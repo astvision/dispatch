@@ -19,7 +19,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Flow | Read-only plan, then member approval, then execution. Replies to a plan are corrections; replies to a result are follow-ups | 0006 |
 | Delivery | Dispatch makes one commit per run, pushes `dispatch/<id>` and opens a draft PR | 0007 |
 | Restarts | Active runs fail as interrupted; members `/retry` | 0008 |
-| Permissions | Plan mode for planning; auto mode plus deny rules for execution; the OS user is the hard boundary | 0009 |
+| Permissions | Plan mode for planning; auto mode plus deny rules for execution, with the agent's actual mode verified; the OS user is the hard boundary | 0009 |
 | Telegram | Offset advanced only after commit; outcome messages go through an outbox | 0010 |
 
 Also decided without an ADR:
@@ -90,8 +90,8 @@ The instance user has `claude` and `gh` installed, file access only to its team'
 
 | Table | Key columns |
 |---|---|
-| `task` | `id` (#42), `project`, `title` (first line, ≤ 80 chars), `description`, `phase`, `requester_ref/name`, `origin_ref` (unique, e.g. `telegram:-100123/5567`), `chat_ref`, `session_id` (UUID), `base_branch`, `base_sha`, `worktree`, `plan_json`, `failure_reason/detail`, `created_at`, `started_at`, `completed_at`; `pr_url` arrives with M2. The branch is always `dispatch/<id>` and is not stored. |
-| `run` | `task_id`, `seq` (run 42.2), `kind` (`PLAN / EXECUTE / DELIVER`), `status` (`QUEUED / RUNNING / SUCCEEDED / FAILED / CANCELLED`), `instruction`, `requested_by`, `pid`, `pid_start`, `queued_at`, `started_at`, `finished_at`, `exit_code`, `failure_reason` (`SETUP / AGENT / TIMEOUT / BUDGET / INTERRUPTED / DELIVERY / INTERNAL`), `error_detail`, `cost_usd`, `turns`, `output`, `denials`. The raw log path is derived: `runs/<task>/<seq>`. |
+| `task` | `id` (#42), `project`, `title` (first line, ≤ 80 chars), `description`, `phase`, `requester_ref/name`, `origin_ref` (unique, e.g. `telegram:-100123/5567`), `chat_ref`, `session_id` (UUID), `base_branch`, `base_sha`, `worktree`, `plan_json`, `failure_reason/detail`, `created_at`, `started_at`, `completed_at`, `pr_url`. The branch is always `dispatch/<id>` and is not stored. |
+| `run` | `task_id`, `seq` (run 42.2), `kind` (`PLAN / EXECUTE / DELIVER`), `status` (`QUEUED / RUNNING / SUCCEEDED / FAILED / CANCELLED`), `instruction` (task text, correction, or the approved plan), `requested_by`, `requested_by_name`, `pid`, `pid_start`, `queued_at`, `started_at`, `finished_at`, `exit_code`, `failure_reason` (`SETUP / AGENT / TIMEOUT / BUDGET / INTERRUPTED / DELIVERY / INTERNAL`), `error_detail`, `cost_usd`, `turns`, `output`, `denials`. The raw log path is derived: `runs/<task>/<seq>`. |
 | `outbox` | `task_id`, `kind`, `reply_to_ref`, `payload`, `status` (`PENDING / SENT / FAILED`), `attempts`, `next_attempt_at`, `last_error` |
 | `task_event` | `task_id`, `run_seq`, `at`, `actor`, `from_phase`, `to_phase`, `reason` (append-only audit) |
 | `kv` | Telegram `getUpdates` offset |
@@ -141,14 +141,19 @@ A transition that loses a race updates 0 rows and is logged.
    - if `questions` is non-empty, no Approve button: members answer by replying, which is a correction;
    - plans over 4096 chars go as a message plus `plan-<id>.md`.
 
-**Approve** (from any member, including the requester): EXECUTE run queued. **Correction:** PLAN run queued with the reply as instruction, resuming the session. **Reject:** REJECTED.
+**Approve** (from any member, including the requester): an EXECUTE run is queued whose instruction is the approved plan. A stale button, a task in another phase, or a plan with open questions is refused in the button's answer.
 
-**Execute run.** The worktree is recreated from `origin/dispatch/<id>` if it was swept, and `copyFiles` are copied in. Each must be git-ignored, otherwise setup fails, so delivery can never commit it. The agent implements the plan (or follow-up) in auto mode. On exit 0, delivery:
-1. If `git status` shows changes: `git add -A` and one commit. The subject is `dispatch #<id>: <title>` (or `follow-up: ...`); the body is the agent's summary; trailers are `Requested-by` / `Approved-by`; the author is the instance bot identity.
-2. `git push -u origin dispatch/<id>`.
-3. `gh pr create --draft` on the first delivery; later pushes update the same PR.
+**Correction:** a member's reply to a plan message. The reply is matched to its plan through the message id Telegram gave that plan (`outbox.sent_ref`); a reply that merely starts like a command (`/api/login fails too`) still counts. A PLAN run is queued with the reply as instruction; it resumes the session in the same worktree and returns the complete revised plan. A reply to a superseded plan, or while the task is not awaiting approval, is refused with the reason.
 
-The task becomes COMPLETED with PR link, files changed, cost and duration. With no changes it is COMPLETED with "no changes".
+**Reject:** REJECTED.
+
+**Execute run.** The run continues in the task's worktree; until the M3 sweep recreates swept worktrees from `origin/dispatch/<id>`, a missing worktree fails the run as `SETUP`. `copyFiles` are copied in. Each must be git-ignored, otherwise setup fails, so delivery can never commit it. The agent implements the approved plan in auto mode. On success, delivery:
+1. If the agent committed anyway, its commits are folded back (`git reset --soft` to the run's start) so the run still becomes one commit and is not mistaken for "no changes".
+2. `git add --all`. If anything is staged: one commit, without hooks or signing so it behaves the same on every run. The subject is `dispatch #<id>: <title>`; the body is the agent's summary, redacted; trailers are `Requested-by` / `Approved-by`; author and committer are `delivery.authorName`/`authorEmail`.
+3. `git push origin dispatch/<id>:refs/heads/dispatch/<id>`, without hooks.
+4. `gh pr create --draft` when the task has no PR yet; later pushes update the same PR.
+
+The task becomes COMPLETED with PR link, files changed, cost, duration and any denied actions. With no changes it is COMPLETED with "no changes" and nothing is pushed.
 
 **Follow-up.** A reply to a COMPLETED/FAILED task's result queues an EXECUTE run immediately in the same session and branch. Replies while a run is active are refused.
 
@@ -195,16 +200,16 @@ The timeout is enforced by `RunExecutor` (a watchdog calls `cancel()`), not by t
 | Always | `claude -p --output-format stream-json --verbose --permission-prompts none --setting-sources project,local --strict-mcp-config --max-budget-usd <b>` + (`--session-id <uuid>` on the first run, `--resume <uuid>` afterwards) + optional `--model`, `--add-dir <attachments>` |
 |---|---|
 | PLAN | `--permission-mode plan --tools Read,Bash --json-schema <plan schema, compacted to one line>` |
-| EXECUTE | `--permission-mode auto --disallowedTools "Bash(git commit *)" "Bash(git push *)" "Bash(gh *)"` |
+| EXECUTE | `--permission-mode auto --tools Read,Edit,Write,Bash --disallowedTools "Bash(git commit *)" "Bash(git push *)" "Bash(gh *)"` |
 
 - The agent's environment excludes `TELEGRAM_BOT_TOKEN` and `GH_TOKEN`; only Dispatch's own git/gh calls get the token. This is a guardrail: processes running as the same user can still read each other's environment.
+- The init event's `permissionMode` must equal the requested mode (`plan` or `auto`). Otherwise the run is stopped at once and fails as `AGENT`: Claude Code does not refuse a mode the model lacks.
 - The plan schema requires the fields `understanding`, `findings`, `steps[]`, `risks[]` and `questions[]`.
 - Prompt rules:
   - Write in the language of the task.
-  - Never commit or push.
-  - Run relevant tests.
-  - End with a short summary.
-  - Ask questions only when planning is impossible without answers.
+  - Plans: ask questions only when a wrong answer would make the change wrong or harmful; otherwise assume, and list the assumption under risks.
+  - Corrections: the task and the member's correction; return the complete revised plan.
+  - Execution: the task and the approved plan; never commit, push or open PRs; stay focused; run quick relevant tests; end with a short plain-text summary.
 - The raw stream goes to `runs/<task>/<seq>.jsonl`. The parser maps `assistant` tool-use blocks to events and the final `result` event to `AgentResult`. Field names are pinned by fixture files recorded from the installed CLI (2.1.274).
 - Failure mapping:
   - timeout (Dispatch-side timer, then `cancel()`): `TIMEOUT`
@@ -218,6 +223,8 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
 - **Budget overshoot:** the budget is checked between model calls. A $0.005 cap ended at $0.07 with subtype `error_max_budget_usd`, `terminal_reason: budget_exhausted` and exit code 1.
 - **Language:** "the same language as the task" produced a Dutch plan for an English task. The prompt now names the language rule explicitly, and a Mongolian task then got a Mongolian plan.
 - **Denials are normal:** plan mode denies writes such as `mkdir ~/.claude/plans` and some compound shell commands. They are recorded in `run.denials`, not treated as failures.
+- **Questions:** with the first plan prompt ("questions that must be answered before implementing"), a simple task got three questions, and such a plan cannot be approved. With the current rule, the same kind of task got none, and its assumptions were listed under risks.
+- **Auto mode is model-dependent:** with Haiku, `--permission-mode auto` started in `default` mode, fresh or resumed. The edit was denied ("no approval surface") and the run still ended as `success` with nothing changed. Sonnet and Opus started in `auto`. A resumed Sonnet run then edited, compiled and checked the change for $0.16. It also wrote scratch files under `/tmp`, outside the worktree, which is allowed because the OS user is the boundary.
 
 ## Background execution
 
@@ -241,6 +248,7 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
 | Bot removed from group (403) | Outbox row FAILED + ERROR. |
 | `git fetch` / worktree / `copyFiles` fails | Run FAILED `SETUP` with the git error; `/retry`. |
 | Agent exit ≠ 0, no result, invalid plan JSON | FAILED `AGENT` + stderr tail. |
+| Agent starts in another permission mode (e.g. Haiku without auto mode) | Stopped at once; FAILED `AGENT` naming both modes. |
 | Timeout / budget | FAILED `TIMEOUT` / `BUDGET`; reply or `/retry`. |
 | Commit / push / PR fails | FAILED `DELIVERY`; `/retry` runs delivery only. |
 | Project clone missing / clone fails | Project unavailable + ERROR; `/task` explains why. |
@@ -266,7 +274,7 @@ The full threat model is in [SECURITY.md](../SECURITY.md).
 
 ## Configuration
 
-The target shape is below. M1 accepts only the keys it uses (`deploy/example.yaml`) and rejects unknown keys, so `language`, `git`, `worktrees` and `limits.execute` arrive with the milestones that need them.
+The target shape is below. Dispatch accepts only the keys it uses (`deploy/example.yaml`) and rejects unknown keys, so `language` and `worktrees` arrive with the milestones that need them.
 
 ```yaml
 team: backend
@@ -276,9 +284,10 @@ telegram:
   members:
     - { id: 123456789, name: Bold }
     - { id: 222333444, name: Ali }
-git:
+delivery:
   authorName: Dispatch (backend)
   authorEmail: dispatch-backend@users.noreply.github.com
+  ghCommand: gh                        # optional
 scheduler:  { maxConcurrentRuns: 2 }
 worktrees:  { idleDays: 7 }
 limits:
@@ -292,6 +301,7 @@ projects:
     repo: https://github.com/acme/autoland-management.git
     baseBranch: main
     agent: claude-code
+    model: sonnet                        # needs auto mode for execution
     copyFiles: [.env]
     limits: { execute: { timeout: 90m, budgetUsd: 15 } }   # optional override
 ```
@@ -303,8 +313,8 @@ Changing members or projects requires a restart, which interrupts active runs. R
 | | Scope |
 |---|---|
 | **M1** read-only slice (built) | Config/env validation, SQLite + migrations, member/group checks, `/task` (text or reply), durable inbound, outbox, scheduler rules, worktree setup, planning run (plan mode, schema, timeout, budget), plan message in Mongolian with `[Reject]` (plans wait for M2's Approve), `/cancel`, `/tasks`, `/help`, group command menu, restart/orphan handling. End-to-end tests use a fake `claude` script and a fake Telegram server. |
-| **M2** execution | `[Approve]`, execution run (auto mode, deny rules), delivery (one commit, push, draft PR), completed/failed outcomes |
-| **M3** interaction and ops | Corrections, follow-ups, `/retry`, live status edits, attachments, plan questions, idle sweep, `/show`, `/projects`, auto-clone of missing repos |
+| **M2** execution (built) | `[Approve]` (refused while questions are open), corrections by replying to a plan, execution run (auto mode, deny rules, verified permission mode, execute limits, `copyFiles`), delivery (one commit, push, draft PR), completed/failed outcomes, plan prompt that states assumptions as risks instead of asking |
+| **M3** interaction and ops | Follow-ups, `/retry`, DELIVER runs, live status edits, attachments, idle sweep (with worktree recreation), `/show`, `/projects`, auto-clone of missing repos |
 | **M4** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
@@ -322,3 +332,6 @@ Tests throughout: unit tests for transitions and scheduler rules; end-to-end tes
 9. A task's title is the first line of its description, cut at 80 chars; no summarizing.
 10. The plan field is `findings`, not `cause`, so it also fits feature tasks.
 11. SQLite is accessed through one connection behind a lock.
+12. An execution run's instruction is the approved plan's JSON, so the audit trail shows exactly what was approved.
+13. Delivery commits skip hooks and signing, and commits the agent made anyway are folded into the one delivery commit.
+14. The agent's summary is redacted before it becomes a commit message and PR description.

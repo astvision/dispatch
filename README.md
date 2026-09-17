@@ -1,9 +1,9 @@
 # Dispatch
 
-Dispatch takes development tasks from a team's Telegram group, has Claude Code analyze them in a git worktree, and posts the plan back to the group. One instance serves one team, with its own bot.
+Dispatch takes development tasks from a team's Telegram group and has Claude Code plan them in a git worktree. Once a member approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance serves one team, with its own bot.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M1, the read-only slice.** Tasks get a plan and can be rejected or cancelled. Approving a plan (execution and draft PRs) arrives with M2.
+- Status: **M2, execution.** Plans can be approved, corrected by replying, or rejected; approved plans end as draft PRs. Follow-ups, `/retry` and live status arrive with M3.
 
 ## Security
 
@@ -43,8 +43,9 @@ Later, when a non-member runs a command, the log line `event=member.not_allowed 
 useradd --system --create-home dispatch-backend
 install -d -o dispatch-backend -g dispatch-backend -m 750 /var/lib/dispatch/backend/repos
 
-# Claude Code for the instance user (ends up in ~dispatch-backend/.local/bin/claude)
+# Claude Code for the instance user (ends up in ~dispatch-backend/.local/bin/claude), and the GitHub CLI for delivery
 sudo -u dispatch-backend -i sh -c 'curl -fsSL https://claude.ai/install.sh | bash'
+dnf install gh        # or apt install gh; see https://github.com/cli/cli#installation
 
 # One clone per project, named as in the config. For private repos, pass the token without storing it in .git/config.
 sudo -u dispatch-backend GH_TOKEN=github_pat_... git \
@@ -61,6 +62,8 @@ systemctl enable --now dispatch@backend
 
 Check that `journalctl -u dispatch@backend` shows `event=dispatch.started`, then send `/help@<bot_username>` in the group. Set a monthly spend limit on the team's API key in the Anthropic Console.
 
+In the config, set `delivery.authorName`/`authorEmail` (the git identity of delivery commits) and `limits.execute`. The GitHub token needs Contents and Pull requests read/write on the team's repositories. Execution runs in auto mode, which not every model has: set the project's `model` to Sonnet or Opus, or leave it unset if the account's default model is one of them. With Haiku, every execution run fails with a permission-mode error.
+
 ## Use it in the group
 
 Pick commands from the `/` menu. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot; a bare `/command` is lost when another bot posted more recently.
@@ -69,11 +72,14 @@ Pick commands from the `/` menu. With privacy mode on, only `/command@<bot_usern
 |---|---|
 | `/task@bot alm Fix the login timeout on staging` | Creates task #N; the agent's plan is posted as a reply |
 | reply to any message with `/task@bot alm` | That message becomes the task (extra text is appended) |
+| **Approve** on a plan | The agent implements the plan; Dispatch commits, pushes `dispatch/N` and posts the draft PR link |
+| reply to a plan message | A correction: the agent revises the plan in the same session |
+| **Reject** on a plan | Closes the task |
 | `/tasks@bot` | Active tasks |
 | `/cancel@bot N` | Cancels task N, stopping its agent if one is running |
 | `/help@bot` | Commands and projects |
 
-Only members listed in the config can create or cancel tasks, and any member can press **Reject** on a plan.
+Only members listed in the config can act on tasks, and any member can approve, correct or reject any plan. A plan with open questions has no Approve button: answer the questions by replying to it.
 
 ## Run locally
 
@@ -92,12 +98,13 @@ Locally, `claude` uses your own login. Your plugins and MCP servers are not load
 - **State:** `sqlite3 /var/lib/dispatch/backend/dispatch.db`
 
   ```sql
-  SELECT id, phase, project, title, failure_reason FROM task ORDER BY id DESC LIMIT 20;
+  SELECT id, phase, project, title, pr_url, failure_reason FROM task ORDER BY id DESC LIMIT 20;
   SELECT task_id, seq, kind, status, cost_usd, turns, error_detail FROM run ORDER BY task_id DESC LIMIT 20;
   SELECT id, kind, status, attempts, last_error FROM outbox WHERE status <> 'SENT';
   SELECT * FROM task_event WHERE task_id = 42 ORDER BY id;
   ```
 - **Raw agent output:** `/var/lib/dispatch/backend/runs/<task>/<run>.jsonl` and `.stderr`.
 - **Restarts:** stopping or restarting interrupts active runs. They fail as `INTERRUPTED` and the group is told.
-- **Worktrees:** they accumulate under `worktrees/` until the M3 sweep. Remove finished ones with `git -C repos/<project> worktree remove --force worktrees/<id>`.
+- **Worktrees:** they accumulate under `worktrees/` until the M3 sweep. Remove finished ones with `git -C repos/<project> worktree remove --force worktrees/<id>`; a task whose worktree is gone can no longer be corrected or executed.
+- **Delivery:** commits are made without hooks or signing, as `delivery.authorName`. A failed push or PR creation fails the task as `DELIVERY`; the commit stays in the worktree.
 - **Bot texts:** `src/main/resources/messages_mn.properties`.

@@ -14,4 +14,5 @@ We rejected three alternatives:
 ## Consequences
 
 - Classifier decisions are not deterministic; the same task can be blocked differently on two runs.
+- Not every model has auto mode. Claude Code does not refuse the flag: with Haiku it starts in default mode, where every edit is denied, and still reports success with nothing changed (observed with 2.1.274). Dispatch therefore compares the permission mode in the agent's init event with the one it requested and stops the run on a mismatch. Execution needs a model with auto mode, e.g. Sonnet or Opus.
 - Deny rules and the classifier are guardrails, not a security boundary. The hard boundary is the instance's OS user (ADR 0005), so that user must hold only its team's repositories and a GitHub token scoped to them.
