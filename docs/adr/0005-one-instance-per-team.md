@@ -6,5 +6,6 @@ We rejected one multi-tenant process serving every team's bot. Any group member 
 
 ## Consequences
 
+- ADR 0012 lets one instance serve several groups that may share a server; this ADR still applies wherever teams need a hard boundary.
 - Serving N teams means N deployments to configure and upgrade.
 - Nothing is shared across teams: no cross-team task list, queue or dashboard.

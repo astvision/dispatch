@@ -21,6 +21,7 @@ We rejected three alternatives:
 
 ## Consequences
 
+- ADR 0012 moves giving a task into the private chat as well, and extends the group's one-line announcements to newly given tasks.
 - This narrows ADR 0006: approving, correcting and rejecting a plan now belong to its requester. If the requester is away, other members can only cancel the task.
 - Members should press Start once before creating tasks. Until they do, their task details appear in the group.
 - An outbox message can carry a fallback destination; a message that falls back is shown with the Start hint.
