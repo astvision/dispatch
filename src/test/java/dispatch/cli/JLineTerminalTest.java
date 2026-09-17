@@ -11,7 +11,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.jline.terminal.Attributes;
-import org.jline.terminal.TerminalBuilder;
+import org.jline.terminal.Size;
+import org.jline.terminal.impl.ExternalTerminal;
 import org.junit.jupiter.api.Test;
 
 /** The real terminal, driven through a virtual xterm with the bytes keys send. */
@@ -87,14 +88,15 @@ class JLineTerminalTest {
     }
 
     /**
-     * A virtual terminal whose keys are all typed at once. Its echo starts off, as a real terminal's is while JLine reads:
-     * otherwise the virtual terminal would echo keys typed ahead of a prompt, which no real prompt does.
+     * A virtual xterm fed from a stream, built directly: through TerminalBuilder, JLine may back it with a real pseudo-terminal,
+     * which fails on CI runners once the input ends. Its echo starts off, as a real terminal's is while JLine reads; otherwise
+     * it would echo keys typed ahead of a prompt, which no real prompt does.
      */
     private JLineTerminal terminal(String keys) throws IOException {
         Attributes noEcho = new Attributes();
         noEcho.setLocalFlag(Attributes.LocalFlag.ECHO, false);
-        return new JLineTerminal(TerminalBuilder.builder().system(false).type("xterm-256color").encoding(StandardCharsets.UTF_8)
-                .attributes(noEcho).streams(new ByteArrayInputStream(keys.getBytes(StandardCharsets.UTF_8)), screen).build());
+        return new JLineTerminal(new ExternalTerminal(null, "test", "xterm-256color", new ByteArrayInputStream(keys.getBytes(StandardCharsets.UTF_8)),
+                screen, StandardCharsets.UTF_8, org.jline.terminal.Terminal.SignalHandler.SIG_DFL, false, noEcho, new Size(80, 24)));
     }
 
     private String shown() {

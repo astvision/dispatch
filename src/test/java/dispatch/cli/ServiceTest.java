@@ -14,6 +14,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 /** The per-user service on each OS, checked through the files written and the commands run; nothing is registered for real. */
@@ -27,6 +29,7 @@ class ServiceTest {
     private final Recorder commands = new Recorder();
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "a systemd unit only ever holds Linux paths; Windows ones get escaped backslashes")
     void linuxGetsASystemdUserUnitThatRestartsAndLogsToAFile() throws IOException {
         Path home = dir.resolve("home bold");
         Service service = Service.forOs("Linux", home, commands, "bold");
