@@ -274,7 +274,8 @@ public final class TaskService {
         List<Draft> stale = Drafts.openCreatedBefore(tx, createdBefore);
         for (Draft draft : stale) {
             Drafts.expire(tx, draft.id(), now);
-            enqueue(tx, null, OutboxKind.DRAFT_EXPIRED, draft.chatRef(), draft.originRef(), Json.object().put("draftId", draft.id()), now);
+            enqueue(tx, null, OutboxKind.DRAFT_EXPIRED, draft.chatRef(), draft.originRef(),
+                    Json.object().put("draftId", draft.id()).put("title", title(draft.description())), now);
         }
         if (!stale.isEmpty()) {
             tx.afterCommit(() -> Log.info("draft.expired", "count", stale.size()));

@@ -161,6 +161,37 @@ class AppTest {
     }
 
     @Test
+    void messageWithSeveralTopicsIsSplitOnRequestAndEachPartIsGivenOnItsOwn() throws Exception {
+        app = start();
+        telegram.pushUpdate(privateText(1, "staging дээр: login timeout-г 60 секунд болго, make help target нэм. бас тайлангийн "
+                + "нэрийг \"Сарын тайлан\" болгож соль"));
+        long prompt = awaitSentMessageId("DRAFT_PROMPT");
+
+        telegram.pushUpdate(privateCallback(2, 100, "Bold", "draft:1:split:ask", prompt));
+
+        assertEquals(messages.getString("callback.splitting"), awaitCallbackAnswer());
+        JsonNode proposal = awaitEditContaining("3. staging дээр: тайлангийн нэрийг");
+        assertEquals(prompt, proposal.get("message_id").asLong(), "the pressed prompt shows the proposal");
+        assertEquals("draft:1:split:yes", proposal.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
+
+        telegram.pushUpdate(privateCallback(3, 100, "Bold", "draft:1:split:yes", prompt));
+
+        assertEquals(messages.getString("callback.split"), awaitCallbackAnswer());
+        JsonNode third = awaitMessageContaining("Сарын тайлан");
+        assertEquals(1, third.get("reply_parameters").get("message_id").asLong(), "each part's prompt is under the message");
+        assertTrue(third.get("reply_markup").toString().contains("draft:4:prio:LOW"), third.toString());
+
+        telegram.pushUpdate(privateCallback(4, 100, "Bold", "draft:4:prio:LOW", 0));
+
+        assertEquals(messages.getString("callback.taskCreated"), awaitCallbackAnswer());
+        Path db = repos.stateDir.resolve("dispatch.db");
+        Map<String, String> task = SqlRows.single(db, "SELECT * FROM task WHERE id = 1");
+        assertEquals("telegram:100/1#3", task.get("origin_ref"));
+        assertEquals("staging дээр: тайлангийн нэрийг \"Сарын тайлан\" болгож соль", task.get("description"));
+        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
+    }
+
+    @Test
     void restartMarksTheInterruptedRunFailedAndStillTellsTheGroup() throws Exception {
         app = start();
         giveTask(1, "SCENARIO:sleep", "NORMAL");
@@ -194,6 +225,18 @@ class AppTest {
         throw new AssertionError("no message containing " + fragment);
     }
 
+    /** The next editMessageText call whose text contains {@code fragment}; earlier calls are skipped. */
+    private JsonNode awaitEditContaining(String fragment) throws InterruptedException {
+        Instant deadline = Instant.now().plus(WAIT);
+        while (Instant.now().isBefore(deadline)) {
+            JsonNode edit = telegram.awaitRequest("editMessageText", Duration.between(Instant.now(), deadline)).json();
+            if (edit.get("text").asText().contains(fragment)) {
+                return edit;
+            }
+        }
+        throw new AssertionError("no edit containing " + fragment);
+    }
+
     private long awaitSentMessageId(String kind) throws InterruptedException {
         Path db = repos.stateDir.resolve("dispatch.db");
         Instant deadline = Instant.now().plus(WAIT);
@@ -210,13 +253,18 @@ class AppTest {
 
     /** Bold writes the task privately and presses a priority button on the prompt (one project, so nothing else is asked). */
     private void giveTask(long updateId, String text, String priority) throws InterruptedException {
-        telegram.pushUpdate(Json.read("""
-                {"update_id":%d,"message":{"message_id":%d,"from":{"id":100,"is_bot":false,"first_name":"Bold"},
-                 "chat":{"id":100,"type":"private"},"date":1789640000,"text":%s}}"""
-                .formatted(updateId, updateId, Json.MAPPER.valueToTree(text))));
+        telegram.pushUpdate(privateText(updateId, text));
         long prompt = awaitSentMessageId("DRAFT_PROMPT");
         telegram.pushUpdate(privateCallback(updateId + 1, 100, "Bold", "draft:1:prio:" + priority, prompt));
         assertEquals(messages.getString("callback.taskCreated"), awaitCallbackAnswer());
+    }
+
+    /** Bold's private message; its message id is the update id. */
+    private static JsonNode privateText(long updateId, String text) {
+        return Json.read("""
+                {"update_id":%d,"message":{"message_id":%d,"from":{"id":100,"is_bot":false,"first_name":"Bold"},
+                 "chat":{"id":100,"type":"private"},"date":1789640000,"text":%s}}"""
+                .formatted(updateId, updateId, Json.MAPPER.valueToTree(text)));
     }
 
     private static JsonNode topicMessage(long updateId, long messageId, long fromId, String name, long threadId, String text) {

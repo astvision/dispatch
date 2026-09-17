@@ -27,6 +27,8 @@ public final class Renderer {
     private static final int TITLE_LIMIT = 80;
     private static final int ACTION_LIMIT = 120;
     private static final int INSTRUCTION_LIMIT = 150;
+    /** Ten parts of this length still fit one message. */
+    private static final int TOPIC_LIMIT = 300;
 
     public record Button(String text, String data) {
     }
@@ -79,7 +81,8 @@ public final class Renderer {
             case TOPIC_CREATE -> plain(escape(topicName(payload.path("taskId").asLong(), payload.path("project").asText(),
                     payload.path("title").asText(), null)));
             case DRAFT_PROMPT -> draftPrompt(payload);
-            case DRAFT_EXPIRED -> plain(text("draft.expired"));
+            case DRAFT_EXPIRED -> plain(text("draft.expired")
+                    + (payload.hasNonNull("title") ? "\n" + escapeWithin(payload.get("title").asText(), TITLE_LIMIT) : ""));
             case PLAN_READY -> throw new IllegalStateException("rendered above");
             case EXECUTION_QUEUED -> plain(format("task.executionQueued", taskId(payload), escape(payload.path("by").asText())));
             case CORRECTION_QUEUED -> plain(format("task.correctionQueued", taskId(payload)));
@@ -118,10 +121,14 @@ public final class Renderer {
         return hint == null ? rendered : new Rendered(rendered.html() + "\n\n" + hint, rendered.keyboard(), rendered.document());
     }
 
-    /** A draft's prompt: while open, project buttons (in rows of three, when there is a choice) and a priority row. */
+    /**
+     * A draft's prompt. While open: project buttons (in rows of three, when there is a choice), a priority row and ✂️ for a
+     * whole message; while a split is proposed, its parts and the choice between splitting and keeping the message whole.
+     */
     private Rendered draftPrompt(JsonNode payload) {
         String title = escapeWithin(payload.path("title").asText(), TITLE_LIMIT);
         String project = payload.hasNonNull("project") ? escape(projectLabel(payload)) : null;
+        JsonNode topics = payload.path("topics");
         switch (payload.path("status").asText()) {
             case "CREATED" -> {
                 String key = payload.path("topic").asBoolean() ? "draft.createdInTopic" : "draft.created";
@@ -130,13 +137,32 @@ public final class Renderer {
             case "EXPIRED" -> {
                 return plain(text("draft.expired") + "\n" + title);
             }
+            case "SPLIT" -> {
+                return plain(format("draft.split", topics.size()) + "\n" + numbered(topics));
+            }
             default -> {
                 // OPEN: asked below.
             }
         }
         String id = String.valueOf(payload.path("draftId").asLong());
-        String html = text("draft.header") + "\n" + title + "\n\n"
-                + (project == null ? text("draft.chooseProject") : format("draft.project", project)) + "\n" + text("draft.choosePriority");
+        String header = payload.hasNonNull("part")
+                ? format("draft.headerPart", payload.path("part").asInt(), payload.path("parts").asInt())
+                : text("draft.header");
+        String split = payload.path("split").asText();
+        if (split.equals("PROPOSED")) {
+            return new Rendered(header + "\n" + title + "\n\n" + format("draft.proposed", topics.size()) + "\n" + numbered(topics),
+                    List.of(List.of(new Button(format("button.splitInto", topics.size()), "draft:" + id + ":split:yes"),
+                            new Button(text("button.keepWhole"), "draft:" + id + ":split:no"))), null);
+        }
+        String note = switch (split) {
+            case "SPLITTING" -> "\n\n" + text("draft.splitting");
+            case "ONE_TOPIC" -> "\n\n" + text("draft.oneTopic");
+            case "FAILED" -> "\n\n" + text("draft.splitFailed");
+            default -> "";
+        };
+        String html = header + "\n" + title + "\n\n"
+                + (project == null ? text("draft.chooseProject") : format("draft.project", project)) + "\n" + text("draft.choosePriority")
+                + note;
         List<List<Button>> keyboard = new ArrayList<>();
         JsonNode projects = payload.path("projects");
         if (projects.size() > 1) {
@@ -159,7 +185,19 @@ public final class Renderer {
             priorities.add(new Button(PRIORITY_ICONS.get(priority) + " " + text("priority." + priority), "draft:" + id + ":prio:" + priority));
         }
         keyboard.add(priorities);
+        if (payload.path("splittable").asBoolean()) {
+            keyboard.add(List.of(new Button(text("button.split"), "draft:" + id + ":split:ask")));
+        }
         return new Rendered(html, keyboard, null);
+    }
+
+    /** A split message's parts, one numbered line each. */
+    private static String numbered(JsonNode topics) {
+        List<String> lines = new ArrayList<>();
+        for (JsonNode topic : topics) {
+            lines.add(lines.size() + 1 + ". " + escapeWithin(topic.asText(), TOPIC_LIMIT));
+        }
+        return String.join("\n", lines);
     }
 
     /**

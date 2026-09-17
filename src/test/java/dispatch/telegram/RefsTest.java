@@ -18,6 +18,14 @@ class RefsTest {
     }
 
     @Test
+    void partOfAMessageStillNamesTheMessageAndItsThread() {
+        assertEquals(77L, Refs.messageId("telegram:100/77#2"));
+        assertNull(Refs.threadId("telegram:100/77#2"));
+        assertEquals(77L, Refs.messageId("telegram:100/77@55#3"));
+        assertEquals(55L, Refs.threadId("telegram:100/77@55#3"));
+    }
+
+    @Test
     void messageOutsideTopicsHasNoThread() {
         String ref = Refs.message(-100, 12, null);
 

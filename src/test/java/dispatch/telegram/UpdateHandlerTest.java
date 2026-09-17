@@ -1,6 +1,7 @@
 package dispatch.telegram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -49,6 +50,7 @@ class UpdateHandlerTest {
     private final Renderer renderer = new Renderer(Renderer.mongolian(), clock, FakeTelegram.BOT_USERNAME);
     private RunTransitions transitions;
     private TaskService tasks;
+    private final List<Long> splitsStarted = new java.util.concurrent.CopyOnWriteArrayList<>();
     private UpdateHandler handler;
 
     @BeforeEach
@@ -67,7 +69,7 @@ class UpdateHandlerTest {
                         List.of("autoland-management")),
                 new Config.Group("mobile", MOBILE_GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
                         List.of("life"))));
-        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
+        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { }, false, splitsStarted::add);
         transitions = new RunTransitions(db, clock, () -> { });
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
         handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME,
@@ -131,6 +133,57 @@ class UpdateHandlerTest {
         JsonNode created = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
         assertTrue(created.get("text").asText().contains("#" + task.get("id")), created.toString());
         assertEquals(0, created.get("reply_markup").get("inline_keyboard").size(), "no buttons once the task exists");
+    }
+
+    @Test
+    void scissorsStartTheSplitAndRedrawThePromptTheyWerePressedOn() throws Exception {
+        handler.handle(message(507, 14, 100, "Bold", 100L, "private", "Fix the login timeout, add make help", null));
+        long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
+
+        handler.handle(privateCallback(508, 100, "Bold", "draft:" + draftId + ":split:ask"));
+
+        assertEquals(List.of(draftId), splitsStarted);
+        assertEquals("telegram:100/88", row("SELECT prompt_ref FROM draft").get("prompt_ref"));
+        assertEquals(renderer.text("callback.splitting"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode splitting = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(88, splitting.get("message_id").asLong());
+        assertTrue(splitting.get("text").asText().contains(renderer.text("draft.splitting")), splitting.toString());
+        assertFalse(splitting.get("reply_markup").toString().contains(":split:"), splitting.toString());
+    }
+
+    @Test
+    void proposalButtonsSplitTheMessageOrKeepItWhole() throws Exception {
+        handler.handle(message(509, 15, 100, "Bold", 100L, "private", "Fix the login timeout, add make help", null));
+        handler.handle(message(510, 16, 100, "Bold", 100L, "private", "Rename the report, drop old logs", null));
+        long first = Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = 'telegram:100/15'").get("id"));
+        long second = Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = 'telegram:100/16'").get("id"));
+        handler.handle(privateCallback(511, 100, "Bold", "draft:" + first + ":split:ask"));
+        handler.handle(privateCallback(512, 100, "Bold", "draft:" + second + ":split:ask"));
+        db.transaction(tx -> {
+            tasks.splitProposed(tx, first, List.of("Fix the login timeout", "Add make help"));
+            tasks.splitProposed(tx, second, List.of("Rename the report", "Drop old logs"));
+        });
+        telegram.drain("editMessageText");
+        telegram.drain("answerCallbackQuery");
+
+        handler.handle(privateCallback(513, 100, "Bold", "draft:" + first + ":split:yes"));
+        handler.handle(privateCallback(514, 100, "Bold", "draft:" + second + ":split:no"));
+        handler.handle(privateCallback(515, 100, "Bold", "draft:" + second + ":split:maybe"));
+
+        assertEquals("2", row("SELECT count(*) AS n FROM draft WHERE parent_id = ?", first).get("n"));
+        assertEquals(renderer.text("callback.split"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode split = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(split.get("text").asText().contains("2. Add make help"), split.toString());
+        assertEquals(0, split.get("reply_markup").get("inline_keyboard").size());
+        assertEquals(renderer.text("callback.keptWhole"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode kept = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(kept.get("reply_markup").toString().contains("draft:" + second + ":prio:URGENT"), kept.toString());
+        assertFalse(kept.get("reply_markup").toString().contains(":split:"), kept.toString());
+        assertEquals(renderer.text("callback.unknown"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
     @Test

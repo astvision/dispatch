@@ -2,7 +2,8 @@ package dispatch.telegram;
 
 /**
  * Telegram's side of the channel-neutral references the core stores: "telegram:&lt;id&gt;" for users and chats,
- * "telegram:&lt;chat&gt;/&lt;message&gt;" for messages, with "@&lt;thread&gt;" appended for a message written in a topic.
+ * "telegram:&lt;chat&gt;/&lt;message&gt;" for messages, with "@&lt;thread&gt;" appended for a message written in a topic. The
+ * core appends "#&lt;part&gt;" for one part of a split message (ADR 0013); it still refers to that message.
  */
 final class Refs {
 
@@ -48,10 +49,12 @@ final class Refs {
         return at < 0 ? null : Long.parseLong(body.substring(at + 1));
     }
 
+    /** The reference without its prefix and without a part number. */
     private static String body(String ref) {
         if (ref == null || !ref.startsWith(PREFIX)) {
             throw new IllegalArgumentException("not a Telegram reference: " + ref);
         }
-        return ref.substring(PREFIX.length());
+        int part = ref.indexOf('#');
+        return ref.substring(PREFIX.length(), part < 0 ? ref.length() : part);
     }
 }

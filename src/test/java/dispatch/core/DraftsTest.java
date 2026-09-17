@@ -224,6 +224,7 @@ class DraftsTest {
         Map<String, String> note = row("SELECT * FROM outbox WHERE kind = 'DRAFT_EXPIRED'");
         assertEquals("telegram:100", note.get("chat_ref"));
         assertEquals("telegram:100/13", note.get("reply_to_ref"));
+        assertEquals("Fix login timeout", Json.read(note.get("payload")).get("title").asText(), "parts of one message expire apart");
         assertEquals(DraftChoice.EXPIRED, db.transactionReturning(tx -> tasks.choosePriority(tx, BOLD, old, Priority.NORMAL)));
     }
 

@@ -158,6 +158,68 @@ class RendererTest {
     }
 
     @Test
+    void wholeMessageOffersScissorsBelowThePriorities() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm", "crm"), null, "OPEN", null).put("splittable", true));
+
+        assertEquals(List.of(new Renderer.Button(messages.getString("button.split"), "draft:5:split:ask")), rendered.keyboard().getLast());
+        assertEquals("draft:5:prio:URGENT", rendered.keyboard().get(1).getFirst().data());
+    }
+
+    @Test
+    void whileSplittingThePromptSaysSoAndStillAsksForProjectAndPriority() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm", "crm"), "crm", "OPEN", null).put("split", "SPLITTING"));
+
+        assertTrue(rendered.html().contains(messages.getString("draft.splitting")), rendered.html());
+        assertEquals("draft:5:prio:LOW", rendered.keyboard().getLast().getLast().data(), "no ✂️ while it runs");
+    }
+
+    @Test
+    void proposedSplitListsThePartsAndAsksToSplitOrKeepWhole() {
+        ObjectNode payload = draftPayload(List.of("alm", "crm"), null, "OPEN", null).put("split", "PROPOSED");
+        payload.putArray("topics").add("staging: fix the <login> timeout").add("staging: add make help");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT, payload);
+
+        assertTrue(rendered.html().contains("1. staging: fix the &lt;login&gt; timeout\n2. staging: add make help"), rendered.html());
+        assertEquals(List.of(List.of(new Renderer.Button("✂️ 2 даалгавар болгох", "draft:5:split:yes"),
+                new Renderer.Button(messages.getString("button.keepWhole"), "draft:5:split:no"))), rendered.keyboard());
+    }
+
+    @Test
+    void splitOutcomesAreNotedOnThePrompt() {
+        String oneTopic = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm"), "alm", "OPEN", null).put("split", "ONE_TOPIC")).html();
+        Renderer.Rendered failed = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm"), "alm", "OPEN", null).put("split", "FAILED").put("splittable", true));
+        ObjectNode split = draftPayload(List.of("alm"), "alm", "SPLIT", null);
+        split.putArray("topics").add("Fix the timeout").add("Add make help");
+        Renderer.Rendered splitInto = renderer.render(OutboxKind.DRAFT_PROMPT, split);
+
+        assertTrue(oneTopic.contains(messages.getString("draft.oneTopic")), oneTopic);
+        assertTrue(failed.html().contains(messages.getString("draft.splitFailed")), failed.html());
+        assertEquals("draft:5:split:ask", failed.keyboard().getLast().getFirst().data(), "try again");
+        assertTrue(splitInto.html().contains("2. Add make help"), splitInto.html());
+        assertTrue(splitInto.keyboard().isEmpty());
+    }
+
+    @Test
+    void partPromptSaysWhichPartItIs() {
+        String html = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm"), "alm", "OPEN", null).put("part", 2).put("parts", 3)).html();
+
+        assertTrue(html.contains("2/3"), html);
+    }
+
+    @Test
+    void expiredNoteNamesTheMessageItIsAbout() {
+        String html = renderer.render(OutboxKind.DRAFT_EXPIRED, Json.object().put("draftId", 5).put("title", "Add <make> help")).html();
+
+        assertTrue(html.startsWith(messages.getString("draft.expired")) && html.contains("Add &lt;make&gt; help"), html);
+    }
+
+    @Test
     void createdDraftShowsTheTaskWithoutButtons() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT, draftPayload(List.of("alm", "crm"), "crm", "CREATED", 7L)
                 .put("priority", "URGENT"));

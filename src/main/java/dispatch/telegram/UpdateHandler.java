@@ -272,14 +272,27 @@ public final class UpdateHandler {
         answer(tx, callbackId, answer);
     }
 
-    /** A project or priority button on a draft's prompt; the prompt is redrawn to show the choice or the new task. */
+    /**
+     * A button on a draft's prompt: project, priority, or ✂️ and its proposal's split and keep-whole choices (ADR 0013).
+     * The prompt is redrawn to show the choice, the new task or the parts.
+     */
     private void onDraftButton(Tx tx, JsonNode callback, Requester who, long draftId, String kind, String value) {
         String callbackId = callback.path("id").asText();
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        long messageId = message.path("message_id").asLong();
         DraftChoice choice;
         if (kind.equals("p")) {
             choice = tasks.chooseProject(tx, who, draftId, value);
         } else if (kind.equals("prio") && Set.of("URGENT", "NORMAL", "LOW").contains(value)) {
             choice = tasks.choosePriority(tx, who, draftId, Priority.valueOf(value));
+        } else if (kind.equals("split") && value.equals("ask")) {
+            // This prompt is redrawn again when the split's answer arrives.
+            choice = tasks.split(tx, who, draftId, Refs.message(chatId, messageId, null));
+        } else if (kind.equals("split") && value.equals("yes")) {
+            choice = tasks.acceptSplit(tx, who, draftId);
+        } else if (kind.equals("split") && value.equals("no")) {
+            choice = tasks.keepWhole(tx, who, draftId);
         } else {
             answer(tx, callbackId, "callback.unknown");
             return;
@@ -299,12 +312,10 @@ public final class UpdateHandler {
             case ALREADY_SPLIT -> "callback.alreadySplit";
             case CANNOT_SPLIT -> "callback.cannotSplit";
         });
-        if (choice != DraftChoice.PROJECT_CHOSEN && choice != DraftChoice.CREATED) {
+        if (!Set.of(DraftChoice.PROJECT_CHOSEN, DraftChoice.CREATED, DraftChoice.SPLITTING, DraftChoice.SPLIT, DraftChoice.KEPT_WHOLE)
+                .contains(choice)) {
             return;
         }
-        JsonNode message = callback.path("message");
-        long chatId = message.path("chat").path("id").asLong();
-        long messageId = message.path("message_id").asLong();
         ObjectNode payload = tasks.draftPayload(tx, draftId).orElseThrow();
         Renderer.Rendered prompt = renderer.render(OutboxKind.DRAFT_PROMPT, Json.read(redactor.redact(payload.toString())));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, prompt.html(), prompt.keyboard())));
