@@ -27,6 +27,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Personal instances | A developer's own bot and instance on their own machine (macOS, Windows, Linux): projects at any `path`, groups without a chat, `effort` per project, set up with `dispatch init` | 0014 |
 | Joining a shared bot | People who write to a team's bot ask to join; `telegram.admins` approve them per group in Telegram, and the config is updated without a restart | 0015 |
 | Setup | One-line install, an arrow-key `dispatch init` for a personal or a team bot, and a per-user background service on each OS | 0016 |
+| Agent sessions | A task has a planning session (the plan and its corrections) and a building session, which execution starts from the approved plan | 0017 |
 
 Also decided without an ADR:
 - Only members of a configured group act, for their groups' projects, in their own private chat with the bot; groups get announcements and read-only reports.
@@ -109,8 +110,8 @@ projects                   wherever each project's path points; Dispatch adds wo
 
 | Table | Key columns |
 |---|---|
-| `task` | `id` (#42), `project`, `title` (first line, ≤ 80 chars), `description`, `phase`, `priority` (`URGENT / NORMAL / LOW`), `requester_ref/name`, `origin_ref` (unique, e.g. `telegram:-100123/5567`), `chat_ref`, `session_id` (UUID), `base_branch`, `base_sha`, `worktree`, `plan_json`, `failure_reason/detail`, `created_at`, `started_at`, `completed_at`, `pr_url`, `topic_ref` (the task's topic in the requester's private chat, once created). The branch is always `dispatch/<id>` and is not stored. |
-| `run` | `task_id`, `seq` (run 42.2), `kind` (`PLAN / EXECUTE / DELIVER`), `status` (`QUEUED / RUNNING / SUCCEEDED / FAILED / CANCELLED`), `instruction` (task text, correction, or the approved plan), `requested_by`, `requested_by_name`, `pid`, `pid_start`, `queued_at`, `started_at`, `finished_at`, `exit_code`, `failure_reason` (`SETUP / AGENT / TIMEOUT / BUDGET / INTERRUPTED / DELIVERY / INTERNAL`), `error_detail`, `cost_usd`, `turns`, `output`, `denials`. The raw log path is derived: `runs/<task>/<seq>`. |
+| `task` | `id` (#42), `project`, `title` (first line, ≤ 80 chars), `description`, `phase`, `priority` (`URGENT / NORMAL / LOW`), `requester_ref/name`, `origin_ref` (unique, e.g. `telegram:-100123/5567`), `chat_ref`, `session_id` (the planning session's UUID, set when the task is created), `build_session_id` (the building session's, set by the first execution run), `base_branch`, `base_sha`, `worktree`, `plan_json`, `failure_reason/detail`, `created_at`, `started_at`, `completed_at`, `pr_url`, `topic_ref` (the task's topic in the requester's private chat, once created). The branch is always `dispatch/<id>` and is not stored. |
+| `run` | `task_id`, `seq` (run 42.2), `kind` (`PLAN / EXECUTE / DELIVER`), `status` (`QUEUED / RUNNING / SUCCEEDED / FAILED / CANCELLED`), `instruction` (task text, correction, or the approved plan), `requested_by`, `requested_by_name`, `pid`, `pid_start`, `queued_at`, `started_at`, `finished_at`, `exit_code`, `failure_reason` (`SETUP / AGENT / TIMEOUT / BUDGET / INTERRUPTED / DELIVERY / INTERNAL`), `error_detail`, `cost_usd`, `turns`, `output`, `denials`, `model` (the model that answered; several are joined with ", "). The raw log path is derived: `runs/<task>/<seq>`. |
 | `outbox` | `task_id`, `kind`, `chat_ref`, `reply_to_ref`, `edit_ref` (a message this row redraws instead of sending a new one), `fallback_chat_ref/reply_to_ref` (where a refused private message goes instead), `fell_back`, `payload`, `status` (`PENDING / SENT / FAILED`), `attempts`, `next_attempt_at`, `last_error`, `sent_ref` |
 | `draft` | `requester_ref/name`, `chat_ref` (private chat), `origin_ref` (unique: the message, plus `#<part>` for a part), `description`, `project` (once chosen), `status` (`OPEN / CREATED / EXPIRED / SPLIT`), `task_id`, `prompt_ref` (the prompt ✂️ was pressed on), `split_state` (`SPLITTING / PROPOSED / ONE_TOPIC / KEPT / FAILED`), `topics` (the proposed parts, JSON), `parent_id` and `part` (for a part) |
 | `task_event` | `task_id`, `run_seq`, `at`, `actor`, `from_phase`, `to_phase`, `reason` (append-only audit) |
@@ -248,7 +249,7 @@ The timeout is enforced by `RunExecutor` (a watchdog calls `cancel()`), not by t
 
 `ClaudeCodeAgent` passes the prompt on stdin to:
 
-| Always | `claude -p --output-format stream-json --verbose --permission-prompts none --setting-sources project,local --strict-mcp-config --max-budget-usd <b>` + (`--session-id <uuid>` on the first run, `--resume <uuid>` afterwards) + optional `--model`, `--add-dir <attachments>` |
+| Always | `claude -p --output-format stream-json --verbose --permission-prompts none --setting-sources project,local --strict-mcp-config --max-budget-usd <b>` + (`--session-id <uuid>` on a session's first run, `--resume <uuid>` afterwards: planning runs use the task's planning session, execution runs its building session) + optional `--model` and `--effort` (a project's `plan` or `execute` block, else the project's own), `--add-dir <attachments>` |
 |---|---|
 | PLAN | `--permission-mode plan --tools Read,Bash --json-schema <plan schema, compacted to one line>` |
 | EXECUTE | `--permission-mode auto --tools Read,Edit,Write,Bash --disallowedTools "Bash(git commit *)" "Bash(git push *)" "Bash(gh *)"` |
@@ -259,10 +260,10 @@ The timeout is enforced by `RunExecutor` (a watchdog calls `cancel()`), not by t
 - The plan schema requires the fields `understanding`, `findings`, `steps[]`, `risks[]` and `questions[]`.
 - Prompt rules:
   - Write in the language of the task.
-  - Plans: ask questions only when a wrong answer would make the change wrong or harmful; otherwise assume, and list the assumption under risks.
+  - Plans: ask questions only when a wrong answer would make the change wrong or harmful; otherwise assume, and list the assumption under risks. Return the plan only as the JSON answer, not also as a plan file.
   - Corrections: the task and the member's correction; return the complete revised plan.
-  - Execution: the task and the approved plan; never commit, push or open PRs; stay focused; run quick relevant tests; end with a short plain-text summary.
-- The raw stream goes to `runs/<task>/<seq>.jsonl`. The parser maps `assistant` tool-use blocks to events and the final `result` event to `AgentResult`. Field names are pinned by fixture files recorded from the installed CLI (2.1.274).
+  - Execution: the task and the approved plan, in a fresh session; never commit, push or open PRs; stay focused; run quick relevant tests; end with a short plain-text summary.
+- The raw stream goes to `runs/<task>/<seq>.jsonl`. The parser maps `assistant` tool-use blocks to events and the final `result` event to `AgentResult`. It also collects the model of the run's own answers (a subagent's are left out) and compares it with `--model`: an alias such as `sonnet` names a family, an id one model, and `opusplan` or `default` are not compared. A mismatch is stored with the run, logged as `agent.model_differs` and shown as a ⚠️ line under the plan or result. Field names are pinned by fixture files recorded from the installed CLI (2.1.274).
 - Failure mapping:
   - timeout (Dispatch-side timer, then `cancel()`): `TIMEOUT`
   - budget exhausted: `BUDGET`
@@ -274,7 +275,10 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
 - **Tool restriction:** without `--tools`, a plan run spawned a Sonnet subagent and called scheduling tools; that run cost $0.34. With `--tools Read,Bash`, the same task cost $0.17 and produced no noise.
 - **Budget overshoot:** the budget is checked between model calls. A $0.005 cap ended at $0.07 with subtype `error_max_budget_usd`, `terminal_reason: budget_exhausted` and exit code 1.
 - **Language:** "the same language as the task" produced a Dutch plan for an English task. The prompt now names the language rule explicitly, and a Mongolian task then got a Mongolian plan.
-- **Denials are normal:** plan mode denies writes such as `mkdir ~/.claude/plans` and some compound shell commands. They are recorded in `run.denials`, not treated as failures.
+- **Denials are normal:** plan mode denied some compound shell commands, and once `mkdir ~/.claude/plans`. They are recorded in `run.denials`, not treated as failures.
+- **Plan files:** plan mode tells the agent to also save its plan under `~/.claude/plans/`. Two of three plans on a smoke instance did, so each of those plans was generated twice. Claude Code accepts a `plansDirectory` only inside the project root, where delivery would commit the file, so the prompt asks for the JSON answer only.
+- **The model asked for is not always the one that answers:** plan runs and splits started with `--model haiku` named Haiku in their init event, but every answer came from Sonnet 5, with no warning. Hence the model check above.
+- **Resuming across modes reuses no cache:** an execution run that resumed its planning session 5 seconds after the plan read 9.5k tokens from the prompt cache and wrote 26k, since plan and auto mode differ in tools and system prompt. Writing context to the cache was 52–82% of each run's cost (ADR 0017).
 - **Questions:** with the first plan prompt ("questions that must be answered before implementing"), a simple task got three questions, and such a plan cannot be approved. With the current rule, the same kind of task got none, and its assumptions were listed under risks.
 - **Splitting:** with the default system prompt, a split cost about $0.02 and 5 seconds, and a $0.05 cap was exceeded on a cold run. With `--system-prompt`, no tools, no skills and no saved session, a three-topic Mongolian message cost $0.015 in 2.9 s, and a one-topic message $0.014 in 3.5 s. Shared context ("staging дээр:") was repeated in each topic, as the prompt asks. Haiku once nested its answer (`{"topics": {"topics": [...]}}`), got a schema error back, and answered correctly on the next turn, so the budget leaves room for a retry.
 - **Auto mode is model-dependent:** with Haiku, `--permission-mode auto` started in `default` mode, fresh or resumed. The edit was denied ("no approval surface") and the run still ended as `success` with nothing changed. Sonnet and Opus started in `auto`. A resumed Sonnet run then edited, compiled and checked the change for $0.16. It also wrote scratch files under `/tmp`, outside the worktree, which is allowed because the OS user is the boundary.
@@ -368,6 +372,7 @@ projects:
     agent: claude-code
     model: sonnet                        # needs auto mode for execution
     effort: high                         # optional: low, medium, high, xhigh, max
+    plan: { model: opus, effort: xhigh } # optional: planning's own model or effort; execute: { ... } likewise
     copyFiles: [.env]
     limits: { execute: { timeout: 90m, budgetUsd: 15 } }   # optional override
 ```
@@ -385,7 +390,7 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **M3c** topics and splitting (built) | A Telegram topic per task in the requester's private chat (when @BotFather has topics on), and splitting a message into tasks on request with ✂️ |
 | **M3d** personal instances (built) | `path` and `effort` per project, groups without a chat, owner-only state and secrets on every OS, `dispatch init / project add / check / run`, launchers, CI on Linux, macOS and Windows |
 | **M3e** setup and team bot (built) | One-line install (`install.sh`, `install.ps1`), arrow-key `dispatch init` for a personal or team bot, joining a shared bot by admin approval in Telegram, `dispatch service` on Linux, macOS and Windows |
-| **M3f** leaner agent runs | A planning and a building session per task (ADR 0017), no plan files outside the task's run folder, the model that actually answered shown on plans and results, model and effort per phase, a CLAUDE.md hint in `dispatch check` |
+| **M3f** leaner agent runs (built) | A planning and a building session per task (ADR 0017), plans asked for as JSON only, the model that actually answered shown on plans and results with a warning when it isn't the configured one, model and effort per phase, a CLAUDE.md hint in `dispatch check` |
 | **M3g** interaction and ops | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
 | **M4** | `CodexAgent` |
 
@@ -394,7 +399,7 @@ Tests throughout: unit tests for transitions and scheduler rules; end-to-end tes
 ## Derived decisions (not asked explicitly)
 
 1. Agents run as CLI subprocesses with the prompt on stdin. There is no SDK, because there is no Java SDK and a CLI keeps Claude and Codex uniform.
-2. Dispatch generates each task's session UUID on its first run and resumes it on every later run.
+2. Dispatch generates a task's planning session UUID when the task is created, and its building session UUID on the first execution run. Later runs of each phase resume that phase's session (ADR 0017).
 3. Runs load only project/local Claude settings and no MCP servers, so behaviour is the same on a laptop and a server. The repo's `CLAUDE.md` still applies. Verified in M1: the recorded runs report no plugins, no MCP servers and no personal skills; only Claude Code's built-in skills remain.
 4. The agent never receives `TELEGRAM_BOT_TOKEN` or `GH_TOKEN`.
 5. Every bot message except live status edits goes through the outbox, including "queued" acks and "not allowed" replies.

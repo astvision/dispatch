@@ -74,7 +74,16 @@ One machine runs the team's bot, with clones of the team's projects: a small ser
 
 - **Joining later:** someone new opens the bot and writes to it. The bot's admins (you, after `init`) get their name with a button per group and **Deny**. Allowing adds them to the config and they can give tasks at once, no restart needed. After a Deny, a person can ask again a day later.
 - **Admins:** `telegram.admins` in the config lists the Telegram user ids of the people who decide.
-- **Config:** plain YAML you may edit by hand; `dispatch check` validates it. Per project: `path` (the clone), `baseBranch`, and optionally `model` and `effort` (`low`, `medium`, `high`, `xhigh` or `max`). Dispatch works in its own worktrees under the state directory and only adds `dispatch/<task>` branches to the clone.
+- **Config:** plain YAML you may edit by hand; `dispatch check` validates it. Per project: `path` (the clone), `baseBranch`, and optionally `model` and `effort` (`low`, `medium`, `high`, `xhigh` or `max`), for both phases or per phase: `plan: { model: opus, effort: high }` or `execute: { model: sonnet }`. Dispatch works in its own worktrees under the state directory and only adds `dispatch/<task>` branches to the clone.
+
+### Help the agent: CLAUDE.md
+
+Every planning and execution run reads the project's `CLAUDE.md` (or `.claude/CLAUDE.md`) as committed on its base branch. Without one, each run first spends several tool calls finding its way around. Keep it short, because every run pays for reading it:
+- what the project is and where its main code lives
+- the exact commands to build it and run its tests
+- conventions a change must follow, and what not to touch
+
+`dispatch check` names the projects that have none.
 
 ## Set up a team instance with systemd (Linux server)
 
@@ -136,6 +145,8 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 | `/history`, `/history N` | The last 10 finished tasks with who gave them and when; task N's timeline |
 | `/stats` | Your numbers, each group's and per person, for 7 days, this month or all time |
 | `/cancel N` | Cancels task N |
+
+Each plan and result ends with the model that answered, the cost and the duration. A ⚠️ line appears when the model isn't the one the config asks for.
 
 **In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot` and `/stats@bot` there cover that group's projects. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
 
