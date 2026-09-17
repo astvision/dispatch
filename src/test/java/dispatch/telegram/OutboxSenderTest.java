@@ -183,6 +183,53 @@ class OutboxSenderTest {
     }
 
     @Test
+    void taskTopicIsCreatedWithItsPriorityColourThenTheTasksPrivateMessagesGoIntoIt() throws Exception {
+        long taskId = task("URGENT");
+        enqueueFor(taskId, OutboxKind.TOPIC_CREATE, "telegram:100", null, Json.object().put("taskId", taskId));
+        enqueueFor(taskId, OutboxKind.PLAN_READY, "telegram:100", "telegram:100/5", planPayload(taskId));
+
+        sender.deliverDue();
+        sender.deliverDue();
+
+        JsonNode created = telegram.awaitRequest("createForumTopic", Duration.ofSeconds(1)).json();
+        assertEquals(100, created.get("chat_id").asLong());
+        assertEquals("#" + taskId + " · life · Fix the login timeout", created.get("name").asText());
+        assertEquals(0xFB6F5F, created.get("icon_color").asInt());
+        assertEquals("500", SqlRows.single(dbFile, "SELECT topic_ref FROM task WHERE id = ?", taskId).get("topic_ref"));
+        JsonNode plan = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
+        assertEquals(500, plan.get("message_thread_id").asLong());
+        assertFalse(plan.has("reply_parameters"), "the task's own message is outside its topic");
+    }
+
+    @Test
+    void finishedTasksTopicIsRenamedWithItsOutcome() throws Exception {
+        long taskId = task("NORMAL");
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '500', phase = 'COMPLETED' WHERE id = ?", taskId));
+        enqueueFor(taskId, OutboxKind.TASK_COMPLETED_SHORT, "telegram:-100", null,
+                Json.object().put("taskId", taskId).put("project", "life").put("prUrl", "https://github.com/acme/life/pull/1").put("filesChanged", 1));
+
+        sender.deliverDue();
+
+        assertEquals(-100, telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json().get("chat_id").asLong());
+        JsonNode renamed = telegram.awaitRequest("editForumTopic", Duration.ofSeconds(1)).json();
+        assertEquals(100, renamed.get("chat_id").asLong());
+        assertEquals(500, renamed.get("message_thread_id").asLong());
+        assertEquals("✅ #" + taskId + " · life · Fix the login timeout", renamed.get("name").asText());
+    }
+
+    @Test
+    void replyToAMessageWrittenInATopicStaysInThatTopic() throws Exception {
+        db.transactionReturning(tx -> Outbox.enqueue(tx, null, OutboxKind.TASK_USAGE, "telegram:100", "telegram:100/77@55", Json.object(),
+                clock.instant()));
+
+        sender.deliverDue();
+
+        JsonNode body = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
+        assertEquals(55, body.get("message_thread_id").asLong());
+        assertEquals(77, body.get("reply_parameters").get("message_id").asLong());
+    }
+
+    @Test
     void messageStillFailingAfter24HoursIsGivenUp() {
         long id = enqueue(OutboxKind.TASK_QUEUED, Json.object().put("taskId", 1).put("project", "alm"));
         clock.advance(Duration.ofHours(25));
@@ -219,6 +266,30 @@ class OutboxSenderTest {
     private long enqueuePrivate(OutboxKind kind, ObjectNode payload) {
         return db.transactionReturning(tx -> Outbox.enqueueWithFallback(tx, null, kind, "telegram:100", null, "telegram:-100",
                 "telegram:-100/55", payload, clock.instant()));
+    }
+
+    private long task(String priority) {
+        return db.transactionReturning(tx -> tx.insert("""
+                INSERT INTO task (project, title, description, phase, priority, requester_ref, requester_name, origin_ref, chat_ref,
+                                  session_id, base_branch, created_at, updated_at)
+                VALUES ('life', 'Fix the login timeout', 'Fix the login timeout', 'PLANNING', ?, 'telegram:100', 'Bold', 'telegram:100/5',
+                        'telegram:-100', '63d36fba-124d-4737-8020-d37d4998abca', 'main', '2026-09-17T10:00:00.000Z', '2026-09-17T10:00:00.000Z')""",
+                priority));
+    }
+
+    private long enqueueFor(long taskId, OutboxKind kind, String chatRef, String replyToRef, ObjectNode payload) {
+        return db.transactionReturning(tx -> Outbox.enqueue(tx, taskId, kind, chatRef, replyToRef, payload, clock.instant()));
+    }
+
+    private static ObjectNode planPayload(long taskId) {
+        ObjectNode payload = Json.object().put("taskId", taskId).put("planSeq", 1).put("project", "life").put("costUsd", "0.1")
+                .put("durationSeconds", 10);
+        ObjectNode plan = payload.putObject("plan").put("understanding", "Make it configurable");
+        plan.putArray("findings");
+        plan.putArray("steps").add("Change it");
+        plan.putArray("risks");
+        plan.putArray("questions");
+        return payload;
     }
 
     private Map<String, String> row(long id) {

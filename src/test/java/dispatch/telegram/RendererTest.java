@@ -470,6 +470,7 @@ class RendererTest {
         return switch (kind) {
             case TASK_QUEUED -> Json.object().put("taskId", 1).put("project", "autoland-management").put("requester", "Bold")
                     .put("priority", "URGENT").put("title", "Fix the login timeout");
+            case TOPIC_CREATE -> Json.object().put("taskId", 7).put("project", "life").put("title", "Fix it");
             case DRAFT_PROMPT -> draftPayload(List.of("alm", "crm", "life", "billing"), null, "OPEN", null);
             case DRAFT_EXPIRED -> Json.object();
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");

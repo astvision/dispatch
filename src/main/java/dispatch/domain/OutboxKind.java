@@ -2,6 +2,8 @@ package dispatch.domain;
 
 /** What an outbox message tells the team; channels render each kind from its JSON payload. */
 public enum OutboxKind {
+    /** Opens the task's own topic in the requester's private chat; later private messages of the task go there. */
+    TOPIC_CREATE,
     /** The group's line about a task given privately (ADR 0012). */
     TASK_QUEUED,
     /** Asks for a draft's project and priority; edited in place as they are chosen. */

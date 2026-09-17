@@ -37,7 +37,7 @@ class BotApiTest {
 
     @Test
     void sendMessageRepliesInHtmlWithInlineButtons() throws Exception {
-        long messageId = api.sendMessage(-100L, "<b>#42</b> план", 55L, REJECT);
+        long messageId = api.sendMessage(-100L, null, "<b>#42</b> план", 55L, REJECT);
 
         assertEquals(1000, messageId);
         JsonNode body = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
@@ -53,11 +53,12 @@ class BotApiTest {
 
     @Test
     void messageWithoutReplyOrButtonsOmitsThem() throws Exception {
-        api.sendMessage(-100L, "hello", null, List.of());
+        api.sendMessage(-100L, null, "hello", null, List.of());
 
         JsonNode body = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
         assertFalse(body.has("reply_parameters"));
         assertFalse(body.has("reply_markup"));
+        assertFalse(body.has("message_thread_id"));
     }
 
     @Test
@@ -66,8 +67,8 @@ class BotApiTest {
                 "{\"ok\":false,\"error_code\":429,\"description\":\"Too Many Requests: retry after 7\",\"parameters\":{\"retry_after\":7}}");
         telegram.respond("sendMessage", 403, "{\"ok\":false,\"error_code\":403,\"description\":\"Forbidden: bot was kicked from the group chat\"}");
 
-        TelegramException limited = assertThrows(TelegramException.class, () -> api.sendMessage(-100L, "x", null, List.of()));
-        TelegramException kicked = assertThrows(TelegramException.class, () -> api.sendMessage(-100L, "x", null, List.of()));
+        TelegramException limited = assertThrows(TelegramException.class, () -> api.sendMessage(-100L, null, "x", null, List.of()));
+        TelegramException kicked = assertThrows(TelegramException.class, () -> api.sendMessage(-100L, null, "x", null, List.of()));
 
         assertEquals(429, limited.errorCode());
         assertEquals(7, limited.retryAfterSeconds());
@@ -82,7 +83,7 @@ class BotApiTest {
         BotApi offline = new BotApi(HttpClient.newHttpClient(), URI.create("http://127.0.0.1:1/bot" + FakeTelegram.TOKEN + "/"),
                 Duration.ofSeconds(2));
 
-        TelegramException error = assertThrows(TelegramException.class, () -> offline.sendMessage(-100L, "x", null, List.of()));
+        TelegramException error = assertThrows(TelegramException.class, () -> offline.sendMessage(-100L, null, "x", null, List.of()));
 
         assertFalse(error.isPermanent());
         assertFalse(String.valueOf(error.getMessage()).contains(FakeTelegram.TOKEN), error.getMessage());
@@ -112,7 +113,7 @@ class BotApiTest {
 
     @Test
     void sendDocumentUploadsTheFileAsMultipartWithCaptionReplyAndButtons() throws Exception {
-        long messageId = api.sendDocument(-100L, "plan-42.md", "# План\n1. step".getBytes(StandardCharsets.UTF_8),
+        long messageId = api.sendDocument(-100L, null, "plan-42.md", "# План\n1. step".getBytes(StandardCharsets.UTF_8),
                 "📋 <b>#42</b>", 55L, REJECT);
 
         assertEquals(1000, messageId);
@@ -150,7 +151,7 @@ class BotApiTest {
 
     @Test
     void keyboardRowsStaySeparateRows() throws Exception {
-        api.sendMessage(-100L, "x", null, List.of(List.of(new Renderer.Button("a", "1")),
+        api.sendMessage(-100L, null, "x", null, List.of(List.of(new Renderer.Button("a", "1")),
                 List.of(new Renderer.Button("b", "2"), new Renderer.Button("c", "3"))));
 
         JsonNode rows = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json().get("reply_markup").get("inline_keyboard");
@@ -168,6 +169,23 @@ class BotApiTest {
         assertEquals("<b>new</b>", body.get("text").asText());
         assertEquals("HTML", body.get("parse_mode").asText());
         assertEquals("prio:4:LOW", body.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
+    }
+
+    @Test
+    void topicsAreCreatedAndRenamedInAPrivateChatAndMessagesSentIntoThem() throws Exception {
+        long thread = api.createForumTopic(100L, "#7 · alm · Fix login", 0xFB6F5F);
+        api.sendMessage(100L, thread, "plan", null, List.of());
+        api.editForumTopic(100L, thread, "✅ #7 · alm · Fix login");
+
+        assertEquals(500, thread);
+        JsonNode created = telegram.awaitRequest("createForumTopic", Duration.ofSeconds(1)).json();
+        assertEquals(100, created.get("chat_id").asLong());
+        assertEquals("#7 · alm · Fix login", created.get("name").asText());
+        assertEquals(0xFB6F5F, created.get("icon_color").asInt());
+        assertEquals(500, telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json().get("message_thread_id").asLong());
+        JsonNode renamed = telegram.awaitRequest("editForumTopic", Duration.ofSeconds(1)).json();
+        assertEquals(500, renamed.get("message_thread_id").asLong());
+        assertEquals("✅ #7 · alm · Fix login", renamed.get("name").asText());
     }
 
     @Test

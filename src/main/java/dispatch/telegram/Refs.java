@@ -2,7 +2,7 @@ package dispatch.telegram;
 
 /**
  * Telegram's side of the channel-neutral references the core stores: "telegram:&lt;id&gt;" for users and chats,
- * "telegram:&lt;chat&gt;/&lt;message&gt;" for messages.
+ * "telegram:&lt;chat&gt;/&lt;message&gt;" for messages, with "@&lt;thread&gt;" appended for a message written in a topic.
  */
 final class Refs {
 
@@ -19,8 +19,9 @@ final class Refs {
         return PREFIX + chatId;
     }
 
-    static String message(long chatId, long messageId) {
-        return PREFIX + chatId + "/" + messageId;
+    /** @param threadId the topic the message was written in, null outside topics */
+    static String message(long chatId, long messageId, Long threadId) {
+        return PREFIX + chatId + "/" + messageId + (threadId == null ? "" : "@" + threadId);
     }
 
     static long chatId(String ref) {
@@ -33,7 +34,18 @@ final class Refs {
     static Long messageId(String ref) {
         String body = body(ref);
         int slash = body.indexOf('/');
-        return slash < 0 ? null : Long.parseLong(body.substring(slash + 1));
+        if (slash < 0) {
+            return null;
+        }
+        int at = body.indexOf('@', slash);
+        return Long.parseLong(at < 0 ? body.substring(slash + 1) : body.substring(slash + 1, at));
+    }
+
+    /** Null unless the reference is to a message written in a topic. */
+    static Long threadId(String ref) {
+        String body = body(ref);
+        int at = body.indexOf('@');
+        return at < 0 ? null : Long.parseLong(body.substring(at + 1));
     }
 
     private static String body(String ref) {

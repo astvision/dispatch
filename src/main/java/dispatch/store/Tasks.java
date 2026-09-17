@@ -18,7 +18,7 @@ public final class Tasks {
 
     private static final String COLUMNS = """
             id, project, title, description, phase, priority, requester_ref, requester_name, origin_ref, chat_ref, session_id,
-            base_branch, base_sha, worktree, plan_json, pr_url, failure_reason, failure_detail,
+            base_branch, base_sha, worktree, plan_json, pr_url, topic_ref, failure_reason, failure_detail,
             created_at, started_at, completed_at, updated_at""";
 
     private Tasks() {
@@ -47,6 +47,15 @@ public final class Tasks {
 
     public static Optional<Task> find(Tx tx, long id) {
         return tx.one("SELECT " + COLUMNS + " FROM task WHERE id = ?", Tasks::map, id);
+    }
+
+    /** The requester's task that owns {@code topicRef} in their private chat. */
+    public static Optional<Task> findByTopic(Tx tx, String requesterRef, String topicRef) {
+        return tx.one("SELECT " + COLUMNS + " FROM task WHERE requester_ref = ? AND topic_ref = ?", Tasks::map, requesterRef, topicRef);
+    }
+
+    public static void recordTopic(Tx tx, long id, String topicRef, Instant now) {
+        tx.update("UPDATE task SET topic_ref = ?, updated_at = ? WHERE id = ?", topicRef, now, id);
     }
 
     public static boolean existsWithOrigin(Tx tx, String originRef) {
@@ -153,6 +162,7 @@ public final class Tasks {
                 row.path("worktree"),
                 row.string("plan_json"),
                 row.string("pr_url"),
+                row.string("topic_ref"),
                 row.enumValue("failure_reason", FailureReason.class),
                 row.string("failure_detail"),
                 row.instant("created_at"),

@@ -135,6 +135,32 @@ class AppTest {
     }
 
     @Test
+    void withTopicsOnTheTaskLivesInItsOwnTopicWhereWritingCorrectsThePlan() throws Exception {
+        telegram.enableTopics();
+        app = start();
+        giveTask(1, "Fix the login timeout on staging", "NORMAL");
+
+        JsonNode topic = telegram.awaitRequest("createForumTopic", WAIT).json();
+        assertEquals(100, topic.get("chat_id").asLong());
+        assertTrue(topic.get("name").asText().startsWith("#1 · autoland-management"), topic.toString());
+        JsonNode plan = awaitMessageContaining("The user reports that login");
+        assertEquals(500, plan.get("message_thread_id").asLong(), "the plan goes into the task's topic");
+
+        telegram.pushUpdate(topicMessage(20, 30, 100, "Bold", 500, "Also cover the mobile login"));
+        assertEquals(500, awaitMessageContaining("✏️").get("message_thread_id").asLong());
+        JsonNode revised = awaitMessageContaining("The user reports that login");
+        assertEquals("approve:1:2", revised.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
+
+        telegram.pushUpdate(privateCallback(21, 100, "Bold", "approve:1:2", 0));
+
+        JsonNode result = awaitMessageContaining(FakeGh.PR_URL);
+        assertEquals(500, result.get("message_thread_id").asLong());
+        JsonNode renamed = telegram.awaitRequest("editForumTopic", WAIT).json();
+        assertTrue(renamed.get("name").asText().startsWith("✅ #1"), renamed.toString());
+        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
+    }
+
+    @Test
     void restartMarksTheInterruptedRunFailedAndStillTellsTheGroup() throws Exception {
         app = start();
         giveTask(1, "SCENARIO:sleep", "NORMAL");
@@ -191,6 +217,13 @@ class AppTest {
         long prompt = awaitSentMessageId("DRAFT_PROMPT");
         telegram.pushUpdate(privateCallback(updateId + 1, 100, "Bold", "draft:1:prio:" + priority, prompt));
         assertEquals(messages.getString("callback.taskCreated"), awaitCallbackAnswer());
+    }
+
+    private static JsonNode topicMessage(long updateId, long messageId, long fromId, String name, long threadId, String text) {
+        return Json.read("""
+                {"update_id":%d,"message":{"message_id":%d,"from":{"id":%d,"is_bot":false,"first_name":"%s"},
+                 "chat":{"id":%d,"type":"private"},"date":1789640000,"text":%s,"message_thread_id":%d,"is_topic_message":true}}"""
+                .formatted(updateId, messageId, fromId, name, fromId, Json.MAPPER.valueToTree(text), threadId));
     }
 
     private String awaitCallbackAnswer() throws InterruptedException {

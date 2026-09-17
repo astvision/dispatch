@@ -75,7 +75,10 @@ public final class App {
         workspaces.createDirectories().ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
         Database db = Database.open(stateDir.resolve("dispatch.db"));
         db.migrate();
-        String botUsername = api.getMe().path("username").asText();
+        com.fasterxml.jackson.databind.JsonNode me = api.getMe();
+        String botUsername = me.path("username").asText();
+        // Set per bot in @BotFather; with it, each task gets its own topic in the requester's private chat.
+        boolean taskTopics = me.path("has_topics_enabled").asBoolean(false);
 
         Signal schedulerSignal = new Signal();
         Signal outboxSignal = new Signal();
@@ -84,7 +87,7 @@ public final class App {
         RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake);
         Groups groups = new Groups(config.telegram().groups());
         TaskService tasks = new TaskService(groups, projects, activeRuns, clock,
-                schedulerSignal::wake, outboxSignal::wake);
+                schedulerSignal::wake, outboxSignal::wake, taskTopics);
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(config.agents().get("claude-code").command(), environment, Duration.ofSeconds(10)));
         RunExecutor executor = new RunExecutor(db, projects, workspaces, delivery, agents, transitions, activeRuns,
@@ -109,7 +112,7 @@ public final class App {
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
         app[0] = new App(db, poller, scheduler, sender, draftExpiry, activeRuns, onFatal);
         app[0].startThreads();
-        Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "groups", groups.all().size(),
+        Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "task_topics", taskTopics, "groups", groups.all().size(),
                 "projects", config.projects().size(), "state_dir", stateDir);
         return app[0];
     }

@@ -4,13 +4,19 @@ import dispatch.Json;
 import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.core.Signal;
+import dispatch.domain.OutboxKind;
+import dispatch.domain.Priority;
+import dispatch.domain.Task;
 import dispatch.store.Database;
 import dispatch.store.Outbox;
+import dispatch.store.Tasks;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Delivers outbox messages one at a time (ADR 0010). Transient failures are retried with logged, bounded backoff. A
@@ -20,6 +26,12 @@ import java.util.Optional;
 public final class OutboxSender implements Runnable {
 
     private static final Duration MAX_AGE = Duration.ofHours(24);
+    /** Messages that report how a task ended; sending one renames the task's topic. */
+    private static final Set<OutboxKind> OUTCOMES = Set.of(OutboxKind.TASK_COMPLETED_SHORT, OutboxKind.TASK_FAILED_SHORT,
+            OutboxKind.TASK_REJECTED, OutboxKind.TASK_CANCELLED);
+    /** Telegram's fixed topic colors: red, yellow, green. */
+    private static final Map<Priority, Integer> TOPIC_COLORS = Map.of(Priority.URGENT, 0xFB6F5F, Priority.NORMAL, 0xFFD67E,
+            Priority.LOW, 0x8EEE98);
     private static final Duration FIRST_BACKOFF = Duration.ofSeconds(5);
     private static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
 
@@ -77,6 +89,13 @@ public final class OutboxSender implements Runnable {
 
     private void deliver(Outbox.Message message) {
         int attempts = message.attempts() + 1;
+        Optional<Task> task = message.taskId() == null
+                ? Optional.empty()
+                : db.transactionReturning(tx -> Tasks.find(tx, message.taskId()));
+        if (message.kind() == OutboxKind.TOPIC_CREATE) {
+            createTopic(message, attempts, task.orElseThrow());
+            return;
+        }
         Renderer.Rendered rendered;
         try {
             // Masked before rendering, so length limits apply to the text that is actually sent.
@@ -88,15 +107,55 @@ public final class OutboxSender implements Runnable {
         }
         long chatId = Refs.chatId(message.chatRef());
         Long replyTo = message.replyToRef() == null ? null : Refs.messageId(message.replyToRef());
+        Long thread = message.replyToRef() == null ? null : Refs.threadId(message.replyToRef());
+        if (task.isPresent() && task.get().topicRef() != null && message.chatRef().equals(task.get().requester().ref())) {
+            // The task's own topic; the message that gave the task is outside it, in General.
+            thread = Long.parseLong(task.get().topicRef());
+            replyTo = null;
+        }
         try {
             long sentId = rendered.document() == null
-                    ? api.sendMessage(chatId, rendered.html(), replyTo, rendered.keyboard())
-                    : api.sendDocument(chatId, rendered.document().fileName(),
+                    ? api.sendMessage(chatId, thread, rendered.html(), replyTo, rendered.keyboard())
+                    : api.sendDocument(chatId, thread, rendered.document().fileName(),
                             rendered.document().markdown().getBytes(StandardCharsets.UTF_8), rendered.html(), replyTo, rendered.keyboard());
-            db.transaction(tx -> Outbox.markSent(tx, message.id(), attempts, Refs.message(chatId, sentId), clock.instant()));
+            db.transaction(tx -> Outbox.markSent(tx, message.id(), attempts, Refs.message(chatId, sentId, null), clock.instant()));
             Log.info("outbox.sent", "id", message.id(), "kind", message.kind(), "task", message.taskId(), "attempt", attempts);
         } catch (TelegramException e) {
             handleFailure(message, attempts, e);
+            return;
+        }
+        if (task.isPresent() && OUTCOMES.contains(message.kind())) {
+            renameTopic(task.get());
+        }
+    }
+
+    /** Opens the task's topic; its color shows the priority. A topic that cannot be made leaves the task in General. */
+    private void createTopic(Outbox.Message message, int attempts, Task task) {
+        long chatId = Refs.chatId(message.chatRef());
+        String name = renderer.topicName(task.id(), task.project(), task.title(), null);
+        try {
+            long thread = api.createForumTopic(chatId, name, TOPIC_COLORS.get(task.priority()));
+            db.transaction(tx -> {
+                Tasks.recordTopic(tx, task.id(), Long.toString(thread), clock.instant());
+                Outbox.markSent(tx, message.id(), attempts, null, clock.instant());
+            });
+            Log.info("outbox.topic_created", "id", message.id(), "task", task.id(), "thread", thread);
+        } catch (TelegramException e) {
+            handleFailure(message, attempts, e);
+        }
+    }
+
+    /** Best effort: the name shows how the task ended; the outcome message itself was already sent. */
+    private void renameTopic(Task sentFor) {
+        Task task = db.transactionReturning(tx -> Tasks.find(tx, sentFor.id())).orElse(sentFor);
+        if (task.topicRef() == null || task.phase().isActive()) {
+            return;
+        }
+        String name = renderer.topicName(task.id(), task.project(), task.title(), task.phase().name());
+        try {
+            api.editForumTopic(Refs.chatId(task.requester().ref()), Long.parseLong(task.topicRef()), name);
+        } catch (TelegramException e) {
+            Log.warn("outbox.topic_rename_failed", "task", task.id(), "error", e.getMessage());
         }
     }
 

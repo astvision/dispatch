@@ -51,9 +51,17 @@ public final class TaskService {
     private final Clock clock;
     private final Runnable wakeScheduler;
     private final Runnable wakeOutbox;
+    private final boolean taskTopics;
 
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
                        Runnable wakeOutbox) {
+        this(groups, projects, activeRuns, clock, wakeScheduler, wakeOutbox, false);
+    }
+
+    /** @param taskTopics the channel can give each task its own topic in the requester's private chat */
+    public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
+                       Runnable wakeOutbox, boolean taskTopics) {
+        this.taskTopics = taskTopics;
         this.groups = groups;
         this.projects = projects;
         this.activeRuns = activeRuns;
@@ -137,7 +145,8 @@ public final class TaskService {
     public Optional<ObjectNode> draftPayload(Tx tx, long draftId) {
         return Drafts.find(tx, draftId).map(draft -> {
             ObjectNode payload = Json.object().put("draftId", draft.id()).put("title", title(draft.description()))
-                    .put("status", draft.status().name()).put("project", draft.project()).put("taskId", draft.taskId());
+                    .put("status", draft.status().name()).put("project", draft.project()).put("taskId", draft.taskId())
+                    .put("topic", taskTopics);
             ArrayNode listed = payload.putArray("projects");
             offeredProjects(draft.requesterRef())
                     .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
@@ -214,6 +223,9 @@ public final class TaskService {
                 UUID.randomUUID(), project.baseBranch(), priority), Phase.PLANNING, now);
         Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, description, who), now);
         Events.record(tx, id, null, who.ref(), null, Phase.PLANNING, "created", now);
+        if (taskTopics) {
+            enqueue(tx, id, OutboxKind.TOPIC_CREATE, who.ref(), null, Json.object().put("taskId", id), now);
+        }
         enqueue(tx, id, OutboxKind.TASK_QUEUED, groupChat, null, Json.object().put("taskId", id).put("project", project.name())
                 .put("requester", who.name()).put("priority", priority.name()).put("title", title(description)), now);
         tx.afterCommit(wakeScheduler);
@@ -330,6 +342,16 @@ public final class TaskService {
         tx.afterCommit(wakeScheduler);
         logTransition(tx, taskId, Phase.AWAITING_APPROVAL, Phase.PLANNING, who.ref());
         return CorrectResult.CORRECTED;
+    }
+
+    /** A message in a task's own topic corrects its latest plan; refused with the reason when the task is not waiting for one. */
+    public CorrectResult correctLatest(Tx tx, Requester who, long taskId, String text, String originRef, String chatRef) {
+        int planSeq = Runs.latestSucceededPlanSeq(tx, taskId).orElse(0);
+        return correct(tx, who, taskId, planSeq, text, originRef, chatRef);
+    }
+
+    public Optional<Task> taskOfTopic(Tx tx, String requesterRef, String topicRef) {
+        return Tasks.findByTopic(tx, requesterRef, topicRef);
     }
 
     /** The requester rejects the plan with run number {@code planSeq}; a button on an older plan is refused as stale. */

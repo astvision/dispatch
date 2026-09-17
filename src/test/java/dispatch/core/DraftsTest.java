@@ -41,6 +41,8 @@ class DraftsTest {
     private final AtomicInteger schedulerWakes = new AtomicInteger();
     private Set<String> unavailable = Set.of();
     private TaskService tasks;
+    private Projects projects;
+    private Groups groups;
 
     @BeforeEach
     void setUp() {
@@ -51,9 +53,9 @@ class DraftsTest {
         Config.Project alm = project("autoland-management", "alm");
         Config.Project crm = project("crm", null);
         Config.Project life = project("life", null);
-        Projects projects = new Projects(List.of(alm, crm, life),
+        projects = new Projects(List.of(alm, crm, life),
                 project -> unavailable.contains(project.name()) ? Optional.of("no clone") : Optional.empty());
-        Groups groups = new Groups(List.of(
+        groups = new Groups(List.of(
                 new Config.Group("backend", -100, List.of(new Config.Member(100, "Bold")), List.of("autoland-management", "crm")),
                 new Config.Group("mobile", -300, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
                         List.of("life"))));
@@ -140,6 +142,19 @@ class DraftsTest {
         assertEquals(Long.parseLong(task.get("id")), prompt.get("taskId").asLong());
         assertEquals("crm", prompt.get("project").asText());
         assertEquals("URGENT", prompt.get("priority").asText());
+    }
+
+    @Test
+    void withTopicsOnEachGivenTaskGetsItsOwnTopicInTheWritersPrivateChat() {
+        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, schedulerWakes::incrementAndGet, () -> { }, true);
+        long draftId = draft(SARA, "Add make help", "telegram:300/20");
+
+        db.transaction(tx -> tasks.choosePriority(tx, SARA, draftId, Priority.LOW));
+
+        Map<String, String> topic = row("SELECT * FROM outbox WHERE kind = 'TOPIC_CREATE'");
+        assertEquals("telegram:300", topic.get("chat_ref"));
+        assertEquals(row("SELECT id FROM task").get("id"), topic.get("task_id"));
+        assertTrue(db.transactionReturning(tx -> tasks.draftPayload(tx, draftId)).orElseThrow().get("topic").asBoolean());
     }
 
     @Test

@@ -442,6 +442,42 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void anythingWrittenInsideATasksTopicIsACorrectionOfItsPlan() {
+        long taskId = taskAwaitingApproval(List.of());
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '55' WHERE id = ?", taskId));
+
+        handler.handle(topicMessage(600, 101, 100, "Bold", 55, "Also cover the mobile login"));
+
+        assertEquals("Also cover the mobile login", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction"));
+        assertEquals("telegram:100/101@55", row("SELECT reply_to_ref FROM outbox WHERE kind = 'CORRECTION_QUEUED'").get("reply_to_ref"));
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"), "not a new task");
+    }
+
+    @Test
+    void messageInTheTopicOfATaskThatIsNoLongerWaitingIsAnsweredWithItsPhase() {
+        long taskId = taskAwaitingApproval(List.of());
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '55', phase = 'EXECUTING' WHERE id = ?", taskId));
+
+        handler.handle(topicMessage(601, 102, 100, "Bold", 55, "and the tablet too"));
+
+        Map<String, String> refused = row("SELECT * FROM outbox WHERE kind = 'CORRECTION_REFUSED'");
+        assertEquals("phase", Json.read(refused.get("payload")).get("reason").asText());
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+    }
+
+    @Test
+    void commandsInsideATopicAreAnsweredThereAndOtherTopicsStartTasks() {
+        long taskId = taskAwaitingApproval(List.of());
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '55' WHERE id = ?", taskId));
+
+        handler.handle(topicMessage(602, 103, 100, "Bold", 55, "/status"));
+        handler.handle(topicMessage(603, 104, 100, "Bold", 77, "Rename the report"));
+
+        assertEquals("telegram:100/103@55", row("SELECT reply_to_ref FROM outbox WHERE kind = 'STATUS'").get("reply_to_ref"));
+        assertEquals("telegram:100/104@77", row("SELECT origin_ref FROM draft").get("origin_ref"), "a topic of no task is like General");
+    }
+
+    @Test
     void helpListsTheProjects() {
         handler.handle(message(530, 30, 999, "Sara", GROUP, "supergroup", "/help", null));
 
@@ -498,6 +534,13 @@ class UpdateHandlerTest {
                  "chat":{"id":%d,"title":"Team","type":"%s"},"date":1789640000,"text":%s%s%s}}"""
                 .formatted(updateId, messageId, fromId, firstName, firstName.toLowerCase(), chatId, chatType,
                         Json.MAPPER.valueToTree(text), entities, reply));
+    }
+
+    /** A message written inside a topic of the sender's private chat with the bot. */
+    static JsonNode topicMessage(long updateId, long messageId, long fromId, String firstName, long threadId, String text) {
+        JsonNode message = message(updateId, messageId, fromId, firstName, fromId, "private", text, null);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) message.get("message")).put("message_thread_id", threadId).put("is_topic_message", true);
+        return message;
     }
 
     /** A button pressed in the presser's own private chat with the bot. */

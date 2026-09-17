@@ -15,6 +15,7 @@ import dispatch.core.TaskService;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
+import dispatch.domain.Task;
 import dispatch.store.Database;
 import dispatch.store.Kv;
 import dispatch.store.Outbox;
@@ -36,6 +37,7 @@ public final class UpdateHandler {
 
     static final String OFFSET_KEY = "telegram.offset";
     private static final Set<String> JOINED_STATUSES = Set.of("member", "administrator");
+    private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "help", "start");
 
     private final Database db;
     private final TaskService tasks;
@@ -115,10 +117,21 @@ public final class UpdateHandler {
         long chatId = message.path("chat").path("id").asLong();
         JsonNode from = message.path("from");
         Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
-        String origin = Refs.message(chatId, message.path("message_id").asLong());
+        Long thread = message.path("is_topic_message").asBoolean(false) && message.has("message_thread_id")
+                ? message.get("message_thread_id").asLong()
+                : null;
+        String origin = Refs.message(chatId, message.path("message_id").asLong(), thread);
         String chatRef = Refs.chat(chatId);
         Set<String> visible = privateChat ? groups.projectsOfMember(who.ref()) : groups.projectsOfChat(chatRef);
         Optional<Command> parsed = Command.parse(message);
+        Optional<Task> topicTask = privateChat && thread != null
+                ? tasks.taskOfTopic(tx, who.ref(), Long.toString(thread))
+                : Optional.empty();
+        if (topicTask.isPresent() && parsed.map(command -> !COMMANDS.contains(command.name())).orElse(true)) {
+            // Inside a task's own topic, anything that is not a command is about that task.
+            tasks.correctLatest(tx, who, topicTask.get().id(), text(message), origin, chatRef);
+            return;
+        }
         if (parsed.isEmpty()) {
             if (!correction(tx, message, who, origin, chatRef) && privateChat) {
                 // Anything else a member writes privately is a task to give (ADR 0012).
@@ -189,7 +202,7 @@ public final class UpdateHandler {
             return false;
         }
         long chatId = message.path("chat").path("id").asLong();
-        String repliedRef = Refs.message(chatId, repliedTo.get("message_id").asLong());
+        String repliedRef = Refs.message(chatId, repliedTo.get("message_id").asLong(), null);
         Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef);
         if (sent.isEmpty() || sent.get().kind() != OutboxKind.PLAN_READY) {
             String kind = sent.map(found -> found.kind().name()).orElse("unknown");

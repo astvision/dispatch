@@ -46,6 +46,8 @@ public final class FakeTelegram implements AutoCloseable {
     private final Map<Long, String[]> refusedChats = new ConcurrentHashMap<>();
     private final BlockingQueue<JsonNode> updates = new LinkedBlockingQueue<>();
     private final AtomicLong nextMessageId = new AtomicLong(1000);
+    private final AtomicLong nextThreadId = new AtomicLong(500);
+    private volatile boolean topicsEnabled;
 
     private FakeTelegram(HttpServer server) {
         this.server = server;
@@ -72,6 +74,11 @@ public final class FakeTelegram implements AutoCloseable {
     /** Every sendMessage to {@code chatId} gets this HTTP status and body, e.g. a user who never started the bot. */
     public void refuseChat(long chatId, int status, String body) {
         refusedChats.put(chatId, new String[] {String.valueOf(status), body});
+    }
+
+    /** getMe then reports that topics are on for the bot's private chats, as @BotFather sets it. */
+    public void enableTopics() {
+        topicsEnabled = true;
     }
 
     public void pushUpdate(JsonNode update) {
@@ -116,7 +123,8 @@ public final class FakeTelegram implements AutoCloseable {
             return;
         }
         String result = switch (method) {
-            case "getMe" -> "{\"id\":1,\"is_bot\":true,\"username\":\"" + BOT_USERNAME + "\"}";
+            case "getMe" -> "{\"id\":1,\"is_bot\":true,\"username\":\"" + BOT_USERNAME + "\",\"has_topics_enabled\":" + topicsEnabled + "}";
+            case "createForumTopic" -> "{\"message_thread_id\":" + nextThreadId.getAndIncrement() + ",\"name\":\"t\",\"icon_color\":16766590}";
             case "getUpdates" -> pendingUpdates();
             case "sendMessage", "sendDocument" -> "{\"message_id\":" + nextMessageId.getAndIncrement() + "}";
             default -> "true";

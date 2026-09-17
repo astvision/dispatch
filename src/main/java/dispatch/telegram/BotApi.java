@@ -55,9 +55,15 @@ public final class BotApi {
         return updates;
     }
 
-    /** @return the sent message's id */
-    public long sendMessage(long chatId, String html, Long replyToMessageId, List<List<Renderer.Button>> buttons) {
+    /**
+     * @param threadId the topic to post in, null for none
+     * @return the sent message's id
+     */
+    public long sendMessage(long chatId, Long threadId, String html, Long replyToMessageId, List<List<Renderer.Button>> buttons) {
         ObjectNode body = Json.object().put("chat_id", chatId).put("text", html).put("parse_mode", "HTML");
+        if (threadId != null) {
+            body.put("message_thread_id", threadId);
+        }
         body.putObject("link_preview_options").put("is_disabled", true);
         if (replyToMessageId != null) {
             body.set("reply_parameters", replyParameters(replyToMessageId));
@@ -69,11 +75,14 @@ public final class BotApi {
     }
 
     /** @return the sent message's id */
-    public long sendDocument(long chatId, String fileName, byte[] content, String captionHtml, Long replyToMessageId,
+    public long sendDocument(long chatId, Long threadId, String fileName, byte[] content, String captionHtml, Long replyToMessageId,
                              List<List<Renderer.Button>> buttons) {
         String boundary = "dispatch-" + UUID.randomUUID();
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         field(body, boundary, "chat_id", Long.toString(chatId));
+        if (threadId != null) {
+            field(body, boundary, "message_thread_id", Long.toString(threadId));
+        }
         field(body, boundary, "caption", captionHtml);
         field(body, boundary, "parse_mode", "HTML");
         if (replyToMessageId != null) {
@@ -100,6 +109,16 @@ public final class BotApi {
         body.putObject("link_preview_options").put("is_disabled", true);
         body.set("reply_markup", keyboard(buttons));
         call("editMessageText", body, requestTimeout);
+    }
+
+    /** Opens a topic in a forum or in a private chat with topics on; returns its thread id. */
+    public long createForumTopic(long chatId, String name, int iconColor) {
+        ObjectNode body = Json.object().put("chat_id", chatId).put("name", name).put("icon_color", iconColor);
+        return call("createForumTopic", body, requestTimeout).path("message_thread_id").asLong();
+    }
+
+    public void editForumTopic(long chatId, long threadId, String name) {
+        call("editForumTopic", Json.object().put("chat_id", chatId).put("message_thread_id", threadId).put("name", name), requestTimeout);
     }
 
     public record BotCommand(String command, String description) {

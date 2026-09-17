@@ -76,6 +76,8 @@ public final class Renderer {
             case TASK_QUEUED -> plain(format("task.queued", taskId(payload), escape(payload.path("project").asText()),
                     escape(payload.path("requester").asText()), icon(payload).strip(),
                     escapeWithin(payload.path("title").asText(), TITLE_LIMIT)));
+            case TOPIC_CREATE -> plain(escape(topicName(payload.path("taskId").asLong(), payload.path("project").asText(),
+                    payload.path("title").asText(), null)));
             case DRAFT_PROMPT -> draftPrompt(payload);
             case DRAFT_EXPIRED -> plain(text("draft.expired"));
             case PLAN_READY -> throw new IllegalStateException("rendered above");
@@ -122,8 +124,8 @@ public final class Renderer {
         String project = payload.hasNonNull("project") ? escape(projectLabel(payload)) : null;
         switch (payload.path("status").asText()) {
             case "CREATED" -> {
-                return plain(format("draft.created", String.valueOf(payload.path("taskId").asLong()), project, icon(payload).strip())
-                        + "\n" + title);
+                String key = payload.path("topic").asBoolean() ? "draft.createdInTopic" : "draft.created";
+                return plain(format(key, String.valueOf(payload.path("taskId").asLong()), project, icon(payload).strip()) + "\n" + title);
             }
             case "EXPIRED" -> {
                 return plain(text("draft.expired") + "\n" + title);
@@ -158,6 +160,17 @@ public final class Renderer {
         }
         keyboard.add(priorities);
         return new Rendered(html, keyboard, null);
+    }
+
+    /**
+     * A task topic's name, plain text within Telegram's 128 characters.
+     *
+     * @param outcome the finished task's phase, whose icon then leads the name; null while it runs
+     */
+    public String topicName(long taskId, String project, String title, String outcome) {
+        String icon = outcome == null ? "" : OUTCOME_ICONS.getOrDefault(outcome, "") + " ";
+        String name = icon + "#" + taskId + " · " + project + " · " + title;
+        return name.length() <= 128 ? name : name.substring(0, 127) + "…";
     }
 
     /** The draft's chosen project as members know it: its alias if it has one. */
