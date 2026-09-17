@@ -55,8 +55,8 @@ class StatsTest {
         clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Projects projects = new Projects(List.of(project("alm"), project("life")), project -> Optional.empty());
         Groups groups = new Groups(List.of(
-                new Config.Group("backend", -100, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")),
-                new Config.Group("mobile", -300, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")), List.of("life"))));
+                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")),
+                new Config.Group("mobile", -300L, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")), List.of("life"))));
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { });
     }

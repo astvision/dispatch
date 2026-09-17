@@ -182,6 +182,9 @@ public final class App {
     /** Best effort: a group's menu fails while the bot is not yet in it, and works again on the next start. */
     private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups) {
         for (Config.Group group : groups.all()) {
+            if (group.chatId() == null) {
+                continue;
+            }
             try {
                 // Groups only read: tasks are given and cancelled privately (ADR 0012).
                 api.setMyCommands(group.chatId(), commands(renderer, "status", "history", "stats", "help"));

@@ -12,8 +12,18 @@ import org.junit.jupiter.api.Test;
 class GroupsTest {
 
     private final Groups groups = new Groups(List.of(
-            new Config.Group("backend", -100, List.of(new Config.Member(1, "Bold"), new Config.Member(2, "Ali")), List.of("alm", "crm")),
-            new Config.Group("mobile", -200, List.of(new Config.Member(1, "Bold"), new Config.Member(3, "Sara")), List.of("life"))));
+            new Config.Group("backend", -100L, List.of(new Config.Member(1, "Bold"), new Config.Member(2, "Ali")), List.of("alm", "crm")),
+            new Config.Group("mobile", -200L, List.of(new Config.Member(1, "Bold"), new Config.Member(3, "Sara")), List.of("life"))));
+
+    @Test
+    void groupWithoutAChatHasNoChatToAnnounceIn() {
+        Groups personal = new Groups(List.of(new Config.Group("bold", null, List.of(new Config.Member(1, "Bold")), List.of("alm"))));
+
+        assertEquals(java.util.Optional.empty(), personal.chatOfProject("alm"));
+        assertEquals(Set.of("alm"), personal.projectsOfMember("telegram:1"));
+        assertFalse(personal.isGroupChat("telegram:null"));
+        assertEquals(java.util.Optional.of("telegram:-100"), groups.chatOfProject("crm"));
+    }
 
     @Test
     void memberOfAnyGroupIsAMember() {
@@ -39,7 +49,7 @@ class GroupsTest {
 
     @Test
     void eachProjectHasTheChatOfItsGroup() {
-        assertEquals("telegram:-200", groups.chatOfProject("life"));
+        assertEquals(java.util.Optional.of("telegram:-200"), groups.chatOfProject("life"));
         assertTrue(groups.isMemberOfProjectGroup("telegram:3", "life"));
         assertFalse(groups.isMemberOfProjectGroup("telegram:3", "alm"));
     }

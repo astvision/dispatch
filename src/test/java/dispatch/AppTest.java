@@ -193,6 +193,35 @@ class AppTest {
     }
 
     @Test
+    void personalBotWithoutAGroupChatWorksInTheDevelopersOwnClone() throws Exception {
+        Path mine = dir.resolve("work/autoland-management");
+        GitFixture.sh(dir, "git", "clone", "--quiet", repos.origin.toString(), mine.toString());
+        config = new Config("bold", repos.stateDir,
+                new Config.Telegram(List.of(new Config.Group("bold", null, List.of(new Config.Member(100, "Bold")), List.of("alm")))),
+                config.scheduler(), config.limits(), config.agents(),
+                List.of(new Config.Project("alm", null, null, mine.toString(), "main", "claude-code", null, "high", List.of(), null)),
+                config.delivery(), config.secrets());
+        app = start();
+        assertEquals("all_private_chats", telegram.awaitRequest("setMyCommands", WAIT).json().get("scope").get("type").asText(),
+                "no group menu without a group chat");
+
+        giveTask(1, "Fix the login timeout on staging", "NORMAL");
+
+        Instant deadline = Instant.now().plus(WAIT);
+        JsonNode plan = null;
+        while (plan == null && Instant.now().isBefore(deadline)) {
+            JsonNode sent = telegram.awaitRequest("sendMessage", Duration.between(Instant.now(), deadline)).json();
+            assertEquals(100, sent.get("chat_id").asLong(), "everything stays in the private chat: " + sent);
+            plan = sent.get("text").asText().contains("The user reports that login") ? sent : null;
+        }
+        assertTrue(plan != null, "the plan arrived");
+        List<String> args = Files.readAllLines(repos.stateDir.resolve("worktrees/1/fake-claude.args"));
+        assertEquals("high", args.get(args.indexOf("--effort") + 1));
+        assertEquals("dispatch/1", GitFixture.sh(mine, "git", "branch", "--list", "dispatch/1", "--format=%(refname:short)"));
+        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
+    }
+
+    @Test
     void restartMarksTheInterruptedRunFailedAndStillTellsTheGroup() throws Exception {
         app = start();
         giveTask(1, "SCENARIO:sleep", "NORMAL");

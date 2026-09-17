@@ -246,6 +246,18 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void groupNeedsNoChatForAPersonalBot() throws IOException {
+        String personal = VALID.replace("      chatId: -1001234567890\n", "")
+                .replace(TWO_PROJECTS_IN_BACKEND, BACKEND_AND_MOBILE.replace("      chatId: -1009876543210\n", ""));
+        assertTrue(!personal.contains("chatId"), personal);
+
+        Config config = ConfigLoader.load(write(personal), ENV);
+
+        assertNull(config.telegram().groups().getFirst().chatId());
+        assertNull(config.telegram().groups().get(1).chatId(), "several groups may go without a chat");
+    }
+
+    @Test
     void effortIsOneOfClaudeCodesLevels() throws IOException {
         Config config = ConfigLoader.load(write(VALID.replace("    model: opus\n", "    model: opus\n    effort: xhigh\n")), ENV);
         ConfigException error = assertThrows(ConfigException.class,

@@ -37,11 +37,14 @@ public final class Groups {
         return byChat(chatRef).map(group -> Set.copyOf(group.projects())).orElse(Set.of());
     }
 
-    /** The chat of the group that owns {@code project}; config validation guarantees there is exactly one. */
-    public String chatOfProject(String project) {
-        return groups.stream().filter(group -> group.projects().contains(project)).findFirst()
-                .map(group -> chatRef(group.chatId()))
+    /**
+     * The chat of the group that owns {@code project}, which config validation guarantees exists; empty when that group has
+     * no chat (ADR 0014).
+     */
+    public Optional<String> chatOfProject(String project) {
+        Config.Group owner = groups.stream().filter(group -> group.projects().contains(project)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("project " + project + " belongs to no group"));
+        return Optional.ofNullable(owner.chatId()).map(Groups::chatRef);
     }
 
     public boolean isMemberOfProjectGroup(String requesterRef, String project) {
@@ -67,7 +70,7 @@ public final class Groups {
     }
 
     private Optional<Config.Group> byChat(String chatRef) {
-        return groups.stream().filter(group -> chatRef(group.chatId()).equals(chatRef)).findFirst();
+        return groups.stream().filter(group -> group.chatId() != null && chatRef(group.chatId()).equals(chatRef)).findFirst();
     }
 
     private static boolean contains(Config.Group group, String requesterRef) {

@@ -63,8 +63,8 @@ class SplitTest {
         clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Projects projects = new Projects(List.of(project("autoland-management"), project("crm"), project("life")), project -> Optional.empty());
         Groups groups = new Groups(List.of(
-                new Config.Group("backend", -100, List.of(new Config.Member(100, "Bold")), List.of("autoland-management", "crm")),
-                new Config.Group("mobile", -300, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
+                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold")), List.of("autoland-management", "crm")),
+                new Config.Group("mobile", -300L, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
                         List.of("life"))));
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { }, false, started::add);
         splitter = new Splitter(db, tasks, agent, dir.resolve("splits"), clock, Duration.ofSeconds(5));

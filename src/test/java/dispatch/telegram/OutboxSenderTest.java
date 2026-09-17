@@ -255,6 +255,28 @@ class OutboxSenderTest {
     }
 
     @Test
+    void topicIsRenamedByTheOutcomeSentToTheTasksOwnChatOnly() throws Exception {
+        long personal = task("NORMAL");
+        db.transaction(tx -> tx.update("UPDATE task SET origin_ref = 'telegram:100/4' WHERE id = ?", personal));
+        long inGroup = task("NORMAL");
+        db.transaction(tx -> {
+            tx.update("UPDATE task SET topic_ref = '500', phase = 'COMPLETED', chat_ref = 'telegram:100' WHERE id = ?", personal);
+            tx.update("UPDATE task SET topic_ref = '501', phase = 'COMPLETED' WHERE id = ?", inGroup);
+        });
+        ObjectNode result = Json.object().put("project", "life").put("prUrl", "https://github.com/acme/life/pull/1").put("filesChanged", 1)
+                .put("summary", "Done").put("costUsd", "0.1").put("durationSeconds", 60);
+        enqueueFor(personal, OutboxKind.TASK_COMPLETED, "telegram:100", "telegram:100/5", result.deepCopy().put("taskId", personal));
+        enqueueFor(inGroup, OutboxKind.TASK_COMPLETED, "telegram:100", "telegram:100/5", result.deepCopy().put("taskId", inGroup));
+
+        sender.deliverDue();
+        sender.deliverDue();
+
+        JsonNode renamed = telegram.awaitRequest("editForumTopic", Duration.ofSeconds(1)).json();
+        assertEquals(500, renamed.get("message_thread_id").asLong(), "a personal task has no group line, so its result renames it");
+        assertTrue(telegram.drain("editForumTopic").isEmpty(), "a group task's topic is renamed by its group line instead");
+    }
+
+    @Test
     void finishedTasksTopicIsRenamedWithItsOutcome() throws Exception {
         long taskId = task("NORMAL");
         db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '500', phase = 'COMPLETED' WHERE id = ?", taskId));

@@ -121,7 +121,9 @@ public final class ConfigLoader {
             } else if (!names.add(group.name().toLowerCase())) {
                 errors.add(at + ".name: '" + group.name() + "' is used by more than one group");
             }
-            if (group.chatId() >= 0) {
+            if (group.chatId() == null) {
+                // A personal bot's group: no chat, so nothing is announced (ADR 0014).
+            } else if (group.chatId() >= 0) {
                 errors.add(at + ".chatId: must be the (negative) chat id of the group, got " + group.chatId());
             } else if (!chats.add(group.chatId())) {
                 errors.add(at + ".chatId: " + group.chatId() + " is used by more than one group");

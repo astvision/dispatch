@@ -8,7 +8,8 @@ import java.util.UUID;
  * A task as stored. Nullable: baseSha, worktree, planJson, prUrl, topicRef, failureReason, failureDetail, startedAt, completedAt.
  *
  * @param originRef channel reference of the message that created the task; replies thread under it
- * @param chatRef   channel reference of the chat the task belongs to
+ * @param chatRef   channel reference of the chat the task belongs to: its project's group chat, or the requester's private
+ *                  chat when that group has none (ADR 0014)
  * @param topicRef  the task's own topic in the requester's private chat, once the channel created one
  */
 public record Task(
@@ -35,9 +36,17 @@ public record Task(
         Instant completedAt,
         Instant updatedAt) {
 
-    /** The message that gave the task, if it was written in the task's group chat (before ADR 0012); otherwise null. */
+    /**
+     * The message that gave the task, if it was written in the chat the task belongs to: its group chat before ADR 0012,
+     * or the requester's private chat for a group without a chat; otherwise null.
+     */
     public String groupOriginRef() {
         return originRef.startsWith(chatRef + "/") ? originRef : null;
+    }
+
+    /** False when the task belongs to its requester's private chat, where its details go anyway (ADR 0014). */
+    public boolean hasGroupChat() {
+        return !chatRef.equals(requester.ref());
     }
 
     /** The message that gave the task, if it was written in the requester's private chat (ADR 0012); otherwise null. */

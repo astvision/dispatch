@@ -331,16 +331,19 @@ public final class TaskService {
 
     private long insertTask(Tx tx, Requester who, Config.Project project, String description, Priority priority, String originRef,
                             Instant now) {
-        String groupChat = groups.chatOfProject(project.name());
-        long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, groupChat,
+        Optional<String> groupChat = groups.chatOfProject(project.name());
+        // Without a group chat the task belongs to the requester's private chat, where nothing needs announcing (ADR 0014).
+        long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, groupChat.orElse(who.ref()),
                 UUID.randomUUID(), project.baseBranch(), priority), Phase.PLANNING, now);
         Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, description, who), now);
         Events.record(tx, id, null, who.ref(), null, Phase.PLANNING, "created", now);
         if (taskTopics) {
             enqueue(tx, id, OutboxKind.TOPIC_CREATE, who.ref(), null, Json.object().put("taskId", id), now);
         }
-        enqueue(tx, id, OutboxKind.TASK_QUEUED, groupChat, null, Json.object().put("taskId", id).put("project", project.name())
-                .put("requester", who.name()).put("priority", priority.name()).put("title", title(description)), now);
+        if (groupChat.isPresent()) {
+            enqueue(tx, id, OutboxKind.TASK_QUEUED, groupChat.get(), null, Json.object().put("taskId", id).put("project", project.name())
+                    .put("requester", who.name()).put("priority", priority.name()).put("title", title(description)), now);
+        }
         tx.afterCommit(wakeScheduler);
         tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "priority", priority,
                 "requester", who.ref()));

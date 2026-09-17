@@ -162,8 +162,14 @@ public final class RunTransitions {
         tx.afterCommit(wakeOutbox);
     }
 
-    /** A message for the task's group, under the task's own message if it was given there. */
+    /**
+     * A one-line outcome for the task's group, under the task's own message if it was given there. A task without a group
+     * chat gets none: it would only repeat the details its requester already has (ADR 0014).
+     */
     private void enqueue(Tx tx, Task task, OutboxKind kind, ObjectNode payload, Instant now) {
+        if (!task.hasGroupChat()) {
+            return;
+        }
         Outbox.enqueue(tx, task.id(), kind, task.chatRef(), task.groupOriginRef(), payload, now);
         tx.afterCommit(wakeOutbox);
     }

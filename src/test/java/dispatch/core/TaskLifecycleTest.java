@@ -73,9 +73,9 @@ class TaskLifecycleTest {
         Projects projects = new Projects(List.of(alm, crm, life),
                 project -> project.name().equals("crm") ? Optional.of("repos/crm is not cloned") : Optional.empty());
         Groups groups = new Groups(List.of(
-                new Config.Group("backend", -100, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
+                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
                         List.of("autoland-management", "crm")),
-                new Config.Group("mobile", -300, List.of(new Config.Member(300, "Sara")), List.of("life"))));
+                new Config.Group("mobile", -300L, List.of(new Config.Member(300, "Sara")), List.of("life"))));
         activeRuns = new ActiveRuns();
         tasks = new TaskService(groups, projects, activeRuns, clock, schedulerWakes::incrementAndGet, outboxWakes::incrementAndGet);
         transitions = new RunTransitions(db, clock, outboxWakes::incrementAndGet);

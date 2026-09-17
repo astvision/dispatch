@@ -44,8 +44,12 @@ public record Config(
     public record Telegram(List<Group> groups) {
     }
 
-    /** A team's chat with its members and the projects it owns; every project belongs to exactly one group (ADR 0012). */
-    public record Group(String name, long chatId, List<Member> members, List<String> projects) {
+    /**
+     * A team's chat with its members and the projects it owns; every project belongs to exactly one group (ADR 0012).
+     *
+     * @param chatId the group chat for announcements; null for a personal bot, whose tasks stay in private chats (ADR 0014)
+     */
+    public record Group(String name, Long chatId, List<Member> members, List<String> projects) {
     }
 
     public record Member(long id, String name) {

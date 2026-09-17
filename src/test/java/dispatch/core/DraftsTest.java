@@ -56,8 +56,8 @@ class DraftsTest {
         projects = new Projects(List.of(alm, crm, life),
                 project -> unavailable.contains(project.name()) ? Optional.of("no clone") : Optional.empty());
         groups = new Groups(List.of(
-                new Config.Group("backend", -100, List.of(new Config.Member(100, "Bold")), List.of("autoland-management", "crm")),
-                new Config.Group("mobile", -300, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
+                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold")), List.of("autoland-management", "crm")),
+                new Config.Group("mobile", -300L, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
                         List.of("life"))));
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, schedulerWakes::incrementAndGet, () -> { });
     }

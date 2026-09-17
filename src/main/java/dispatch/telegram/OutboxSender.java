@@ -26,9 +26,12 @@ import java.util.Set;
 public final class OutboxSender implements Runnable {
 
     private static final Duration MAX_AGE = Duration.ofHours(24);
-    /** Messages that report how a task ended; sending one renames the task's topic. */
-    private static final Set<OutboxKind> OUTCOMES = Set.of(OutboxKind.TASK_COMPLETED_SHORT, OutboxKind.TASK_FAILED_SHORT,
-            OutboxKind.TASK_REJECTED, OutboxKind.TASK_CANCELLED);
+    /**
+     * Messages that report how a task ended. The one sent to the task's own chat renames its topic: the group line for a
+     * group's task, the full result for a personal bot's task (ADR 0014). Copies sent elsewhere do not rename it again.
+     */
+    private static final Set<OutboxKind> OUTCOMES = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_FAILED,
+            OutboxKind.TASK_COMPLETED_SHORT, OutboxKind.TASK_FAILED_SHORT, OutboxKind.TASK_REJECTED, OutboxKind.TASK_CANCELLED);
     /** Telegram's fixed topic colors: red, yellow, green. */
     private static final Map<Priority, Integer> TOPIC_COLORS = Map.of(Priority.URGENT, 0xFB6F5F, Priority.NORMAL, 0xFFD67E,
             Priority.LOW, 0x8EEE98);
@@ -133,7 +136,7 @@ public final class OutboxSender implements Runnable {
             }
             return;
         }
-        if (task.isPresent() && OUTCOMES.contains(message.kind())) {
+        if (task.isPresent() && OUTCOMES.contains(message.kind()) && message.chatRef().equals(task.get().chatRef())) {
             renameTopic(task.get());
         }
     }

@@ -64,8 +64,8 @@ class StatusAndHistoryTest {
                 List.of(), null);
         activeRuns = new ActiveRuns();
         Groups groups = new Groups(List.of(
-                new Config.Group("mobile", -100, List.of(new Config.Member(100, "Bold")), List.of("life")),
-                new Config.Group("backend", -200, List.of(new Config.Member(200, "Ali")), List.of("alm"))));
+                new Config.Group("mobile", -100L, List.of(new Config.Member(100, "Bold")), List.of("life")),
+                new Config.Group("backend", -200L, List.of(new Config.Member(200, "Ali")), List.of("alm"))));
         tasks = new TaskService(groups, new Projects(List.of(life, alm), p -> Optional.empty()), activeRuns, clock, () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { });
     }

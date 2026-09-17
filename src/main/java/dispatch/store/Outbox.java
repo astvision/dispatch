@@ -70,6 +70,10 @@ public final class Outbox {
      * user's id. A reply target is set only in the chat that holds the message, so a reply never lands on an unrelated one.
      */
     public static long enqueueForRequester(Tx tx, Task task, OutboxKind kind, JsonNode payload, Instant now) {
+        if (!task.hasGroupChat()) {
+            // A personal bot's task (ADR 0014): there is no group to fall back to.
+            return enqueue(tx, task.id(), kind, task.requester().ref(), task.privateOriginRef(), payload, now);
+        }
         return enqueueWithFallback(tx, task.id(), kind, task.requester().ref(), task.privateOriginRef(), task.chatRef(),
                 task.groupOriginRef(), payload, now);
     }
