@@ -3,7 +3,7 @@
 Dispatch takes development tasks from a team's Telegram group and has Claude Code plan them in a git worktree. Once a member approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance serves one team, with its own bot.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M2, execution.** Plans can be approved, corrected by replying, or rejected; approved plans end as draft PRs. Follow-ups, `/retry` and live status arrive with M3.
+- Status: **M3a.** Tasks start in the group; plans, corrections and results reach the requester privately, and approved plans end as draft PRs. `/status` shows what the agent is doing, `/history` what was done. Follow-ups and `/retry` come next.
 
 ## Security
 
@@ -24,7 +24,7 @@ Requires JDK 25+ and git. The Maven wrapper downloads Maven itself.
 
 The examples use the team `backend`.
 
-**1. Create the bot.** Create it with @BotFather. Leave privacy mode enabled (the default) and do not make the bot a group admin, because admins receive every message. Add the bot to the team group.
+**1. Create the bot.** Create it with @BotFather. Leave privacy mode enabled (the default) and do not make the bot a group admin, because admins receive every message. Add the bot to the team group. Every member should also open the bot once and press **Start**, so their task details can reach them privately; until they do, the details are posted in the group.
 
 **2. Find the ids before starting Dispatch.** With a wrong `groupChatId`, Dispatch leaves the group it sees messages from.
 1. In the group, each member sends `/help@<bot_username>`.
@@ -68,18 +68,23 @@ In the config, set `delivery.authorName`/`authorEmail` (the git identity of deli
 
 Pick commands from the `/` menu. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot; a bare `/command` is lost when another bot posted more recently.
 
-| Command | Effect |
+| In the group | Effect |
 |---|---|
-| `/task@bot alm Fix the login timeout on staging` | Creates task #N; the agent's plan is posted as a reply |
+| `/task@bot alm Fix the login timeout on staging` | Creates task #N. The group gets a one-line acknowledgement; the plan goes to you privately |
 | reply to any message with `/task@bot alm` | That message becomes the task (extra text is appended) |
-| **Approve** on a plan | The agent implements the plan; Dispatch commits, pushes `dispatch/N` and posts the draft PR link |
-| reply to a plan message | A correction: the agent revises the plan in the same session |
-| **Reject** on a plan | Closes the task |
-| `/tasks@bot` | Active tasks |
+| `/status@bot` | What is running now (with the agent's latest action), queued, and awaiting approval |
+| `/history@bot`, `/history@bot N` | The last 10 finished tasks; task N's timeline with durations and costs |
 | `/cancel@bot N` | Cancels task N, stopping its agent if one is running |
 | `/help@bot` | Commands and projects |
 
-Only members listed in the config can act on tasks, and any member can approve, correct or reject any plan. A plan with open questions has no Approve button: answer the questions by replying to it.
+| In your private chat with the bot | Effect |
+|---|---|
+| **Approve** on a plan | The agent implements the plan; Dispatch commits, pushes `dispatch/N`, and you get the draft PR link and summary |
+| reply to a plan | A correction: the agent revises the plan in the same session |
+| **Reject** on a plan | Closes the task |
+| `/status`, `/history [N]`, `/cancel N`, `/help` | As in the group |
+
+The group sees each outcome in one line: done with the PR link, failed with the reason, rejected, or cancelled. Only members listed in the config can act. Only the requester can approve, correct or reject their plan, and any member can cancel. A plan with open questions has no Approve button: answer the questions by replying to it.
 
 ## Run locally
 

@@ -9,6 +9,8 @@ Type=simple
 User=dispatch-%i
 Group=dispatch-%i
 EnvironmentFile=/etc/dispatch/%i.env
+# Times in /history timelines use this zone.
+Environment=TZ=Asia/Ulaanbaatar
 StateDirectory=dispatch/%i
 StateDirectoryMode=0750
 WorkingDirectory=/var/lib/dispatch/%i

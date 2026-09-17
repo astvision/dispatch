@@ -21,9 +21,10 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Restarts | Active runs fail as interrupted; members `/retry` | 0008 |
 | Permissions | Plan mode for planning; auto mode plus deny rules for execution, with the agent's actual mode verified; the OS user is the hard boundary | 0009 |
 | Telegram | Offset advanced only after commit; outcome messages go through an outbox | 0010 |
+| Private details | Tasks start in the group; plan, corrections and full result go to the requester's private chat, with a one-line outcome in the group and a group fallback; only the requester decides on their plan | 0011 |
 
 Also decided without an ADR:
-- Only allowlisted members act, and only in the one configured group.
+- Only allowlisted members act: in the one configured group, and in their own private chat with the bot.
 - Queue is FIFO with no priority field.
 - At most `maxConcurrentRuns` runs at once, and at most one execution per project.
 - Per-run timeout and budget.
@@ -76,10 +77,10 @@ The instance user has `claude` and `gh` installed, file access only to its team'
 
 | Package | Responsibility |
 |---|---|
-| `Main`, `App` | `Main` validates config and installs the shutdown hook. `App` wires everything explicitly: it migrates the DB, checks the bot token (`getMe`), runs `Recovery`, registers the group's command menu, and starts the poller, scheduler and outbox threads. A loop that dies unexpectedly is fatal. |
+| `Main`, `App` | `Main` validates config and installs the shutdown hook. `App` wires everything explicitly: it migrates the DB, checks the bot token (`getMe`), runs `Recovery`, registers the command menus (group, private chats), and starts the poller, scheduler and outbox threads. A loop that dies unexpectedly is fatal. |
 | `config` | YAML + env loading into records. Startup fails naming the invalid field. |
 | `store` | SQLite access and migrations (`PRAGMA user_version`); conditional updates. One connection behind a lock. |
-| `core` | `TaskService`: the channel-neutral commands `create / approve / reject / correct / followUp / cancel / retry / list / show`. `Scheduler` picks runs; `RunExecutor` drives one run; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
+| `core` | `TaskService`: the channel-neutral commands `create / approve / reject / correct / cancel / status / history / timeline` (later `followUp / retry`). `Scheduler` picks runs; `RunExecutor` drives one run; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
 | `agent` | `Agent` interface and `ClaudeCodeAgent` (CLI subprocess + stream-json parser). Tests run the real adapter against a fake `claude` shell script that replays recorded output. `CodexAgent` comes later. |
 | `workspace` | Clone, fetch, worktree add/remove, `copyFiles`, commit, push, `gh pr create`. |
 | `telegram` | Bot API client (`java.net.http` + Jackson), `Poller`, `UpdateHandler` (parses updates, calls `TaskService`), `OutboxSender`, status edits, `messages_mn.properties`. |
@@ -92,7 +93,7 @@ The instance user has `claude` and `gh` installed, file access only to its team'
 |---|---|
 | `task` | `id` (#42), `project`, `title` (first line, ≤ 80 chars), `description`, `phase`, `requester_ref/name`, `origin_ref` (unique, e.g. `telegram:-100123/5567`), `chat_ref`, `session_id` (UUID), `base_branch`, `base_sha`, `worktree`, `plan_json`, `failure_reason/detail`, `created_at`, `started_at`, `completed_at`, `pr_url`. The branch is always `dispatch/<id>` and is not stored. |
 | `run` | `task_id`, `seq` (run 42.2), `kind` (`PLAN / EXECUTE / DELIVER`), `status` (`QUEUED / RUNNING / SUCCEEDED / FAILED / CANCELLED`), `instruction` (task text, correction, or the approved plan), `requested_by`, `requested_by_name`, `pid`, `pid_start`, `queued_at`, `started_at`, `finished_at`, `exit_code`, `failure_reason` (`SETUP / AGENT / TIMEOUT / BUDGET / INTERRUPTED / DELIVERY / INTERNAL`), `error_detail`, `cost_usd`, `turns`, `output`, `denials`. The raw log path is derived: `runs/<task>/<seq>`. |
-| `outbox` | `task_id`, `kind`, `reply_to_ref`, `payload`, `status` (`PENDING / SENT / FAILED`), `attempts`, `next_attempt_at`, `last_error` |
+| `outbox` | `task_id`, `kind`, `chat_ref`, `reply_to_ref`, `fallback_chat_ref/reply_to_ref` (where a refused private message goes instead), `fell_back`, `payload`, `status` (`PENDING / SENT / FAILED`), `attempts`, `next_attempt_at`, `last_error`, `sent_ref` |
 | `task_event` | `task_id`, `run_seq`, `at`, `actor`, `from_phase`, `to_phase`, `reason` (append-only audit) |
 | `kv` | Telegram `getUpdates` offset |
 
@@ -128,24 +129,26 @@ A transition that loses a race updates 0 rows and is logged.
 
 ## Flows
 
+**Messages (ADR 0011).** Tasks start in the group, which gets a one-line acknowledgement naming the requester. The plan, the execution notice and the full result or failure go to the requester's private chat with the bot. The group gets a one-line outcome: done with the PR link or "no changes", failed with the reason, rejected, or cancelled. If Telegram refuses a private message permanently (the requester never pressed Start, or blocked the bot), the outbox re-addresses it as a reply under the task in the group, with a hint to press Start.
+
 **Create.**
-1. `/task <project|alias> <text>`, or `/task <project>` as a reply to any group message (whose text becomes the description).
+1. `/task <project|alias> <text>`, or `/task <project>` as a reply to any group message (whose text becomes the description). Sent in a private chat, `/task` is answered with a pointer to the group.
 2. Checks: the chat is the configured group, the sender is a member, and the project exists and is available.
 3. One transaction: `task` (PLANNING) + `run` 1 (PLAN, QUEUED) + event + outbox "queued" ack + offset.
 
 **Plan run.**
 1. `git fetch origin <base>`, then `git worktree add -b dispatch/<id> worktrees/<id> origin/<base>`. Record `base_sha`. `copyFiles` are **not** copied: planning needs no local secrets, and whatever the agent can read may be quoted in a plan posted to the group.
 2. Run the agent read-only, requiring the plan JSON schema.
-3. On success, store `plan_json` and move to AWAITING_APPROVAL. The outbox posts the plan:
+3. On success, store `plan_json` and move to AWAITING_APPROVAL. The outbox sends the plan to the requester:
    - `[Approve]` and `[Reject]`, where the button data carries the plan's run seq so a stale button is refused;
-   - if `questions` is non-empty, no Approve button: members answer by replying, which is a correction;
+   - if `questions` is non-empty, no Approve button: the requester answers by replying, which is a correction;
    - plans over 4096 chars go as a message plus `plan-<id>.md`.
 
-**Approve** (from any member, including the requester): an EXECUTE run is queued whose instruction is the approved plan. A stale button, a task in another phase, or a plan with open questions is refused in the button's answer.
+**Approve** (by the requester only): an EXECUTE run is queued whose instruction is the approved plan. Another member's press, a stale button, a task in another phase, or a plan with open questions is refused in the button's answer.
 
-**Correction:** a member's reply to a plan message. The reply is matched to its plan through the message id Telegram gave that plan (`outbox.sent_ref`); a reply that merely starts like a command (`/api/login fails too`) still counts. A PLAN run is queued with the reply as instruction; it resumes the session in the same worktree and returns the complete revised plan. A reply to a superseded plan, or while the task is not awaiting approval, is refused with the reason.
+**Correction:** the requester's reply to a plan message, in the private chat or, after a fallback, in the group. The reply is matched to its plan through the message id Telegram gave that plan (`outbox.sent_ref`); a reply that merely starts like a command (`/api/login fails too`) still counts. A PLAN run is queued with the reply as instruction; it resumes the session in the same worktree and returns the complete revised plan. A reply from another member, to a superseded plan, or while the task is not awaiting approval is refused with the reason.
 
-**Reject:** REJECTED.
+**Reject** (by the requester only): REJECTED.
 
 **Execute run.** The run continues in the task's worktree; until the M3 sweep recreates swept worktrees from `origin/dispatch/<id>`, a missing worktree fails the run as `SETUP`. `copyFiles` are copied in. Each must be git-ignored, otherwise setup fails, so delivery can never commit it. The agent implements the approved plan in auto mode. On success, delivery:
 1. If the agent committed anyway, its commits are folded back (`git reset --soft` to the run's start) so the run still becomes one commit and is not mistaken for "no changes".
@@ -162,7 +165,12 @@ The task becomes COMPLETED with PR link, files changed, cost, duration and any d
 - Execution failure: new EXECUTE run resuming the session, with a note about how the previous run ended.
 - `DELIVERY` failure: DELIVER run (commit/push/PR only, no agent).
 
-**Cancel.** A queued run is dropped. A running run gets SIGTERM on its process tree, then a 10 s grace period, then SIGKILL. The task becomes CANCELLED and nothing is delivered.
+**Cancel** (any member, in the group or privately). A queued run is dropped. A running run gets SIGTERM on its process tree, then a 10 s grace period, then SIGKILL. The task becomes CANCELLED and nothing is delivered. The group is told; a cancel sent privately is also answered there.
+
+**Status and history** (anyone in the group, members in private chats):
+- `/status`: running runs with elapsed time and the agent's step count and latest action (read live from its stream), then queued runs, then plans awaiting approval.
+- `/history`: the ten most recently finished tasks with outcome, PR link or failure reason, total cost and age.
+- `/history <id>`: the task's timeline. Each run shows its time, duration and cost; corrections show their text and executions who approved them. It ends with the outcome and total cost. Times use the server's time zone (`TZ`).
 
 ## Telegram boundary
 
@@ -174,10 +182,10 @@ The task becomes COMPLETED with PR link, files changed, cost, duration and any d
   - button callbacks.
   
   So at startup Dispatch registers its command menu for the team group (`setMyCommands`, chat scope); picking a command from the menu reaches it, and `/help` shows the `/task@<bot>` form. `/cmd@otherbot` is ignored. Edited messages are ignored. Never make the bot a group admin: admins receive every message.
-- Private chats are ignored and logged. Other groups: `leaveChat` + WARN. Non-member in the group: a short "not allowed" reply + WARN with their user ID. A group migrated to a supergroup is logged at ERROR with the new chat ID.
-- Commands: `/task`, `/tasks`, `/show <id>`, `/cancel <id>`, `/retry <id>`, `/projects`, `/help`. Plan buttons: Approve / Reject. Replies: correction (to a plan) or follow-up (to a result).
-- Durability (ADR 0010): the offset is stored in the same transaction as an update's effects. Every bot message except live status edits goes through the outbox, whose sender retries with backoff from 5 s to 5 min, honours `retry_after` on 429, marks a message FAILED after 24 h or immediately on 403, and logs every attempt.
-- Rendering: `messages_mn.properties` (ResourceBundle), HTML parse mode with escaping. All bot messages reply to the task's `/task` message. Each run has one status message edited about every 30 s (phase, elapsed time, current tool); outcomes are new messages.
+- Members' private chats with the bot are served: `/start`, `/help`, `/status`, `/history`, `/cancel`, plan buttons and replies to plans; they get their own command menu (`all_private_chats` scope, without `/task`). Private chats of non-members are ignored and logged. Other groups: `leaveChat` + WARN. Non-member in the group: a short "not allowed" reply + WARN with their user ID. A group migrated to a supergroup is logged at ERROR with the new chat ID.
+- Commands: `/task`, `/status`, `/history [id]`, `/cancel <id>`, `/help`; later `/retry <id>`, `/projects`. Plan buttons: Approve / Reject. Replies: correction (to a plan), later follow-up (to a result).
+- Durability (ADR 0010): the offset is stored in the same transaction as an update's effects. Every bot message except live status edits goes through the outbox, whose sender retries with backoff from 5 s to 5 min, honours `retry_after` on 429, falls back from a refused private chat to the group, marks other messages FAILED after 24 h or immediately on a permanent error, and logs every attempt.
+- Rendering: `messages_mn.properties` (ResourceBundle), HTML parse mode with escaping; agent text is cut after escaping so a message never passes Telegram's limit. Group messages reply to the task's `/task` message; private messages stand alone. Live progress is `/status` on demand rather than edited status messages.
 - Attachments: photos (largest size) and documents from the command and replied message go to `attachments/<task>/` and are listed in the prompt. Files over 20 MB are skipped and the skip is reported.
 
 ## Agent boundary
@@ -193,7 +201,7 @@ interface RunHandle {
 }
 ```
 
-The timeout is enforced by `RunExecutor` (a watchdog calls `cancel()`), not by the agent. `onEvent(...)` for live status edits arrives with M3.
+The timeout is enforced by `RunExecutor` (a watchdog calls `cancel()`), not by the agent. `RunHandle.activity()` returns the agent's step count and latest tool call, parsed from the stream as it arrives, for `/status`.
 
 `ClaudeCodeAgent` passes the prompt on stdin to:
 
@@ -269,7 +277,7 @@ The full threat model is in [SECURITY.md](../SECURITY.md).
 ## Observability
 
 - logfmt lines to stdout, collected by journald. One line per transition, e.g. `event=task.transition task=42 run=42.2 from=AWAITING_APPROVAL to=EXECUTING actor=telegram:222333444`.
-- The `task_event` table is the audit trail; `/show <id>` renders it with the runs (cost, turns, duration, failure).
+- The `task_event` table is the audit trail; `/history <id>` renders a task's runs (time, duration, cost, failure) and outcome, and `/status` shows what is running now.
 - Per-run raw agent output and stderr live under `runs/`. `sqlite3 dispatch.db` is the debugging console.
 
 ## Configuration
@@ -314,7 +322,8 @@ Changing members or projects requires a restart, which interrupts active runs. R
 |---|---|
 | **M1** read-only slice (built) | Config/env validation, SQLite + migrations, member/group checks, `/task` (text or reply), durable inbound, outbox, scheduler rules, worktree setup, planning run (plan mode, schema, timeout, budget), plan message in Mongolian with `[Reject]` (plans wait for M2's Approve), `/cancel`, `/tasks`, `/help`, group command menu, restart/orphan handling. End-to-end tests use a fake `claude` script and a fake Telegram server. |
 | **M2** execution (built) | `[Approve]` (refused while questions are open), corrections by replying to a plan, execution run (auto mode, deny rules, verified permission mode, execute limits, `copyFiles`), delivery (one commit, push, draft PR), completed/failed outcomes, plan prompt that states assumptions as risks instead of asking |
-| **M3** interaction and ops | Follow-ups, `/retry`, DELIVER runs, live status edits, attachments, idle sweep (with worktree recreation), `/show`, `/projects`, auto-clone of missing repos |
+| **M3a** private details and reports (built) | Task details to the requester's private chat with group fallback and one-line group outcomes, requester-only decisions, private-chat commands and menu, `/status` with live agent activity (replaces `/tasks`), `/history` and `/history <id>` |
+| **M3b** interaction and ops | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
 | **M4** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
@@ -328,10 +337,12 @@ Tests throughout: unit tests for transitions and scheduler rules; end-to-end tes
 5. Every bot message except live status edits goes through the outbox, including "queued" acks and "not allowed" replies.
 6. Approve/Reject buttons carry the plan's run seq, so buttons on a superseded plan are refused.
 7. `copyFiles` entries must be git-ignored, otherwise setup fails.
-8. Any member may approve, including the requester. Any member may cancel or retry any task.
+8. Only the requester approves, corrects or rejects their plan (ADR 0011). Any member may cancel or retry any task.
 9. A task's title is the first line of its description, cut at 80 chars; no summarizing.
 10. The plan field is `findings`, not `cause`, so it also fits feature tasks.
 11. SQLite is accessed through one connection behind a lock.
 12. An execution run's instruction is the approved plan's JSON, so the audit trail shows exactly what was approved.
 13. Delivery commits skip hooks and signing, and commits the agent made anyway are folded into the one delivery commit.
 14. The agent's summary is redacted before it becomes a commit message and PR description.
+15. A requester's private chat is addressed by their requester reference (for Telegram, a private chat's id is the user's id), so no chat id is stored per member.
+16. `/status` and `/history` show the whole team's tasks, in the group and in private chats alike.

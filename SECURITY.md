@@ -9,7 +9,9 @@ Do not open an issue. Contact the maintainers privately, or use GitHub's private
 Dispatch lets people in a Telegram group make an AI coding agent run commands on a server. Treat access to it like shell access to that server.
 
 **Who can make the agent act**
-- Only members listed in the instance config, only in the configured group, and only through commands. Everyone else is refused or ignored.
+- Only members listed in the instance config, only in the configured group or their own private chat with the bot, and only through commands, buttons and replies to plans. Everyone else is refused or ignored.
+- Only a task's requester can approve, correct or reject its plan (ADR 0011).
+- Plans and results go to the requester's private chat. If Telegram refuses that chat (the requester never pressed Start, or blocked the bot), the message is posted in the team group instead, where everyone in the group can read it.
 - Anyone who controls a member's Telegram account, the bot token or the configured group can act as that member.
 
 **Boundaries**
