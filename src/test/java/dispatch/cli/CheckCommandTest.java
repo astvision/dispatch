@@ -89,6 +89,26 @@ class CheckCommandTest {
     }
 
     @Test
+    void projectWithoutACommittedClaudeMdGetsAHint() throws IOException {
+        writeConfig(repos.repo("alm"), JAVA);
+        Files.writeString(repos.repo("alm").resolve("CLAUDE.md"), "Only in this clone, never committed\n");
+
+        int exit = check();
+        String withoutOne = terminal.output();
+        Files.createDirectories(repos.seed.resolve(".claude"));
+        Files.writeString(repos.seed.resolve(".claude/CLAUDE.md"), "Build and test: ./mvnw verify\n");
+        repos.commitAndPush("Add CLAUDE.md");
+        GitFixture.sh(repos.repo("alm"), "git", "fetch", "--quiet");
+        check();
+        String withOne = terminal.output().substring(withoutOne.length());
+
+        assertEquals(0, exit, "a hint, not a failure");
+        assertTrue(withoutOne.contains("WARN project alm: no CLAUDE.md on origin/main"),
+                "agents work in worktrees of origin/main, which an uncommitted file never reaches: " + withoutOne);
+        assertFalse(withOne.contains("CLAUDE.md"), withOne);
+    }
+
+    @Test
     void missingConfigPointsToInit() {
         int exit = check();
 

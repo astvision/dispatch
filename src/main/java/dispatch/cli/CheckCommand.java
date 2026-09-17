@@ -94,6 +94,20 @@ public final class CheckCommand {
             return;
         }
         ok("project " + project.name() + ": " + repo + " (base " + project.baseBranch() + ")");
+        checkInstructions(project, repo);
+    }
+
+    /** Agents work in worktrees of origin/baseBranch, so only a CLAUDE.md committed there reaches them. */
+    private void checkInstructions(Config.Project project, Path repo) {
+        String base = "origin/" + project.baseBranch();
+        for (String file : List.of("CLAUDE.md", ".claude/CLAUDE.md")) {
+            Optional<Git.Result> found = run(List.of("git", "-C", repo.toString(), "cat-file", "-e", base + ":" + file), repo);
+            if (found.isPresent() && found.get().exitCode() == 0) {
+                return;
+            }
+        }
+        warn("project " + project.name() + ": no CLAUDE.md on " + base + ", so every run first spends turns finding its way around; "
+                + "commit a short one with the layout and the build and test commands");
     }
 
     private void checkStateDir(Path stateDir) {
