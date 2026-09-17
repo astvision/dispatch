@@ -62,9 +62,9 @@ cp "$source_dir/bin/dispatch" "$home/dispatch"
 chmod 755 "$home/dispatch"
 ln -sf "$home/dispatch" "$bin/dispatch"
 
+# shellcheck disable=SC2016 # $PATH is printed unexpanded, for the person to paste
 case ":$PATH:" in
   *":$bin:"*) ;;
-  # shellcheck disable=SC2016 # $PATH is printed unexpanded, for the person to paste
   *) printf '\n%s is not on your PATH yet. Add it, e.g.:\n  echo '"'"'export PATH="%s:$PATH"'"'"' >> ~/.profile\n' "$bin" "$bin" ;;
 esac
 step "Installed. Set it up with: dispatch init"
