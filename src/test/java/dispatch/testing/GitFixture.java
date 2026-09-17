@@ -25,7 +25,8 @@ public final class GitFixture {
         Files.createDirectories(fixture.stateDir.resolve("repos"));
         sh(dir, "git", "init", "--quiet", "--bare", "-b", "main", fixture.origin.toString());
         sh(dir, "git", "clone", "--quiet", fixture.origin.toString(), fixture.seed.toString());
-        Files.writeString(fixture.seed.resolve(".gitignore"), ".env\nlocal/\n");
+        // fake-* : what the fake claude and gh scripts record in their working directory must never be delivered.
+        Files.writeString(fixture.seed.resolve(".gitignore"), ".env\nlocal/\nfake-*\n");
         Files.writeString(fixture.seed.resolve("README.md"), "v1\n");
         fixture.commitAndPush("initial");
         sh(dir, "git", "clone", "--quiet", fixture.origin.toString(), fixture.repo(project).toString());

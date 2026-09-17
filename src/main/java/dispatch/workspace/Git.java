@@ -55,6 +55,11 @@ public final class Git {
             commandLine.addAll(List.of("-c", "credential.helper=", "-c", CREDENTIAL_HELPER));
         }
         commandLine.addAll(Arrays.asList(args));
+        return runProcess(commandLine, dir, ghToken, timeout, describe(args));
+    }
+
+    /** Shared with {@link Gh}: nothing may prompt, the token travels only in the environment, and a hang is killed. */
+    static Result runProcess(List<String> commandLine, Path dir, String ghToken, Duration timeout, String description) {
         ProcessBuilder builder = new ProcessBuilder(commandLine).directory(dir.toFile());
         builder.environment().put("GIT_TERMINAL_PROMPT", "0");
         if (ghToken != null) {
@@ -65,20 +70,20 @@ public final class Git {
             process = builder.start();
             process.getOutputStream().close();
         } catch (IOException e) {
-            throw new WorkspaceException("cannot start " + describe(args) + ": " + e.getMessage(), e);
+            throw new WorkspaceException("cannot start " + description + ": " + e.getMessage(), e);
         }
         CompletableFuture<String> stdout = CompletableFuture.supplyAsync(() -> read(process.getInputStream()), OUTPUT_READERS);
         CompletableFuture<String> stderr = CompletableFuture.supplyAsync(() -> read(process.getErrorStream()), OUTPUT_READERS);
         try {
             if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
                 ProcessTrees.terminate(process.toHandle(), Duration.ofSeconds(2));
-                throw new WorkspaceException(describe(args) + " timed out after " + timeout.toSeconds() + "s");
+                throw new WorkspaceException(description + " timed out after " + timeout.toSeconds() + "s");
             }
             return new Result(process.exitValue(), stdout.join(), stderr.join());
         } catch (InterruptedException e) {
             ProcessTrees.terminate(process.toHandle(), Duration.ofSeconds(2));
             Thread.currentThread().interrupt();
-            throw new WorkspaceException(describe(args) + " was interrupted", e);
+            throw new WorkspaceException(description + " was interrupted", e);
         }
     }
 
