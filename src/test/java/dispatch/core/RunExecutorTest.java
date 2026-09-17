@@ -118,6 +118,8 @@ class RunExecutorTest {
         assertTrue(prompt.contains("Fix the login timeout on staging"), prompt);
         assertTrue(prompt.contains("The user reports that login"), "the approved plan is part of the prompt: " + prompt);
         assertTrue(prompt.contains("Do not commit"), prompt);
+        // A recorded Sonnet run answered a Mongolian task in English until the summary rule named the language explicitly.
+        assertTrue(prompt.contains("a task written in Mongolian gets a Mongolian summary"), prompt);
         List<String> args = Files.readAllLines(worktree.resolve("fake-claude.args"));
         assertEquals(task.get("session_id"), valueAfter(args, "--resume"));
         assertEquals("auto", valueAfter(args, "--permission-mode"));

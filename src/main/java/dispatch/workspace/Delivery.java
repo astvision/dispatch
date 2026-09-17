@@ -60,7 +60,11 @@ public final class Delivery {
         if (!commit.body().isBlank()) {
             args.addAll(List.of("-m", commit.body()));
         }
-        commit.trailers().forEach(trailer -> args.addAll(List.of("--trailer", trailer)));
+        if (!commit.trailers().isEmpty()) {
+            // Their own paragraph: --trailer appends to a last body paragraph that merely looks like trailers
+            // ("Summary: ..."), which turned a summary line into a trailer in a recorded delivery.
+            args.addAll(List.of("-m", String.join("\n", commit.trailers())));
+        }
         git.run(worktree, args.toArray(String[]::new));
         String commitSha = head(worktree);
 

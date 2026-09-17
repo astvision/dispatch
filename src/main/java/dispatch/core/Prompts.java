@@ -85,7 +85,8 @@ final class Prompts {
                 - Run the relevant tests if they are quick to run.
                 - Finish with a short plain-text summary (no Markdown) of what you changed and the test results.
 
-                Language: write the summary in the natural language used inside <task>. Keep code identifiers, file paths \
+                Language: write the summary in the natural language used inside <task> (a task written in Mongolian gets a \
+                Mongolian summary, a task written in English gets an English summary). Keep code identifiers, file paths \
                 and commands unchanged.
                 """.formatted(task.id(), task.requester().name(), task.description(), planJson);
     }

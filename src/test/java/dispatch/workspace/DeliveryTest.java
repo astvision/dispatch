@@ -67,6 +67,20 @@ class DeliveryTest {
     }
 
     @Test
+    void trailersStayTheirOwnParagraphWhenTheSummaryEndsLikeATrailer() throws IOException {
+        Files.writeString(worktree.resolve("README.md"), "v2\n");
+        Delivery.Commit commit = new Delivery.Commit("dispatch #42: Add make help",
+                "Added the help target.\n\nSummary: listed every target with its description.", List.of("Requested-by: Bold", "Approved-by: Ali"));
+
+        delivery(null).deliver(worktree, 42, "main", start, commit, null);
+
+        assertEquals("Requested-by: Bold\nApproved-by: Ali",
+                origin("log", "-1", "--format=%(trailers:only,unfold)", "refs/heads/dispatch/42").strip());
+        String body = origin("log", "-1", "--format=%b", "refs/heads/dispatch/42");
+        assertTrue(body.contains("Summary: listed every target with its description.\n\nRequested-by: Bold"), body);
+    }
+
+    @Test
     void runWithoutChangesDeliversNothing() {
         Delivery.Result result = delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
 
