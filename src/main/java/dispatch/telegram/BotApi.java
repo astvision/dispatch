@@ -36,7 +36,20 @@ public final class BotApi {
         this.requestTimeout = requestTimeout;
     }
 
+    /** Digits, a colon, then letters, digits, '_' and '-', as @BotFather gives them. */
+    public static boolean isBotToken(String token) {
+        return token != null && token.matches("\\d+:[A-Za-z0-9_-]+");
+    }
+
+    /**
+     * @throws IllegalArgumentException when {@code token} cannot be a bot token. Checked first because the URI built from it
+     *                                  would otherwise fail with the whole token in its message.
+     */
     public static BotApi create(String token) {
+        if (!isBotToken(token)) {
+            throw new IllegalArgumentException("TELEGRAM_BOT_TOKEN is not a bot token: @BotFather gives digits, a colon, then letters, "
+                    + "digits, '_' and '-'");
+        }
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
         return new BotApi(http, URI.create("https://api.telegram.org/bot" + token + "/"), Duration.ofSeconds(30));
     }

@@ -57,6 +57,10 @@ public final class CheckCommand {
     }
 
     private void checkBot(String token) {
+        if (!BotApi.isBotToken(token)) {
+            fail("bot: TELEGRAM_BOT_TOKEN is not a bot token: @BotFather gives digits, a colon, then letters, digits, '_' and '-'");
+            return;
+        }
         try {
             var me = bots.apply(token).getMe();
             String topics = me.path("has_topics_enabled").asBoolean(false) ? "topics on" : "topics off";

@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 
 /**
  * `dispatch init`: sets up a personal instance in five steps (ADR 0014): the bot, who you are on Telegram, Claude Code, your
@@ -31,7 +30,6 @@ public final class InitCommand {
 
     private static final int ATTEMPTS = 3;
     private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(30);
-    private static final Pattern TOKEN = Pattern.compile("\\d+:[A-Za-z0-9_-]+");
     private static final List<String> EFFORTS = List.of("low", "medium", "high", "xhigh", "max");
     private static final String TEMPLATE = """
             # Your own Dispatch (ADR 0014), written by dispatch init. Edit it freely: dispatch check says if something is wrong.
@@ -128,7 +126,7 @@ public final class InitCommand {
     private Bot bot() {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             String token = answered(terminal.askSecret("Bot token"));
-            if (!TOKEN.matcher(token).matches()) {
+            if (!BotApi.isBotToken(token)) {
                 terminal.say("WARN that is not a bot token: @BotFather gives digits, a colon, then letters and digits");
                 continue;
             }
@@ -171,14 +169,22 @@ public final class InitCommand {
                 Config.Member sender = new Config.Member(message.get("from").get("id").asLong(), displayName(message.get("from")));
                 String answer = answered(terminal.ask("Is " + sender.name() + " (" + sender.id() + ") you? (y/n)", "y"));
                 if (answer.strip().toLowerCase().startsWith("y")) {
-                    // Confirms these messages, so Dispatch does not answer them once it runs.
-                    api.getUpdates(offset, 0);
+                    acknowledge(api, offset);
                     terminal.say("OK   you are " + sender.name() + " (" + sender.id() + ")");
                     return sender;
                 }
             }
         }
         throw new CliException("no message from you reached the bot within " + startWait.toMinutes() + " minutes; run dispatch init again");
+    }
+
+    /** Confirms the messages read so far, so Dispatch does not answer them once it runs; if this fails, it answers /start later. */
+    private void acknowledge(BotApi api, long offset) {
+        try {
+            api.getUpdates(offset, 0);
+        } catch (TelegramException e) {
+            terminal.say("WARN could not mark your message as read (" + e.getMessage() + "); the bot may answer it once it runs");
+        }
     }
 
     private String claude(Map<String, String> env) {

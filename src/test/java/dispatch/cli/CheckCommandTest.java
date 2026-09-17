@@ -76,6 +76,19 @@ class CheckCommandTest {
     }
 
     @Test
+    void malformedTokenIsReportedWithoutShowingIt() throws IOException {
+        writeConfig(repos.repo("alm"), JAVA);
+        String malformed = "123456789" + ":AAH fake-token-with-a-space";
+        SecretsFile.write(SecretsFile.beside(config), Map.of("TELEGRAM_BOT_TOKEN", malformed));
+
+        int exit = check();
+
+        assertEquals(1, exit);
+        assertTrue(terminal.output().contains("FAIL bot: TELEGRAM_BOT_TOKEN is not a bot token"), terminal.output());
+        assertFalse(terminal.output().contains("fake-token-with-a-space"), terminal.output());
+    }
+
+    @Test
     void missingConfigPointsToInit() {
         int exit = check();
 

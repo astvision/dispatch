@@ -36,6 +36,17 @@ class BotApiTest {
     }
 
     @Test
+    void malformedTokenIsRefusedWithoutRepeatingIt() {
+        // A stray space from a hand-edited secrets file; URI.create would put the whole token into its message.
+        String malformed = "123456789" + ":AAH-fake token-for-tests";
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> BotApi.create(malformed));
+
+        assertTrue(error.getMessage().contains("TELEGRAM_BOT_TOKEN"), error.getMessage());
+        assertFalse(error.getMessage().contains("fake token"), error.getMessage());
+    }
+
+    @Test
     void sendMessageRepliesInHtmlWithInlineButtons() throws Exception {
         long messageId = api.sendMessage(-100L, null, "<b>#42</b> план", 55L, REJECT);
 
