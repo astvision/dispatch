@@ -24,7 +24,7 @@ import java.util.function.Function;
  */
 public final class Database implements AutoCloseable {
 
-    private static final List<String> MIGRATIONS = List.of("db/001-init.sql", "db/002-execution.sql");
+    private static final List<String> MIGRATIONS = List.of("db/001-init.sql", "db/002-execution.sql", "db/003-private-messages.sql");
 
     private final Connection connection;
     private final ReentrantLock lock = new ReentrantLock();

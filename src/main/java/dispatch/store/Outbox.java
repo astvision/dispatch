@@ -12,13 +12,21 @@ public final class Outbox {
     private Outbox() {
     }
 
-    /** A pending message as the sender sees it. */
+    /**
+     * A pending message as the sender sees it.
+     *
+     * @param fallbackChatRef where the message goes if its chat refuses it; null when it has no fallback
+     * @param fellBack        the message already went to its fallback
+     */
     public record Message(
             long id,
             Long taskId,
             OutboxKind kind,
             String chatRef,
             String replyToRef,
+            String fallbackChatRef,
+            String fallbackReplyToRef,
+            boolean fellBack,
             String payload,
             int attempts,
             Instant createdAt) {
@@ -40,17 +48,32 @@ public final class Outbox {
                 taskId, kind, chatRef, replyToRef, Json.write(payload), now, now);
     }
 
+    /**
+     * A message for someone's private chat that goes to {@code fallbackChatRef}, as a reply to {@code fallbackReplyToRef},
+     * if the channel refuses it, e.g. because they never started the bot (ADR 0011).
+     */
+    public static long enqueueWithFallback(Tx tx, Long taskId, OutboxKind kind, String chatRef, String fallbackChatRef,
+                                           String fallbackReplyToRef, JsonNode payload, Instant now) {
+        return tx.insert("""
+                        INSERT INTO outbox (task_id, kind, chat_ref, fallback_chat_ref, fallback_reply_to_ref, payload, status,
+                                            next_attempt_at, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)""",
+                taskId, kind, chatRef, fallbackChatRef, fallbackReplyToRef, Json.write(payload), now, now);
+    }
+
     /** The pending message that has waited longest past its next attempt time. */
     public static Optional<Message> nextDue(Tx tx, Instant now) {
         return tx.one("""
-                        SELECT id, task_id, kind, chat_ref, reply_to_ref, payload, attempts, created_at
+                        SELECT id, task_id, kind, chat_ref, reply_to_ref, fallback_chat_ref, fallback_reply_to_ref, fell_back,
+                               payload, attempts, created_at
                         FROM outbox
                         WHERE status = 'PENDING' AND next_attempt_at <= ?
                         ORDER BY next_attempt_at, id
                         LIMIT 1""",
                 row -> new Message(row.longValue("id"), row.longOrNull("task_id"), row.enumValue("kind", OutboxKind.class),
-                        row.string("chat_ref"), row.string("reply_to_ref"), row.string("payload"), row.intValue("attempts"),
-                        row.instant("created_at")),
+                        row.string("chat_ref"), row.string("reply_to_ref"), row.string("fallback_chat_ref"),
+                        row.string("fallback_reply_to_ref"), row.intValue("fell_back") == 1, row.string("payload"),
+                        row.intValue("attempts"), row.instant("created_at")),
                 now);
     }
 
@@ -69,6 +92,15 @@ public final class Outbox {
     public static void retryLater(Tx tx, long id, int attempts, Instant nextAttemptAt, String error) {
         tx.update("UPDATE outbox SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?",
                 attempts, nextAttemptAt, error, id);
+    }
+
+    /** Re-addresses a refused message to its fallback, due at once. */
+    public static void fallBack(Tx tx, long id, int attempts, String error, Instant now) {
+        tx.update("""
+                        UPDATE outbox SET chat_ref = fallback_chat_ref, reply_to_ref = fallback_reply_to_ref, fallback_chat_ref = NULL,
+                                          fallback_reply_to_ref = NULL, fell_back = 1, attempts = ?, next_attempt_at = ?, last_error = ?
+                        WHERE id = ? AND fallback_chat_ref IS NOT NULL""",
+                attempts, now, error, id);
     }
 
     public static void markFailed(Tx tx, long id, int attempts, String error) {

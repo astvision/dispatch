@@ -19,7 +19,7 @@ class RendererTest {
 
     private final TestClock clock = new TestClock(Instant.parse("2026-09-17T10:30:00Z"));
     private final ResourceBundle messages = Renderer.mongolian();
-    private final Renderer renderer = new Renderer(messages, clock);
+    private final Renderer renderer = new Renderer(messages, clock, "dispatch_backend_bot");
 
     @Test
     void planIsRenderedWithEscapedContentNumberedStepsCostDurationAndApproveAndRejectButtons() {
@@ -156,12 +156,34 @@ class RendererTest {
     @Test
     void everyKindRendersWithinTelegramLimitsWithoutPlaceholders() {
         for (OutboxKind kind : OutboxKind.values()) {
-            Renderer.Rendered rendered = renderer.render(kind, samplePayload(kind));
+            for (boolean fellBack : new boolean[] {false, true}) {
+                Renderer.Rendered rendered = renderer.render(kind, samplePayload(kind), fellBack);
 
-            assertFalse(rendered.html().isBlank(), kind.name());
-            assertTrue(rendered.html().length() <= 4096, kind.name());
-            assertFalse(rendered.html().matches("(?s).*\\{\\d}.*"), kind + " left a placeholder: " + rendered.html());
+                assertFalse(rendered.html().isBlank(), kind.name());
+                assertTrue(rendered.html().length() <= 4096, kind.name());
+                assertFalse(rendered.html().matches("(?s).*\\{\\d}.*"), kind + " left a placeholder: " + rendered.html());
+            }
         }
+    }
+
+    @Test
+    void messageThatFellBackToTheGroupAsksTheRequesterToPressStart() {
+        String html = renderer.render(OutboxKind.TASK_QUEUED, samplePayload(OutboxKind.TASK_QUEUED), true).html();
+
+        assertTrue(html.contains("@dispatch_backend_bot"), html);
+        assertTrue(html.contains("Start"), html);
+    }
+
+    @Test
+    void longestCompletionStillFitsWithTheStartHint() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 3,
+                java.util.Collections.nCopies(9, "Bash: " + "<&>".repeat(80)));
+        payload.put("summary", "<&>".repeat(3000)).put("project", "p".repeat(100));
+
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload, true).html();
+
+        assertTrue(html.length() <= 4096, "message limit, got " + html.length());
+        assertTrue(html.contains("Start"), "the hint survives");
     }
 
     private static ObjectNode planPayload(List<String> steps, List<String> questions) {

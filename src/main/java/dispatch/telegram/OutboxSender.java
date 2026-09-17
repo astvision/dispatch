@@ -13,8 +13,9 @@ import java.time.Instant;
 import java.util.Optional;
 
 /**
- * Delivers outbox messages one at a time (ADR 0010). Transient failures are retried with logged, bounded backoff;
- * permanent ones and anything older than a day are marked FAILED and logged, never dropped silently.
+ * Delivers outbox messages one at a time (ADR 0010). Transient failures are retried with logged, bounded backoff. A
+ * private message Telegram refuses goes to its fallback in the group (ADR 0011); other permanent failures and anything
+ * older than a day are marked FAILED and logged, never dropped silently.
  */
 public final class OutboxSender implements Runnable {
 
@@ -79,7 +80,7 @@ public final class OutboxSender implements Runnable {
         Renderer.Rendered rendered;
         try {
             // Masked before rendering, so length limits apply to the text that is actually sent.
-            rendered = renderer.render(message.kind(), Json.read(redactor.redact(message.payload())));
+            rendered = renderer.render(message.kind(), Json.read(redactor.redact(message.payload())), message.fellBack());
         } catch (RuntimeException e) {
             Log.error("outbox.render_failed", e, "id", message.id(), "kind", message.kind());
             db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, "render failed: " + e.getMessage()));
@@ -101,6 +102,13 @@ public final class OutboxSender implements Runnable {
 
     private void handleFailure(Outbox.Message message, int attempts, TelegramException error) {
         Instant now = clock.instant();
+        if (error.isPermanent() && message.fallbackChatRef() != null) {
+            // Usually the requester never pressed Start or has blocked the bot.
+            Log.warn("outbox.fell_back", "id", message.id(), "kind", message.kind(), "task", message.taskId(),
+                    "attempt", attempts, "error", error.getMessage());
+            db.transaction(tx -> Outbox.fallBack(tx, message.id(), attempts, error.getMessage(), now));
+            return;
+        }
         if (error.isPermanent()) {
             Log.error("outbox.failed", null, "id", message.id(), "kind", message.kind(), "task", message.taskId(),
                     "attempt", attempts, "error", error.getMessage());

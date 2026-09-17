@@ -46,7 +46,7 @@ class OutboxSenderTest {
         db = Database.open(dbFile);
         db.migrate();
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
-        sender = new OutboxSender(db, api, new Renderer(Renderer.mongolian(), clock),
+        sender = new OutboxSender(db, api, new Renderer(Renderer.mongolian(), clock, FakeTelegram.BOT_USERNAME),
                 Redactor.fromEnvironment(Map.of("ANTHROPIC_API_KEY", "sk-ant-test-value-for-instance")), new Signal(), clock,
                 Duration.ofSeconds(1));
     }
@@ -132,6 +132,57 @@ class OutboxSenderTest {
     }
 
     @Test
+    void privateMessageGoesToThePrivateChatWithoutAHint() throws Exception {
+        long id = enqueuePrivate(OutboxKind.TASK_QUEUED, Json.object().put("taskId", 42).put("project", "alm"));
+
+        sender.deliverDue();
+
+        JsonNode body = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
+        assertEquals(100, body.get("chat_id").asLong());
+        assertFalse(body.has("reply_parameters"));
+        assertFalse(body.get("text").asText().contains("Start"), body.toString());
+        assertEquals("telegram:100/1000", row(id).get("sent_ref"));
+    }
+
+    @Test
+    void privateMessageTelegramRefusesFallsBackToTheGroupWithAStartHint() throws Exception {
+        telegram.respond("sendMessage", 403,
+                "{\"ok\":false,\"error_code\":403,\"description\":\"Forbidden: bot can't initiate conversation with a user\"}");
+        long id = enqueuePrivate(OutboxKind.TASK_QUEUED, Json.object().put("taskId", 42).put("project", "alm"));
+
+        sender.deliverDue();
+
+        Map<String, String> fellBack = row(id);
+        assertEquals("PENDING", fellBack.get("status"));
+        assertEquals("telegram:-100", fellBack.get("chat_ref"));
+        assertEquals("telegram:-100/55", fellBack.get("reply_to_ref"));
+        assertEquals("1", fellBack.get("fell_back"));
+        assertTrue(fellBack.get("last_error").contains("can't initiate conversation"), fellBack.get("last_error"));
+
+        assertTrue(sender.deliverDue(), "due again at once");
+
+        assertEquals(100, telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json().get("chat_id").asLong());
+        JsonNode inGroup = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
+        assertEquals(-100, inGroup.get("chat_id").asLong());
+        assertEquals(55, inGroup.get("reply_parameters").get("message_id").asLong());
+        assertTrue(inGroup.get("text").asText().contains("@" + FakeTelegram.BOT_USERNAME), inGroup.toString());
+        assertEquals("SENT", row(id).get("status"));
+        assertEquals("telegram:-100/1000", row(id).get("sent_ref"));
+    }
+
+    @Test
+    void transientErrorOnAPrivateMessageIsRetriedThereFirst() {
+        telegram.respond("sendMessage", 500, SERVER_ERROR);
+        long id = enqueuePrivate(OutboxKind.TASK_QUEUED, Json.object().put("taskId", 1).put("project", "alm"));
+
+        sender.deliverDue();
+
+        assertEquals("telegram:100", row(id).get("chat_ref"));
+        assertEquals("PENDING", row(id).get("status"));
+        assertEquals("0", row(id).get("fell_back"));
+    }
+
+    @Test
     void messageStillFailingAfter24HoursIsGivenUp() {
         long id = enqueue(OutboxKind.TASK_QUEUED, Json.object().put("taskId", 1).put("project", "alm"));
         clock.advance(Duration.ofHours(25));
@@ -163,6 +214,11 @@ class OutboxSenderTest {
 
     private long enqueue(OutboxKind kind, ObjectNode payload) {
         return db.transactionReturning(tx -> Outbox.enqueue(tx, null, kind, "telegram:-100", "telegram:-100/55", payload, clock.instant()));
+    }
+
+    private long enqueuePrivate(OutboxKind kind, ObjectNode payload) {
+        return db.transactionReturning(tx -> Outbox.enqueueWithFallback(tx, null, kind, "telegram:100", "telegram:-100",
+                "telegram:-100/55", payload, clock.instant()));
     }
 
     private Map<String, String> row(long id) {

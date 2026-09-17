@@ -75,25 +75,13 @@ class DatabaseTest {
 
     @Test
     void version1DatabaseIsUpgradedInPlace() throws Exception {
-        Path file = dir.resolve("v1.db");
-        try (java.sql.Connection connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file);
-             java.sql.Statement statement = connection.createStatement();
-             java.io.InputStream script = getClass().getResourceAsStream("/db/001-init.sql")) {
-            for (String sql : new String(script.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).split(";\\s*\\n")) {
-                if (!sql.isBlank()) {
-                    statement.execute(sql);
-                }
-            }
-            statement.execute("PRAGMA user_version = 1");
-            statement.execute("""
-                    INSERT INTO task (id, project, title, description, phase, requester_ref, requester_name, origin_ref, chat_ref,
-                                      session_id, base_branch, created_at, updated_at)
-                    VALUES (1, 'alm', 't', 't', 'AWAITING_APPROVAL', 'telegram:1', 'Bold', 'telegram:-1/5', 'telegram:-1',
-                            '63d36fba-124d-4737-8020-d37d4998abca', 'main', '2026-09-17T10:00:00.000Z', '2026-09-17T10:00:00.000Z')""");
-            statement.execute("""
-                    INSERT INTO run (task_id, seq, kind, status, instruction, requested_by, queued_at)
-                    VALUES (1, 1, 'PLAN', 'SUCCEEDED', 't', 'telegram:1', '2026-09-17T10:00:00.000Z')""");
-        }
+        Path file = databaseAtVersion(1, """
+                INSERT INTO task (id, project, title, description, phase, requester_ref, requester_name, origin_ref, chat_ref,
+                                  session_id, base_branch, created_at, updated_at)
+                VALUES (1, 'alm', 't', 't', 'AWAITING_APPROVAL', 'telegram:1', 'Bold', 'telegram:-1/5', 'telegram:-1',
+                        '63d36fba-124d-4737-8020-d37d4998abca', 'main', '2026-09-17T10:00:00.000Z', '2026-09-17T10:00:00.000Z')""", """
+                INSERT INTO run (task_id, seq, kind, status, instruction, requested_by, queued_at)
+                VALUES (1, 1, 'PLAN', 'SUCCEEDED', 't', 'telegram:1', '2026-09-17T10:00:00.000Z')""");
 
         try (Database upgraded = Database.open(file)) {
             upgraded.migrate();
@@ -105,6 +93,51 @@ class DatabaseTest {
             assertEquals("telegram:1", run.requestedBy());
             assertNull(run.requestedByName(), "runs recorded before version 2 have no requester name");
         }
+    }
+
+    @Test
+    void version2DatabaseDropsUnsentTaskListsThatNoLongerRender() throws Exception {
+        Path file = databaseAtVersion(2, """
+                INSERT INTO outbox (id, kind, chat_ref, payload, status, next_attempt_at, created_at)
+                VALUES (1, 'TASK_LIST', 'telegram:-1', '{"tasks":[]}', 'PENDING', '2026-09-17T10:00:00.000Z', '2026-09-17T10:00:00.000Z')""", """
+                INSERT INTO outbox (id, kind, chat_ref, payload, status, next_attempt_at, created_at)
+                VALUES (2, 'HELP', 'telegram:-1', '{"projects":[]}', 'PENDING', '2026-09-17T10:00:01.000Z', '2026-09-17T10:00:01.000Z')""");
+
+        try (Database upgraded = Database.open(file)) {
+            upgraded.migrate();
+
+            Outbox.Message next = upgraded.transactionReturning(tx -> Outbox.nextDue(tx, Instant.parse("2026-09-17T11:00:00Z")))
+                    .orElseThrow();
+            assertEquals(2, next.id(), "the removed kind is not picked up, so the sender cannot crash on it");
+            assertNull(next.fallbackChatRef());
+        }
+        assertEquals("FAILED", dispatch.testing.SqlRows.single(file, "SELECT status FROM outbox WHERE id = 1").get("status"));
+    }
+
+    /** A state file as an older Dispatch left it: the first {@code version} migrations applied, then {@code inserts}. */
+    private Path databaseAtVersion(int version, String... inserts) throws Exception {
+        Path file = dir.resolve("v" + version + ".db");
+        try (java.sql.Connection connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file);
+             java.sql.Statement statement = connection.createStatement()) {
+            String[] scripts = {"/db/001-init.sql", "/db/002-execution.sql"};
+            for (int i = 0; i < version; i++) {
+                try (java.io.InputStream script = getClass().getResourceAsStream(scripts[i])) {
+                    String sqlText = new String(script.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    for (String sql : sqlText.split(";\\s*\\n")) {
+                        String withoutComments = sql.lines().filter(line -> !line.strip().startsWith("--"))
+                                .reduce("", (joined, line) -> joined + line + "\n");
+                        if (!withoutComments.isBlank()) {
+                            statement.execute(withoutComments);
+                        }
+                    }
+                }
+            }
+            statement.execute("PRAGMA user_version = " + version);
+            for (String insert : inserts) {
+                statement.execute(insert);
+            }
+        }
+        return file;
     }
 
     @Test

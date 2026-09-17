@@ -45,7 +45,7 @@ class UpdateHandlerTest {
     private Path dbFile;
     private Database db;
     private final TestClock clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
-    private final Renderer renderer = new Renderer(Renderer.mongolian(), clock);
+    private final Renderer renderer = new Renderer(Renderer.mongolian(), clock, FakeTelegram.BOT_USERNAME);
     private RunTransitions transitions;
     private UpdateHandler handler;
 

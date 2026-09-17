@@ -89,7 +89,7 @@ public final class App {
         projects.all().forEach(project -> projects.unavailableReason(project).ifPresent(reason ->
                 Log.error("project.unavailable", null, "project", project.name(), "reason", reason)));
 
-        Renderer renderer = new Renderer(Renderer.mongolian(), clock);
+        Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
         registerCommandMenu(api, renderer, config.telegram().groupChatId());
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
         UpdateHandler handler = new UpdateHandler(db, tasks, projects, api, renderer, config.telegram().groupChatId(),
