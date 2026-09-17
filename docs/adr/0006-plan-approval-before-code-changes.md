@@ -8,6 +8,7 @@ We chose this over direct execution because tasks come from a shared group chat.
 
 ## Consequences
 
+- ADR 0011 narrows who decides: only a task's requester approves, corrects or rejects its plan, in a private chat with the bot.
 - A task can wait indefinitely for a human, so the lifecycle needs a waiting-for-approval state and a policy for stale plans.
 - Every task costs at least two agent runs.
 - The agent integration must support a read-only mode and resuming a session.

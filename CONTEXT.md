@@ -9,8 +9,12 @@ The developers who share one Telegram group and one bot, served by their own Dis
 _Avoid_: Tenant, organization, workspace
 
 **Member**:
-A person on the team's allowlist who may create, approve, cancel and retry tasks. Other people in the team group can read the bot's replies but cannot act on tasks.
+A person on the team's allowlist who may create, cancel and retry tasks. Other people in the team group can read the bot's replies but cannot act on tasks.
 _Avoid_: User, operator, admin
+
+**Requester**:
+The member who created a task. Its plan is theirs to approve, correct or reject, and its details reach them in their private chat with the bot.
+_Avoid_: Owner, author, assignee
 
 **Project**:
 A repository the team hands tasks for, together with how Dispatch works on it: its short alias, base branch and agent.
