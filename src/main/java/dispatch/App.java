@@ -161,7 +161,7 @@ public final class App {
 
     /** Best effort: fails while the bot is not yet in the group, and works again on the next start. */
     private static void registerCommandMenu(BotApi api, Renderer renderer, long groupChatId) {
-        List<BotApi.BotCommand> commands = List.of("task", "tasks", "cancel", "help").stream()
+        List<BotApi.BotCommand> commands = List.of("task", "status", "history", "cancel", "help").stream()
                 .map(name -> new BotApi.BotCommand(name, renderer.text("command." + name)))
                 .toList();
         try {

@@ -9,15 +9,20 @@ import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
 import dispatch.domain.Requester;
+import dispatch.domain.Run;
 import dispatch.domain.RunKind;
+import dispatch.domain.RunStatus;
 import dispatch.domain.Task;
 import dispatch.store.Events;
 import dispatch.store.Outbox;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
@@ -29,6 +34,8 @@ import java.util.UUID;
 public final class TaskService {
 
     private static final int TITLE_LENGTH = 80;
+    private static final int HISTORY_SIZE = 10;
+    private static final int INSTRUCTION_LENGTH = 200;
 
     private final Members members;
     private final Projects projects;
@@ -229,19 +236,74 @@ public final class TaskService {
         return CancelResult.CANCELLED;
     }
 
-    /** Posts the active tasks, oldest first. */
-    public void list(Tx tx, String originRef, String chatRef) {
+    /** Posts what Dispatch is doing now: running runs with their agent's latest action, then queued runs, then plans awaiting approval. */
+    public void status(Tx tx, String originRef, String chatRef) {
+        ObjectNode payload = Json.object();
+        ArrayNode running = payload.putArray("running");
+        ArrayNode queued = payload.putArray("queued");
+        for (Runs.InProgress run : Runs.inProgress(tx)) {
+            boolean isRunning = run.status() == RunStatus.RUNNING;
+            ObjectNode item = (isRunning ? running : queued).addObject().put("taskId", run.taskId()).put("project", run.project())
+                    .put("title", run.title()).put("kind", run.kind().name());
+            if (isRunning) {
+                item.put("startedAt", text(run.startedAt()));
+                activeRuns.activity(run.taskId()).ifPresent(activity ->
+                        item.put("steps", activity.steps()).put("lastAction", activity.lastAction()));
+            } else {
+                item.put("queuedAt", text(run.queuedAt()));
+            }
+        }
+        ArrayNode awaiting = payload.putArray("awaitingApproval");
+        for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL)) {
+            awaiting.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
+                    .put("requester", task.requester().name()).put("since", text(task.updatedAt()));
+        }
+        enqueue(tx, null, OutboxKind.STATUS, chatRef, originRef, payload, clock.instant());
+    }
+
+    /** Posts the most recently finished tasks, newest first, with their total cost. */
+    public void history(Tx tx, String originRef, String chatRef) {
+        List<Task> finished = Tasks.finished(tx, HISTORY_SIZE);
+        Map<Long, BigDecimal> costs = Runs.costs(tx, finished.stream().map(Task::id).toList());
         ObjectNode payload = Json.object();
         ArrayNode listed = payload.putArray("tasks");
-        for (Task task : Tasks.active(tx)) {
-            listed.addObject()
-                    .put("id", task.id())
-                    .put("title", task.title())
-                    .put("project", task.project())
-                    .put("phase", task.phase().name())
-                    .put("createdAt", task.createdAt().toString());
+        for (Task task : finished) {
+            BigDecimal cost = costs.get(task.id());
+            listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
+                    .put("phase", task.phase().name()).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
+                    .put("costUsd", cost == null ? null : cost.toPlainString()).put("completedAt", text(task.completedAt()));
         }
-        enqueue(tx, null, OutboxKind.TASK_LIST, chatRef, originRef, payload, clock.instant());
+        enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, payload, clock.instant());
+    }
+
+    /** Posts one task's timeline: its runs in order, how it ended, and what it cost. */
+    public void timeline(Tx tx, long taskId, String originRef, String chatRef) {
+        Optional<Task> found = Tasks.find(tx, taskId);
+        if (found.isEmpty()) {
+            enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), clock.instant());
+            return;
+        }
+        Task task = found.get();
+        ObjectNode payload = Json.object().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
+                .put("requester", task.requester().name()).put("phase", task.phase().name()).put("prUrl", task.prUrl())
+                .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
+                .put("completedAt", text(task.completedAt()));
+        ArrayNode runs = payload.putArray("runs");
+        BigDecimal total = null;
+        for (Run run : Runs.forTask(tx, taskId)) {
+            // Only a correction's instruction is worth showing: the first plan's is the task, an execution's is the plan.
+            String instruction = run.kind() == RunKind.PLAN && run.seq() > 1 ? truncate(run.instruction(), INSTRUCTION_LENGTH) : null;
+            runs.addObject().put("seq", run.seq()).put("kind", run.kind().name()).put("status", run.status().name())
+                    .put("requestedBy", run.requestedByName()).put("instruction", instruction).put("queuedAt", text(run.queuedAt()))
+                    .put("startedAt", text(run.startedAt())).put("finishedAt", text(run.finishedAt()))
+                    .put("costUsd", run.costUsd() == null ? null : run.costUsd().toPlainString())
+                    .put("failureReason", name(run.failureReason()));
+            if (run.costUsd() != null) {
+                total = total == null ? run.costUsd() : total.add(run.costUsd());
+            }
+        }
+        payload.put("costUsd", total == null ? null : total.toPlainString());
+        enqueue(tx, null, OutboxKind.TASK_TIMELINE, chatRef, originRef, payload, clock.instant());
     }
 
     private void notAllowed(Tx tx, Requester who, String originRef, String chatRef, Instant now) {
@@ -261,6 +323,18 @@ public final class TaskService {
     /** First non-blank line; long lines are cut rather than summarized. */
     static String title(String description) {
         String firstLine = description.lines().map(String::strip).filter(line -> !line.isEmpty()).findFirst().orElse("");
-        return firstLine.length() <= TITLE_LENGTH ? firstLine : firstLine.substring(0, TITLE_LENGTH - 1) + "…";
+        return truncate(firstLine, TITLE_LENGTH);
+    }
+
+    private static String truncate(String text, int limit) {
+        return text.length() <= limit ? text : text.substring(0, limit - 1) + "…";
+    }
+
+    private static String text(Instant instant) {
+        return instant == null ? null : instant.toString();
+    }
+
+    private static String name(Enum<?> constant) {
+        return constant == null ? null : constant.name();
     }
 }

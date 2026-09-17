@@ -230,6 +230,17 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void statusAndHistoryAnswerAnyoneInTheGroup() {
+        handler.handle(message(550, 50, 999, "Sara", GROUP, "supergroup", "/status", null));
+        handler.handle(message(551, 51, 999, "Sara", GROUP, "supergroup", "/history", null));
+        handler.handle(message(552, 52, 999, "Sara", GROUP, "supergroup", "/history@" + FakeTelegram.BOT_USERNAME + " 7", null));
+
+        assertEquals("STATUS", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/50").get("kind"));
+        assertEquals("HISTORY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/51").get("kind"));
+        assertEquals("TASK_NOT_FOUND", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/52").get("kind"));
+    }
+
+    @Test
     void helpListsTheProjects() {
         handler.handle(message(530, 30, 999, "Sara", GROUP, "supergroup", "/help", null));
 

@@ -54,6 +54,17 @@ public final class Tasks {
                 Tasks::map, Phase.PLANNING, Phase.AWAITING_APPROVAL, Phase.EXECUTING);
     }
 
+    /** Tasks in {@code phase}, the longest unchanged first. */
+    public static List<Task> withPhase(Tx tx, Phase phase) {
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase = ? ORDER BY updated_at, id", Tasks::map, phase);
+    }
+
+    /** The {@code limit} most recently finished tasks, newest first. */
+    public static List<Task> finished(Tx tx, int limit) {
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase IN (?, ?, ?, ?) ORDER BY completed_at DESC, id DESC LIMIT ?",
+                Tasks::map, Phase.COMPLETED, Phase.FAILED, Phase.REJECTED, Phase.CANCELLED, limit);
+    }
+
     /** Moves {@code from} to {@code to}; entering a finished phase stamps completed_at. */
     public static boolean changePhase(Tx tx, long id, Phase from, Phase to, Instant now) {
         Instant completedAt = to.isActive() ? null : now;

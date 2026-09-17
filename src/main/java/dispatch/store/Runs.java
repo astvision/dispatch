@@ -9,7 +9,10 @@ import dispatch.domain.RunStatus;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -18,12 +21,17 @@ public final class Runs {
 
     private static final String COLUMNS = """
             task_id, seq, kind, status, instruction, requested_by, requested_by_name, pid, pid_start, queued_at, started_at,
-            finished_at""";
+            finished_at, cost_usd, turns, failure_reason""";
 
     private Runs() {
     }
 
     public record NewRun(long taskId, int seq, RunKind kind, String instruction, Requester requestedBy) {
+    }
+
+    /** A queued or running run, with the task details /status shows. */
+    public record InProgress(long taskId, int seq, RunKind kind, RunStatus status, Instant queuedAt, Instant startedAt,
+                             String project, String title) {
     }
 
     /** Result columns written once when a run ends; any may be null. */
@@ -81,6 +89,39 @@ public final class Runs {
         return tx.one("SELECT " + COLUMNS + " FROM run WHERE task_id = ? AND seq = ?", Runs::map, taskId, seq);
     }
 
+    /** Running and queued runs, oldest queued first. */
+    public static List<InProgress> inProgress(Tx tx) {
+        return tx.list("""
+                        SELECT r.task_id, r.seq, r.kind, r.status, r.queued_at, r.started_at, t.project, t.title
+                        FROM run r JOIN task t ON t.id = r.task_id
+                        WHERE r.status IN (?, ?)
+                        ORDER BY r.queued_at, r.task_id, r.seq""",
+                row -> new InProgress(row.longValue("task_id"), row.intValue("seq"), row.enumValue("kind", RunKind.class),
+                        row.enumValue("status", RunStatus.class), row.instant("queued_at"), row.instant("started_at"),
+                        row.string("project"), row.string("title")),
+                RunStatus.RUNNING, RunStatus.QUEUED);
+    }
+
+    public static List<Run> forTask(Tx tx, long taskId) {
+        return tx.list("SELECT " + COLUMNS + " FROM run WHERE task_id = ? ORDER BY seq", Runs::map, taskId);
+    }
+
+    /** Total reported cost per task; a task none of whose runs reported a cost is absent. */
+    public static Map<Long, BigDecimal> costs(Tx tx, List<Long> taskIds) {
+        if (taskIds.isEmpty()) {
+            return Map.of();
+        }
+        record Cost(long taskId, BigDecimal usd) {
+        }
+        String placeholders = String.join(", ", Collections.nCopies(taskIds.size(), "?"));
+        Map<Long, BigDecimal> totals = new HashMap<>();
+        for (Cost cost : tx.list("SELECT task_id, cost_usd FROM run WHERE cost_usd IS NOT NULL AND task_id IN (" + placeholders + ")",
+                row -> new Cost(row.longValue("task_id"), row.decimal("cost_usd")), taskIds.toArray())) {
+            totals.merge(cost.taskId(), cost.usd(), BigDecimal::add);
+        }
+        return totals;
+    }
+
     public static List<Run> withStatus(Tx tx, RunStatus status) {
         return tx.list("SELECT " + COLUMNS + " FROM run WHERE status = ? ORDER BY task_id, seq", Runs::map, status);
     }
@@ -130,6 +171,9 @@ public final class Runs {
                 row.instant("pid_start"),
                 row.instant("queued_at"),
                 row.instant("started_at"),
-                row.instant("finished_at"));
+                row.instant("finished_at"),
+                row.decimal("cost_usd"),
+                row.intOrNull("turns"),
+                row.enumValue("failure_reason", FailureReason.class));
     }
 }

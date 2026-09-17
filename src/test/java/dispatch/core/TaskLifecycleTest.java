@@ -539,26 +539,6 @@ class TaskLifecycleTest {
         assertEquals(messagesBefore, Long.parseLong(row("SELECT count(*) AS n FROM outbox").get("n")));
     }
 
-    @Test
-    void listPostsActiveTasksOnly() {
-        long awaiting = awaitingApproval("61");
-        long rejected = awaitingApproval("62");
-        db.transaction(tx -> tasks.reject(tx, ALI, rejected, 1));
-        long planning = create(BOLD, "alm", "Newest task", "60");
-
-        db.transaction(tx -> tasks.list(tx, CHAT + "/63", CHAT));
-
-        Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'TASK_LIST'");
-        assertEquals(CHAT + "/63", message.get("reply_to_ref"));
-        JsonNode listed = Json.read(message.get("payload")).get("tasks");
-        assertEquals(2, listed.size());
-        assertEquals(awaiting, listed.get(0).get("id").asLong());
-        assertEquals("AWAITING_APPROVAL", listed.get(0).get("phase").asText());
-        assertEquals(planning, listed.get(1).get("id").asLong());
-        assertEquals("PLANNING", listed.get(1).get("phase").asText());
-        assertEquals("Newest task", listed.get(1).get("title").asText());
-    }
-
     private long create(Requester who, String project, String text, String messageId) {
         CreateResult result = db.transactionReturning(tx -> tasks.create(tx, who, project, text, CHAT + "/" + messageId, CHAT));
         assertEquals(CreateResult.CREATED, result);

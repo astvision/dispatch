@@ -110,7 +110,10 @@ public final class UpdateHandler {
                 String text = projectAndText.length > 1 ? projectAndText[1].strip() : "";
                 tasks.create(tx, who, projectAndText[0], withRepliedMessage(text, message.path("reply_to_message")), origin, chatRef);
             }
-            case "tasks" -> tasks.list(tx, origin, chatRef);
+            case "status" -> tasks.status(tx, origin, chatRef);
+            case "history" -> taskId(command.args()).ifPresentOrElse(
+                    id -> tasks.timeline(tx, id, origin, chatRef),
+                    () -> tasks.history(tx, origin, chatRef));
             case "cancel" -> taskId(command.args()).ifPresentOrElse(
                     id -> tasks.cancel(tx, who, id, origin, chatRef),
                     () -> help(tx, origin, chatRef));

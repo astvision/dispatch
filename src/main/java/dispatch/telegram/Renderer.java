@@ -8,6 +8,7 @@ import java.text.MessageFormat;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -23,6 +24,9 @@ public final class Renderer {
     private static final int SUMMARY_LIMIT = 2500;
     private static final int DENIAL_LIMIT = 200;
     private static final int DENIALS_SHOWN = 5;
+    private static final int TITLE_LIMIT = 80;
+    private static final int ACTION_LIMIT = 120;
+    private static final int INSTRUCTION_LIMIT = 150;
 
     public record Button(String text, String data) {
     }
@@ -78,7 +82,9 @@ public final class Renderer {
                     + detail(payload.path("detail").asText("")));
             case TASK_REJECTED -> plain(format("task.rejected", taskId(payload), escape(payload.path("by").asText())));
             case TASK_CANCELLED -> plain(format("task.cancelled", taskId(payload), escape(payload.path("by").asText())));
-            case TASK_LIST -> taskList(payload.path("tasks"));
+            case STATUS -> status(payload);
+            case HISTORY -> history(payload.path("tasks"));
+            case TASK_TIMELINE -> timeline(payload);
             case TASK_NOT_FOUND -> plain(format("task.notFound", taskId(payload)));
             case CANCEL_REFUSED -> plain(format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
             case NOT_ALLOWED -> plain(format("member.notAllowed", escape(payload.path("name").asText())));
@@ -184,22 +190,147 @@ public final class Renderer {
         return plain(html.toString());
     }
 
-    private Rendered taskList(JsonNode tasks) {
-        if (tasks.isEmpty()) {
-            return plain(text("tasks.empty"));
+    private Rendered status(JsonNode payload) {
+        JsonNode running = payload.path("running");
+        JsonNode queued = payload.path("queued");
+        JsonNode awaiting = payload.path("awaitingApproval");
+        if (running.isEmpty() && queued.isEmpty() && awaiting.isEmpty()) {
+            return plain(text("status.empty"));
         }
-        StringBuilder html = new StringBuilder(text("tasks.header"));
-        for (JsonNode task : tasks) {
-            String line = "\n\n" + format("tasks.line", String.valueOf(task.path("id").asLong()),
-                    escape(task.path("project").asText()), text("phase." + task.path("phase").asText()),
-                    age(Instant.parse(task.path("createdAt").asText())), escape(task.path("title").asText()));
-            if (html.length() + line.length() > MESSAGE_LIMIT - 2) {
-                html.append("\n…");
-                break;
+        List<String> blocks = new ArrayList<>();
+        if (!running.isEmpty()) {
+            blocks.add(text("status.running"));
+            for (JsonNode run : running) {
+                String line = format("status.runLine", taskId(run), escape(run.path("project").asText()),
+                        text("kind." + run.path("kind").asText()), age(Instant.parse(run.path("startedAt").asText())));
+                if (run.hasNonNull("steps")) {
+                    line += " · " + format("status.steps", run.path("steps").asInt());
+                }
+                line += "\n   " + escapeWithin(run.path("title").asText(), TITLE_LIMIT);
+                if (run.hasNonNull("lastAction")) {
+                    line += "\n   └ " + escapeWithin(run.path("lastAction").asText(), ACTION_LIMIT);
+                }
+                blocks.add(line);
             }
-            html.append(line);
         }
-        return plain(html.toString());
+        if (!queued.isEmpty()) {
+            blocks.add("\n" + text("status.queued"));
+            for (JsonNode run : queued) {
+                blocks.add(format("status.queuedLine", taskId(run), escape(run.path("project").asText()),
+                        text("kind." + run.path("kind").asText()), age(Instant.parse(run.path("queuedAt").asText())))
+                        + "\n   " + escapeWithin(run.path("title").asText(), TITLE_LIMIT));
+            }
+        }
+        if (!awaiting.isEmpty()) {
+            blocks.add("\n" + text("status.awaiting"));
+            for (JsonNode task : awaiting) {
+                blocks.add(format("status.awaitingLine", taskId(task), escape(task.path("project").asText()),
+                        escape(task.path("requester").asText()), age(Instant.parse(task.path("since").asText())))
+                        + "\n   " + escapeWithin(task.path("title").asText(), TITLE_LIMIT));
+            }
+        }
+        return plain(joinWithin(blocks, "\n"));
+    }
+
+    private Rendered history(JsonNode tasks) {
+        if (tasks.isEmpty()) {
+            return plain(text("history.empty"));
+        }
+        List<String> blocks = new ArrayList<>(List.of(text("history.header")));
+        for (JsonNode task : tasks) {
+            String phase = task.path("phase").asText();
+            StringBuilder block = new StringBuilder("\n").append(format("history.line", OUTCOME_ICONS.getOrDefault(phase, "•"),
+                    taskId(task), escape(task.path("project").asText()), money(task.path("costUsd")),
+                    age(Instant.parse(task.path("completedAt").asText()))))
+                    .append("\n").append(escapeWithin(task.path("title").asText(), TITLE_LIMIT));
+            if (task.hasNonNull("prUrl")) {
+                block.append("\n").append(escape(task.path("prUrl").asText()));
+            }
+            if (task.hasNonNull("failureReason")) {
+                block.append("\n").append(text("failure." + task.path("failureReason").asText()));
+            }
+            blocks.add(block.toString());
+        }
+        blocks.add("\n" + text("history.more"));
+        return plain(joinWithin(blocks, "\n"));
+    }
+
+    private Rendered timeline(JsonNode payload) {
+        List<String> blocks = new ArrayList<>();
+        blocks.add(format("timeline.header", taskId(payload), escape(payload.path("project").asText()),
+                escape(payload.path("requester").asText()))
+                + "\n" + escapeWithin(payload.path("title").asText(), TITLE_LIMIT)
+                + "\n" + format("timeline.created", dateTime(payload.path("createdAt").asText())) + "\n");
+        for (JsonNode run : payload.path("runs")) {
+            blocks.add(time(run.path("queuedAt").asText()) + " " + runHeadline(run) + runResult(run));
+        }
+        blocks.add("\n" + outcome(payload) + "\n" + format("timeline.total", money(payload.path("costUsd"))));
+        return plain(joinWithin(blocks, "\n"));
+    }
+
+    private String runHeadline(JsonNode run) {
+        String requestedBy = escape(run.path("requestedBy").asText("—"));
+        return switch (run.path("kind").asText()) {
+            case "PLAN" -> run.hasNonNull("instruction")
+                    ? format("timeline.correction", requestedBy, escapeWithin(run.path("instruction").asText(), INSTRUCTION_LIMIT))
+                    : text("timeline.plan");
+            case "EXECUTE" -> format("timeline.execute", requestedBy);
+            default -> text("kind." + run.path("kind").asText());
+        };
+    }
+
+    private String runResult(JsonNode run) {
+        List<String> parts = new ArrayList<>();
+        switch (run.path("status").asText()) {
+            case "QUEUED" -> parts.add(text("timeline.queued"));
+            case "RUNNING" -> parts.add(text("timeline.running"));
+            case "FAILED" -> parts.add("❌ " + text("failure." + run.path("failureReason").asText()));
+            case "CANCELLED" -> parts.add(text("timeline.stopped"));
+            default -> {
+                // SUCCEEDED: duration and cost say enough.
+            }
+        }
+        if (run.hasNonNull("startedAt") && run.hasNonNull("finishedAt")) {
+            parts.add(duration(Duration.between(Instant.parse(run.path("startedAt").asText()),
+                    Instant.parse(run.path("finishedAt").asText()))));
+        }
+        if (run.hasNonNull("costUsd")) {
+            parts.add(money(run.path("costUsd")));
+        }
+        return parts.isEmpty() ? "" : " · " + String.join(" · ", parts);
+    }
+
+    private String outcome(JsonNode payload) {
+        return switch (payload.path("phase").asText()) {
+            case "COMPLETED" -> payload.hasNonNull("prUrl")
+                    ? format("timeline.completedPr", escape(payload.path("prUrl").asText()))
+                    : text("timeline.completedNoChanges");
+            case "FAILED" -> format("timeline.failed", text("failure." + payload.path("failureReason").asText()));
+            case "REJECTED" -> text("timeline.rejected");
+            case "CANCELLED" -> text("timeline.cancelled");
+            default -> format("timeline.active", text("phase." + payload.path("phase").asText()));
+        };
+    }
+
+    /** Joins blocks until the next would pass the message limit, then marks the cut. */
+    private static String joinWithin(List<String> blocks, String separator) {
+        StringBuilder html = new StringBuilder();
+        for (String block : blocks) {
+            String next = html.isEmpty() ? block : separator + block;
+            if (html.length() + next.length() > MESSAGE_LIMIT - 2) {
+                return html.append("\n…").toString();
+            }
+            html.append(next);
+        }
+        return html.toString();
+    }
+
+    private String time(String instant) {
+        return DateTimeFormatter.ofPattern("HH:mm").withZone(clock.getZone()).format(Instant.parse(instant));
+    }
+
+    private String dateTime(String instant) {
+        return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(clock.getZone()).format(Instant.parse(instant));
     }
 
     private String projectList(JsonNode projects) {
@@ -242,6 +373,9 @@ public final class Renderer {
     private static String money(JsonNode costUsd) {
         return costUsd.isTextual() ? "$" + new BigDecimal(costUsd.asText()).setScale(2, RoundingMode.HALF_UP).toPlainString() : "—";
     }
+
+    private static final java.util.Map<String, String> OUTCOME_ICONS =
+            java.util.Map.of("COMPLETED", "✅", "FAILED", "❌", "REJECTED", "🚫", "CANCELLED", "🛑");
 
     private static String taskId(JsonNode payload) {
         return String.valueOf(payload.path("taskId").asLong());
