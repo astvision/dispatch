@@ -49,5 +49,5 @@ Handing an execution run's changes to the team: committing them to the task's br
 _Avoid_: Publish, deploy, release
 
 **Run**:
-One invocation of an agent on a task: either a planning run (read-only) or an execution run (implementing an approved plan or a follow-up). All runs of a task continue the same agent conversation on the same branch.
+One invocation of an agent on a task: either a planning run (read-only) or an execution run (implementing an approved plan or a follow-up). All runs of a task work on the same branch. Planning runs continue one agent conversation. Execution runs continue another, which starts from the approved plan instead of the investigation.
 _Avoid_: Attempt, execution, job

@@ -385,7 +385,8 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **M3c** topics and splitting (built) | A Telegram topic per task in the requester's private chat (when @BotFather has topics on), and splitting a message into tasks on request with ✂️ |
 | **M3d** personal instances (built) | `path` and `effort` per project, groups without a chat, owner-only state and secrets on every OS, `dispatch init / project add / check / run`, launchers, CI on Linux, macOS and Windows |
 | **M3e** setup and team bot (built) | One-line install (`install.sh`, `install.ps1`), arrow-key `dispatch init` for a personal or team bot, joining a shared bot by admin approval in Telegram, `dispatch service` on Linux, macOS and Windows |
-| **M3f** interaction and ops | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
+| **M3f** leaner agent runs | A planning and a building session per task (ADR 0017), no plan files outside the task's run folder, the model that actually answered shown on plans and results, model and effort per phase, a CLAUDE.md hint in `dispatch check` |
+| **M3g** interaction and ops | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
 | **M4** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
