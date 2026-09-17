@@ -80,7 +80,8 @@ public final class ServiceCommand {
         if (jar == null || !Files.isRegularFile(jar)) {
             throw new CliException("the service runs dispatch.jar, but this is not running from it; install Dispatch first");
         }
-        Path java = Path.of(ProcessHandle.current().info().command().orElse("java"));
+        Path java = Executables.serviceJava(Path.of(ProcessHandle.current().info().command().orElse("java")),
+                System.getProperty("os.name"), processEnvironment, Path.of(System.getProperty("user.home")));
         String path = processEnvironment.entrySet().stream().filter(entry -> entry.getKey().equalsIgnoreCase("PATH"))
                 .map(Map.Entry::getValue).findFirst().orElse("");
         Service.Spec spec = new Service.Spec(java, jar.toAbsolutePath(), configFile.toAbsolutePath(),

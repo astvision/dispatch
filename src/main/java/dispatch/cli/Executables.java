@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -42,6 +43,32 @@ final class Executables {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * The running Java by the name Dispatch's launcher runs it with, JAVA_HOME's java or else the one on PATH, when that name
+     * leads to the same binary. A service must not name the running binary's own path where a name like that exists: with
+     * Homebrew, Fedora and the Windows installers that path is versioned (…/Cellar/openjdk/25.0.1/…), gone after an update.
+     */
+    static Path serviceJava(Path running, String osName, Map<String, String> env, Path home) {
+        String javaHome = variable(env, "JAVA_HOME");
+        Optional<Path> named;
+        try {
+            named = javaHome == null || javaHome.isBlank()
+                    ? find("java", osName, env, home)
+                    : Optional.of(Path.of(javaHome.strip(), "bin", osName.startsWith("Windows") ? "java.exe" : "java"));
+        } catch (InvalidPathException e) {
+            return running;
+        }
+        return named.filter(candidate -> sameFile(candidate, running)).orElse(running);
+    }
+
+    private static boolean sameFile(Path candidate, Path running) {
+        try {
+            return Files.isSameFile(candidate, running);
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private static List<String> extensions(Map<String, String> env) {
