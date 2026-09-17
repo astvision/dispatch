@@ -8,6 +8,7 @@ import dispatch.config.Config;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.Renderer;
 import dispatch.testing.FakeClaude;
+import dispatch.testing.FakeGh;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.GitFixture;
 import dispatch.testing.SqlRows;
@@ -49,6 +50,7 @@ class AppTest {
         telegram = FakeTelegram.start();
         repos = GitFixture.create(dir, "autoland-management");
         Path claude = FakeClaude.install(Files.createDirectories(dir.resolve("bin")));
+        Path gh = FakeGh.install(dir.resolve("bin"));
         config = new Config("backend", repos.stateDir,
                 new Config.Telegram(GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali"))),
                 new Config.Scheduler(2),
@@ -57,7 +59,7 @@ class AppTest {
                 Map.of("claude-code", new Config.Agent(claude.toString())),
                 List.of(new Config.Project("autoland-management", "alm", repos.origin.toString(), "main", "claude-code", null,
                         List.of(), null)),
-                new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", "gh"),
+                new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", gh.toString()),
                 new Config.Secrets(FakeTelegram.TOKEN, null));
     }
 
@@ -85,15 +87,40 @@ class AppTest {
         assertTrue(plan.get("text").asText().contains("The user reports that login"), plan.toString());
         assertEquals("reject:1:1", plan.get("reply_markup").get("inline_keyboard").get(0).get(1).get("callback_data").asText());
 
-        telegram.pushUpdate(Json.read("""
-                {"update_id":2,"callback_query":{"id":"cb-2","from":{"id":200,"is_bot":false,"first_name":"Ali"},
-                 "message":{"message_id":1001,"chat":{"id":%d,"type":"supergroup"},"date":1789640000,"text":"plan"},
-                 "chat_instance":"1","data":"reject:1:1"}}""".formatted(GROUP)));
+        telegram.pushUpdate(callback(2, 200, "Ali", "reject:1:1"));
 
         assertEquals(messages.getString("callback.rejected"),
                 telegram.awaitRequest("answerCallbackQuery", WAIT).json().get("text").asText());
         assertTrue(telegram.awaitRequest("sendMessage", WAIT).json().get("text").asText().contains("Ali"));
         assertEquals("REJECTED", SqlRows.single(repos.stateDir.resolve("dispatch.db"), "SELECT phase FROM task WHERE id = 1").get("phase"));
+        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
+    }
+
+    @Test
+    void correctedAndApprovedPlanEndsAsADraftPullRequestLinkedInTheGroup() throws Exception {
+        app = start();
+        telegram.pushUpdate(command(1, 10, 100, "Bold", "/task@" + FakeTelegram.BOT_USERNAME + " alm Fix the login timeout on staging"));
+        telegram.awaitRequest("sendMessage", WAIT);
+        JsonNode firstPlan = telegram.awaitRequest("sendMessage", WAIT).json();
+        assertEquals("approve:1:1", firstPlan.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
+
+        // Sent messages get ids 1000, 1001, ... in order: the queued ack, then the plan.
+        telegram.pushUpdate(reply(2, 11, 200, "Ali", "Also cover the mobile login", 1001));
+        assertTrue(awaitMessageContaining("✏️").contains("#1"));
+        JsonNode revisedPlan = telegram.awaitRequest("sendMessage", WAIT).json();
+        assertEquals("approve:1:2", revisedPlan.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
+
+        telegram.pushUpdate(callback(3, 200, "Ali", "approve:1:2"));
+
+        assertEquals(messages.getString("callback.approved"),
+                telegram.awaitRequest("answerCallbackQuery", WAIT).json().get("text").asText());
+        String completed = awaitMessageContaining(FakeGh.PR_URL);
+        assertTrue(completed.contains("#1"), completed);
+        Path db = repos.stateDir.resolve("dispatch.db");
+        assertEquals("COMPLETED", SqlRows.single(db, "SELECT phase FROM task WHERE id = 1").get("phase"));
+        assertEquals(FakeGh.PR_URL, SqlRows.single(db, "SELECT pr_url FROM task WHERE id = 1").get("pr_url"));
+        assertEquals("dispatch #1: Fix the login timeout on staging", GitFixture.sh(dir, "git", "--git-dir", repos.origin.toString(),
+                "log", "-1", "--format=%s", "refs/heads/dispatch/1"));
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 
@@ -138,6 +165,22 @@ class AppTest {
                  "chat":{"id":%d,"title":"Team","type":"supergroup"},"date":1789640000,"text":%s,
                  "entities":[{"offset":0,"length":%d,"type":"bot_command"}]}}"""
                 .formatted(updateId, messageId, fromId, name, GROUP, Json.MAPPER.valueToTree(text), length));
+    }
+
+    private static JsonNode callback(long updateId, long fromId, String name, String data) {
+        return Json.read("""
+                {"update_id":%d,"callback_query":{"id":"cb-%d","from":{"id":%d,"is_bot":false,"first_name":"%s"},
+                 "message":{"message_id":1001,"chat":{"id":%d,"type":"supergroup"},"date":1789640000,"text":"plan"},
+                 "chat_instance":"1","data":"%s"}}""".formatted(updateId, updateId, fromId, name, GROUP, data));
+    }
+
+    private static JsonNode reply(long updateId, long messageId, long fromId, String name, String text, long repliedMessageId) {
+        return Json.read("""
+                {"update_id":%d,"message":{"message_id":%d,"from":{"id":%d,"is_bot":false,"first_name":"%s"},
+                 "chat":{"id":%d,"title":"Team","type":"supergroup"},"date":1789640000,"text":%s,
+                 "reply_to_message":{"message_id":%d,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},
+                                     "chat":{"id":%d,"type":"supergroup"},"date":1789640000,"text":"plan"}}}"""
+                .formatted(updateId, messageId, fromId, name, GROUP, Json.MAPPER.valueToTree(text), repliedMessageId, GROUP));
     }
 
     private static void awaitFile(Path file) throws Exception {

@@ -19,6 +19,8 @@ RestartSec=10
 # With the default control-group mode, agents would be killed directly and their runs misreported as agent errors.
 KillMode=mixed
 TimeoutStopSec=60
+# The JVM exits with 128+SIGTERM after a graceful stop; that is a clean stop, not a failure.
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target
