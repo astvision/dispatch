@@ -31,6 +31,10 @@ public final class ClaudeCodeAgent implements Agent {
     private static final Set<String> WITHHELD_VARIABLES = Set.of("TELEGRAM_BOT_TOKEN", "GH_TOKEN");
     /** Compacted to one line (and so validated as JSON) when the class loads, not on the first run. */
     private static final String PLAN_SCHEMA = Json.read(resource("/plan-schema.json")).toString();
+    private static final String SPLIT_SCHEMA = Json.read(resource("/split-schema.json")).toString();
+    /** Replaces Claude Code's coding prompt, which a split does not need: it would multiply the split's cost (ADR 0013). */
+    private static final String SPLIT_SYSTEM_PROMPT =
+            "You split a developer's chat message into independent development tasks. Answer only through the structured output.";
 
     private final String command;
     private final Map<String, String> environment;
@@ -68,7 +72,7 @@ public final class ClaudeCodeAgent implements Agent {
 
     private static String permissionMode(RunKind kind) {
         return switch (kind) {
-            case PLAN -> "plan";
+            case PLAN, SPLIT -> "plan";
             case EXECUTE -> "auto";
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
         };
@@ -82,7 +86,10 @@ public final class ClaudeCodeAgent implements Agent {
                 "--setting-sources", "project,local",
                 "--strict-mcp-config",
                 "--max-budget-usd", request.budgetUsd().toPlainString()));
-        if (request.resume()) {
+        if (request.kind() == RunKind.SPLIT) {
+            // Nothing will continue a split: no transcript on disk, no skills listed in its prompt.
+            args.addAll(List.of("--no-session-persistence", "--disable-slash-commands"));
+        } else if (request.resume()) {
             args.addAll(List.of("--resume", request.sessionId().toString()));
         } else {
             args.addAll(List.of("--session-id", request.sessionId().toString()));
@@ -100,6 +107,7 @@ public final class ClaudeCodeAgent implements Agent {
             // --disallowedTools takes every following argument that is not a flag, so it stays last.
             case EXECUTE -> args.addAll(List.of("--tools", "Read,Edit,Write,Bash",
                     "--disallowedTools", "Bash(git commit *)", "Bash(git push *)", "Bash(gh *)"));
+            case SPLIT -> args.addAll(List.of("--tools", "", "--json-schema", SPLIT_SCHEMA, "--system-prompt", SPLIT_SYSTEM_PROMPT));
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
         }
         return args;

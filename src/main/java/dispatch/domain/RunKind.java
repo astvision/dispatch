@@ -6,5 +6,7 @@ public enum RunKind {
     /** Implements an approved plan or a follow-up (M2). */
     EXECUTE,
     /** Repeats only the commit/push/PR step after a delivery failure (M3). */
-    DELIVER
+    DELIVER,
+    /** Proposes how to split a draft's message into tasks (ADR 0013); belongs to no task and is never stored as a run. */
+    SPLIT
 }

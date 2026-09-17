@@ -9,6 +9,7 @@ import java.util.UUID;
 /**
  * Everything an agent needs for one run.
  *
+ * @param sessionId    the task's agent conversation; null for a split, which belongs to no task
  * @param resume       false for a task's first run (starts {@code sessionId}), true to continue that session
  * @param readOnlyDirs extra directories the agent may read, e.g. downloaded attachments
  * @param model        null for the agent's default

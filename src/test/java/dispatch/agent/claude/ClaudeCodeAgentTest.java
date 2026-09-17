@@ -93,6 +93,27 @@ class ClaudeCodeAgentTest {
     }
 
     @Test
+    void splitRunAnswersWithTopicsWithoutToolsSkillsOrASavedSession() throws Exception {
+        RunRequest request = new RunRequest(RunKind.SPLIT, workdir, "Split this message", null, false, List.of(),
+                new BigDecimal("0.25"), "haiku", dir.resolve("splits/7-1"));
+
+        AgentResult result = agent.start(request).await();
+
+        assertEquals(AgentOutcome.SUCCEEDED, result.outcome(), result.error());
+        assertTrue(result.structuredOutput().contains("make help target"), result.structuredOutput());
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertEquals("plan", valueAfter(args, "--permission-mode"));
+        assertEquals("", valueAfter(args, "--tools"), "no tools at all");
+        assertEquals("haiku", valueAfter(args, "--model"));
+        assertEquals("0.25", valueAfter(args, "--max-budget-usd"));
+        assertTrue(valueAfter(args, "--json-schema").contains("\"topics\""), args.toString());
+        assertTrue(valueAfter(args, "--system-prompt").contains("split"), "Claude Code's own coding prompt is not needed");
+        assertTrue(args.contains("--no-session-persistence"), args.toString());
+        assertTrue(args.contains("--disable-slash-commands"), args.toString());
+        assertFalse(args.contains("--session-id") || args.contains("--resume"), args.toString());
+    }
+
+    @Test
     void agentStartedInTheWrongPermissionModeIsStoppedInsteadOfRunningOn() throws Exception {
         RunHandle handle = agent.start(new RunRequest(RunKind.EXECUTE, workdir, "SCENARIO:wrong-mode", SESSION, true, List.of(),
                 new BigDecimal("10"), "haiku", dir.resolve("runs/1/2")));

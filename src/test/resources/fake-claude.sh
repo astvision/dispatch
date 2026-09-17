@@ -1,8 +1,9 @@
 #!/bin/sh
 # Stands in for the claude CLI in tests: records how it was called, then behaves as the prompt asks.
-# SCENARIO:<name> applies to any run. Otherwise a planning run replays the recorded plan, and an execution run (auto mode)
-# edits README.md and replays the recorded execution unless an exec scenario (exec-fail, nochange, leaky-summary) says
-# otherwise; those names never match the general scenarios, so such a task still gets its plan first.
+# SCENARIO:<name> applies to any run. Otherwise a split replays the recorded three topics (one-topic: a single topic), a
+# planning run replays the recorded plan, and an execution run (auto mode) edits README.md and replays the recorded
+# execution unless an exec scenario (exec-fail, nochange, leaky-summary) says otherwise; those names never match the
+# general scenarios, so such a task still gets its plan first.
 printf '%s\n' "$@" > fake-claude.args
 env > fake-claude.env
 prompt=$(cat)
@@ -11,6 +12,7 @@ printf '%s' "$prompt" > fake-claude.prompt
 mode=plan
 case " $* " in
   *" --permission-mode auto "*) mode=auto ;;
+  *" --no-session-persistence "*) mode=split ;;
 esac
 
 case "$prompt" in
@@ -45,6 +47,18 @@ case "$prompt" in
     wait
     ;;
   *)
+    if [ "$mode" = split ]; then
+      case "$prompt" in
+        *SCENARIO:one-topic*)
+          printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-split","permissionMode":"plan"}'
+          printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"fake-split","total_cost_usd":0.014,"num_turns":2,"permission_denials":[],"structured_output":{"topics":["Fix the login timeout"]}}'
+          ;;
+        *)
+          cat "$FAKE_CLAUDE_FIXTURES/split-success.jsonl"
+          ;;
+      esac
+      exit 0
+    fi
     if [ "$mode" = plan ]; then
       cat "$FAKE_CLAUDE_FIXTURES/plan-success.jsonl"
       exit 0
