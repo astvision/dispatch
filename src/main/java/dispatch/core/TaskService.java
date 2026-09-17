@@ -481,7 +481,8 @@ public final class TaskService {
         for (Task task : finished) {
             BigDecimal cost = costs.get(task.id());
             listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
-                    .put("phase", task.phase().name()).put("priority", task.priority().name()).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
+                    .put("phase", task.phase().name()).put("priority", task.priority().name())
+                    .put("requester", task.requester().name()).put("createdAt", text(task.createdAt())).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
                     .put("costUsd", cost == null ? null : cost.toPlainString()).put("completedAt", text(task.completedAt()));
         }
         enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, payload, clock.instant());

@@ -251,9 +251,9 @@ class RendererTest {
     void historyShowsEachOutcomeWithPullRequestFailureCostAndAge() {
         String html = renderer.render(OutboxKind.HISTORY, historyPayload()).html();
 
-        assertTrue(html.contains("✅ 🟡 <b>#2</b> life · $0.42 · 3 цаг"), html);
+        assertTrue(html.contains("✅ 🟡 <b>#2</b> life · Bold · 09-17 07:00 · $0.42"), html);
         assertTrue(html.contains("https://github.com/acme/life/pull/1"), html);
-        assertTrue(html.contains("❌ <b>#5</b> life"), html);
+        assertTrue(html.contains("❌ <b>#5</b> life · Ali &lt;qa&gt; · 09-17 05:40"), html);
         assertTrue(html.contains(messages.getString("failure.DELIVERY")), html);
         assertTrue(html.contains("🚫 <b>#4</b>"), html);
         assertTrue(html.contains("/history"), "points to the per-task timeline: " + html);
@@ -375,11 +375,13 @@ class RendererTest {
         com.fasterxml.jackson.databind.node.ArrayNode tasks = payload.putArray("tasks");
         tasks.addObject().put("taskId", 2).put("project", "life").put("title", "Add make help").put("phase", "COMPLETED").put("priority", "NORMAL")
                 .put("prUrl", "https://github.com/acme/life/pull/1").putNull("failureReason").put("costUsd", "0.42")
-                .put("completedAt", "2026-09-17T07:30:00Z");
+                .put("requester", "Bold").put("createdAt", "2026-09-17T07:00:00Z").put("completedAt", "2026-09-17T07:30:00Z");
         tasks.addObject().put("taskId", 5).put("project", "life").put("title", "Fix login").put("phase", "FAILED")
-                .putNull("prUrl").put("failureReason", "DELIVERY").put("costUsd", "0.31").put("completedAt", "2026-09-17T06:00:00Z");
+                .putNull("prUrl").put("failureReason", "DELIVERY").put("costUsd", "0.31").put("requester", "Ali <qa>")
+                .put("createdAt", "2026-09-17T05:40:00Z").put("completedAt", "2026-09-17T06:00:00Z");
         tasks.addObject().put("taskId", 4).put("project", "life").put("title", "Old idea").put("phase", "REJECTED")
-                .putNull("prUrl").putNull("failureReason").putNull("costUsd").put("completedAt", "2026-09-16T10:30:00Z");
+                .putNull("prUrl").putNull("failureReason").putNull("costUsd").put("requester", "Bold")
+                .put("createdAt", "2026-09-16T10:00:00Z").put("completedAt", "2026-09-16T10:30:00Z");
         return payload;
     }
 

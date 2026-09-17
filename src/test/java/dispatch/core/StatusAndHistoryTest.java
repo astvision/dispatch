@@ -228,14 +228,17 @@ class StatusAndHistoryTest {
     }
 
     @Test
-    void historyShowsEachTasksPriority() {
+    void historyShowsWhoGaveEachTaskWhenAndHowUrgent() {
+        clock.advance(Duration.ofMinutes(5));
         long id = completed("Add make help", "83");
         db.transaction(tx -> tx.update("UPDATE task SET priority = 'LOW' WHERE id = ?", id));
 
         db.transaction(tx -> tasks.history(tx, LIFE, CHAT + "/84", CHAT));
 
-        assertEquals("LOW", Json.read(row("SELECT payload FROM outbox WHERE kind = 'HISTORY'").get("payload"))
-                .get("tasks").get(0).get("priority").asText());
+        JsonNode listed = Json.read(row("SELECT payload FROM outbox WHERE kind = 'HISTORY'").get("payload")).get("tasks").get(0);
+        assertEquals("LOW", listed.get("priority").asText());
+        assertEquals("Bold", listed.get("requester").asText());
+        assertEquals("2026-09-17T10:05:00Z", listed.get("createdAt").asText());
     }
 
     private long createFor(Requester who, String project, String text, String messageId) {

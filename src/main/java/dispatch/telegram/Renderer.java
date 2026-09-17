@@ -325,9 +325,10 @@ public final class Renderer {
         List<String> blocks = new ArrayList<>(List.of(text("history.header")));
         for (JsonNode task : tasks) {
             String phase = task.path("phase").asText();
-            StringBuilder block = new StringBuilder("\n").append(format("history.line", (OUTCOME_ICONS.getOrDefault(phase, "•") + " " + icon(task)).strip(),
-                    taskId(task), escape(task.path("project").asText()), money(task.path("costUsd")),
-                    age(Instant.parse(task.path("completedAt").asText()))))
+            String icons = (OUTCOME_ICONS.getOrDefault(phase, "•") + " " + icon(task)).strip();
+            StringBuilder block = new StringBuilder("\n").append(format("history.line", icons, taskId(task),
+                    escape(task.path("project").asText()), escape(task.path("requester").asText()),
+                    shortDateTime(task.path("createdAt").asText()), money(task.path("costUsd"))))
                     .append("\n").append(escapeWithin(task.path("title").asText(), TITLE_LIMIT));
             if (task.hasNonNull("prUrl")) {
                 block.append("\n").append(escape(task.path("prUrl").asText()));
@@ -413,6 +414,10 @@ public final class Renderer {
 
     private String time(String instant) {
         return DateTimeFormatter.ofPattern("HH:mm").withZone(clock.getZone()).format(Instant.parse(instant));
+    }
+
+    private String shortDateTime(String instant) {
+        return DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(clock.getZone()).format(Instant.parse(instant));
     }
 
     private String dateTime(String instant) {
