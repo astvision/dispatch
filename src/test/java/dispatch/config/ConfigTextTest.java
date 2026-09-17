@@ -1,4 +1,4 @@
-package dispatch.cli;
+package dispatch.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -111,7 +111,7 @@ class ConfigTextTest {
 
     @Test
     void unknownGroupIsRefused() {
-        CliException error = assertThrows(CliException.class,
+        ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigText.addProject("telegram:\n  groups:\n    - name: bold\n      projects: [alm]\nprojects:\n  - name: alm\n",
                         "team", "life", LIFE));
 

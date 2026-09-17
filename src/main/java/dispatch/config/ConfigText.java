@@ -1,4 +1,4 @@
-package dispatch.cli;
+package dispatch.config;
 
 import java.io.StringReader;
 import java.util.ArrayList;
@@ -19,7 +19,7 @@ import org.yaml.snakeyaml.nodes.SequenceNode;
  * positions of the new lines come from where SnakeYAML found the existing nodes; re-serializing the tree would lose the
  * comments' places.
  */
-final class ConfigText {
+public final class ConfigText {
 
     private record Insert(int index, String text) {
     }
@@ -31,7 +31,7 @@ final class ConfigText {
      * @param name         the project's name as it should appear in YAML
      * @param projectLines the project's lines without indentation, "name: ..." first
      */
-    static String addProject(String text, String group, String name, List<String> projectLines) {
+    public static String addProject(String text, String group, String name, List<String> projectLines) {
         MappingNode top = root(text);
         Lines lines = new Lines(text);
         List<Insert> inserts = new ArrayList<>(List.of(
@@ -49,9 +49,9 @@ final class ConfigText {
                 return top;
             }
         } catch (YAMLException e) {
-            throw new CliException("the config is not valid YAML: " + e.getMessage());
+            throw new ConfigException("the config is not valid YAML: " + e.getMessage());
         }
-        throw new CliException("the config is not a YAML mapping");
+        throw new ConfigException("the config is not a YAML mapping");
     }
 
     private static SequenceNode groupProjects(MappingNode top, String group) {
@@ -62,11 +62,11 @@ final class ConfigText {
                     if (value(candidate, "projects") instanceof SequenceNode projects) {
                         return projects;
                     }
-                    throw new CliException("group '" + group + "' has no project list to add to; add the project by hand");
+                    throw new ConfigException("group '" + group + "' has no project list to add to; add the project by hand");
                 }
             }
         }
-        throw new CliException("no group named '" + group + "' in the config");
+        throw new ConfigException("no group named '" + group + "' in the config");
     }
 
     private static Insert intoGroup(Lines lines, SequenceNode projects, String name) {
@@ -81,7 +81,7 @@ final class ConfigText {
     private static Insert intoProjects(Lines lines, MappingNode top, List<String> projectLines) {
         if (!(value(top, "projects") instanceof SequenceNode projects) || projects.getFlowStyle() == DumperOptions.FlowStyle.FLOW
                 || projects.getValue().isEmpty()) {
-            throw new CliException("the config's projects are not a list of blocks; add the project by hand");
+            throw new ConfigException("the config's projects are not a list of blocks; add the project by hand");
         }
         String prefix = lines.prefix(projects.getValue().getFirst().getStartMark());
         StringBuilder block = new StringBuilder();
@@ -168,7 +168,7 @@ final class ConfigText {
         /** The end of the text; a last line without a newline would run into the inserted one, so this is not supported. */
         private int endWithNewline() {
             if (!text.isEmpty() && !text.endsWith("\n")) {
-                throw new CliException("the config's last line has no line break; add one and try again");
+                throw new ConfigException("the config's last line has no line break; add one and try again");
             }
             return text.length();
         }

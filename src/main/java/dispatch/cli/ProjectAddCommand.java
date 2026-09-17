@@ -1,14 +1,15 @@
 package dispatch.cli;
 
 import dispatch.config.Config;
+import dispatch.config.ConfigFile;
+import dispatch.config.ConfigText;
 import dispatch.config.ConfigException;
 import dispatch.config.ConfigLoader;
 import dispatch.workspace.Git;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -69,6 +70,8 @@ public final class ProjectAddCommand {
             edited = ConfigText.addProject(Files.readString(configFile), group, yaml(name), lines);
         } catch (IOException e) {
             throw new CliException("cannot read " + configFile + ": " + e.getMessage());
+        } catch (ConfigException e) {
+            throw new CliException(e.getMessage());
         }
         replaceValidated(configFile, edited, environment);
         terminal.ok("added " + name + ": " + probe.folder() + " (base " + base + ", group " + group + ")");
@@ -136,27 +139,11 @@ public final class ProjectAddCommand {
         return names.getFirst();
     }
 
-    private void replaceValidated(Path configFile, String edited, Map<String, String> environment) {
-        Path candidate = null;
+    private static void replaceValidated(Path configFile, String edited, Map<String, String> environment) {
         try {
-            candidate = Files.createTempFile(configFile.toAbsolutePath().getParent(), ".dispatch-", ".yaml");
-            Files.writeString(candidate, edited);
-            load(candidate, configFile, environment);
-            try {
-                Files.move(candidate, configFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(candidate, configFile, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException e) {
-            throw new CliException("cannot write " + configFile + ": " + e.getMessage());
-        } finally {
-            if (candidate != null) {
-                try {
-                    Files.deleteIfExists(candidate);
-                } catch (IOException e) {
-                    terminal.warn("could not remove the draft " + candidate + ": " + e.getMessage());
-                }
-            }
+            ConfigFile.replace(configFile, edited, environment);
+        } catch (ConfigException | UncheckedIOException e) {
+            throw new CliException(e.getMessage());
         }
     }
 }
