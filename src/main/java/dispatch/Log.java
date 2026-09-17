@@ -12,6 +12,8 @@ public final class Log {
     private static final DateTimeFormatter TIMESTAMP =
             DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
 
+    private static volatile Redactor redactor = Redactor.patternsOnly();
+
     private Log() {
     }
 
@@ -25,6 +27,11 @@ public final class Log {
 
     public static void error(String event, Throwable error, Object... pairs) {
         write(line(Instant.now(), "ERROR", event, pairs), error);
+    }
+
+    /** Installed once at startup with the process's secret values; patterns-only until then. */
+    public static void useRedactor(Redactor redactor) {
+        Log.redactor = redactor;
     }
 
     static String line(Instant ts, String level, String event, Object... pairs) {
@@ -45,7 +52,7 @@ public final class Log {
         if (value == null) {
             return "null";
         }
-        String text = value.toString();
+        String text = redactor.redact(value.toString());
         boolean plain = !text.isEmpty() && text.chars().noneMatch(c -> c <= ' ' || c == '"' || c == '=');
         if (plain) {
             return text;
@@ -61,6 +68,7 @@ public final class Log {
         StringWriter trace = new StringWriter();
         error.printStackTrace(new PrintWriter(trace));
         // One println keeps the event line and its stack trace together when threads log concurrently.
-        System.out.println(line + " error=" + value(String.valueOf(error.getMessage())) + System.lineSeparator() + trace);
+        System.out.println(line + " error=" + value(String.valueOf(error.getMessage())) + System.lineSeparator()
+                + redactor.redact(trace.toString()));
     }
 }

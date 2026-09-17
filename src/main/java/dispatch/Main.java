@@ -13,6 +13,9 @@ public final class Main {
     }
 
     public static void main(String[] args) throws InterruptedException {
+        // Before anything is logged: every log line from here on has this process's secrets masked.
+        Redactor redactor = Redactor.fromEnvironment(System.getenv());
+        Log.useRedactor(redactor);
         if (args.length != 1) {
             System.err.println("usage: java -jar dispatch.jar <config.yaml>");
             System.exit(2);
@@ -21,7 +24,7 @@ public final class Main {
         try {
             config = ConfigLoader.load(Path.of(args[0]), System.getenv());
         } catch (ConfigException e) {
-            System.err.println(e.getMessage());
+            System.err.println(redactor.redact(e.getMessage()));
             Log.error("config.invalid", null, "detail", e.getMessage());
             System.exit(2);
             return;

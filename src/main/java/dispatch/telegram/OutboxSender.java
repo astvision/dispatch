@@ -2,6 +2,7 @@ package dispatch.telegram;
 
 import dispatch.Json;
 import dispatch.Log;
+import dispatch.Redactor;
 import dispatch.core.Signal;
 import dispatch.store.Database;
 import dispatch.store.Outbox;
@@ -24,15 +25,18 @@ public final class OutboxSender implements Runnable {
     private final Database db;
     private final BotApi api;
     private final Renderer renderer;
+    private final Redactor redactor;
     private final Signal signal;
     private final Clock clock;
     private final Duration idlePoll;
     private volatile boolean stopped;
 
-    public OutboxSender(Database db, BotApi api, Renderer renderer, Signal signal, Clock clock, Duration idlePoll) {
+    public OutboxSender(Database db, BotApi api, Renderer renderer, Redactor redactor, Signal signal, Clock clock,
+                        Duration idlePoll) {
         this.db = db;
         this.api = api;
         this.renderer = renderer;
+        this.redactor = redactor;
         this.signal = signal;
         this.clock = clock;
         this.idlePoll = idlePoll;
@@ -74,7 +78,8 @@ public final class OutboxSender implements Runnable {
         int attempts = message.attempts() + 1;
         Renderer.Rendered rendered;
         try {
-            rendered = renderer.render(message.kind(), Json.read(message.payload()));
+            // Masked before rendering, so length limits apply to the text that is actually sent.
+            rendered = renderer.render(message.kind(), Json.read(redactor.redact(message.payload())));
         } catch (RuntimeException e) {
             Log.error("outbox.render_failed", e, "id", message.id(), "kind", message.kind());
             db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, "render failed: " + e.getMessage()));

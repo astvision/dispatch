@@ -88,7 +88,8 @@ public final class App {
 
         Renderer renderer = new Renderer(Renderer.mongolian(), clock);
         registerCommandMenu(api, renderer, config.telegram().groupChatId());
-        OutboxSender sender = new OutboxSender(db, api, renderer, outboxSignal, clock, Duration.ofSeconds(30));
+        OutboxSender sender = new OutboxSender(db, api, renderer, Redactor.fromEnvironment(environment), outboxSignal, clock,
+                Duration.ofSeconds(30));
         UpdateHandler handler = new UpdateHandler(db, tasks, projects, api, renderer, config.telegram().groupChatId(),
                 botUsername, clock, outboxSignal::wake);
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
+import dispatch.Redactor;
 import dispatch.core.Signal;
 import dispatch.domain.OutboxKind;
 import dispatch.store.Database;
@@ -45,7 +46,9 @@ class OutboxSenderTest {
         db = Database.open(dbFile);
         db.migrate();
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
-        sender = new OutboxSender(db, api, new Renderer(Renderer.mongolian(), clock), new Signal(), clock, Duration.ofSeconds(1));
+        sender = new OutboxSender(db, api, new Renderer(Renderer.mongolian(), clock),
+                Redactor.fromEnvironment(Map.of("ANTHROPIC_API_KEY", "sk-ant-test-value-for-instance")), new Signal(), clock,
+                Duration.ofSeconds(1));
     }
 
     @AfterEach
@@ -69,6 +72,21 @@ class OutboxSenderTest {
         assertEquals("telegram:-100/1000", row.get("sent_ref"));
         assertEquals("1", row.get("attempts"));
         assertFalse(sender.deliverDue(), "nothing left to send");
+    }
+
+    @Test
+    void secretsAreMaskedBeforeAnythingReachesTelegram() throws Exception {
+        String githubToken = "gh" + "p_" + "Q7w8E9r0T1".repeat(4);
+        String detail = "git fetch failed for https://x-access-token:" + githubToken + "@github.com/acme/app.git; key "
+                + "sk-ant-test-value-for-instance";
+        enqueue(OutboxKind.TASK_FAILED, Json.object().put("taskId", 7).put("reason", "SETUP").put("detail", detail));
+
+        sender.deliverDue();
+
+        String text = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json().get("text").asText();
+        assertFalse(text.contains(githubToken), text);
+        assertFalse(text.contains("sk-ant-test-value-for-instance"), text);
+        assertTrue(text.contains("https://[redacted]@github.com/acme/app.git"), text);
     }
 
     @Test
