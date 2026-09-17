@@ -2,7 +2,7 @@ package dispatch.domain;
 
 import java.time.Instant;
 
-/** A run as stored. Nullable: pid, pidStart, startedAt, finishedAt. */
+/** A run as stored. Nullable: requestedByName (runs from before schema v2), pid, pidStart, startedAt, finishedAt. */
 public record Run(
         long taskId,
         int seq,
@@ -10,6 +10,7 @@ public record Run(
         RunStatus status,
         String instruction,
         String requestedBy,
+        String requestedByName,
         Long pid,
         Instant pidStart,
         Instant queuedAt,

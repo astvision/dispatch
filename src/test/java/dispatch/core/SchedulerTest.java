@@ -82,7 +82,7 @@ class SchedulerTest {
         return db.transactionReturning(tx -> {
             long id = Tasks.insert(tx, new Tasks.NewTask("alm", "t", "t", new Requester("telegram:1", "Bold"),
                     "telegram:-1/" + UUID.randomUUID(), "telegram:-1", UUID.randomUUID(), "main"), Phase.PLANNING, clock.instant());
-            Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, "t", "telegram:1"), clock.instant());
+            Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, "t", new Requester("telegram:1", "Bold")), clock.instant());
             clock.advance(Duration.ofSeconds(1));
             return id;
         });

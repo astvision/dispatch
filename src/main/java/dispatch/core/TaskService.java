@@ -87,7 +87,7 @@ public final class TaskService {
         String description = text.strip();
         long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, chatRef,
                 UUID.randomUUID(), project.baseBranch()), Phase.PLANNING, now);
-        Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, description, who.ref()), now);
+        Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, description, who), now);
         Events.record(tx, id, null, who.ref(), null, Phase.PLANNING, "created", now);
         enqueue(tx, id, OutboxKind.TASK_QUEUED, chatRef, originRef,
                 Json.object().put("taskId", id).put("project", project.name()), now);

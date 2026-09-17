@@ -87,7 +87,7 @@ class RunsClaimTest {
         return db.transactionReturning(tx -> {
             long id = Tasks.insert(tx, new Tasks.NewTask(project, "t", "t", new Requester("telegram:1", "Bold"),
                     "telegram:-1/" + UUID.randomUUID(), "telegram:-1", UUID.randomUUID(), "main"), Phase.PLANNING, queuedAt);
-            Runs.insert(tx, new Runs.NewRun(id, 1, kind, "t", "telegram:1"), queuedAt);
+            Runs.insert(tx, new Runs.NewRun(id, 1, kind, "t", new Requester("telegram:1", "Bold")), queuedAt);
             return id;
         });
     }

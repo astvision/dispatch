@@ -15,7 +15,7 @@ public final class Tasks {
 
     private static final String COLUMNS = """
             id, project, title, description, phase, requester_ref, requester_name, origin_ref, chat_ref, session_id,
-            base_branch, base_sha, worktree, plan_json, failure_reason, failure_detail,
+            base_branch, base_sha, worktree, plan_json, pr_url, failure_reason, failure_detail,
             created_at, started_at, completed_at, updated_at""";
 
     private Tasks() {
@@ -96,6 +96,7 @@ public final class Tasks {
                 row.string("base_sha"),
                 row.path("worktree"),
                 row.string("plan_json"),
+                row.string("pr_url"),
                 row.enumValue("failure_reason", FailureReason.class),
                 row.string("failure_detail"),
                 row.instant("created_at"),

@@ -2,6 +2,7 @@ package dispatch.store;
 
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
+import dispatch.domain.Requester;
 import dispatch.domain.Run;
 import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
@@ -16,12 +17,13 @@ import java.util.OptionalInt;
 public final class Runs {
 
     private static final String COLUMNS = """
-            task_id, seq, kind, status, instruction, requested_by, pid, pid_start, queued_at, started_at, finished_at""";
+            task_id, seq, kind, status, instruction, requested_by, requested_by_name, pid, pid_start, queued_at, started_at,
+            finished_at""";
 
     private Runs() {
     }
 
-    public record NewRun(long taskId, int seq, RunKind kind, String instruction, String requestedBy) {
+    public record NewRun(long taskId, int seq, RunKind kind, String instruction, Requester requestedBy) {
     }
 
     /** Result columns written once when a run ends; any may be null. */
@@ -38,9 +40,10 @@ public final class Runs {
 
     public static void insert(Tx tx, NewRun run, Instant now) {
         tx.update("""
-                        INSERT INTO run (task_id, seq, kind, status, instruction, requested_by, queued_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                run.taskId(), run.seq(), run.kind(), RunStatus.QUEUED, run.instruction(), run.requestedBy(), now);
+                        INSERT INTO run (task_id, seq, kind, status, instruction, requested_by, requested_by_name, queued_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                run.taskId(), run.seq(), run.kind(), RunStatus.QUEUED, run.instruction(), run.requestedBy().ref(),
+                run.requestedBy().name(), now);
     }
 
     /**
@@ -117,6 +120,7 @@ public final class Runs {
                 row.enumValue("status", RunStatus.class),
                 row.string("instruction"),
                 row.string("requested_by"),
+                row.string("requested_by_name"),
                 row.longOrNull("pid"),
                 row.instant("pid_start"),
                 row.instant("queued_at"),
