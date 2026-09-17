@@ -220,6 +220,26 @@ class RendererTest {
     }
 
     @Test
+    void joinRequestOffersAButtonPerGroupAndDeny() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.JOIN_REQUEST, joinPayload("OPEN"));
+
+        assertTrue(rendered.html().contains("Ali &lt;x&gt;") && rendered.html().contains("@ali_dev") && rendered.html().contains("555"),
+                rendered.html());
+        assertEquals(List.of(List.of(new Renderer.Button("✅ backend", "join:7:backend"), new Renderer.Button("✅ mobile", "join:7:mobile")),
+                List.of(new Renderer.Button(messages.getString("button.joinDeny"), "join:7:-"))), rendered.keyboard());
+    }
+
+    @Test
+    void decidedJoinRequestSaysWhoDecidedWithoutButtons() {
+        Renderer.Rendered approved = renderer.render(OutboxKind.JOIN_REQUEST, joinPayload("APPROVED").put("group", "backend"));
+        Renderer.Rendered denied = renderer.render(OutboxKind.JOIN_REQUEST, joinPayload("DENIED"));
+
+        assertTrue(approved.html().contains("backend") && approved.html().contains("Nomin"), approved.html());
+        assertTrue(denied.html().contains("Nomin"), denied.html());
+        assertTrue(approved.keyboard().isEmpty() && denied.keyboard().isEmpty());
+    }
+
+    @Test
     void createdDraftShowsTheTaskWithoutButtons() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT, draftPayload(List.of("alm", "crm"), "crm", "CREATED", 7L)
                 .put("priority", "URGENT"));
@@ -461,6 +481,13 @@ class RendererTest {
         return payload;
     }
 
+    private static ObjectNode joinPayload(String status) {
+        ObjectNode payload = Json.object().put("requestId", 7).put("name", "Ali <x>").put("username", "ali_dev").put("userId", 555)
+                .put("status", status).put("decidedBy", status.equals("OPEN") ? null : "Nomin");
+        payload.putArray("groups").add("backend").add("mobile");
+        return payload;
+    }
+
     private static ObjectNode statsPayload(String view) {
         ObjectNode payload = Json.object().put("view", view).put("period", "month").put("canViewMe", true);
         payload.putArray("groups").add("backend").add("mobile");
@@ -535,6 +562,9 @@ class RendererTest {
             case TOPIC_CREATE -> Json.object().put("taskId", 7).put("project", "life").put("title", "Fix it");
             case DRAFT_PROMPT -> draftPayload(List.of("alm", "crm", "life", "billing"), null, "OPEN", null);
             case DRAFT_EXPIRED -> Json.object();
+            case JOIN_REQUEST -> joinPayload("OPEN");
+            case JOIN_REQUESTED, JOIN_DENIED -> Json.object();
+            case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();
             case TASK_COMPLETED_SHORT -> Json.object().put("taskId", 1).put("project", "life")

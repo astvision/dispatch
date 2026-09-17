@@ -41,7 +41,8 @@ public record Config(
                 override.budgetUsd() != null ? override.budgetUsd() : defaults.budgetUsd());
     }
 
-    public record Telegram(List<Group> groups) {
+    /** @param admins who decide on people asking to join (ADR 0015); empty when nobody can join from Telegram */
+    public record Telegram(List<Long> admins, List<Group> groups) {
     }
 
     /**

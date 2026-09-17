@@ -117,6 +117,10 @@ public final class Renderer {
             case NO_PROJECTS -> plain(text("noProjects"));
             case HELP -> plain(format(payload.path("privateChat").asBoolean() ? "help.private" : "help",
                     projectList(payload.path("projects")), escape(payload.path("bot").asText())));
+            case JOIN_REQUEST -> joinRequest(payload);
+            case JOIN_REQUESTED -> plain(text("join.requested"));
+            case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
+            case JOIN_DENIED -> plain(text("join.denied"));
         };
         return hint == null ? rendered : new Rendered(rendered.html() + "\n\n" + hint, rendered.keyboard(), rendered.document());
     }
@@ -209,6 +213,40 @@ public final class Renderer {
         String icon = outcome == null ? "" : OUTCOME_ICONS.getOrDefault(outcome, "") + " ";
         String name = icon + "#" + taskId + " · " + project + " · " + title;
         return name.length() <= 128 ? name : name.substring(0, 127) + "…";
+    }
+
+    /** Asks an admin about someone who wants to use the bot; once decided, says what was decided and by whom. */
+    private Rendered joinRequest(JsonNode payload) {
+        String name = escapeWithin(payload.path("name").asText(), TITLE_LIMIT);
+        String username = payload.hasNonNull("username") ? " @" + escape(payload.get("username").asText()) : "";
+        String userId = String.valueOf(payload.path("userId").asLong());
+        String decidedBy = escape(payload.path("decidedBy").asText());
+        switch (payload.path("status").asText()) {
+            case "APPROVED" -> {
+                return plain(format("join.approvedBy", name, username, userId, escape(payload.path("group").asText()), decidedBy));
+            }
+            case "DENIED" -> {
+                return plain(format("join.deniedBy", name, username, userId, decidedBy));
+            }
+            default -> {
+                // OPEN: asked below.
+            }
+        }
+        String id = String.valueOf(payload.path("requestId").asLong());
+        List<List<Button>> keyboard = new ArrayList<>();
+        List<Button> row = new ArrayList<>();
+        for (JsonNode group : payload.path("groups")) {
+            row.add(new Button(format("button.joinGroup", group.asText()), "join:" + id + ":" + group.asText()));
+            if (row.size() == 3) {
+                keyboard.add(row);
+                row = new ArrayList<>();
+            }
+        }
+        if (!row.isEmpty()) {
+            keyboard.add(row);
+        }
+        keyboard.add(List.of(new Button(text("button.joinDeny"), "join:" + id + ":-")));
+        return new Rendered(format("join.request", name, username, userId), keyboard, null);
     }
 
     /** The draft's chosen project as members know it: its alias if it has one. */

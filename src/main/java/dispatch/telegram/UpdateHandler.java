@@ -9,6 +9,9 @@ import dispatch.Redactor;
 import dispatch.config.Config;
 import dispatch.core.DraftChoice;
 import dispatch.core.Groups;
+import dispatch.core.JoinDecision;
+import dispatch.core.JoinRequestResult;
+import dispatch.core.Membership;
 import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
 import dispatch.core.TaskService;
@@ -41,6 +44,7 @@ public final class UpdateHandler {
 
     private final Database db;
     private final TaskService tasks;
+    private final Membership membership;
     private final Groups groups;
     private final Projects projects;
     private final BotApi api;
@@ -51,10 +55,11 @@ public final class UpdateHandler {
     private final Runnable wakeOutbox;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
-    public UpdateHandler(Database db, TaskService tasks, Groups groups, Projects projects, BotApi api, Renderer renderer,
-                         Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox) {
+    public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
+                         Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox) {
         this.db = db;
         this.tasks = tasks;
+        this.membership = membership;
         this.groups = groups;
         this.projects = projects;
         this.api = api;
@@ -95,6 +100,14 @@ public final class UpdateHandler {
         boolean privateChat = isPrivateChatOf(chat, from);
         if (privateChat && groups.isMember(Refs.user(from.get("id").asLong()))) {
             onChatMessage(tx, message, true);
+            return;
+        }
+        if (privateChat && !groups.admins().isEmpty()) {
+            // Someone new writes to a shared bot: they ask to join, and the admins decide (ADR 0015).
+            Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
+            JoinRequestResult result = membership.requestJoin(tx, who, from.path("username").asText(null),
+                    Refs.message(chatId, message.path("message_id").asLong(), null));
+            tx.afterCommit(() -> Log.info("telegram.join_message", "requester", who.ref(), "result", result));
             return;
         }
         if (!groups.isGroupChat(Refs.chat(chatId))) {
@@ -225,6 +238,10 @@ public final class UpdateHandler {
             return;
         }
         String[] parts = data.split(":");
+        if (servedChat && from.has("id") && parts.length == 3 && parts[0].equals("join") && taskId(parts[1]).isPresent()) {
+            onJoinButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
+            return;
+        }
         if (servedChat && from.has("id") && parts.length == 4 && parts[0].equals("draft") && taskId(parts[1]).isPresent()) {
             Requester presser = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
             onDraftButton(tx, callback, presser, taskId(parts[1]).get(), parts[2], parts[3]);
@@ -319,6 +336,29 @@ public final class UpdateHandler {
         ObjectNode payload = tasks.draftPayload(tx, draftId).orElseThrow();
         Renderer.Rendered prompt = renderer.render(OutboxKind.DRAFT_PROMPT, Json.read(redactor.redact(payload.toString())));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, prompt.html(), prompt.keyboard())));
+    }
+
+    /** An admin's button on a join request: a group to add the person to, or "-" to deny. The request is redrawn with the decision. */
+    private void onJoinButton(Tx tx, JsonNode callback, Requester presser, long requestId, String choice) {
+        JoinDecision decision = choice.equals("-") ? membership.deny(tx, presser, requestId) : membership.approve(tx, presser, requestId, choice);
+        answer(tx, callback.path("id").asText(), switch (decision) {
+            case APPROVED -> "callback.joinApproved";
+            case DENIED -> "callback.joinDenied";
+            case NOT_ADMIN -> "callback.notAdmin";
+            case NOT_FOUND -> "callback.notFound";
+            case ALREADY_DECIDED -> "callback.joinDecided";
+            case UNKNOWN_GROUP -> "callback.unknown";
+            case CONFIG_FAILED -> "callback.joinFailed";
+        });
+        if (decision != JoinDecision.APPROVED && decision != JoinDecision.DENIED && decision != JoinDecision.ALREADY_DECIDED) {
+            return;
+        }
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        long messageId = message.path("message_id").asLong();
+        ObjectNode payload = membership.requestPayload(tx, requestId).orElseThrow();
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.JOIN_REQUEST, Json.read(redactor.redact(payload.toString())));
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard())));
     }
 
     /** A view or period button under statistics; the same message is redrawn, for the groups its chat may see. */

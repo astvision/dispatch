@@ -9,6 +9,7 @@ import dispatch.cli.Locations;
 import dispatch.cli.ProjectAddCommand;
 import dispatch.cli.RunCommand;
 import dispatch.config.ConfigException;
+import dispatch.config.MemberWriter;
 import dispatch.telegram.BotApi;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -58,8 +59,8 @@ public final class Main {
         App app;
         try {
             // Instants stay UTC everywhere; the zone (TZ) only affects clock times shown in chat.
-            app = App.start(prepared.config(), BotApi.create(prepared.config().secrets().telegramBotToken()), prepared.environment(),
-                    Clock.systemDefaultZone(), fatal -> {
+            app = App.start(prepared.config(), MemberWriter.file(configFile, prepared.environment()),
+                    BotApi.create(prepared.config().secrets().telegramBotToken()), prepared.environment(), Clock.systemDefaultZone(), fatal -> {
                         Log.error("dispatch.fatal", fatal);
                         System.exit(1);
                     });

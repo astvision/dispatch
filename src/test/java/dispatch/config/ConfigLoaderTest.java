@@ -252,6 +252,28 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void adminsWhoApproveNewMembersAreTelegramUsers() throws IOException {
+        String withAdmins = VALID.replace("telegram:\n  groups:\n", "telegram:\n  admins: [123456789, 555]\n  groups:\n");
+        String invalid = VALID.replace("telegram:\n  groups:\n", "telegram:\n  admins: [0, 555, 555]\n  groups:\n");
+
+        assertEquals(List.of(123456789L, 555L), ConfigLoader.load(write(withAdmins), ENV).telegram().admins());
+        assertEquals(List.of(), ConfigLoader.load(write(VALID), ENV).telegram().admins(), "nobody unless configured");
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(invalid), ENV));
+        assertTrue(error.getMessage().contains("telegram.admins[0]: must be a positive Telegram user id, got 0"), error.getMessage());
+        assertTrue(error.getMessage().contains("telegram.admins[2]: 555 is listed more than once"), error.getMessage());
+    }
+
+    @Test
+    void groupNameFitsInAButtonsData() throws IOException {
+        String longName = "a".repeat(41);
+
+        ConfigException error = assertThrows(ConfigException.class,
+                () -> ConfigLoader.load(write(VALID.replace("  - name: backend\n", "  - name: " + longName + "\n")), ENV));
+
+        assertTrue(error.getMessage().contains("telegram.groups[0].name: at most 40 characters"), error.getMessage());
+    }
+
+    @Test
     void groupNeedsNoChatForAPersonalBot() throws IOException {
         String personal = VALID.replace("      chatId: -1001234567890\n", "")
                 .replace(TWO_PROJECTS_IN_BACKEND, BACKEND_AND_MOBILE.replace("      chatId: -1009876543210\n", ""));

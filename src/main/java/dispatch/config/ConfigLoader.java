@@ -26,6 +26,7 @@ public final class ConfigLoader {
     private static final Pattern TEAM = Pattern.compile("[a-z0-9][a-z0-9-]*");
     private static final Pattern PROJECT_KEY = Pattern.compile("[A-Za-z0-9._-]+");
     private static final Set<String> SUPPORTED_AGENTS = Set.of("claude-code");
+    private static final int MAX_GROUP_NAME = 40;
     /** Claude Code's --effort levels, in its own order. */
     private static final List<String> EFFORT_LEVELS = List.of("low", "medium", "high", "xhigh", "max");
     /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
@@ -107,10 +108,11 @@ public final class ConfigLoader {
     }
 
     private static Config.Telegram validateTelegram(Config.Telegram telegram, List<Config.Project> projects, List<String> errors) {
+        List<Long> admins = validateAdmins(telegram == null || telegram.admins() == null ? List.of() : telegram.admins(), errors);
         List<Config.Group> groups = telegram == null || telegram.groups() == null ? List.of() : telegram.groups();
         if (groups.isEmpty()) {
             errors.add("telegram.groups: at least one group is required");
-            return new Config.Telegram(List.of());
+            return new Config.Telegram(admins, List.of());
         }
         Set<String> names = new HashSet<>();
         Set<Long> chats = new HashSet<>();
@@ -123,6 +125,9 @@ public final class ConfigLoader {
             String at = "telegram.groups[" + i + "]";
             if (isBlank(group.name()) || !PROJECT_KEY.matcher(group.name()).matches()) {
                 errors.add(at + ".name: required; letters, digits, '.', '_' and '-' only");
+            } else if (group.name().length() > MAX_GROUP_NAME) {
+                // A join request's button carries the name, and Telegram allows 64 bytes of button data.
+                errors.add(at + ".name: at most " + MAX_GROUP_NAME + " characters");
             } else if (!names.add(group.name().toLowerCase())) {
                 errors.add(at + ".name: '" + group.name() + "' is used by more than one group");
             }
@@ -154,7 +159,20 @@ public final class ConfigLoader {
                 errors.add("projects[" + i + "]: '" + projects.get(i).name() + "' is not listed in any group");
             }
         }
-        return new Config.Telegram(List.copyOf(normalized));
+        return new Config.Telegram(admins, List.copyOf(normalized));
+    }
+
+    private static List<Long> validateAdmins(List<Long> admins, List<String> errors) {
+        Set<Long> seen = new HashSet<>();
+        for (int i = 0; i < admins.size(); i++) {
+            Long admin = admins.get(i);
+            if (admin == null || admin <= 0) {
+                errors.add("telegram.admins[" + i + "]: must be a positive Telegram user id, got " + admin);
+            } else if (!seen.add(admin)) {
+                errors.add("telegram.admins[" + i + "]: " + admin + " is listed more than once");
+            }
+        }
+        return admins.stream().filter(admin -> admin != null && admin > 0).distinct().toList();
     }
 
     private static void validateMembers(String at, List<Config.Member> members, List<String> errors) {

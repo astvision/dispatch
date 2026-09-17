@@ -110,6 +110,39 @@ class ConfigTextTest {
     }
 
     @Test
+    void memberIsAddedToTheirGroupInBlockStyle() {
+        String before = """
+                telegram:
+                  groups:
+                    - name: backend
+                      members:
+                        - id: 1
+                          name: 'Bold'   # admin
+                      projects: [alm]
+                """;
+
+        assertEquals("""
+                telegram:
+                  groups:
+                    - name: backend
+                      members:
+                        - id: 1
+                          name: 'Bold'   # admin
+                        - id: 222
+                          name: 'Ali Ba''ba'
+                      projects: [alm]
+                """, ConfigText.addMember(before, "backend", 222, "Ali Ba'ba"));
+    }
+
+    @Test
+    void memberIsAddedToTheirGroupInFlowStyle() {
+        String before = "telegram:\n  groups:\n    - { name: bold, members: [{ id: 1, name: Bold }], projects: [alm] }\n";
+
+        assertEquals("telegram:\n  groups:\n    - { name: bold, members: [{ id: 1, name: Bold }, { id: 222, name: 'Ali' }], projects: [alm] }\n",
+                ConfigText.addMember(before, "bold", 222, "Ali"));
+    }
+
+    @Test
     void unknownGroupIsRefused() {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigText.addProject("telegram:\n  groups:\n    - name: bold\n      projects: [alm]\nprojects:\n  - name: alm\n",

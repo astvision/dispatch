@@ -3,9 +3,11 @@ package dispatch;
 import dispatch.agent.Agent;
 import dispatch.agent.claude.ClaudeCodeAgent;
 import dispatch.config.Config;
+import dispatch.config.MemberWriter;
 import dispatch.core.ActiveRuns;
 import dispatch.core.DraftExpiry;
 import dispatch.core.Groups;
+import dispatch.core.Membership;
 import dispatch.core.Projects;
 import dispatch.core.Recovery;
 import dispatch.core.RunExecutor;
@@ -68,7 +70,9 @@ public final class App {
      * Opens state, checks the bot token, recovers runs interrupted by a previous process, then starts polling, scheduling
      * and sending. {@code onFatal} receives errors that stop a core loop (e.g. storage failures).
      */
-    public static App start(Config config, BotApi api, Map<String, String> environment, Clock clock, Consumer<Throwable> onFatal) {
+    /** @param members adds people whom an admin let join to the config (ADR 0015) */
+    public static App start(Config config, MemberWriter members, BotApi api, Map<String, String> environment, Clock clock,
+                            Consumer<Throwable> onFatal) {
         Path stateDir = config.stateDir();
         Git git = new Git("git", config.secrets().ghToken(), Duration.ofMinutes(5));
         Workspaces workspaces = new Workspaces(stateDir, git);
@@ -88,7 +92,7 @@ public final class App {
         Projects projects = new Projects(config.projects(), workspaces::unavailableReason);
         ActiveRuns activeRuns = new ActiveRuns();
         RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake);
-        Groups groups = new Groups(config.telegram().groups());
+        Groups groups = new Groups(config.telegram());
         Splitter[] splitter = new Splitter[1];
         TaskService tasks = new TaskService(groups, projects, activeRuns, clock,
                 schedulerSignal::wake, outboxSignal::wake, taskTopics, draftId -> splitter[0].start(draftId));
@@ -107,8 +111,8 @@ public final class App {
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
         registerCommandMenus(api, renderer, groups);
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
-        UpdateHandler handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, redactor, botUsername, clock,
-                outboxSignal::wake);
+        UpdateHandler handler = new UpdateHandler(db, tasks, new Membership(groups, members, clock, outboxSignal::wake), groups, projects,
+                api, renderer, redactor, botUsername, clock, outboxSignal::wake);
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         App[] app = new App[1];

@@ -11,6 +11,7 @@ import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Groups;
+import dispatch.core.Membership;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
 import dispatch.core.TaskService;
@@ -72,8 +73,8 @@ class UpdateHandlerTest {
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { }, false, splitsStarted::add);
         transitions = new RunTransitions(db, clock, () -> { });
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
-        handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME,
-                clock, () -> { });
+        handler = new UpdateHandler(db, tasks, new Membership(groups, UpdateHandlerTest::noJoins, clock, () -> { }), groups, projects, api,
+                renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME, clock, () -> { });
     }
 
     @AfterEach
@@ -184,6 +185,55 @@ class UpdateHandlerTest {
         assertFalse(kept.get("reply_markup").toString().contains(":split:"), kept.toString());
         assertEquals(renderer.text("callback.unknown"),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+    }
+
+    @Test
+    void strangerAsksToJoinAndAnAdminApprovesThemFromTheChat() throws Exception {
+        Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null, "main",
+                "claude-code", null, null, List.of(), null);
+        Projects projects = new Projects(List.of(alm), project -> Optional.empty());
+        Groups joinable = new Groups(new Config.Telegram(List.of(100L),
+                List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold")), List.of("autoland-management")))));
+        dispatch.config.MemberWriter writer = (group, member) -> new Config.Telegram(List.of(100L),
+                List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold"), member), List.of("autoland-management"))));
+        BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
+        UpdateHandler joinHandler = new UpdateHandler(db, new TaskService(joinable, projects, new ActiveRuns(), clock, () -> { }, () -> { }),
+                new Membership(joinable, writer, clock, () -> { }), joinable, projects, api, renderer, dispatch.Redactor.patternsOnly(),
+                FakeTelegram.BOT_USERNAME, clock, () -> { });
+
+        joinHandler.handle(message(620, 40, 555, "Ali", 555L, "private", "Fix the login timeout", null));
+
+        assertEquals("OPEN", row("SELECT status FROM join_request").get("status"));
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"), "no task before they are a member");
+        long requestId = Long.parseLong(row("SELECT id FROM join_request").get("id"));
+
+        joinHandler.handle(privateCallback(621, 300, "Sara", "join:" + requestId + ":backend"));
+        joinHandler.handle(privateCallback(622, 100, "Bold", "join:" + requestId + ":backend"));
+
+        assertEquals(renderer.text("callback.notAdmin"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals(renderer.text("callback.joinApproved"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode redrawn = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(redrawn.get("text").asText().contains("Ali") && redrawn.get("text").asText().contains("backend"), redrawn.toString());
+        assertEquals(0, redrawn.get("reply_markup").get("inline_keyboard").size());
+        assertTrue(joinable.isMember("telegram:555"));
+
+        joinHandler.handle(message(623, 41, 555, "Ali", 555L, "private", "Fix the login timeout", null));
+
+        assertEquals("1", row("SELECT count(*) AS n FROM draft").get("n"), "their messages are tasks now");
+    }
+
+    @Test
+    void withoutAdminsAStrangersPrivateMessageIsOnlyLogged() {
+        handler.handle(message(630, 42, 555, "Ali", 555L, "private", "hello", null));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM join_request").get("n"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"));
+    }
+
+    private static Config.Telegram noJoins(String group, Config.Member member) {
+        throw new AssertionError("no one joins in this test");
     }
 
     @Test

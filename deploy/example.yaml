@@ -5,6 +5,7 @@ team: backend
 # stateDir: /var/lib/dispatch/backend
 
 telegram:
+  # admins: [123456789]           # who lets people join from Telegram: they get a button per group (ADR 0015)
   groups:                         # each group: its chat, its members, the projects it owns (ADR 0012)
     - name: backend
       chatId: -1001234567890      # the group's (negative) id; see README "Find the ids". Omit it for a personal bot (ADR 0014)

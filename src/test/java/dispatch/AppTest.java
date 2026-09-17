@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.config.Config;
+import dispatch.config.MemberWriter;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.Renderer;
 import dispatch.testing.FakeClaude;
@@ -56,7 +57,7 @@ class AppTest {
         Path claude = FakeClaude.install(Files.createDirectories(dir.resolve("bin")));
         Path gh = FakeGh.install(dir.resolve("bin"));
         config = new Config("backend", repos.stateDir,
-                new Config.Telegram(List.of(new Config.Group("backend", GROUP,
+                new Config.Telegram(List.of(), List.of(new Config.Group("backend", GROUP,
                         List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("autoland-management")))),
                 new Config.Scheduler(2),
                 new Config.Limits(new Config.RunLimits(Duration.ofSeconds(60), new BigDecimal("2")),
@@ -200,7 +201,7 @@ class AppTest {
         Path mine = dir.resolve("work/autoland-management");
         GitFixture.sh(dir, "git", "clone", "--quiet", repos.origin.toString(), mine.toString());
         config = new Config("bold", repos.stateDir,
-                new Config.Telegram(List.of(new Config.Group("bold", null, List.of(new Config.Member(100, "Bold")), List.of("alm")))),
+                new Config.Telegram(List.of(), List.of(new Config.Group("bold", null, List.of(new Config.Member(100, "Bold")), List.of("alm")))),
                 config.scheduler(), config.limits(), config.agents(),
                 List.of(new Config.Project("alm", null, null, mine.toString(), "main", "claude-code", null, "high", List.of(), null)),
                 config.delivery(), config.secrets());
@@ -225,6 +226,35 @@ class AppTest {
     }
 
     @Test
+    void strangerAsksAnAdminApprovesAndTheirMessagesBecomeTasks() throws Exception {
+        List<Config.Member> members = new CopyOnWriteArrayList<>(List.of(new Config.Member(100, "Bold")));
+        config = new Config("backend", repos.stateDir, new Config.Telegram(List.of(100L),
+                List.of(new Config.Group("backend", GROUP, List.copyOf(members), List.of("autoland-management")))),
+                config.scheduler(), config.limits(), config.agents(), config.projects(), config.delivery(), config.secrets());
+        app = start((group, member) -> {
+            members.add(member);
+            return new Config.Telegram(List.of(100L), List.of(new Config.Group("backend", GROUP, List.copyOf(members), List.of("autoland-management"))));
+        });
+
+        telegram.pushUpdate(privateTextFrom(1, 777, "Sara", "Fix the login timeout on staging"));
+
+        JsonNode request = awaitMessageContaining("Sara");
+        assertEquals(100, request.get("chat_id").asLong(), "the admin is asked");
+        String allow = request.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText();
+
+        telegram.pushUpdate(privateCallback(2, 100, "Bold", allow, 0));
+
+        assertEquals(messages.getString("callback.joinApproved"), awaitCallbackAnswer());
+        assertEquals(777, awaitMessageContaining("backend").get("chat_id").asLong(), "Sara is told she is in");
+
+        telegram.pushUpdate(privateTextFrom(3, 777, "Sara", "Fix the login timeout on staging"));
+
+        awaitSentMessageId("DRAFT_PROMPT");
+        assertEquals("telegram:777", SqlRows.single(repos.stateDir.resolve("dispatch.db"), "SELECT requester_ref FROM draft").get("requester_ref"));
+        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
+    }
+
+    @Test
     void restartMarksTheInterruptedRunFailedAndStillTellsTheGroup() throws Exception {
         app = start();
         giveTask(1, "SCENARIO:sleep", "NORMAL");
@@ -242,8 +272,14 @@ class AppTest {
     }
 
     private App start() {
+        return start((group, member) -> {
+            throw new AssertionError("no one joins in this test");
+        });
+    }
+
+    private App start(MemberWriter members) {
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(60));
-        return App.start(config, api, FakeClaude.environment(), Clock.systemUTC(), fatalErrors::add);
+        return App.start(config, members, api, FakeClaude.environment(), Clock.systemUTC(), fatalErrors::add);
     }
 
     /** The next sendMessage call whose text contains {@code fragment}; earlier calls are skipped. */
@@ -290,6 +326,14 @@ class AppTest {
         long prompt = awaitSentMessageId("DRAFT_PROMPT");
         telegram.pushUpdate(privateCallback(updateId + 1, 100, "Bold", "draft:1:prio:" + priority, prompt));
         assertEquals(messages.getString("callback.taskCreated"), awaitCallbackAnswer());
+    }
+
+    /** A private message from anyone; its message id is the update id. */
+    private static JsonNode privateTextFrom(long updateId, long fromId, String name, String text) {
+        return Json.read("""
+                {"update_id":%d,"message":{"message_id":%d,"from":{"id":%d,"is_bot":false,"first_name":"%s"},
+                 "chat":{"id":%d,"type":"private"},"date":1789640000,"text":%s}}"""
+                .formatted(updateId, updateId, fromId, name, fromId, Json.MAPPER.valueToTree(text)));
     }
 
     /** Bold's private message; its message id is the update id. */

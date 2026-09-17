@@ -26,6 +26,23 @@ class GroupsTest {
     }
 
     @Test
+    void adminsAreKnownAndMembersCanChangeWhileRunning() {
+        Config.Group backend = new Config.Group("backend", -100L, List.of(new Config.Member(1, "Bold")), List.of("alm"));
+        Groups live = new Groups(new Config.Telegram(List.of(9L), List.of(backend)));
+
+        assertTrue(live.isAdmin("telegram:9"));
+        assertFalse(live.isAdmin("telegram:1"));
+        assertFalse(live.isMember("telegram:2"));
+
+        live.replace(new Config.Telegram(List.of(9L), List.of(new Config.Group("backend", -100L,
+                List.of(new Config.Member(1, "Bold"), new Config.Member(2, "Ali")), List.of("alm")))));
+
+        assertTrue(live.isMember("telegram:2"));
+        assertEquals(Set.of("alm"), live.projectsOfMember("telegram:2"));
+        assertEquals(List.of("telegram:9"), live.admins());
+    }
+
+    @Test
     void memberOfAnyGroupIsAMember() {
         assertTrue(groups.isMember("telegram:1"));
         assertTrue(groups.isMember("telegram:3"));

@@ -15,7 +15,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * `dispatch project add <folder>`: adds a clone on this machine as a project (ADR 0014). The name, origin and base branch
@@ -25,7 +24,6 @@ import java.util.regex.Pattern;
 public final class ProjectAddCommand {
 
     private static final Duration GIT_TIMEOUT = Duration.ofSeconds(30);
-    private static final Pattern PLAIN = Pattern.compile("[A-Za-z0-9._/-]+");
 
     private final Terminal terminal;
 
@@ -103,11 +101,11 @@ public final class ProjectAddCommand {
     }
 
     static String yaml(String value) {
-        return PLAIN.matcher(value).matches() ? value : quoted(value);
+        return ConfigText.yaml(value);
     }
 
     static String quoted(String value) {
-        return "'" + value.replace("'", "''") + "'";
+        return ConfigText.quoted(value);
     }
 
     /** Only the config's shape matters here; the token and state directory may come later, from secrets or systemd. */

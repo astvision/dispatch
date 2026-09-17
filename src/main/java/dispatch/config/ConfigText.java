@@ -43,6 +43,33 @@ public final class ConfigText {
         return edited.toString();
     }
 
+    /** Adds a member to a group's members, block or flow style; the name is always quoted. */
+    public static String addMember(String text, String group, long id, String name) {
+        MappingNode top = root(text);
+        Lines lines = new Lines(text);
+        SequenceNode members = groupList(top, group, "members");
+        if (members.getFlowStyle() == DumperOptions.FlowStyle.FLOW) {
+            int closingBracket = lines.index(members.getEndMark()) - 1;
+            String entry = "{ id: " + id + ", name: " + quoted(name) + " }";
+            return new StringBuilder(text).insert(closingBracket, members.getValue().isEmpty() ? entry : ", " + entry).toString();
+        }
+        if (members.getValue().isEmpty()) {
+            throw new ConfigException("group '" + group + "' has no members to add to; add the member by hand");
+        }
+        String prefix = lines.prefix(members.getValue().getFirst().getStartMark());
+        String entry = prefix + "id: " + id + lines.newline + " ".repeat(prefix.length()) + "name: " + quoted(name) + lines.newline;
+        return new StringBuilder(text).insert(lines.startOfLineAfter(lastLine(members.getValue().getLast())), entry).toString();
+    }
+
+    /** A YAML scalar for {@code value}: plain when that reads the same, single-quoted otherwise. */
+    public static String yaml(String value) {
+        return value.matches("[A-Za-z0-9._/-]+") ? value : quoted(value);
+    }
+
+    public static String quoted(String value) {
+        return "'" + value.replace("'", "''") + "'";
+    }
+
     private static MappingNode root(String text) {
         try {
             if (new Yaml().compose(new StringReader(text)) instanceof MappingNode top) {
@@ -55,14 +82,18 @@ public final class ConfigText {
     }
 
     private static SequenceNode groupProjects(MappingNode top, String group) {
+        return groupList(top, group, "projects");
+    }
+
+    private static SequenceNode groupList(MappingNode top, String group, String list) {
         if (value(top, "telegram") instanceof MappingNode telegram && value(telegram, "groups") instanceof SequenceNode groups) {
             for (Node item : groups.getValue()) {
                 if (item instanceof MappingNode candidate && value(candidate, "name") instanceof ScalarNode found
                         && found.getValue().equals(group)) {
-                    if (value(candidate, "projects") instanceof SequenceNode projects) {
-                        return projects;
+                    if (value(candidate, list) instanceof SequenceNode items) {
+                        return items;
                     }
-                    throw new ConfigException("group '" + group + "' has no project list to add to; add the project by hand");
+                    throw new ConfigException("group '" + group + "' has no " + list + " list to add to; add it by hand");
                 }
             }
         }
@@ -75,7 +106,7 @@ public final class ConfigText {
             return new Insert(closingBracket, projects.getValue().isEmpty() ? name : ", " + name);
         }
         Node last = projects.getValue().getLast();
-        return new Insert(lines.startOfLineAfter(last.getEndMark().getLine()), lines.prefix(last.getStartMark()) + name + lines.newline);
+        return new Insert(lines.startOfLineAfter(lastLine(last)), lines.prefix(last.getStartMark()) + name + lines.newline);
     }
 
     private static Insert intoProjects(Lines lines, MappingNode top, List<String> projectLines) {
@@ -112,6 +143,20 @@ public final class ConfigText {
             }
         }
         return lines.startOfLine(line);
+    }
+
+    /**
+     * The line a node's text ends on. A block collection's end mark is where the next token starts, often the next line, so
+     * its last value decides.
+     */
+    private static int lastLine(Node node) {
+        if (node instanceof MappingNode map && map.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !map.getValue().isEmpty()) {
+            return lastLine(map.getValue().getLast().getValueNode());
+        }
+        if (node instanceof SequenceNode list && list.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !list.getValue().isEmpty()) {
+            return lastLine(list.getValue().getLast());
+        }
+        return node.getEndMark().getLine();
     }
 
     private static Node value(MappingNode map, String key) {
