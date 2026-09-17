@@ -19,9 +19,10 @@ class ExecutablesTest {
     void firstMatchOnThePathWins() throws IOException {
         Path first = Files.createDirectories(dir.resolve("first"));
         Path second = Files.createDirectories(dir.resolve("second"));
-        Path claude = executable(second.resolve("claude"));
+        String os = System.getProperty("os.name");
+        Path claude = executable(second.resolve(os.startsWith("Windows") ? "claude.exe" : "claude"));
 
-        Optional<Path> found = Executables.find("claude", System.getProperty("os.name"),
+        Optional<Path> found = Executables.find("claude", os,
                 Map.of("PATH", first + java.io.File.pathSeparator + second), dir.resolve("home"));
 
         assertEquals(Optional.of(claude), found);
