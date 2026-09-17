@@ -31,6 +31,6 @@ projects:
     baseBranch: main
     agent: claude-code
     # model: opus
-    # copyFiles: [.env]           # must be git-ignored; copied from the clone into each worktree
+    # copyFiles: [.env]           # must be git-ignored; copied into worktrees for execution runs only (M2)
     # limits:
     #   plan: { timeout: 20m, budgetUsd: 3 }

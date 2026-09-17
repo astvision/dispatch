@@ -134,7 +134,7 @@ A transition that loses a race updates 0 rows and is logged.
 3. One transaction: `task` (PLANNING) + `run` 1 (PLAN, QUEUED) + event + outbox "queued" ack + offset.
 
 **Plan run.**
-1. `git fetch origin <base>`, then `git worktree add -b dispatch/<id> worktrees/<id> origin/<base>`. Record `base_sha` and copy `copyFiles`; each must be git-ignored, otherwise setup fails so delivery can never commit it.
+1. `git fetch origin <base>`, then `git worktree add -b dispatch/<id> worktrees/<id> origin/<base>`. Record `base_sha`. `copyFiles` are **not** copied: planning needs no local secrets, and whatever the agent can read may be quoted in a plan posted to the group.
 2. Run the agent read-only, requiring the plan JSON schema.
 3. On success, store `plan_json` and move to AWAITING_APPROVAL. The outbox posts the plan:
    - `[Approve]` and `[Reject]`, where the button data carries the plan's run seq so a stale button is refused;
@@ -143,7 +143,7 @@ A transition that loses a race updates 0 rows and is logged.
 
 **Approve** (from any member, including the requester): EXECUTE run queued. **Correction:** PLAN run queued with the reply as instruction, resuming the session. **Reject:** REJECTED.
 
-**Execute run.** The worktree is recreated from `origin/dispatch/<id>` if it was swept. The agent implements the plan (or follow-up) in auto mode. On exit 0, delivery:
+**Execute run.** The worktree is recreated from `origin/dispatch/<id>` if it was swept, and `copyFiles` are copied in. Each must be git-ignored, otherwise setup fails, so delivery can never commit it. The agent implements the plan (or follow-up) in auto mode. On exit 0, delivery:
 1. If `git status` shows changes: `git add -A` and one commit. The subject is `dispatch #<id>: <title>` (or `follow-up: ...`); the body is the agent's summary; trailers are `Requested-by` / `Approved-by`; the author is the instance bot identity.
 2. `git push -u origin dispatch/<id>`.
 3. `gh pr create --draft` on the first delivery; later pushes update the same PR.
@@ -248,6 +248,15 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
 | SQLite error | Logged; the process exits non-zero and systemd restarts it (recovery above). |
 
 Nothing retries silently. The only automatic retries are Telegram polling and outbox delivery, and both log every attempt.
+
+## Secrets and sensitive state
+
+The full threat model is in [SECURITY.md](../SECURITY.md).
+
+- **Secrets:** only in the 0600 environment file. The YAML rejects unknown keys and repository URLs with embedded credentials.
+- **Redaction:** a `Redactor` masks the values of the secret variables and common credential formats. `Main` installs it for every log line and stack trace; `OutboxSender` applies it to payloads before rendering, so every Telegram message is covered.
+- **State on disk:** the database file (and its `-wal`/`-shm` files) is created `rw-------`, and `repos/`, `worktrees/` and `runs/` are created `rwx------`. Startup warns if the state directory is open to other users.
+- **Chat content in logs:** a Telegram update that fails to process is logged with its id and type only, never its content.
 
 ## Observability
 

@@ -5,6 +5,13 @@ Dispatch takes development tasks from a team's Telegram group, has Claude Code a
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
 - Status: **M1, the read-only slice.** Tasks get a plan and can be rejected or cancelled. Approving a plan (execution and draft PRs) arrives with M2.
 
+## Security
+
+Access to the bot is effectively shell access to the server. Read [SECURITY.md](SECURITY.md) before deploying.
+- Secrets go only in the 0600 environment file, never in the YAML config.
+- Logs and Telegram messages are redacted.
+- The state directory is created owner-only.
+
 ## Build
 
 Requires JDK 25+ and git. The Maven wrapper downloads Maven itself.
