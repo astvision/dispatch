@@ -15,14 +15,14 @@ class CliTest {
 
     @Test
     void withoutArgumentsTheBotRunsFromTheDefaultConfig() {
-        assertEquals(new Cli.Run(DEFAULT_CONFIG), parse());
-        assertEquals(new Cli.Run(DEFAULT_CONFIG), parse("run"));
-        assertEquals(new Cli.Run(Path.of("team.yaml")), parse("run", "--config", "team.yaml"));
+        assertEquals(new Cli.Run(DEFAULT_CONFIG, null), parse());
+        assertEquals(new Cli.Run(DEFAULT_CONFIG, null), parse("run"));
+        assertEquals(new Cli.Run(Path.of("team.yaml"), null), parse("run", "--config", "team.yaml"));
     }
 
     @Test
     void aConfigFileAloneRunsTheBotAsTheSystemdUnitDoes() {
-        assertEquals(new Cli.Run(Path.of("/etc/dispatch/backend.yaml")), parse("/etc/dispatch/backend.yaml"));
+        assertEquals(new Cli.Run(Path.of("/etc/dispatch/backend.yaml"), null), parse("/etc/dispatch/backend.yaml"));
     }
 
     @Test
@@ -46,6 +46,14 @@ class CliTest {
     void initWritesTheDefaultOrAGivenConfig() {
         assertEquals(new Cli.Init(DEFAULT_CONFIG, false), parse("init"));
         assertEquals(new Cli.Init(Path.of("mine.yaml"), true), parse("init", "--force", "--config", "mine.yaml"));
+    }
+
+    @Test
+    void serviceActionsAndTheRunLogFile() {
+        assertEquals(new Cli.Service(DEFAULT_CONFIG, "install"), parse("service", "install"));
+        assertEquals(new Cli.Service(Path.of("team.yaml"), "status"), parse("service", "status", "--config", "team.yaml"));
+        assertEquals(new Cli.Run(DEFAULT_CONFIG, Path.of("dispatch.log")), parse("run", "--log-file", "dispatch.log"));
+        assertTrue(error("service", "restart").contains("service needs one of: install, start, stop, status, uninstall"));
     }
 
     @Test

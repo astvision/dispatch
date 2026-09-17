@@ -65,7 +65,8 @@ class InitCommandTest {
                 "", "", "Opus", "High",             // name, base branch, model, effort
                 "",                                 // add another project? no
                 "", "bold@example.com",             // commit author name and email
-                "");                                // write this setup? yes
+                "",                                 // write this setup? yes
+                "");                                // keep it running in the background? yes
 
         int exit = init(terminal, false);
 
@@ -89,7 +90,8 @@ class InitCommandTest {
         String output = terminal.output();
         assertTrue(output.contains("? (hidden) Bot token"), "the token is typed without being shown: " + output);
         assertFalse(output.contains(TOKEN), output);
-        assertTrue(output.contains("dispatch check"), output);
+        assertEquals(config, service.installed.configFile(), "the service runs this config");
+        assertTrue(output.contains("Dispatch runs in the background"), output);
     }
 
     @Test
@@ -105,7 +107,7 @@ class InitCommandTest {
                 "y",                                // a team group for announcements: yes
                 "",                                 // team name: from the group's title
                 JAVA, repos.repo("alm").toString(), "", "", "", "", "",
-                "", "bold@example.com", "");
+                "", "bold@example.com", "", "n");
 
         int exit = init(terminal, false);
 
@@ -117,6 +119,8 @@ class InitCommandTest {
         assertEquals(-1001234567890L, group.chatId());
         assertEquals(List.of(new Config.Member(100, "Bold"), new Config.Member(222, "Ali")), group.members());
         assertEquals("acme-backend", written.team());
+        assertNull(service.installed, "not wanted this time");
+        assertTrue(terminal.output().contains("dispatch run"), terminal.output());
     }
 
     @Test
@@ -124,7 +128,7 @@ class InitCommandTest {
         telegram.pushUpdate(start(1, 666, "Stranger"));
         telegram.pushUpdate(start(2, 100, "Bold"));
         ScriptedTerminal terminal = new ScriptedTerminal("", TOKEN, "n", "y", JAVA, repos.repo("alm").toString(), "", "", "", "", "",
-                "", "bold@example.com", "");
+                "", "bold@example.com", "", "n");
 
         assertEquals(0, init(terminal, false), terminal.output());
 
@@ -138,7 +142,7 @@ class InitCommandTest {
         telegram.pushUpdate(start(1, 100, "Bold"));
         String revoked = "987654321" + ":AAH-revoked-token-for-tests-only-012345";
         ScriptedTerminal terminal = new ScriptedTerminal("", "my bot", revoked, TOKEN, "y", JAVA, repos.repo("alm").toString(),
-                "", "", "", "", "", "", "bold@example.com", "");
+                "", "", "", "", "", "", "bold@example.com", "", "n");
 
         assertEquals(0, init(terminal, false), terminal.output());
         assertTrue(terminal.output().contains("WARN that is not a bot token"), "checked before anything is sent: " + terminal.output());
@@ -182,9 +186,51 @@ class InitCommandTest {
         assertTrue(terminal.output().contains("already exists") && terminal.output().contains("--force"), terminal.output());
     }
 
+    private final RecordingService service = new RecordingService();
+
     private int init(ScriptedTerminal terminal, boolean force) {
+        Path jar;
+        try {
+            jar = Files.writeString(dir.resolve("dispatch.jar"), "stand-in");
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
         return new InitCommand(terminal, token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)),
-                locations, Duration.ofSeconds(10)).run(new Cli.Init(config, force), Map.of("PATH", ""));
+                locations, Duration.ofSeconds(10), new ServiceCommand(terminal, service, jar)).run(new Cli.Init(config, force), Map.of("PATH", ""));
+    }
+
+    /** A background service that only remembers what it was asked to run. */
+    private static final class RecordingService implements Service {
+
+        Service.Spec installed;
+
+        @Override
+        public String describe() {
+            return "test service";
+        }
+
+        @Override
+        public void install(Service.Spec spec) {
+            installed = spec;
+        }
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public Service.Status status() {
+            return new Service.Status(installed != null, installed != null, "running", List.of());
+        }
+
+        @Override
+        public void uninstall() {
+            installed = null;
+        }
     }
 
     private Config load() {

@@ -54,16 +54,20 @@ public final class InitCommand {
     private final Function<String, BotApi> bots;
     private final Locations locations;
     private final Duration waitForPeople;
+    private final ServiceCommand services;
 
     /**
      * @param bots          the Telegram client for a bot token
      * @param waitForPeople how long to wait for someone to press Start, or for the bot to be added to a group
+     * @param services      installs the background service offered at the end
      */
-    public InitCommand(Terminal terminal, Function<String, BotApi> bots, Locations locations, Duration waitForPeople) {
+    public InitCommand(Terminal terminal, Function<String, BotApi> bots, Locations locations, Duration waitForPeople,
+                       ServiceCommand services) {
         this.terminal = terminal;
         this.bots = bots;
         this.locations = locations;
         this.waitForPeople = waitForPeople;
+        this.services = services;
     }
 
     public int run(Cli.Init options, Map<String, String> processEnvironment) {
@@ -136,8 +140,16 @@ public final class InitCommand {
         updates.acknowledge();
         terminal.ok("wrote " + configFile);
         terminal.ok("wrote " + secretsFile + " (only you can read it)");
+        if (terminal.confirm("Keep Dispatch running in the background, also after a restart?", true)) {
+            try {
+                services.install(configFile, env);
+                return;
+            } catch (CliException e) {
+                terminal.warn("the background service could not be installed: " + e.getMessage());
+            }
+        }
         terminal.say("");
-        terminal.say("Next: dispatch check, then dispatch run.");
+        terminal.say("Next: dispatch check, then dispatch run (or dispatch service install).");
     }
 
     private Bot bot() {

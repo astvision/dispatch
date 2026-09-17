@@ -11,16 +11,22 @@ import java.util.Set;
 /** The dispatch command line: what was asked for, parsed without running anything. */
 public final class Cli {
 
-    private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group");
+    private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group", "log-file");
+    private static final List<String> SERVICE_ACTIONS = List.of("install", "start", "stop", "status", "uninstall");
     private static final Set<String> SWITCHES = Set.of("force");
 
     private Cli() {
     }
 
-    public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Help {
+    public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Help {
     }
 
-    public record Run(Path configFile) implements Invocation {
+    /** @param logFile where output goes instead of the terminal, as a background service runs it; null for the terminal */
+    public record Run(Path configFile, Path logFile) implements Invocation {
+    }
+
+    /** @param action one of install, start, stop, status, uninstall */
+    public record Service(Path configFile, String action) implements Invocation {
     }
 
     public record Check(Path configFile) implements Invocation {
@@ -46,6 +52,8 @@ public final class Cli {
                   init     set up your own Dispatch: bot, you, Claude Code, projects
                   run      start the bot (the default)
                   check    check the config, bot token, agent, projects and GitHub CLI
+                  service install|start|stop|status|uninstall
+                           keep Dispatch running in the background (systemd, launchd or Task Scheduler)
                   project add FOLDER [--name NAME] [--alias ALIAS] [--base BRANCH] [--model MODEL]
                            [--effort low|medium|high|xhigh|max] [--group GROUP]
                            add a git clone on this machine as a project
@@ -57,7 +65,7 @@ public final class Cli {
 
     public static Invocation parse(String[] args, Locations defaults) {
         if (args.length == 0) {
-            return new Run(defaults.configFile());
+            return new Run(defaults.configFile(), null);
         }
         String command = args[0];
         if (Set.of("help", "--help", "-h").contains(command)) {
@@ -68,13 +76,21 @@ public final class Cli {
             if (args.length > 1) {
                 throw new CliException("unexpected '" + args[1] + "' after the config file");
             }
-            return new Run(Path.of(command));
+            return new Run(Path.of(command), null);
         }
         Arguments arguments = Arguments.parse(command, List.of(args).subList(1, args.length));
         return switch (command) {
             case "run" -> {
-                arguments.allow(0, Set.of("config"));
-                yield new Run(arguments.configFile(defaults));
+                arguments.allow(0, Set.of("config", "log-file"));
+                yield new Run(arguments.configFile(defaults), arguments.values().containsKey("log-file")
+                        ? Path.of(arguments.values().get("log-file")) : null);
+            }
+            case "service" -> {
+                if (arguments.positional().isEmpty() || !SERVICE_ACTIONS.contains(arguments.positional().getFirst())) {
+                    throw new CliException("service needs one of: " + String.join(", ", SERVICE_ACTIONS));
+                }
+                arguments.allow(1, Set.of("config"));
+                yield new Service(arguments.configFile(defaults), arguments.positional().getFirst());
             }
             case "project" -> {
                 if (arguments.positional().isEmpty() || !arguments.positional().getFirst().equals("add")) {

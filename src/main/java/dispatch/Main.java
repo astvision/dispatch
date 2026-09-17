@@ -7,10 +7,16 @@ import dispatch.cli.JLineTerminal;
 import dispatch.cli.InitCommand;
 import dispatch.cli.Locations;
 import dispatch.cli.ProjectAddCommand;
+import dispatch.cli.ServiceCommand;
 import dispatch.cli.RunCommand;
 import dispatch.config.ConfigException;
 import dispatch.config.MemberWriter;
 import dispatch.telegram.BotApi;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -35,15 +41,35 @@ public final class Main {
         }
         switch (invocation) {
             case Cli.Help help -> System.out.print(Cli.usage(defaults));
-            case Cli.Run run -> run(run.configFile());
-            case Cli.Init init -> System.exit(new InitCommand(JLineTerminal.system(), BotApi::create, defaults, Duration.ofMinutes(3))
-                    .run(init, System.getenv()));
+            case Cli.Run run -> run(run.configFile(), run.logFile());
+            case Cli.Init init -> {
+                JLineTerminal terminal = JLineTerminal.system();
+                System.exit(new InitCommand(terminal, BotApi::create, defaults, Duration.ofMinutes(3), ServiceCommand.forThisMachine(terminal))
+                        .run(init, System.getenv()));
+            }
+            case Cli.Service service -> {
+                JLineTerminal terminal = JLineTerminal.system();
+                System.exit(ServiceCommand.forThisMachine(terminal).run(service, System.getenv()));
+            }
             case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create).run(check.configFile(), System.getenv()));
             case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(JLineTerminal.system()).run(add, System.getenv()));
         }
     }
 
-    private static void run(Path configFile) throws InterruptedException {
+    private static void run(Path configFile, Path logFile) throws InterruptedException {
+        if (logFile != null) {
+            // A background service has no terminal: everything that would be shown goes to the log file instead.
+            try {
+                Files.createDirectories(logFile.toAbsolutePath().getParent());
+                PrintStream log = new PrintStream(new FileOutputStream(logFile.toFile(), true), true, StandardCharsets.UTF_8);
+                System.setOut(log);
+                System.setErr(log);
+            } catch (IOException e) {
+                System.err.println("cannot write the log file " + logFile + ": " + e.getMessage());
+                System.exit(2);
+                return;
+            }
+        }
         RunCommand.Prepared prepared;
         try {
             prepared = RunCommand.prepare(configFile, System.getenv());
