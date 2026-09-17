@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.core.Projects;
-import dispatch.core.RejectResult;
 import dispatch.core.TaskService;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Requester;
@@ -22,7 +21,8 @@ import java.util.Set;
 /**
  * Turns one Telegram update into core calls. The update's effects and the next offset commit in one transaction, so a
  * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). Only the configured team group
- * is served: other groups are left, private chats ignored.
+ * is served: other groups are left, private chats ignored. Besides commands and buttons, a reply to a plan message is a
+ * correction.
  */
 public final class UpdateHandler {
 
@@ -89,14 +89,21 @@ public final class UpdateHandler {
             return;
         }
         JsonNode from = message.path("from");
-        Optional<Command> parsed = Command.parse(message, botUsername);
-        if (parsed.isEmpty() || !from.has("id")) {
+        if (!from.has("id")) {
             return;
         }
-        Command command = parsed.get();
         Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
         String origin = Refs.message(chatId, message.path("message_id").asLong());
         String chatRef = Refs.chat(chatId);
+        Optional<Command> parsed = Command.parse(message);
+        if (parsed.isEmpty()) {
+            correction(tx, message, who, origin, chatRef);
+            return;
+        }
+        Command command = parsed.get();
+        if (!command.addressedTo(botUsername)) {
+            return;
+        }
         switch (command.name()) {
             case "task" -> {
                 String[] projectAndText = command.args().split("\\s+", 2);
@@ -108,8 +115,29 @@ public final class UpdateHandler {
                     id -> tasks.cancel(tx, who, id, origin, chatRef),
                     () -> help(tx, origin, chatRef));
             case "help", "start" -> help(tx, origin, chatRef);
-            default -> tx.afterCommit(() -> Log.info("telegram.command_ignored", "command", command.name()));
+            default -> {
+                // Telegram marks any leading "/word" as a command, so a correction like "/api/login fails too" lands here.
+                if (!correction(tx, message, who, origin, chatRef)) {
+                    tx.afterCommit(() -> Log.info("telegram.command_ignored", "command", command.name()));
+                }
+            }
         }
+    }
+
+    /** Treats a reply to one of the bot's plan messages as a correction of that plan; false for any other message. */
+    private boolean correction(Tx tx, JsonNode message, Requester who, String origin, String chatRef) {
+        JsonNode repliedTo = message.path("reply_to_message");
+        if (!repliedTo.has("message_id")) {
+            return false;
+        }
+        long chatId = message.path("chat").path("id").asLong();
+        Optional<Outbox.Sent> sent = Outbox.findSent(tx, Refs.message(chatId, repliedTo.get("message_id").asLong()));
+        if (sent.isEmpty() || sent.get().kind() != OutboxKind.PLAN_READY) {
+            return false;
+        }
+        int planSeq = Json.read(sent.get().payload()).path("planSeq").asInt();
+        tasks.correct(tx, who, sent.get().taskId(), planSeq, text(message), origin, chatRef);
+        return true;
     }
 
     private void onCallback(Tx tx, JsonNode callback) {
@@ -117,7 +145,8 @@ public final class UpdateHandler {
         JsonNode from = callback.path("from");
         long chatId = callback.path("message").path("chat").path("id").asLong();
         String[] parts = callback.path("data").asText().split(":");
-        if (chatId != groupChatId || parts.length != 3 || !parts[0].equals("reject") || !from.has("id")) {
+        boolean known = parts.length == 3 && (parts[0].equals("approve") || parts[0].equals("reject"));
+        if (chatId != groupChatId || !known || !from.has("id")) {
             answer(tx, callbackId, "callback.unknown");
             return;
         }
@@ -128,14 +157,24 @@ public final class UpdateHandler {
             return;
         }
         Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
-        RejectResult result = tasks.reject(tx, who, taskId.get(), planSeq.get().intValue());
-        answer(tx, callbackId, switch (result) {
-            case REJECTED -> "callback.rejected";
-            case NOT_ALLOWED -> "callback.notAllowed";
-            case NOT_FOUND -> "callback.notFound";
-            case WRONG_STATE -> "callback.wrongState";
-            case STALE_PLAN -> "callback.stale";
-        });
+        int seq = planSeq.get().intValue();
+        String answer = parts[0].equals("approve")
+                ? switch (tasks.approve(tx, who, taskId.get(), seq)) {
+                    case APPROVED -> "callback.approved";
+                    case NOT_ALLOWED -> "callback.notAllowed";
+                    case NOT_FOUND -> "callback.notFound";
+                    case WRONG_STATE -> "callback.wrongState";
+                    case STALE_PLAN -> "callback.stale";
+                    case OPEN_QUESTIONS -> "callback.openQuestions";
+                }
+                : switch (tasks.reject(tx, who, taskId.get(), seq)) {
+                    case REJECTED -> "callback.rejected";
+                    case NOT_ALLOWED -> "callback.notAllowed";
+                    case NOT_FOUND -> "callback.notFound";
+                    case WRONG_STATE -> "callback.wrongState";
+                    case STALE_PLAN -> "callback.stale";
+                };
+        answer(tx, callbackId, answer);
     }
 
     private void onMembershipChange(Tx tx, JsonNode change) {
@@ -182,11 +221,16 @@ public final class UpdateHandler {
     }
 
     private static String withRepliedMessage(String text, JsonNode repliedTo) {
-        String replied = repliedTo.hasNonNull("text") ? repliedTo.get("text").asText() : repliedTo.path("caption").asText("");
+        String replied = text(repliedTo);
         if (replied.isBlank()) {
             return text;
         }
         return text.isBlank() ? replied : replied + "\n\n" + text;
+    }
+
+    /** A message's text, or the caption of a photo or document. */
+    private static String text(JsonNode message) {
+        return message.hasNonNull("text") ? message.get("text").asText() : message.path("caption").asText("");
     }
 
     private static Optional<Long> taskId(String text) {
@@ -218,11 +262,15 @@ public final class UpdateHandler {
         }
     }
 
-    /** A /command at the start of a message, addressed to this bot (or to no bot in particular). */
-    record Command(String name, String args) {
+    /**
+     * A /command at the start of a message.
+     *
+     * @param bot the bot named in /command@bot, null when none was named
+     */
+    record Command(String name, String bot, String args) {
 
-        static Optional<Command> parse(JsonNode message, String botUsername) {
-            String text = message.hasNonNull("text") ? message.get("text").asText() : message.path("caption").asText("");
+        static Optional<Command> parse(JsonNode message) {
+            String text = text(message);
             JsonNode entities = message.has("entities") ? message.get("entities") : message.path("caption_entities");
             for (JsonNode entity : entities) {
                 if (!entity.path("type").asText().equals("bot_command") || entity.path("offset").asInt() != 0) {
@@ -231,13 +279,14 @@ public final class UpdateHandler {
                 int length = entity.path("length").asInt();
                 String token = text.substring(1, length);
                 int at = token.indexOf('@');
-                if (at >= 0 && !token.substring(at + 1).equalsIgnoreCase(botUsername)) {
-                    return Optional.empty();
-                }
                 String name = (at >= 0 ? token.substring(0, at) : token).toLowerCase(Locale.ROOT);
-                return Optional.of(new Command(name, text.substring(length).strip()));
+                return Optional.of(new Command(name, at >= 0 ? token.substring(at + 1) : null, text.substring(length).strip()));
             }
             return Optional.empty();
+        }
+
+        boolean addressedTo(String botUsername) {
+            return bot == null || bot.equalsIgnoreCase(botUsername);
         }
     }
 }

@@ -24,6 +24,10 @@ public final class Outbox {
             Instant createdAt) {
     }
 
+    /** A delivered message, as found through the reference the channel gave it. */
+    public record Sent(long id, Long taskId, OutboxKind kind, String payload) {
+    }
+
     /**
      * @param taskId     null for replies that concern no task (help, not allowed, ...)
      * @param replyToRef channel reference of the message to reply to, null for none
@@ -48,6 +52,13 @@ public final class Outbox {
                         row.string("chat_ref"), row.string("reply_to_ref"), row.string("payload"), row.intValue("attempts"),
                         row.instant("created_at")),
                 now);
+    }
+
+    public static Optional<Sent> findSent(Tx tx, String sentRef) {
+        return tx.one("SELECT id, task_id, kind, payload FROM outbox WHERE sent_ref = ?",
+                row -> new Sent(row.longValue("id"), row.longOrNull("task_id"), row.enumValue("kind", OutboxKind.class),
+                        row.string("payload")),
+                sentRef);
     }
 
     public static void markSent(Tx tx, long id, int attempts, String sentRef, Instant now) {

@@ -16,6 +16,7 @@ import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
 import dispatch.store.Database;
+import dispatch.store.Outbox;
 import dispatch.store.Runs;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.SqlRows;
@@ -156,6 +157,70 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void approveButtonApprovesThePlanAndAnswersTheCallback() throws Exception {
+        long taskId = taskAwaitingApproval(List.of());
+
+        handler.handle(callback(512, 200, "Ali", "approve:" + taskId + ":1"));
+
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        assertEquals("Ali", row("SELECT requested_by_name FROM run WHERE task_id = ? AND seq = 2", taskId).get("requested_by_name"));
+        assertEquals(renderer.text("callback.approved"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+    }
+
+    @Test
+    void approveButtonOnAPlanWithOpenQuestionsSaysToAnswerThemFirst() throws Exception {
+        long taskId = taskAwaitingApproval(List.of("Which environments?"));
+
+        handler.handle(callback(513, 200, "Ali", "approve:" + taskId + ":1"));
+
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        assertEquals(renderer.text("callback.openQuestions"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+    }
+
+    @Test
+    void replyToThePlanMessageIsACorrection() {
+        long taskId = taskAwaitingApproval(List.of());
+        planMessageSentAs(1000);
+
+        handler.handle(message(540, 41, 200, "Ali", GROUP, "supergroup", "Also cover the mobile login", botMessage(1000)));
+
+        assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        Map<String, String> run = row("SELECT * FROM run WHERE task_id = ? AND seq = 2", taskId);
+        assertEquals("PLAN", run.get("kind"));
+        assertEquals("Also cover the mobile login", run.get("instruction"));
+        assertEquals("telegram:" + GROUP + "/41", row("SELECT reply_to_ref FROM outbox WHERE kind = 'CORRECTION_QUEUED'").get("reply_to_ref"));
+    }
+
+    @Test
+    void replyThatMerelyStartsLikeACommandIsStillACorrection() {
+        long taskId = taskAwaitingApproval(List.of());
+        planMessageSentAs(1000);
+
+        handler.handle(message(541, 42, 200, "Ali", GROUP, "supergroup", "/api/login fails the same way", botMessage(1000)));
+
+        assertEquals("/api/login fails the same way", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction"));
+    }
+
+    @Test
+    void repliesToOtherBotMessagesAndCommandsForOtherBotsAreNotCorrections() {
+        long taskId = taskAwaitingApproval(List.of());
+        planMessageSentAs(1000);
+        long messagesBefore = Long.parseLong(row("SELECT count(*) AS n FROM outbox").get("n"));
+        String ackRef = "telegram:" + GROUP + "/999";
+        db.transaction(tx -> tx.update("UPDATE outbox SET status = 'SENT', sent_ref = ? WHERE kind = 'TASK_QUEUED'", ackRef));
+
+        handler.handle(message(542, 43, 200, "Ali", GROUP, "supergroup", "thanks", botMessage(999)));
+        handler.handle(message(543, 44, 200, "Ali", GROUP, "supergroup", "/start@other_bot", botMessage(1000)));
+        handler.handle(message(544, 45, 200, "Ali", GROUP, "supergroup", "just chatting", null));
+
+        assertEquals("1", row("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId).get("n"));
+        assertEquals(messagesBefore, Long.parseLong(row("SELECT count(*) AS n FROM outbox").get("n")));
+        assertEquals(545, handler.nextOffset());
+    }
+
+    @Test
     void cancelCommandCancelsTheTask() {
         handler.handle(message(520, 20, 100, "Bold", GROUP, "supergroup", "/task alm Fix it", null));
 
@@ -177,12 +242,28 @@ class UpdateHandlerTest {
     }
 
     private long taskAwaitingApproval() {
+        return taskAwaitingApproval(List.of());
+    }
+
+    private long taskAwaitingApproval(List<String> questions) {
         handler.handle(message(509, 19, 100, "Bold", GROUP, "supergroup", "/task alm Fix the login timeout", null));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
-        Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), List.of());
+        Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), questions);
         transitions.planSucceeded(run.taskId(), run.seq(), plan,
                 new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", plan.toJson(), null, new BigDecimal("0.1"), 3, List.of(), null));
         return run.taskId();
+    }
+
+    /** As the outbox sender records it once Telegram accepted the plan message. */
+    private void planMessageSentAs(long messageId) {
+        long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'PLAN_READY'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/" + messageId, clock.instant()));
+    }
+
+    private static String botMessage(long messageId) {
+        return """
+                {"message_id":%d,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":%d,"type":"supergroup"},
+                 "date":1789640000,"text":"plan"}""".formatted(messageId, GROUP);
     }
 
     /** Shaped like a real Bot API update; the command entity covers the leading /command[@bot] token. */
