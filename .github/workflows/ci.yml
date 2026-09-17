@@ -27,13 +27,17 @@ jobs:
       - name: Build and test
         shell: bash
         run: ./mvnw --batch-mode verify
-      - name: Launcher (macOS, Linux)
+      - name: Install and run (macOS, Linux)
         if: runner.os != 'Windows'
         shell: bash
-        run: cp target/dispatch-*.jar bin/dispatch.jar && bin/dispatch --help
-      - name: Launcher (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
         run: |
-          for %%f in (target\dispatch-*.jar) do copy "%%f" bin\dispatch.jar
-          call bin\dispatch.cmd --help
+          DISPATCH_HOME="$RUNNER_TEMP/dispatch" DISPATCH_BIN="$RUNNER_TEMP/bin" sh install.sh
+          "$RUNNER_TEMP/bin/dispatch" --help
+      - name: Install and run (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:DISPATCH_HOME = "$env:RUNNER_TEMP\dispatch"
+          .\install.ps1
+          & "$env:RUNNER_TEMP\dispatch\dispatch.cmd" --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
