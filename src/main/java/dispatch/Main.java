@@ -3,7 +3,7 @@ package dispatch;
 import dispatch.cli.CheckCommand;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
-import dispatch.cli.ConsoleTerminal;
+import dispatch.cli.JLineTerminal;
 import dispatch.cli.InitCommand;
 import dispatch.cli.Locations;
 import dispatch.cli.ProjectAddCommand;
@@ -35,10 +35,10 @@ public final class Main {
         switch (invocation) {
             case Cli.Help help -> System.out.print(Cli.usage(defaults));
             case Cli.Run run -> run(run.configFile());
-            case Cli.Init init -> System.exit(new InitCommand(new ConsoleTerminal(), BotApi::create, defaults, Duration.ofMinutes(3))
+            case Cli.Init init -> System.exit(new InitCommand(JLineTerminal.system(), BotApi::create, defaults, Duration.ofMinutes(3))
                     .run(init, System.getenv()));
-            case Cli.Check check -> System.exit(new CheckCommand(new ConsoleTerminal(), BotApi::create).run(check.configFile(), System.getenv()));
-            case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(new ConsoleTerminal()).run(add, System.getenv()));
+            case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create).run(check.configFile(), System.getenv()));
+            case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(JLineTerminal.system()).run(add, System.getenv()));
         }
     }
 

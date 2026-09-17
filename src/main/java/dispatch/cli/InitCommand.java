@@ -87,7 +87,7 @@ public final class InitCommand {
             init(options.configFile().toAbsolutePath(), options.force(), processEnvironment);
             return 0;
         } catch (CliException e) {
-            terminal.say("FAIL " + e.getMessage());
+            terminal.fail(e.getMessage());
             return 1;
         }
     }
@@ -118,8 +118,8 @@ public final class InitCommand {
 
         write(configFile, secretsFile, render(me, claude, projects, authorName, authorEmail), bot.token());
         terminal.say("");
-        terminal.say("OK   wrote " + configFile);
-        terminal.say("OK   wrote " + secretsFile + " (only you can read it)");
+        terminal.ok("wrote " + configFile);
+        terminal.ok("wrote " + secretsFile + " (only you can read it)");
         terminal.say("Next: dispatch check, then dispatch run.");
     }
 
@@ -127,20 +127,20 @@ public final class InitCommand {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             String token = answered(terminal.askSecret("Bot token"));
             if (!BotApi.isBotToken(token)) {
-                terminal.say("WARN that is not a bot token: @BotFather gives digits, a colon, then letters and digits");
+                terminal.warn("that is not a bot token: @BotFather gives digits, a colon, then letters and digits");
                 continue;
             }
             try {
                 BotApi api = bots.apply(token);
                 JsonNode me = api.getMe();
                 String username = me.path("username").asText();
-                terminal.say("OK   @" + username);
+                terminal.ok("@" + username);
                 if (!me.path("has_topics_enabled").asBoolean(false)) {
                     terminal.say("     Tip: turn on topics for the bot in @BotFather, and each task gets its own topic.");
                 }
                 return new Bot(api, token, username);
             } catch (TelegramException e) {
-                terminal.say("WARN Telegram refused that token or could not be reached (" + e.getMessage() + ")");
+                terminal.warn("Telegram refused that token or could not be reached (" + e.getMessage() + ")");
             }
         }
         throw new CliException("no working bot token after " + ATTEMPTS + " tries");
@@ -170,7 +170,7 @@ public final class InitCommand {
                 String answer = answered(terminal.ask("Is " + sender.name() + " (" + sender.id() + ") you? (y/n)", "y"));
                 if (answer.strip().toLowerCase().startsWith("y")) {
                     acknowledge(api, offset);
-                    terminal.say("OK   you are " + sender.name() + " (" + sender.id() + ")");
+                    terminal.ok("you are " + sender.name() + " (" + sender.id() + ")");
                     return sender;
                 }
             }
@@ -183,7 +183,7 @@ public final class InitCommand {
         try {
             api.getUpdates(offset, 0);
         } catch (TelegramException e) {
-            terminal.say("WARN could not mark your message as read (" + e.getMessage() + "); the bot may answer it once it runs");
+            terminal.warn("could not mark your message as read (" + e.getMessage() + "); the bot may answer it once it runs");
         }
     }
 
@@ -196,10 +196,10 @@ public final class InitCommand {
             String command = answered(terminal.ask("claude command", found.map(Path::toString).orElse(null)));
             Optional<String> version = version(command);
             if (version.isPresent()) {
-                terminal.say("OK   " + version.get());
+                terminal.ok("" + version.get());
                 return command;
             }
-            terminal.say("WARN cannot run " + command + " --version");
+            terminal.warn("cannot run " + command + " --version");
         }
         throw new CliException("Claude Code could not be run; install it and run dispatch init again");
     }
@@ -215,29 +215,29 @@ public final class InitCommand {
                 if (!projects.isEmpty()) {
                     return projects;
                 }
-                terminal.say("WARN Dispatch needs at least one project");
+                terminal.warn("Dispatch needs at least one project");
                 continue;
             }
             ProjectProbe probe;
             try {
                 probe = ProjectProbe.of(Path.of(folder.strip()), git);
             } catch (CliException | InvalidPathException e) {
-                terminal.say("WARN " + e.getMessage());
+                terminal.warn("" + e.getMessage());
                 continue;
             }
             String name = required("Name", probe.defaultName());
             if (projects.stream().anyMatch(project -> project.name().equalsIgnoreCase(name))) {
-                terminal.say("WARN you already added a project named " + name);
+                terminal.warn("you already added a project named " + name);
                 continue;
             }
             String base = required("Branch tasks start from", probe.defaultBranch());
             String model = optional("Model (sonnet, opus or fable; empty for Claude Code's default)");
             String effort = effort();
             if (probe.originHadCredentials()) {
-                terminal.say("WARN origin's URL holds credentials; it is not copied into the config");
+                terminal.warn("origin's URL holds credentials; it is not copied into the config");
             }
             projects.add(new ProjectAddCommand.Project(name, null, probe.folder(), probe.originUrl(), base, "claude-code", model, effort));
-            terminal.say("OK   " + name + ": " + probe.folder() + " (base " + base + ")");
+            terminal.ok("" + name + ": " + probe.folder() + " (base " + base + ")");
         }
     }
 
@@ -247,7 +247,7 @@ public final class InitCommand {
             if (effort == null || EFFORTS.contains(effort)) {
                 return effort;
             }
-            terminal.say("WARN effort is one of " + String.join(", ", EFFORTS));
+            terminal.warn("effort is one of " + String.join(", ", EFFORTS));
         }
         return null;
     }

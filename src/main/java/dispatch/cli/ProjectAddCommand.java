@@ -37,7 +37,7 @@ public final class ProjectAddCommand {
             add(options, processEnvironment);
             return 0;
         } catch (CliException e) {
-            terminal.say("FAIL " + e.getMessage());
+            terminal.fail(e.getMessage());
             return 1;
         }
     }
@@ -60,7 +60,7 @@ public final class ProjectAddCommand {
         }
         String group = options.group() != null ? options.group() : onlyGroup(config);
         if (probe.originHadCredentials()) {
-            terminal.say("WARN origin's URL holds credentials; it is not copied into the config");
+            terminal.warn("origin's URL holds credentials; it is not copied into the config");
         }
         List<String> lines = projectLines(new Project(name, options.alias(), probe.folder(), probe.originUrl(), base,
                 config.agents().keySet().iterator().next(), options.model(), options.effort()));
@@ -71,8 +71,8 @@ public final class ProjectAddCommand {
             throw new CliException("cannot read " + configFile + ": " + e.getMessage());
         }
         replaceValidated(configFile, edited, environment);
-        terminal.say("OK   added " + name + ": " + probe.folder() + " (base " + base + ", group " + group + ")");
-        terminal.say("     A running Dispatch picks it up when restarted.");
+        terminal.ok("added " + name + ": " + probe.folder() + " (base " + base + ", group " + group + ")");
+        terminal.say("  A running Dispatch picks it up when restarted.");
     }
 
     /** What a new project's block says; everything the person typed is quoted where YAML would read it differently. */
@@ -154,7 +154,7 @@ public final class ProjectAddCommand {
                 try {
                     Files.deleteIfExists(candidate);
                 } catch (IOException e) {
-                    terminal.say("WARN could not remove the draft " + candidate + ": " + e.getMessage());
+                    terminal.warn("could not remove the draft " + candidate + ": " + e.getMessage());
                 }
             }
         }

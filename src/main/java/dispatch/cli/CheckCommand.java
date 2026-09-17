@@ -134,15 +134,15 @@ public final class CheckCommand {
     }
 
     private void ok(String line) {
-        terminal.say("OK   " + line);
+        terminal.ok(line);
     }
 
     private void warn(String line) {
-        terminal.say("WARN " + line);
+        terminal.warn(line);
     }
 
     private void fail(String line) {
         failed = true;
-        terminal.say("FAIL " + line);
+        terminal.fail(line);
     }
 }
