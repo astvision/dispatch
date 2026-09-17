@@ -98,6 +98,9 @@ class TaskLifecycleTest {
         assertEquals("telegram:100", task.get("requester_ref"));
         assertEquals("Bold", task.get("requester_name"));
         assertEquals("main", task.get("base_branch"));
+        assertEquals("NORMAL", task.get("priority"));
+        assertEquals("telegram:100/5", task.get("origin_ref"));
+        assertEquals(CHAT, task.get("chat_ref"), "the group of its project");
         assertEquals("2026-09-17T10:00:00.000Z", task.get("created_at"));
         assertNotNull(task.get("session_id"));
 
@@ -116,12 +119,14 @@ class TaskLifecycleTest {
         Map<String, String> message = row("SELECT * FROM outbox");
         assertEquals("TASK_QUEUED", message.get("kind"));
         assertEquals(CHAT, message.get("chat_ref"));
-        assertEquals(CHAT + "/5", message.get("reply_to_ref"));
+        assertNull(message.get("reply_to_ref"), "the task was given privately, so nothing in the group to reply to");
         assertEquals("PENDING", message.get("status"));
         JsonNode payload = Json.read(message.get("payload"));
         assertEquals(id, payload.get("taskId").asLong());
         assertEquals("autoland-management", payload.get("project").asText());
         assertEquals("Bold", payload.get("requester").asText());
+        assertEquals("NORMAL", payload.get("priority").asText());
+        assertEquals("Fix login timeout on staging", payload.get("title").asText());
 
         assertEquals(1, schedulerWakes.get());
         assertEquals(1, outboxWakes.get());
@@ -130,7 +135,7 @@ class TaskLifecycleTest {
     @Test
     void wakeUpsHappenOnlyAfterCommit() {
         assertThrows(IllegalStateException.class, () -> db.transaction(tx -> {
-            tasks.create(tx, BOLD, "alm", "Fix login timeout", CHAT + "/6", CHAT);
+            tasks.create(tx, BOLD, "alm", "Fix login timeout", Priority.NORMAL, BOLD.ref() + "/6");
             throw new IllegalStateException("rolled back");
         }));
 
@@ -157,19 +162,20 @@ class TaskLifecycleTest {
 
     @Test
     void nonMemberIsToldNoAndNoTaskIsCreated() {
-        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, STRANGER, "alm", "Drop tables", CHAT + "/10", CHAT));
+        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, STRANGER, "alm", "Drop tables", Priority.NORMAL, STRANGER.ref() + "/10"));
 
         assertEquals(CreateResult.NOT_ALLOWED, result);
         assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
         Map<String, String> message = row("SELECT * FROM outbox");
         assertEquals("NOT_ALLOWED", message.get("kind"));
-        assertEquals(CHAT + "/10", message.get("reply_to_ref"));
+        assertEquals("telegram:999", message.get("chat_ref"));
+        assertEquals("telegram:999/10", message.get("reply_to_ref"));
         assertEquals("Sara", Json.read(message.get("payload")).get("name").asText());
     }
 
     @Test
     void unknownProjectListsConfiguredProjects() {
-        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, BOLD, "billing", "x", CHAT + "/11", CHAT));
+        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, BOLD, "billing", "x", Priority.NORMAL, BOLD.ref() + "/11"));
 
         assertEquals(CreateResult.UNKNOWN_PROJECT, result);
         JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'UNKNOWN_PROJECT'").get("payload"));
@@ -181,7 +187,7 @@ class TaskLifecycleTest {
 
     @Test
     void unavailableProjectExplainsWhy() {
-        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, BOLD, "crm", "x", CHAT + "/12", CHAT));
+        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, BOLD, "crm", "x", Priority.NORMAL, BOLD.ref() + "/12"));
 
         assertEquals(CreateResult.PROJECT_UNAVAILABLE, result);
         JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'PROJECT_UNAVAILABLE'").get("payload"));
@@ -192,7 +198,7 @@ class TaskLifecycleTest {
 
     @Test
     void blankDescriptionAsksForUsage() {
-        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, BOLD, "alm", "  \n ", CHAT + "/13", CHAT));
+        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, BOLD, "alm", "  \n ", Priority.NORMAL, BOLD.ref() + "/13"));
 
         assertEquals(CreateResult.EMPTY, result);
         assertEquals("TASK_USAGE", row("SELECT kind FROM outbox").get("kind"));
@@ -200,20 +206,20 @@ class TaskLifecycleTest {
 
     @Test
     void missingProjectAsksMembersForUsageButStillRefusesStrangers() {
-        CreateResult member = db.transactionReturning(tx -> tasks.create(tx, BOLD, " ", "", CHAT + "/15", CHAT));
-        CreateResult stranger = db.transactionReturning(tx -> tasks.create(tx, STRANGER, "", "", CHAT + "/16", CHAT));
+        CreateResult member = db.transactionReturning(tx -> tasks.create(tx, BOLD, " ", "", Priority.NORMAL, BOLD.ref() + "/15"));
+        CreateResult stranger = db.transactionReturning(tx -> tasks.create(tx, STRANGER, "", "", Priority.NORMAL, STRANGER.ref() + "/16"));
 
         assertEquals(CreateResult.EMPTY, member);
         assertEquals(CreateResult.NOT_ALLOWED, stranger);
-        assertEquals("TASK_USAGE", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", CHAT + "/15").get("kind"));
-        assertEquals("NOT_ALLOWED", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", CHAT + "/16").get("kind"));
+        assertEquals("TASK_USAGE", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:100/15").get("kind"));
+        assertEquals("NOT_ALLOWED", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:999/16").get("kind"));
     }
 
     @Test
     void redeliveredCommandCreatesOneTask() {
         create(BOLD, "alm", "Fix login timeout", "14");
 
-        CreateResult again = db.transactionReturning(tx -> tasks.create(tx, BOLD, "alm", "Fix login timeout", CHAT + "/14", CHAT));
+        CreateResult again = db.transactionReturning(tx -> tasks.create(tx, BOLD, "alm", "Fix login timeout", Priority.NORMAL, BOLD.ref() + "/14"));
 
         assertEquals(CreateResult.DUPLICATE, again);
         assertEquals("1", row("SELECT count(*) AS n FROM task").get("n"));
@@ -240,7 +246,7 @@ class TaskLifecycleTest {
         assertEquals("[\"Bash: mkdir -p /tmp/plans\"]", finished.get("denials"));
 
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'PLAN_READY'");
-        assertPrivateWithGroupFallback(message, "telegram:100", CHAT + "/20");
+        assertPrivateWithGroupFallback(message, "telegram:100/20");
         JsonNode payload = Json.read(message.get("payload"));
         assertEquals(id, payload.get("taskId").asLong());
         assertEquals(1, payload.get("planSeq").asInt());
@@ -273,13 +279,13 @@ class TaskLifecycleTest {
         assertEquals("BUDGET", finished.get("failure_reason"));
         assertEquals("2.1", finished.get("cost_usd"));
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'TASK_FAILED'");
-        assertPrivateWithGroupFallback(message, "telegram:100", CHAT + "/21");
+        assertPrivateWithGroupFallback(message, "telegram:100/21");
         JsonNode payload = Json.read(message.get("payload"));
         assertEquals("BUDGET", payload.get("reason").asText());
         assertEquals("Reached maximum budget ($2)", payload.get("detail").asText());
         Map<String, String> inGroup = row("SELECT * FROM outbox WHERE kind = 'TASK_FAILED_SHORT'");
         assertEquals(CHAT, inGroup.get("chat_ref"));
-        assertEquals(CHAT + "/21", inGroup.get("reply_to_ref"));
+        assertNull(inGroup.get("reply_to_ref"));
         JsonNode brief = Json.read(inGroup.get("payload"));
         assertEquals("BUDGET", brief.get("reason").asText());
         assertFalse(brief.has("detail"), "details stay private");
@@ -300,7 +306,7 @@ class TaskLifecycleTest {
         assertEquals("telegram:100", event.get("actor"));
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'TASK_REJECTED'");
         assertEquals(CHAT, message.get("chat_ref"), "the group sees the outcome");
-        assertEquals(CHAT + "/30", message.get("reply_to_ref"));
+        assertNull(message.get("reply_to_ref"));
         assertEquals("Bold", Json.read(message.get("payload")).get("by").asText());
     }
 
@@ -335,7 +341,7 @@ class TaskLifecycleTest {
         assertEquals("AWAITING_APPROVAL", event.get("from_phase"));
         assertEquals("telegram:100", event.get("actor"));
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'EXECUTION_QUEUED'");
-        assertPrivateWithGroupFallback(message, "telegram:100", CHAT + "/70");
+        assertPrivateWithGroupFallback(message, "telegram:100/70");
         assertEquals("Bold", Json.read(message.get("payload")).get("by").asText());
         assertEquals(2, schedulerWakes.get(), "woken when the task was created and when it was approved");
     }
@@ -457,7 +463,7 @@ class TaskLifecycleTest {
         assertEquals("Made the auth timeout configurable.", run.get("output"));
         assertEquals("EXECUTING", row("SELECT from_phase FROM task_event WHERE task_id = ? AND to_phase = 'COMPLETED'", id).get("from_phase"));
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'TASK_COMPLETED'");
-        assertPrivateWithGroupFallback(message, "telegram:100", CHAT + "/90");
+        assertPrivateWithGroupFallback(message, "telegram:100/90");
         JsonNode payload = Json.read(message.get("payload"));
         assertEquals(id, payload.get("taskId").asLong());
         assertEquals("autoland-management", payload.get("project").asText());
@@ -469,7 +475,7 @@ class TaskLifecycleTest {
         assertEquals(240, payload.get("durationSeconds").asLong());
         Map<String, String> inGroup = row("SELECT * FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'");
         assertEquals(CHAT, inGroup.get("chat_ref"));
-        assertEquals(CHAT + "/90", inGroup.get("reply_to_ref"));
+        assertNull(inGroup.get("reply_to_ref"));
         JsonNode brief = Json.read(inGroup.get("payload"));
         assertEquals("https://github.com/acme/alm/pull/7", brief.get("prUrl").asText());
         assertEquals(2, brief.get("filesChanged").asInt());
@@ -542,7 +548,8 @@ class TaskLifecycleTest {
         assertEquals("CANCELLED", run.get("status"));
         assertNotNull(run.get("finished_at"));
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'TASK_CANCELLED'");
-        assertEquals(CHAT + "/40", message.get("reply_to_ref"));
+        assertEquals(CHAT, message.get("chat_ref"));
+        assertNull(message.get("reply_to_ref"));
         assertEquals("Ali", Json.read(message.get("payload")).get("by").asText());
         assertEquals("CANCELLED", row("SELECT to_phase FROM task_event WHERE task_id = ? ORDER BY id DESC LIMIT 1", id).get("to_phase"));
     }
@@ -560,12 +567,12 @@ class TaskLifecycleTest {
     }
 
     @Test
-    void taskGivenInAGroupChatIsOnlyForThatGroupsProjects() {
-        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, BOLD, "life", "Fix it", CHAT + "/53", CHAT));
+    void taskIsOnlyForProjectsOfTheMembersOwnGroups() {
+        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, BOLD, "life", "Fix it", Priority.NORMAL, BOLD.ref() + "/53"));
 
         assertEquals(CreateResult.UNKNOWN_PROJECT, result);
-        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/53").get("payload"));
-        assertEquals(2, payload.get("projects").size(), "only the group's own projects are offered");
+        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:100/53").get("payload"));
+        assertEquals(2, payload.get("projects").size(), "only the member's own projects are offered");
     }
 
     @Test
@@ -577,7 +584,7 @@ class TaskLifecycleTest {
         List<Map<String, String>> messages = SqlRows.query(dbFile, "SELECT * FROM outbox WHERE kind = 'TASK_CANCELLED' ORDER BY id");
         assertEquals(2, messages.size());
         assertEquals(CHAT, messages.get(0).get("chat_ref"));
-        assertEquals(CHAT + "/44", messages.get(0).get("reply_to_ref"));
+        assertNull(messages.get(0).get("reply_to_ref"));
         assertEquals("telegram:200", messages.get(1).get("chat_ref"));
         assertEquals("telegram:200/9", messages.get(1).get("reply_to_ref"));
     }
@@ -644,18 +651,19 @@ class TaskLifecycleTest {
         assertEquals(messagesBefore, Long.parseLong(row("SELECT count(*) AS n FROM outbox").get("n")));
     }
 
-    /** Sent to the requester's private chat, falling back to a reply under the task's message in the group. */
-    private static void assertPrivateWithGroupFallback(Map<String, String> message, String privateChat, String taskMessage) {
-        assertEquals(privateChat, message.get("chat_ref"));
-        assertNull(message.get("reply_to_ref"));
+    /** Sent to the requester's private chat under the message that gave the task, falling back to the group. */
+    private static void assertPrivateWithGroupFallback(Map<String, String> message, String taskMessage) {
+        assertEquals(taskMessage.substring(0, taskMessage.indexOf('/')), message.get("chat_ref"));
+        assertEquals(taskMessage, message.get("reply_to_ref"));
         assertEquals(CHAT, message.get("fallback_chat_ref"));
-        assertEquals(taskMessage, message.get("fallback_reply_to_ref"));
+        assertNull(message.get("fallback_reply_to_ref"), "the group has no message of the task to reply to");
     }
 
     private long create(Requester who, String project, String text, String messageId) {
-        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, who, project, text, CHAT + "/" + messageId, CHAT));
+        String origin = who.ref() + "/" + messageId;
+        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, who, project, text, Priority.NORMAL, origin));
         assertEquals(CreateResult.CREATED, result);
-        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", CHAT + "/" + messageId).get("id"));
+        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
     }
 
     private ClaimedRun claim() {

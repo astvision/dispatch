@@ -2,7 +2,11 @@ package dispatch.domain;
 
 /** What an outbox message tells the team; channels render each kind from its JSON payload. */
 public enum OutboxKind {
+    /** The group's line about a task given privately (ADR 0012). */
     TASK_QUEUED,
+    /** Asks for a draft's project and priority; edited in place as they are chosen. */
+    DRAFT_PROMPT,
+    DRAFT_EXPIRED,
     PLAN_READY,
     EXECUTION_QUEUED,
     CORRECTION_QUEUED,
@@ -23,6 +27,7 @@ public enum OutboxKind {
     UNKNOWN_PROJECT,
     PROJECT_UNAVAILABLE,
     TASK_USAGE,
-    TASK_IN_GROUP_ONLY,
+    PRIVATE_ONLY,
+    NO_PROJECTS,
     HELP
 }

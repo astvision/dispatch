@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.config.Config;
+import dispatch.domain.Draft;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
@@ -14,6 +15,7 @@ import dispatch.domain.Run;
 import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
 import dispatch.domain.Task;
+import dispatch.store.Drafts;
 import dispatch.store.Events;
 import dispatch.store.Outbox;
 import dispatch.store.Runs;
@@ -58,11 +60,113 @@ public final class TaskService {
     }
 
     /**
-     * @param originRef channel reference of the command message; the task's replies thread under it
-     * @param chatRef   channel reference of the chat
+     * A member's private message becomes a draft; its prompt asks for the project, unless the member can use only one or
+     * named one, and for the priority (ADR 0012).
+     *
+     * @param projectKey a project the member named, null if none; one they cannot use is ignored and asked for instead
+     * @param originRef  the message in the member's private chat
      */
-    public CreateResult create(Tx tx, Requester who, String projectKey, String text, String originRef, String chatRef) {
+    public DraftResult draft(Tx tx, Requester who, String projectKey, String text, String originRef) {
         Instant now = clock.instant();
+        String chatRef = who.ref();
+        if (Drafts.existsWithOrigin(tx, originRef)) {
+            tx.afterCommit(() -> Log.info("draft.duplicate_ignored", "origin", originRef));
+            return DraftResult.DUPLICATE;
+        }
+        if (!groups.isMember(who.ref())) {
+            notAllowed(tx, who, originRef, chatRef, now);
+            return DraftResult.NOT_ALLOWED;
+        }
+        String description = text == null ? "" : text.strip();
+        if (description.isEmpty()) {
+            enqueue(tx, null, OutboxKind.TASK_USAGE, chatRef, originRef, Json.object(), now);
+            return DraftResult.EMPTY;
+        }
+        List<Config.Project> offered = offeredProjects(who.ref());
+        if (offered.isEmpty()) {
+            enqueue(tx, null, OutboxKind.NO_PROJECTS, chatRef, originRef, Json.object(), now);
+            return DraftResult.NO_PROJECTS;
+        }
+        Optional<Config.Project> named = projectKey == null ? Optional.empty() : projects.find(projectKey).filter(offered::contains);
+        String project = named.map(Config.Project::name).orElse(offered.size() == 1 ? offered.getFirst().name() : null);
+        long id = Drafts.insert(tx, new Drafts.NewDraft(who, chatRef, originRef, description, project), now);
+        enqueue(tx, null, OutboxKind.DRAFT_PROMPT, chatRef, originRef, draftPayload(tx, id).orElseThrow(), now);
+        tx.afterCommit(() -> Log.info("draft.created", "draft", id, "requester", who.ref(), "project", project));
+        return DraftResult.DRAFTED;
+    }
+
+    public DraftChoice chooseProject(Tx tx, Requester who, long draftId, String project) {
+        Optional<Draft> found = Drafts.find(tx, draftId);
+        Optional<DraftChoice> refused = refusal(found, who);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        if (offeredProjects(who.ref()).stream().noneMatch(candidate -> candidate.name().equals(project))) {
+            return DraftChoice.PROJECT_UNAVAILABLE;
+        }
+        Drafts.chooseProject(tx, draftId, project, clock.instant());
+        return DraftChoice.PROJECT_CHOSEN;
+    }
+
+    /** Choosing the priority gives the task, provided the project is chosen and still one the member can use. */
+    public DraftChoice choosePriority(Tx tx, Requester who, long draftId, Priority priority) {
+        Instant now = clock.instant();
+        Optional<Draft> found = Drafts.find(tx, draftId);
+        Optional<DraftChoice> refused = refusal(found, who);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        Draft draft = found.get();
+        if (draft.project() == null) {
+            return DraftChoice.CHOOSE_PROJECT_FIRST;
+        }
+        Optional<Config.Project> project = offeredProjects(who.ref()).stream()
+                .filter(candidate -> candidate.name().equals(draft.project())).findFirst();
+        if (project.isEmpty()) {
+            return DraftChoice.PROJECT_UNAVAILABLE;
+        }
+        long taskId = insertTask(tx, who, project.get(), draft.description(), priority, draft.originRef(), now);
+        Drafts.created(tx, draftId, taskId, now);
+        return DraftChoice.CREATED;
+    }
+
+    /** What a draft's prompt shows: while open, the projects to choose from; once created, the task. */
+    public Optional<ObjectNode> draftPayload(Tx tx, long draftId) {
+        return Drafts.find(tx, draftId).map(draft -> {
+            ObjectNode payload = Json.object().put("draftId", draft.id()).put("title", title(draft.description()))
+                    .put("status", draft.status().name()).put("project", draft.project()).put("taskId", draft.taskId());
+            ArrayNode listed = payload.putArray("projects");
+            offeredProjects(draft.requesterRef())
+                    .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
+            payload.put("priority", draft.taskId() == null ? null
+                    : Tasks.find(tx, draft.taskId()).map(task -> task.priority().name()).orElse(null));
+            return payload;
+        });
+    }
+
+    /** Closes drafts created before {@code createdBefore} that nobody answered, telling their writers. */
+    public int expireDrafts(Tx tx, Instant createdBefore) {
+        Instant now = clock.instant();
+        List<Draft> stale = Drafts.openCreatedBefore(tx, createdBefore);
+        for (Draft draft : stale) {
+            Drafts.expire(tx, draft.id(), now);
+            enqueue(tx, null, OutboxKind.DRAFT_EXPIRED, draft.chatRef(), draft.originRef(), Json.object().put("draftId", draft.id()), now);
+        }
+        if (!stale.isEmpty()) {
+            tx.afterCommit(() -> Log.info("draft.expired", "count", stale.size()));
+        }
+        return stale.size();
+    }
+
+    /**
+     * Gives a task whose project and priority are already known, as a draft's buttons do in the end (ADR 0012). Replies go
+     * to the requester's private chat under {@code originRef}; the project's group gets a one-line announcement.
+     *
+     * @param originRef the message in the requester's private chat that gave the task
+     */
+    public CreateResult create(Tx tx, Requester who, String projectKey, String text, Priority priority, String originRef) {
+        Instant now = clock.instant();
+        String chatRef = who.ref();
         if (Tasks.existsWithOrigin(tx, originRef)) {
             tx.afterCommit(() -> Log.info("task.duplicate_ignored", "origin", originRef));
             return CreateResult.DUPLICATE;
@@ -75,22 +179,17 @@ public final class TaskService {
             enqueue(tx, null, OutboxKind.TASK_USAGE, chatRef, originRef, Json.object(), now);
             return CreateResult.EMPTY;
         }
-        // A group offers only its own projects (ADR 0012).
-        Set<String> offered = groups.projectsOfChat(chatRef);
-        Optional<Config.Project> found = projects.find(projectKey).filter(project -> offered.contains(project.name()));
+        Set<String> mine = groups.projectsOfMember(who.ref());
+        Optional<Config.Project> found = projects.find(projectKey).filter(project -> mine.contains(project.name()));
         if (found.isEmpty()) {
             ObjectNode payload = Json.object().put("given", projectKey);
             ArrayNode known = payload.putArray("projects");
-            projects.all().stream().filter(project -> offered.contains(project.name()))
+            projects.all().stream().filter(project -> mine.contains(project.name()))
                     .forEach(project -> known.addObject().put("name", project.name()).put("alias", project.alias()));
             enqueue(tx, null, OutboxKind.UNKNOWN_PROJECT, chatRef, originRef, payload, now);
             return CreateResult.UNKNOWN_PROJECT;
         }
         Config.Project project = found.get();
-        if (!groups.isMemberOfProjectGroup(who.ref(), project.name())) {
-            notAllowed(tx, who, originRef, chatRef, now);
-            return CreateResult.NOT_ALLOWED;
-        }
         Optional<String> unavailable = projects.unavailableReason(project);
         if (unavailable.isPresent()) {
             enqueue(tx, null, OutboxKind.PROJECT_UNAVAILABLE, chatRef, originRef,
@@ -101,17 +200,47 @@ public final class TaskService {
             enqueue(tx, null, OutboxKind.TASK_USAGE, chatRef, originRef, Json.object(), now);
             return CreateResult.EMPTY;
         }
+        insertTask(tx, who, project, text.strip(), priority, originRef, now);
+        return CreateResult.CREATED;
+    }
 
-        String description = text.strip();
-        long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, chatRef,
-                UUID.randomUUID(), project.baseBranch(), Priority.NORMAL), Phase.PLANNING, now);
+    private long insertTask(Tx tx, Requester who, Config.Project project, String description, Priority priority, String originRef,
+                            Instant now) {
+        String groupChat = groups.chatOfProject(project.name());
+        long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, groupChat,
+                UUID.randomUUID(), project.baseBranch(), priority), Phase.PLANNING, now);
         Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, description, who), now);
         Events.record(tx, id, null, who.ref(), null, Phase.PLANNING, "created", now);
-        enqueue(tx, id, OutboxKind.TASK_QUEUED, chatRef, originRef,
-                Json.object().put("taskId", id).put("project", project.name()).put("requester", who.name()), now);
+        enqueue(tx, id, OutboxKind.TASK_QUEUED, groupChat, null, Json.object().put("taskId", id).put("project", project.name())
+                .put("requester", who.name()).put("priority", priority.name()).put("title", title(description)), now);
         tx.afterCommit(wakeScheduler);
-        tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "requester", who.ref()));
-        return CreateResult.CREATED;
+        tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "priority", priority,
+                "requester", who.ref()));
+        return id;
+    }
+
+    /** A draft can be answered only by its writer, and only while it is open. */
+    private static Optional<DraftChoice> refusal(Optional<Draft> found, Requester who) {
+        if (found.isEmpty()) {
+            return Optional.of(DraftChoice.NOT_FOUND);
+        }
+        Draft draft = found.get();
+        if (!draft.requesterRef().equals(who.ref())) {
+            return Optional.of(DraftChoice.NOT_REQUESTER);
+        }
+        return switch (draft.status()) {
+            case OPEN -> Optional.empty();
+            case CREATED -> Optional.of(DraftChoice.ALREADY_CREATED);
+            case EXPIRED -> Optional.of(DraftChoice.EXPIRED);
+        };
+    }
+
+    /** The member's projects that can take tasks now, in config order. */
+    private List<Config.Project> offeredProjects(String requesterRef) {
+        Set<String> mine = groups.projectsOfMember(requesterRef);
+        return projects.all().stream()
+                .filter(project -> mine.contains(project.name()) && projects.unavailableReason(project).isEmpty())
+                .toList();
     }
 
     /**
@@ -227,7 +356,7 @@ public final class TaskService {
             return RejectResult.WRONG_STATE;
         }
         Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.REJECTED, "rejected", now);
-        enqueue(tx, taskId, OutboxKind.TASK_REJECTED, task.chatRef(), task.originRef(),
+        enqueue(tx, taskId, OutboxKind.TASK_REJECTED, task.chatRef(), task.groupOriginRef(),
                 Json.object().put("taskId", taskId).put("by", who.name()), now);
         logTransition(tx, taskId, Phase.AWAITING_APPROVAL, Phase.REJECTED, who.ref());
         return RejectResult.REJECTED;
@@ -288,7 +417,7 @@ public final class TaskService {
         Runs.cancelQueued(tx, taskId, now);
         Events.record(tx, taskId, null, who.ref(), task.phase(), Phase.CANCELLED, "cancelled", now);
         ObjectNode cancelled = Json.object().put("taskId", taskId).put("by", who.name());
-        enqueue(tx, taskId, OutboxKind.TASK_CANCELLED, task.chatRef(), task.originRef(), cancelled, now);
+        enqueue(tx, taskId, OutboxKind.TASK_CANCELLED, task.chatRef(), task.groupOriginRef(), cancelled, now);
         if (!chatRef.equals(task.chatRef())) {
             // Sent from a private chat: answer there too, not only in the group.
             enqueue(tx, taskId, OutboxKind.TASK_CANCELLED, chatRef, originRef, cancelled, now);

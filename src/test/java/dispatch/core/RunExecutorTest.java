@@ -13,6 +13,7 @@ import dispatch.agent.claude.ClaudeCodeAgent;
 import dispatch.config.Config;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Runs;
@@ -339,7 +340,7 @@ class RunExecutorTest {
                 activeRuns, project -> new Config.RunLimits(planTimeout, new BigDecimal("2")),
                 project -> new Config.RunLimits(Duration.ofSeconds(30), new BigDecimal("10")), Redactor.patternsOnly(),
                 schedulerWakes::incrementAndGet);
-        db.transaction(tx -> tasks.create(tx, BOLD, "alm", description, CHAT + "/" + System.nanoTime(), CHAT));
+        db.transaction(tx -> tasks.create(tx, BOLD, "alm", description, Priority.NORMAL, BOLD.ref() + "/" + System.nanoTime()));
         return Long.parseLong(row("SELECT max(id) AS id FROM task").get("id"));
     }
 

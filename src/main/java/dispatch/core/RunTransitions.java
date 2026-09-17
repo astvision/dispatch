@@ -162,9 +162,9 @@ public final class RunTransitions {
         tx.afterCommit(wakeOutbox);
     }
 
-    /** A message for the group, under the task's own message. */
+    /** A message for the task's group, under the task's own message if it was given there. */
     private void enqueue(Tx tx, Task task, OutboxKind kind, ObjectNode payload, Instant now) {
-        Outbox.enqueue(tx, task.id(), kind, task.chatRef(), task.originRef(), payload, now);
+        Outbox.enqueue(tx, task.id(), kind, task.chatRef(), task.groupOriginRef(), payload, now);
         tx.afterCommit(wakeOutbox);
     }
 

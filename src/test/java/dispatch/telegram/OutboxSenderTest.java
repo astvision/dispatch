@@ -217,7 +217,7 @@ class OutboxSenderTest {
     }
 
     private long enqueuePrivate(OutboxKind kind, ObjectNode payload) {
-        return db.transactionReturning(tx -> Outbox.enqueueWithFallback(tx, null, kind, "telegram:100", "telegram:-100",
+        return db.transactionReturning(tx -> Outbox.enqueueWithFallback(tx, null, kind, "telegram:100", null, "telegram:-100",
                 "telegram:-100/55", payload, clock.instant()));
     }
 

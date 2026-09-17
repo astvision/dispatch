@@ -51,23 +51,25 @@ public final class Outbox {
 
     /**
      * A message for someone's private chat that goes to {@code fallbackChatRef}, as a reply to {@code fallbackReplyToRef},
-     * if the channel refuses it, e.g. because they never started the bot (ADR 0011).
+     * if the channel refuses it, e.g. because they blocked the bot (ADR 0011).
      */
-    public static long enqueueWithFallback(Tx tx, Long taskId, OutboxKind kind, String chatRef, String fallbackChatRef,
-                                           String fallbackReplyToRef, JsonNode payload, Instant now) {
+    public static long enqueueWithFallback(Tx tx, Long taskId, OutboxKind kind, String chatRef, String replyToRef,
+                                           String fallbackChatRef, String fallbackReplyToRef, JsonNode payload, Instant now) {
         return tx.insert("""
-                        INSERT INTO outbox (task_id, kind, chat_ref, fallback_chat_ref, fallback_reply_to_ref, payload, status,
-                                            next_attempt_at, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)""",
-                taskId, kind, chatRef, fallbackChatRef, fallbackReplyToRef, Json.write(payload), now, now);
+                        INSERT INTO outbox (task_id, kind, chat_ref, reply_to_ref, fallback_chat_ref, fallback_reply_to_ref, payload,
+                                            status, next_attempt_at, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)""",
+                taskId, kind, chatRef, replyToRef, fallbackChatRef, fallbackReplyToRef, Json.write(payload), now, now);
     }
 
     /**
-     * A task message for its requester's private chat, falling back to a reply under the task in its group (ADR 0011).
-     * The requester reference addresses the private chat: for Telegram, a private chat's id is the user's id.
+     * A task message for its requester's private chat, under the message that gave the task, falling back to the task's
+     * group (ADR 0011, 0012). The requester reference addresses the private chat: for Telegram, a private chat's id is the
+     * user's id. A reply target is set only in the chat that holds the message, so a reply never lands on an unrelated one.
      */
     public static long enqueueForRequester(Tx tx, Task task, OutboxKind kind, JsonNode payload, Instant now) {
-        return enqueueWithFallback(tx, task.id(), kind, task.requester().ref(), task.chatRef(), task.originRef(), payload, now);
+        return enqueueWithFallback(tx, task.id(), kind, task.requester().ref(), task.privateOriginRef(), task.chatRef(),
+                task.groupOriginRef(), payload, now);
     }
 
     /** The pending message that has waited longest past its next attempt time. */

@@ -48,6 +48,7 @@ class UpdateHandlerTest {
     private final TestClock clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
     private final Renderer renderer = new Renderer(Renderer.mongolian(), clock, FakeTelegram.BOT_USERNAME);
     private RunTransitions transitions;
+    private TaskService tasks;
     private UpdateHandler handler;
 
     @BeforeEach
@@ -66,7 +67,7 @@ class UpdateHandlerTest {
                         List.of("autoland-management")),
                 new Config.Group("mobile", MOBILE_GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
                         List.of("life"))));
-        TaskService tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
+        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { });
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
         handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME,
@@ -80,30 +81,67 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void taskCommandFromMemberCreatesTaskAndStoresTheNextOffset() {
-        handler.handle(message(500, 10, 100, "Bold", GROUP, "supergroup", "/task alm Fix the login timeout\nIt happens on staging", null));
+    void privateMessageFromAMemberStartsADraftAndStoresTheNextOffset() {
+        handler.handle(message(500, 10, 100, "Bold", 100L, "private", "Fix the login timeout\nIt happens on staging", null));
 
-        Map<String, String> task = row("SELECT * FROM task");
-        assertEquals("autoland-management", task.get("project"));
-        assertEquals("Fix the login timeout\nIt happens on staging", task.get("description"));
-        assertEquals("telegram:" + GROUP + "/10", task.get("origin_ref"));
-        assertEquals("telegram:" + GROUP, task.get("chat_ref"));
-        assertEquals("telegram:100", task.get("requester_ref"));
-        assertEquals("Bold", task.get("requester_name"));
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("Fix the login timeout\nIt happens on staging", draft.get("description"));
+        assertEquals("telegram:100/10", draft.get("origin_ref"));
+        assertEquals("telegram:100", draft.get("requester_ref"));
+        assertEquals("Bold", draft.get("requester_name"));
+        assertEquals("DRAFT_PROMPT", row("SELECT kind FROM outbox").get("kind"));
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
         assertEquals("501", row("SELECT value FROM kv WHERE key = 'telegram.offset'").get("value"));
         assertEquals(501, handler.nextOffset());
     }
 
     @Test
-    void taskCommandSentAsReplyTurnsTheRepliedMessageIntoTheTask() {
-        String replied = """
-                {"message_id":9,"from":{"id":300,"is_bot":false,"first_name":"QA"},"chat":{"id":%d,"type":"supergroup"},
-                 "date":1789640000,"text":"Login fails after 30s on staging"}""".formatted(GROUP);
+    void privateTaskCommandNamesTheProjectAndTakesTheRepliedMessageAsText() {
+        String forwarded = """
+                {"message_id":9,"from":{"id":100,"is_bot":false,"first_name":"Bold"},"chat":{"id":100,"type":"private"},
+                 "date":1789640000,"text":"Login fails after 30s on staging"}""";
 
-        handler.handle(message(501, 11, 100, "Bold", GROUP, "supergroup", "/task@" + FakeTelegram.BOT_USERNAME + " alm also check mobile",
-                replied));
+        handler.handle(message(501, 11, 100, "Bold", 100L, "private", "/task alm also check mobile", forwarded));
 
-        assertEquals("Login fails after 30s on staging\n\nalso check mobile", row("SELECT description FROM task").get("description"));
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("autoland-management", draft.get("project"));
+        assertEquals("Login fails after 30s on staging\n\nalso check mobile", draft.get("description"));
+    }
+
+    @Test
+    void draftButtonsChooseTheProjectThenThePriorityAndUpdateThePromptInPlace() throws Exception {
+        handler.handle(message(502, 12, 100, "Bold", 100L, "private", "Fix the login timeout", null));
+        long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
+
+        handler.handle(privateCallback(503, 100, "Bold", "draft:" + draftId + ":p:autoland-management"));
+
+        assertEquals(renderer.text("callback.projectChosen"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode chosen = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(88, chosen.get("message_id").asLong());
+        assertTrue(chosen.get("reply_markup").toString().contains("✓ alm"), chosen.toString());
+
+        handler.handle(privateCallback(504, 100, "Bold", "draft:" + draftId + ":prio:URGENT"));
+
+        Map<String, String> task = row("SELECT * FROM task");
+        assertEquals("autoland-management", task.get("project"));
+        assertEquals("URGENT", task.get("priority"));
+        assertEquals(renderer.text("callback.taskCreated"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode created = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(created.get("text").asText().contains("#" + task.get("id")), created.toString());
+        assertEquals(0, created.get("reply_markup").get("inline_keyboard").size(), "no buttons once the task exists");
+    }
+
+    @Test
+    void draftButtonOfSomeoneElsesMessageIsRefused() throws Exception {
+        handler.handle(message(505, 13, 100, "Bold", 100L, "private", "Fix the login timeout", null));
+        long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
+
+        handler.handle(privateCallback(506, 300, "Sara", "draft:" + draftId + ":p:life"));
+
+        assertEquals(renderer.text("callback.notRequester"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
     @Test
@@ -116,11 +154,15 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void strangerInTheGroupIsToldNo() {
-        handler.handle(message(503, 13, 999, "Sara", GROUP, "supergroup", "/task alm Drop the tables", null));
+    void taskAndCancelInAGroupArePointedToThePrivateChat() {
+        handler.handle(message(507, 17, 999, "Sara", GROUP, "supergroup", "/task alm Drop the tables", null));
+        handler.handle(message(508, 18, 100, "Bold", GROUP, "supergroup", "/cancel 1", null));
 
-        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
-        assertEquals("NOT_ALLOWED", row("SELECT kind FROM outbox").get("kind"));
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        Map<String, String> task = row("SELECT * FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/17");
+        assertEquals("PRIVATE_ONLY", task.get("kind"));
+        assertEquals(FakeTelegram.BOT_USERNAME, Json.read(task.get("payload")).get("bot").asText());
+        assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/18").get("kind"));
     }
 
     @Test
@@ -157,18 +199,8 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void taskSentPrivatelyIsPointedToTheGroup() {
-        handler.handle(message(563, 63, 100, "Bold", 100L, "private", "/task alm Fix it", null));
-
-        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
-        Map<String, String> reply = row("SELECT * FROM outbox");
-        assertEquals("TASK_IN_GROUP_ONLY", reply.get("kind"));
-        assertEquals("telegram:100/63", reply.get("reply_to_ref"));
-    }
-
-    @Test
     void memberCanCancelFromTheirPrivateChat() {
-        handler.handle(message(564, 64, 100, "Bold", GROUP, "supergroup", "/task alm Fix it", null));
+        task("Fix it");
 
         handler.handle(message(565, 65, 100, "Bold", 100L, "private", "/cancel 1", null));
 
@@ -299,15 +331,6 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void cancelCommandCancelsTheTask() {
-        handler.handle(message(520, 20, 100, "Bold", GROUP, "supergroup", "/task alm Fix it", null));
-
-        handler.handle(message(521, 21, 200, "Ali", GROUP, "supergroup", "/cancel 1", null));
-
-        assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = 1").get("phase"));
-    }
-
-    @Test
     void statusAndHistoryAnswerAnyoneInTheGroup() {
         handler.handle(message(550, 50, 999, "Sara", GROUP, "supergroup", "/status", null));
         handler.handle(message(551, 51, 999, "Sara", GROUP, "supergroup", "/history", null));
@@ -365,7 +388,7 @@ class UpdateHandlerTest {
 
     @Test
     void priorityButtonChangesThePriorityAndUpdatesTheStatusMessageInPlace() throws Exception {
-        handler.handle(message(580, 80, 100, "Bold", GROUP, "supergroup", "/task alm Fix the login timeout", null));
+        task("Fix the login timeout");
 
         handler.handle(privateCallback(581, 100, "Bold", "prio:1:URGENT"));
 
@@ -381,7 +404,7 @@ class UpdateHandlerTest {
 
     @Test
     void priorityButtonOfSomeoneElsesTaskIsRefused() throws Exception {
-        handler.handle(message(582, 82, 100, "Bold", GROUP, "supergroup", "/task alm Fix the login timeout", null));
+        task("Fix the login timeout");
 
         handler.handle(privateCallback(583, 200, "Ali", "prio:1:LOW"));
 
@@ -399,15 +422,23 @@ class UpdateHandlerTest {
         JsonNode payload = Json.read(reply.get("payload"));
         assertEquals("alm", payload.get("projects").get(0).get("alias").asText());
         assertEquals(FakeTelegram.BOT_USERNAME, payload.get("bot").asText());
-        assertTrue(renderer.render(dispatch.domain.OutboxKind.HELP, payload).html().contains("/task@" + FakeTelegram.BOT_USERNAME));
+        assertTrue(renderer.render(dispatch.domain.OutboxKind.HELP, payload).html().contains("@" + FakeTelegram.BOT_USERNAME));
     }
 
     private long taskAwaitingApproval() {
         return taskAwaitingApproval(List.of());
     }
 
+    /** A task Bold gave for autoland-management, as the draft buttons would have created it. */
+    private long task(String text) {
+        String origin = "telegram:100/" + System.nanoTime();
+        db.transaction(tx -> tasks.create(tx, new dispatch.domain.Requester("telegram:100", "Bold"), "alm", text,
+                dispatch.domain.Priority.NORMAL, origin));
+        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+    }
+
     private long taskAwaitingApproval(List<String> questions) {
-        handler.handle(message(509, 19, 100, "Bold", GROUP, "supergroup", "/task alm Fix the login timeout", null));
+        task("Fix the login timeout");
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), questions);
         transitions.planSucceeded(run.taskId(), run.seq(), plan,

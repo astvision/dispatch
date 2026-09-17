@@ -74,7 +74,10 @@ public final class Renderer {
         }
         Rendered rendered = switch (kind) {
             case TASK_QUEUED -> plain(format("task.queued", taskId(payload), escape(payload.path("project").asText()),
-                    escape(payload.path("requester").asText())));
+                    escape(payload.path("requester").asText()), icon(payload).strip(),
+                    escapeWithin(payload.path("title").asText(), TITLE_LIMIT)));
+            case DRAFT_PROMPT -> draftPrompt(payload);
+            case DRAFT_EXPIRED -> plain(text("draft.expired"));
             case PLAN_READY -> throw new IllegalStateException("rendered above");
             case EXECUTION_QUEUED -> plain(format("task.executionQueued", taskId(payload), escape(payload.path("by").asText())));
             case CORRECTION_QUEUED -> plain(format("task.correctionQueued", taskId(payload)));
@@ -104,11 +107,71 @@ public final class Renderer {
             case PROJECT_UNAVAILABLE -> plain(format("project.unavailable", escape(payload.path("project").asText()),
                     escape(payload.path("reason").asText())));
             case TASK_USAGE -> plain(text("task.usage"));
-            case TASK_IN_GROUP_ONLY -> plain(format("task.inGroupOnly", escape(payload.path("bot").asText())));
+            case PRIVATE_ONLY -> plain(format("privateOnly", escape(payload.path("bot").asText())));
+            case NO_PROJECTS -> plain(text("noProjects"));
             case HELP -> plain(format(payload.path("privateChat").asBoolean() ? "help.private" : "help",
                     projectList(payload.path("projects")), escape(payload.path("bot").asText())));
         };
         return hint == null ? rendered : new Rendered(rendered.html() + "\n\n" + hint, rendered.keyboard(), rendered.document());
+    }
+
+    /** A draft's prompt: while open, project buttons (in rows of three, when there is a choice) and a priority row. */
+    private Rendered draftPrompt(JsonNode payload) {
+        String title = escapeWithin(payload.path("title").asText(), TITLE_LIMIT);
+        String project = payload.hasNonNull("project") ? escape(projectLabel(payload)) : null;
+        switch (payload.path("status").asText()) {
+            case "CREATED" -> {
+                return plain(format("draft.created", String.valueOf(payload.path("taskId").asLong()), project, icon(payload).strip())
+                        + "\n" + title);
+            }
+            case "EXPIRED" -> {
+                return plain(text("draft.expired") + "\n" + title);
+            }
+            default -> {
+                // OPEN: asked below.
+            }
+        }
+        String id = String.valueOf(payload.path("draftId").asLong());
+        String html = text("draft.header") + "\n" + title + "\n\n"
+                + (project == null ? text("draft.chooseProject") : format("draft.project", project)) + "\n" + text("draft.choosePriority");
+        List<List<Button>> keyboard = new ArrayList<>();
+        JsonNode projects = payload.path("projects");
+        if (projects.size() > 1) {
+            List<Button> row = new ArrayList<>();
+            for (JsonNode candidate : projects) {
+                String name = candidate.path("name").asText();
+                String chosen = name.equals(payload.path("project").asText()) ? "✓ " : "";
+                row.add(new Button(chosen + label(candidate), "draft:" + id + ":p:" + name));
+                if (row.size() == 3) {
+                    keyboard.add(row);
+                    row = new ArrayList<>();
+                }
+            }
+            if (!row.isEmpty()) {
+                keyboard.add(row);
+            }
+        }
+        List<Button> priorities = new ArrayList<>();
+        for (String priority : PRIORITIES) {
+            priorities.add(new Button(PRIORITY_ICONS.get(priority) + " " + text("priority." + priority), "draft:" + id + ":prio:" + priority));
+        }
+        keyboard.add(priorities);
+        return new Rendered(html, keyboard, null);
+    }
+
+    /** The draft's chosen project as members know it: its alias if it has one. */
+    private static String projectLabel(JsonNode draft) {
+        String name = draft.path("project").asText();
+        for (JsonNode candidate : draft.path("projects")) {
+            if (candidate.path("name").asText().equals(name)) {
+                return label(candidate);
+            }
+        }
+        return name;
+    }
+
+    private static String label(JsonNode project) {
+        return project.hasNonNull("alias") ? project.get("alias").asText() : project.path("name").asText();
     }
 
     /** @param hint the Start hint of a message that fell back to the group, null otherwise */

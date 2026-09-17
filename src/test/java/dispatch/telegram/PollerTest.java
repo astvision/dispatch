@@ -79,13 +79,13 @@ class PollerTest {
                  "chat":{"id":%d,"type":"supergroup"},"date":1789640000,"text":"/t",
                  "entities":[{"offset":0,"length":99,"type":"bot_command"}]}}""".formatted(GROUP));
         telegram.pushUpdate(malformed);
-        telegram.pushUpdate(UpdateHandlerTest.message(41, 2, 100, "Bold", GROUP, "supergroup", "/task alm Fix it", null));
+        telegram.pushUpdate(UpdateHandlerTest.message(41, 2, 100, "Bold", 100L, "private", "Fix it", null));
 
         thread = Thread.ofVirtual().start(poller);
 
         assertEquals(40, telegram.awaitRequest("getUpdates", Duration.ofSeconds(5)).json().get("offset").asLong());
         assertEquals(42, telegram.awaitRequest("getUpdates", Duration.ofSeconds(5)).json().get("offset").asLong());
-        assertEquals("1", SqlRows.single(dbFile, "SELECT count(*) AS n FROM task").get("n"));
+        assertEquals("1", SqlRows.single(dbFile, "SELECT count(*) AS n FROM draft").get("n"));
         assertEquals("42", SqlRows.single(dbFile, "SELECT value FROM kv WHERE key = 'telegram.offset'").get("value"));
     }
 
@@ -119,7 +119,7 @@ class PollerTest {
     void unreachableTelegramIsRetriedUntilItRecovers() throws Exception {
         telegram.respond("getUpdates", 502, "<html>Bad Gateway</html>");
         telegram.respond("getUpdates", 502, "<html>Bad Gateway</html>");
-        telegram.pushUpdate(UpdateHandlerTest.message(7, 3, 100, "Bold", GROUP, "supergroup", "/task alm Fix it", null));
+        telegram.pushUpdate(UpdateHandlerTest.message(7, 3, 100, "Bold", 100L, "private", "Fix it", null));
 
         thread = Thread.ofVirtual().start(poller);
 
@@ -127,7 +127,7 @@ class PollerTest {
             telegram.awaitRequest("getUpdates", Duration.ofSeconds(5));
         }
         telegram.awaitRequest("getUpdates", Duration.ofSeconds(5));
-        assertEquals("1", SqlRows.single(dbFile, "SELECT count(*) AS n FROM task").get("n"));
+        assertEquals("1", SqlRows.single(dbFile, "SELECT count(*) AS n FROM draft").get("n"));
     }
 
     @Test

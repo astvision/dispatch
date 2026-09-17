@@ -4,6 +4,7 @@ import dispatch.agent.Agent;
 import dispatch.agent.claude.ClaudeCodeAgent;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
+import dispatch.core.DraftExpiry;
 import dispatch.core.Groups;
 import dispatch.core.Projects;
 import dispatch.core.Recovery;
@@ -40,19 +41,22 @@ public final class App {
     private final Poller poller;
     private final Scheduler scheduler;
     private final OutboxSender sender;
+    private final DraftExpiry draftExpiry;
     private final ActiveRuns activeRuns;
     private final Consumer<Throwable> onFatal;
     private final AtomicBoolean stopping = new AtomicBoolean();
     private Thread pollerThread;
     private Thread schedulerThread;
     private Thread senderThread;
+    private Thread draftExpiryThread;
 
-    private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, ActiveRuns activeRuns,
+    private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, ActiveRuns activeRuns,
                 Consumer<Throwable> onFatal) {
         this.db = db;
         this.poller = poller;
         this.scheduler = scheduler;
         this.sender = sender;
+        this.draftExpiry = draftExpiry;
         this.activeRuns = activeRuns;
         this.onFatal = onFatal;
     }
@@ -102,7 +106,8 @@ public final class App {
                 run -> Thread.ofVirtual().name("run-" + run.taskId() + "." + run.seq())
                         .start(app[0].guarded(() -> executor.execute(run))),
                 Duration.ofSeconds(5));
-        app[0] = new App(db, poller, scheduler, sender, activeRuns, onFatal);
+        DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
+        app[0] = new App(db, poller, scheduler, sender, draftExpiry, activeRuns, onFatal);
         app[0].startThreads();
         Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "groups", groups.all().size(),
                 "projects", config.projects().size(), "state_dir", stateDir);
@@ -129,6 +134,8 @@ public final class App {
             if (!activeRuns.awaitIdle(STOP_TIMEOUT)) {
                 Log.warn("dispatch.runs_still_active", "waited_seconds", STOP_TIMEOUT.toSeconds());
             }
+            draftExpiry.stop();
+            draftExpiryThread.join(Duration.ofSeconds(10));
             sender.stop();
             senderThread.join(Duration.ofSeconds(10));
             pollerThread.join(Duration.ofSeconds(10));
@@ -143,6 +150,7 @@ public final class App {
         pollerThread = Thread.ofVirtual().name("telegram-poller").start(guarded(poller));
         schedulerThread = Thread.ofVirtual().name("scheduler").start(guarded(scheduler));
         senderThread = Thread.ofVirtual().name("outbox-sender").start(guarded(sender));
+        draftExpiryThread = Thread.ofVirtual().name("draft-expiry").start(guarded(draftExpiry));
     }
 
     /** A loop that dies unexpectedly would leave the instance half-working; report it as fatal instead. */
@@ -164,14 +172,14 @@ public final class App {
     private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups) {
         for (Config.Group group : groups.all()) {
             try {
-                api.setMyCommands(group.chatId(), commands(renderer, "task", "status", "history", "cancel", "help"));
+                // Groups only read: tasks are given and cancelled privately (ADR 0012).
+                api.setMyCommands(group.chatId(), commands(renderer, "status", "history", "help"));
             } catch (TelegramException e) {
                 Log.warn("telegram.command_menu_failed", "group", group.name(), "chat_id", group.chatId(), "error", e.getMessage());
             }
         }
         try {
-            // No /task in private chats: tasks start in the group (ADR 0011).
-            api.setPrivateChatCommands(commands(renderer, "status", "history", "cancel", "help"));
+            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "cancel", "help"));
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "scope", "all_private_chats", "error", e.getMessage());
         }

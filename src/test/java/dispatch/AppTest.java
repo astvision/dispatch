@@ -74,30 +74,27 @@ class AppTest {
     }
 
     @Test
-    void taskCommandBecomesAPrivatePlanThatTheRequesterRejects() throws Exception {
+    void taskGivenPrivatelyBecomesAPrivatePlanThatTheRequesterRejects() throws Exception {
         app = start();
-        JsonNode menu = telegram.awaitRequest("setMyCommands", WAIT).json();
-        assertEquals(GROUP, menu.get("scope").get("chat_id").asLong());
-        assertTrue(menu.get("commands").toString().contains("\"task\""), menu.toString());
+        JsonNode groupMenu = telegram.awaitRequest("setMyCommands", WAIT).json();
+        assertEquals(GROUP, groupMenu.get("scope").get("chat_id").asLong());
+        assertFalse(groupMenu.get("commands").toString().contains("\"task\""), groupMenu.toString());
         JsonNode privateMenu = telegram.awaitRequest("setMyCommands", WAIT).json();
         assertEquals("all_private_chats", privateMenu.get("scope").get("type").asText());
-        assertFalse(privateMenu.get("commands").toString().contains("\"task\""), privateMenu.toString());
+        assertTrue(privateMenu.get("commands").toString().contains("\"task\""), privateMenu.toString());
 
-        telegram.pushUpdate(command(1, 10, 100, "Bold", "/task@" + FakeTelegram.BOT_USERNAME + " alm Staging дээр нэвтрэх үед timeout болж байна"));
+        giveTask(1, "Staging дээр нэвтрэх үед timeout болж байна", "NORMAL");
 
-        JsonNode queued = telegram.awaitRequest("sendMessage", WAIT).json();
-        assertEquals(GROUP, queued.get("chat_id").asLong());
-        assertTrue(queued.get("text").asText().contains("#1") && queued.get("text").asText().contains("Bold"), queued.toString());
-        assertEquals(10, queued.get("reply_parameters").get("message_id").asLong());
-        JsonNode plan = telegram.awaitRequest("sendMessage", WAIT).json();
+        JsonNode announced = awaitMessageContaining("#1");
+        assertEquals(GROUP, announced.get("chat_id").asLong(), "the group hears who gave which task");
+        assertTrue(announced.get("text").asText().contains("Bold"), announced.toString());
+        JsonNode plan = awaitMessageContaining("The user reports that login");
         assertEquals(100, plan.get("chat_id").asLong(), "the plan goes to the requester privately");
-        assertTrue(plan.get("text").asText().contains("The user reports that login"), plan.toString());
         assertEquals("reject:1:1", plan.get("reply_markup").get("inline_keyboard").get(0).get(1).get("callback_data").asText());
 
-        telegram.pushUpdate(privateCallback(2, 100, "Bold", "reject:1:1"));
+        telegram.pushUpdate(privateCallback(20, 100, "Bold", "reject:1:1", awaitSentMessageId("PLAN_READY")));
 
-        assertEquals(messages.getString("callback.rejected"),
-                telegram.awaitRequest("answerCallbackQuery", WAIT).json().get("text").asText());
+        assertEquals(messages.getString("callback.rejected"), awaitCallbackAnswer());
         JsonNode rejected = telegram.awaitRequest("sendMessage", WAIT).json();
         assertEquals(GROUP, rejected.get("chat_id").asLong(), "the group hears the outcome");
         assertTrue(rejected.get("text").asText().contains("Bold"), rejected.toString());
@@ -108,22 +105,20 @@ class AppTest {
     @Test
     void correctedAndApprovedPlanEndsAsADraftPullRequestReportedPrivatelyAndInTheGroup() throws Exception {
         app = start();
-        telegram.pushUpdate(command(1, 10, 100, "Bold", "/task@" + FakeTelegram.BOT_USERNAME + " alm Fix the login timeout on staging"));
-        assertEquals(GROUP, telegram.awaitRequest("sendMessage", WAIT).json().get("chat_id").asLong());
-        JsonNode firstPlan = telegram.awaitRequest("sendMessage", WAIT).json();
+        giveTask(1, "Fix the login timeout on staging", "URGENT");
+        JsonNode firstPlan = awaitMessageContaining("The user reports that login");
         assertEquals(100, firstPlan.get("chat_id").asLong());
         assertEquals("approve:1:1", firstPlan.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
 
         // A member can only reply once the plan exists; Dispatch knows its message id once Telegram has answered.
-        telegram.pushUpdate(privateReply(2, 11, 100, "Bold", "Also cover the mobile login", awaitSentMessageId("PLAN_READY")));
+        telegram.pushUpdate(privateReply(20, 21, 100, "Bold", "Also cover the mobile login", awaitSentMessageId("PLAN_READY")));
         assertEquals(100, awaitMessageContaining("✏️").get("chat_id").asLong());
         JsonNode revisedPlan = telegram.awaitRequest("sendMessage", WAIT).json();
         assertEquals("approve:1:2", revisedPlan.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
 
-        telegram.pushUpdate(privateCallback(3, 100, "Bold", "approve:1:2"));
+        telegram.pushUpdate(privateCallback(21, 100, "Bold", "approve:1:2", 0));
 
-        assertEquals(messages.getString("callback.approved"),
-                telegram.awaitRequest("answerCallbackQuery", WAIT).json().get("text").asText());
+        assertEquals(messages.getString("callback.approved"), awaitCallbackAnswer());
         JsonNode result = awaitMessageContaining(FakeGh.PR_URL);
         assertEquals(100, result.get("chat_id").asLong());
         assertTrue(result.get("text").asText().contains("AUTH_TIMEOUT_SECONDS"), "the full result with the summary: " + result);
@@ -132,6 +127,7 @@ class AppTest {
         assertFalse(inGroup.get("text").asText().contains("AUTH_TIMEOUT_SECONDS"), "one line in the group: " + inGroup);
         Path db = repos.stateDir.resolve("dispatch.db");
         assertEquals("COMPLETED", SqlRows.single(db, "SELECT phase FROM task WHERE id = 1").get("phase"));
+        assertEquals("URGENT", SqlRows.single(db, "SELECT priority FROM task WHERE id = 1").get("priority"));
         assertEquals(FakeGh.PR_URL, SqlRows.single(db, "SELECT pr_url FROM task WHERE id = 1").get("pr_url"));
         assertEquals("dispatch #1: Fix the login timeout on staging", GitFixture.sh(dir, "git", "--git-dir", repos.origin.toString(),
                 "log", "-1", "--format=%s", "refs/heads/dispatch/1"));
@@ -139,27 +135,9 @@ class AppTest {
     }
 
     @Test
-    void requesterWhoNeverStartedTheBotGetsThePlanInTheGroupWithAStartHint() throws Exception {
-        telegram.refuseChat(100, 403, "{\"ok\":false,\"error_code\":403,\"description\":\"Forbidden: bot can't initiate conversation with a user\"}");
-        app = start();
-
-        telegram.pushUpdate(command(1, 10, 100, "Bold", "/task@" + FakeTelegram.BOT_USERNAME + " alm Fix the login timeout"));
-
-        JsonNode plan = awaitMessageContaining("The user reports that login");
-        assertEquals(100, plan.get("chat_id").asLong(), "tried privately first");
-        JsonNode fellBack = awaitMessageContaining("The user reports that login");
-        assertEquals(GROUP, fellBack.get("chat_id").asLong());
-        assertEquals(10, fellBack.get("reply_parameters").get("message_id").asLong());
-        assertTrue(fellBack.get("text").asText().contains("@" + FakeTelegram.BOT_USERNAME), fellBack.toString());
-        assertEquals("approve:1:1", fellBack.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
-        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
-    }
-
-    @Test
     void restartMarksTheInterruptedRunFailedAndStillTellsTheGroup() throws Exception {
         app = start();
-        telegram.pushUpdate(command(1, 10, 100, "Bold", "/task alm SCENARIO:sleep"));
-        telegram.awaitRequest("sendMessage", WAIT);
+        giveTask(1, "SCENARIO:sleep", "NORMAL");
         awaitFile(repos.stateDir.resolve("worktrees/1/fake-claude.child"));
 
         app.stop();
@@ -190,20 +168,12 @@ class AppTest {
         throw new AssertionError("no message containing " + fragment);
     }
 
-    private static JsonNode command(long updateId, long messageId, long fromId, String name, String text) {
-        int length = text.split("\\s", 2)[0].length();
-        return Json.read("""
-                {"update_id":%d,"message":{"message_id":%d,"from":{"id":%d,"is_bot":false,"first_name":"%s"},
-                 "chat":{"id":%d,"title":"Team","type":"supergroup"},"date":1789640000,"text":%s,
-                 "entities":[{"offset":0,"length":%d,"type":"bot_command"}]}}"""
-                .formatted(updateId, messageId, fromId, name, GROUP, Json.MAPPER.valueToTree(text), length));
-    }
-
     private long awaitSentMessageId(String kind) throws InterruptedException {
         Path db = repos.stateDir.resolve("dispatch.db");
         Instant deadline = Instant.now().plus(WAIT);
         while (Instant.now().isBefore(deadline)) {
-            String sentRef = SqlRows.single(db, "SELECT sent_ref FROM outbox WHERE kind = ? ORDER BY id LIMIT 1", kind).get("sent_ref");
+            List<Map<String, String>> rows = SqlRows.query(db, "SELECT sent_ref FROM outbox WHERE kind = ? ORDER BY id LIMIT 1", kind);
+            String sentRef = rows.isEmpty() ? null : rows.getFirst().get("sent_ref");
             if (sentRef != null) {
                 return Long.parseLong(sentRef.substring(sentRef.indexOf('/') + 1));
             }
@@ -212,12 +182,27 @@ class AppTest {
         throw new AssertionError("no sent " + kind + " message");
     }
 
-    /** A button pressed on a plan in the presser's private chat with the bot. */
-    private static JsonNode privateCallback(long updateId, long fromId, String name, String data) {
+    /** Bold writes the task privately and presses a priority button on the prompt (one project, so nothing else is asked). */
+    private void giveTask(long updateId, String text, String priority) throws InterruptedException {
+        telegram.pushUpdate(Json.read("""
+                {"update_id":%d,"message":{"message_id":%d,"from":{"id":100,"is_bot":false,"first_name":"Bold"},
+                 "chat":{"id":100,"type":"private"},"date":1789640000,"text":%s}}"""
+                .formatted(updateId, updateId, Json.MAPPER.valueToTree(text))));
+        long prompt = awaitSentMessageId("DRAFT_PROMPT");
+        telegram.pushUpdate(privateCallback(updateId + 1, 100, "Bold", "draft:1:prio:" + priority, prompt));
+        assertEquals(messages.getString("callback.taskCreated"), awaitCallbackAnswer());
+    }
+
+    private String awaitCallbackAnswer() throws InterruptedException {
+        return telegram.awaitRequest("answerCallbackQuery", WAIT).json().get("text").asText();
+    }
+
+    /** A button pressed on message {@code messageId} in the presser's private chat with the bot. */
+    private static JsonNode privateCallback(long updateId, long fromId, String name, String data, long messageId) {
         return Json.read("""
                 {"update_id":%d,"callback_query":{"id":"cb-%d","from":{"id":%d,"is_bot":false,"first_name":"%s"},
-                 "message":{"message_id":1001,"chat":{"id":%d,"type":"private"},"date":1789640000,"text":"plan"},
-                 "chat_instance":"1","data":"%s"}}""".formatted(updateId, updateId, fromId, name, fromId, data));
+                 "message":{"message_id":%d,"chat":{"id":%d,"type":"private"},"date":1789640000,"text":"x"},
+                 "chat_instance":"1","data":"%s"}}""".formatted(updateId, updateId, fromId, name, messageId, fromId, data));
     }
 
     /** A reply in the sender's private chat with the bot. */

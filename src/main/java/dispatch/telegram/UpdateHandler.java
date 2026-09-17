@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.Redactor;
+import dispatch.config.Config;
+import dispatch.core.DraftChoice;
 import dispatch.core.Groups;
 import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
@@ -117,7 +119,10 @@ public final class UpdateHandler {
         Set<String> visible = privateChat ? groups.projectsOfMember(who.ref()) : groups.projectsOfChat(chatRef);
         Optional<Command> parsed = Command.parse(message);
         if (parsed.isEmpty()) {
-            correction(tx, message, who, origin, chatRef);
+            if (!correction(tx, message, who, origin, chatRef) && privateChat) {
+                // Anything else a member writes privately is a task to give (ADR 0012).
+                tasks.draft(tx, who, null, text(message), origin);
+            }
             return;
         }
         Command command = parsed.get();
@@ -125,31 +130,53 @@ public final class UpdateHandler {
             return;
         }
         switch (command.name()) {
-            // Tasks start in the group, so the whole team sees every one arrive (ADR 0011).
             case "task" -> {
-                if (privateChat) {
-                    enqueue(tx, OutboxKind.TASK_IN_GROUP_ONLY, chatRef, origin, Json.object().put("bot", botUsername));
+                if (!privateChat) {
+                    privateOnly(tx, chatRef, origin);
                     return;
                 }
-                String[] projectAndText = command.args().split("\\s+", 2);
-                String text = projectAndText.length > 1 ? projectAndText[1].strip() : "";
-                tasks.create(tx, who, projectAndText[0], withRepliedMessage(text, message.path("reply_to_message")), origin, chatRef);
+                giveTask(tx, who, command.args(), message.path("reply_to_message"), origin);
             }
             case "status" -> tasks.status(tx, visible, privateChat ? who.ref() : null, origin, chatRef);
             case "history" -> taskId(command.args()).ifPresentOrElse(
                     id -> tasks.timeline(tx, visible, id, origin, chatRef),
                     () -> tasks.history(tx, visible, origin, chatRef));
-            case "cancel" -> taskId(command.args()).ifPresentOrElse(
-                    id -> tasks.cancel(tx, who, id, origin, chatRef),
-                    () -> help(tx, visible, origin, chatRef, privateChat));
+            case "cancel" -> {
+                if (!privateChat) {
+                    privateOnly(tx, chatRef, origin);
+                    return;
+                }
+                taskId(command.args()).ifPresentOrElse(
+                        id -> tasks.cancel(tx, who, id, origin, chatRef),
+                        () -> help(tx, visible, origin, chatRef, true));
+            }
             case "help", "start" -> help(tx, visible, origin, chatRef, privateChat);
             default -> {
-                // Telegram marks any leading "/word" as a command, so a correction like "/api/login fails too" lands here.
-                if (!correction(tx, message, who, origin, chatRef)) {
+                // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
+                // it replies to a plan, otherwise a task when written privately.
+                if (correction(tx, message, who, origin, chatRef)) {
+                    return;
+                }
+                if (privateChat) {
+                    tasks.draft(tx, who, null, text(message), origin);
+                } else {
                     tx.afterCommit(() -> Log.info("telegram.command_ignored", "command", command.name()));
                 }
             }
         }
+    }
+
+    /** /task [project] [text]: the first word names the project only if it is one of the member's; a replied message is the text. */
+    private void giveTask(Tx tx, Requester who, String args, JsonNode repliedTo, String origin) {
+        String[] firstAndRest = args.split("\\s+", 2);
+        Set<String> mine = groups.projectsOfMember(who.ref());
+        Optional<Config.Project> named = projects.find(firstAndRest[0]).filter(project -> mine.contains(project.name()));
+        String own = named.isPresent() ? (firstAndRest.length > 1 ? firstAndRest[1].strip() : "") : args;
+        tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), withRepliedMessage(own, repliedTo), origin);
+    }
+
+    private void privateOnly(Tx tx, String chatRef, String origin) {
+        enqueue(tx, OutboxKind.PRIVATE_ONLY, chatRef, origin, Json.object().put("bot", botUsername));
     }
 
     /** Treats a reply to one of the bot's plan messages as a correction of that plan; false for any other message. */
@@ -177,6 +204,11 @@ public final class UpdateHandler {
         JsonNode chat = callback.path("message").path("chat");
         boolean servedChat = groups.isGroupChat(Refs.chat(chat.path("id").asLong())) || isPrivateChatOf(chat, from);
         String[] parts = callback.path("data").asText().split(":");
+        if (servedChat && from.has("id") && parts.length == 4 && parts[0].equals("draft") && taskId(parts[1]).isPresent()) {
+            Requester presser = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
+            onDraftButton(tx, callback, presser, taskId(parts[1]).get(), parts[2], parts[3]);
+            return;
+        }
         boolean known = parts.length == 3 && Set.of("approve", "reject", "prio").contains(parts[0]);
         if (!servedChat || !known || !from.has("id")) {
             answer(tx, callbackId, "callback.unknown");
@@ -217,6 +249,39 @@ public final class UpdateHandler {
                     case STALE_PLAN -> "callback.stale";
                 };
         answer(tx, callbackId, answer);
+    }
+
+    /** A project or priority button on a draft's prompt; the prompt is redrawn to show the choice or the new task. */
+    private void onDraftButton(Tx tx, JsonNode callback, Requester who, long draftId, String kind, String value) {
+        String callbackId = callback.path("id").asText();
+        DraftChoice choice;
+        if (kind.equals("p")) {
+            choice = tasks.chooseProject(tx, who, draftId, value);
+        } else if (kind.equals("prio") && Set.of("URGENT", "NORMAL", "LOW").contains(value)) {
+            choice = tasks.choosePriority(tx, who, draftId, Priority.valueOf(value));
+        } else {
+            answer(tx, callbackId, "callback.unknown");
+            return;
+        }
+        answer(tx, callbackId, switch (choice) {
+            case PROJECT_CHOSEN -> "callback.projectChosen";
+            case CREATED -> "callback.taskCreated";
+            case ALREADY_CREATED -> "callback.alreadyCreated";
+            case EXPIRED -> "callback.draftExpired";
+            case NOT_FOUND -> "callback.notFound";
+            case NOT_REQUESTER -> "callback.notRequester";
+            case CHOOSE_PROJECT_FIRST -> "callback.chooseProjectFirst";
+            case PROJECT_UNAVAILABLE -> "callback.projectUnavailable";
+        });
+        if (choice != DraftChoice.PROJECT_CHOSEN && choice != DraftChoice.CREATED) {
+            return;
+        }
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        long messageId = message.path("message_id").asLong();
+        ObjectNode payload = tasks.draftPayload(tx, draftId).orElseThrow();
+        Renderer.Rendered prompt = renderer.render(OutboxKind.DRAFT_PROMPT, Json.read(redactor.redact(payload.toString())));
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, prompt.html(), prompt.keyboard())));
     }
 
     /** A priority button under a status report: change it, then redraw that report so it shows the new order. */

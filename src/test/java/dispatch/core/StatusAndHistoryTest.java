@@ -193,7 +193,7 @@ class StatusAndHistoryTest {
 
     @Test
     void statusHistoryAndTimelineShowOnlyTheViewersProjects() {
-        long other = createFor(ALI, "alm", "Backend work", "70", "telegram:-200");
+        long other = createFor(ALI, "alm", "Backend work", "70");
         claim();
         transitions.planSucceeded(other, 1, PLAN, result("0.10"));
         db.transaction(tx -> tasks.reject(tx, ALI, other, 1));
@@ -238,14 +238,13 @@ class StatusAndHistoryTest {
                 .get("tasks").get(0).get("priority").asText());
     }
 
-    private long createFor(Requester who, String project, String text, String messageId, String chat) {
-        db.transaction(tx -> tasks.create(tx, who, project, text, chat + "/" + messageId, chat));
-        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", chat + "/" + messageId).get("id"));
+    private long createFor(Requester who, String project, String text, String messageId) {
+        db.transaction(tx -> tasks.create(tx, who, project, text, Priority.NORMAL, who.ref() + "/" + messageId));
+        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", who.ref() + "/" + messageId).get("id"));
     }
 
     private long create(String text, String messageId) {
-        db.transaction(tx -> tasks.create(tx, BOLD, "life", text, CHAT + "/" + messageId, CHAT));
-        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", CHAT + "/" + messageId).get("id"));
+        return createFor(BOLD, "life", text, messageId);
     }
 
     private ClaimedRun claim() {

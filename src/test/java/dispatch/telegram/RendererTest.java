@@ -122,11 +122,48 @@ class RendererTest {
     }
 
     @Test
-    void groupHearsWhoAskedAndThatDetailsGoPrivately() {
-        String html = renderer.render(OutboxKind.TASK_QUEUED,
-                Json.object().put("taskId", 3).put("project", "life").put("requester", "Bold <dev>")).html();
+    void groupHearsWhoGaveWhichTaskForWhichProjectAndHowUrgent() {
+        String html = renderer.render(OutboxKind.TASK_QUEUED, Json.object().put("taskId", 3).put("project", "life")
+                .put("requester", "Bold <dev>").put("priority", "URGENT").put("title", "Fix <login>")).html();
 
         assertTrue(html.contains("#3") && html.contains("life") && html.contains("Bold &lt;dev&gt;"), html);
+        assertTrue(html.contains("🔴") && html.contains("Fix &lt;login&gt;"), html);
+    }
+
+    @Test
+    void draftPromptAsksForTheProjectInRowsOfThreeThenThePriority() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm", "crm", "life", "billing"), null, "OPEN", null));
+
+        assertTrue(rendered.html().contains("Fix the &lt;login&gt; timeout"), rendered.html());
+        assertTrue(rendered.html().contains(messages.getString("draft.chooseProject")), rendered.html());
+        List<List<Renderer.Button>> keyboard = rendered.keyboard();
+        assertEquals(3, keyboard.size());
+        assertEquals(List.of(new Renderer.Button("alm", "draft:5:p:alm"), new Renderer.Button("crm", "draft:5:p:crm"),
+                new Renderer.Button("life", "draft:5:p:life")), keyboard.get(0));
+        assertEquals(List.of(new Renderer.Button("billing", "draft:5:p:billing")), keyboard.get(1));
+        assertEquals("draft:5:prio:URGENT", keyboard.get(2).get(0).data());
+        assertEquals("draft:5:prio:LOW", keyboard.get(2).get(2).data());
+    }
+
+    @Test
+    void draftPromptMarksTheChosenProjectAndWithOneProjectAsksOnlyForPriority() {
+        Renderer.Rendered chosen = renderer.render(OutboxKind.DRAFT_PROMPT, draftPayload(List.of("alm", "crm"), "crm", "OPEN", null));
+        Renderer.Rendered single = renderer.render(OutboxKind.DRAFT_PROMPT, draftPayload(List.of("life"), "life", "OPEN", null));
+
+        assertEquals("✓ crm", chosen.keyboard().getFirst().get(1).text());
+        assertTrue(chosen.html().contains("crm"), chosen.html());
+        assertEquals(1, single.keyboard().size(), "priority only");
+        assertTrue(single.html().contains("life"), single.html());
+    }
+
+    @Test
+    void createdDraftShowsTheTaskWithoutButtons() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT, draftPayload(List.of("alm", "crm"), "crm", "CREATED", 7L)
+                .put("priority", "URGENT"));
+
+        assertTrue(rendered.html().contains("#7") && rendered.html().contains("🔴") && rendered.html().contains("crm"), rendered.html());
+        assertTrue(rendered.keyboard().isEmpty());
     }
 
     @Test
@@ -255,14 +292,14 @@ class RendererTest {
     }
 
     @Test
-    void privateHelpListsThePrivateCommandsWithoutTask() {
+    void privateHelpExplainsGivingATaskAndListsThePrivateCommands() {
         ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot").put("privateChat", true);
         payload.putArray("projects").addObject().put("name", "life").putNull("alias");
 
         String html = renderer.render(OutboxKind.HELP, payload).html();
 
         assertTrue(html.contains("/status") && html.contains("/history") && html.contains("/cancel"), html);
-        assertFalse(html.contains("<code>/task "), html);
+        assertTrue(html.contains("<code>/task"), html);
     }
 
     @Test
@@ -306,6 +343,13 @@ class RendererTest {
         steps.forEach(plan.putArray("steps")::add);
         plan.putArray("risks").add("Slower error page");
         questions.forEach(plan.putArray("questions")::add);
+        return payload;
+    }
+
+    private static ObjectNode draftPayload(List<String> projects, String project, String status, Long taskId) {
+        ObjectNode payload = Json.object().put("draftId", 5).put("title", "Fix the <login> timeout").put("project", project)
+                .put("status", status).put("taskId", taskId).putNull("priority");
+        projects.forEach(name -> payload.withArray("projects").addObject().put("name", name).putNull("alias"));
         return payload;
     }
 
@@ -366,7 +410,12 @@ class RendererTest {
 
     private static ObjectNode samplePayload(OutboxKind kind) {
         return switch (kind) {
-            case TASK_QUEUED -> Json.object().put("taskId", 1).put("project", "autoland-management").put("requester", "Bold");
+            case TASK_QUEUED -> Json.object().put("taskId", 1).put("project", "autoland-management").put("requester", "Bold")
+                    .put("priority", "URGENT").put("title", "Fix the login timeout");
+            case DRAFT_PROMPT -> draftPayload(List.of("alm", "crm", "life", "billing"), null, "OPEN", null);
+            case DRAFT_EXPIRED -> Json.object();
+            case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
+            case NO_PROJECTS -> Json.object();
             case TASK_COMPLETED_SHORT -> Json.object().put("taskId", 1).put("project", "life")
                     .put("prUrl", "https://github.com/acme/alm/pull/7").put("filesChanged", 2);
             case TASK_FAILED_SHORT -> Json.object().put("taskId", 1).put("reason", "DELIVERY");
@@ -388,7 +437,6 @@ class RendererTest {
             }
             case PROJECT_UNAVAILABLE -> Json.object().put("project", "crm").put("reason", "no clone");
             case TASK_USAGE -> Json.object();
-            case TASK_IN_GROUP_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case HELP -> {
                 ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot");
                 payload.putArray("projects").addObject().put("name", "crm").putNull("alias");

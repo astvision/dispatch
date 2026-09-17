@@ -32,4 +32,14 @@ public record Task(
         Instant startedAt,
         Instant completedAt,
         Instant updatedAt) {
+
+    /** The message that gave the task, if it was written in the task's group chat (before ADR 0012); otherwise null. */
+    public String groupOriginRef() {
+        return originRef.startsWith(chatRef + "/") ? originRef : null;
+    }
+
+    /** The message that gave the task, if it was written in the requester's private chat (ADR 0012); otherwise null. */
+    public String privateOriginRef() {
+        return originRef.startsWith(requester.ref() + "/") ? originRef : null;
+    }
 }
