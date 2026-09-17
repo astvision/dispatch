@@ -153,10 +153,16 @@ final class StreamParser {
         return truncate(toolUse.path("name").asText("?") + ": " + detail.replaceAll("\\s+", " ").strip(), MAX_ACTION_LENGTH);
     }
 
+    /** Shown with '/' on every OS, so /status reads the same from a Windows machine. */
     private String relative(String file) {
         try {
             Path path = Path.of(file);
-            return path.startsWith(workdir) ? workdir.relativize(path).toString() : file;
+            if (!path.startsWith(workdir)) {
+                return file;
+            }
+            List<String> names = new ArrayList<>();
+            workdir.relativize(path).forEach(name -> names.add(name.toString()));
+            return String.join("/", names);
         } catch (InvalidPathException e) {
             return file;
         }

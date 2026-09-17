@@ -48,7 +48,7 @@ class WorkspacesTest {
         assertEquals(stateDir.resolve("worktrees/42"), worktree.path());
         assertEquals(newBase, worktree.baseSha());
         assertEquals("dispatch/42", GitFixture.sh(worktree.path(), "git", "rev-parse", "--abbrev-ref", "HEAD"));
-        assertEquals("v2\n", Files.readString(worktree.path().resolve("README.md")));
+        assertEquals("v2\n", text(worktree.path().resolve("README.md")));
     }
 
     @Test
@@ -62,7 +62,7 @@ class WorkspacesTest {
         Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project, 43);
 
         assertEquals(stateDir.resolve("worktrees/43"), worktree.path());
-        assertEquals("v1\n", Files.readString(worktree.path().resolve("README.md")));
+        assertEquals("v1\n", text(worktree.path().resolve("README.md")));
         assertEquals("my unfinished edit\n", Files.readString(mine.resolve("README.md")), "the developer's checkout is untouched");
         assertEquals("dispatch/43", GitFixture.sh(mine, "git", "branch", "--list", "dispatch/43", "--format=%(refname:short)"));
     }
@@ -154,6 +154,7 @@ class WorkspacesTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "POSIX permissions")
     void groupAccessAsSetBySystemdIsAccepted() throws IOException {
         Path shared = Files.createDirectories(dir.resolve("group-state"));
         Files.setPosixFilePermissions(shared, PosixFilePermissions.fromString("rwxr-x---"));
@@ -212,6 +213,11 @@ class WorkspacesTest {
         WorkspaceException error = assertThrows(WorkspaceException.class, () -> slow.run(dir, "fetch", "origin", "main"));
 
         assertTrue(error.getMessage().contains("timed out"), error.getMessage());
+    }
+
+    /** A checked-out file's text with LF line endings: git on Windows usually checks files out with CRLF (core.autocrlf). */
+    private static String text(Path file) throws IOException {
+        return Files.readString(file).replace("\r\n", "\n");
     }
 
     private Config.Project project(List<String> copyFiles) {
