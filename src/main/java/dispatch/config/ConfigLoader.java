@@ -3,6 +3,7 @@ package dispatch.config;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -25,6 +26,9 @@ public final class ConfigLoader {
     private static final Pattern TEAM = Pattern.compile("[a-z0-9][a-z0-9-]*");
     private static final Pattern PROJECT_KEY = Pattern.compile("[A-Za-z0-9._-]+");
     private static final Set<String> SUPPORTED_AGENTS = Set.of("claude-code");
+    /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
+    private static final Pattern CREDENTIAL_URL = Pattern.compile("^https?://[^/@]*@", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SECRET_KEY = Pattern.compile("(?i).*(token|secret|password|passwd|apikey|api_key|credential).*");
 
     private ConfigLoader() {
     }
@@ -62,6 +66,11 @@ public final class ConfigLoader {
     private static ConfigFile read(Path file) {
         try {
             return YAML.readValue(file.toFile(), ConfigFile.class);
+        } catch (UnrecognizedPropertyException e) {
+            String hint = SECRET_KEY.matcher(e.getPropertyName()).matches()
+                    ? " (secrets never go in this file: put them in the environment file, see deploy/example.env)"
+                    : "";
+            throw new ConfigException(file + ": " + path(e.getPath()) + ": " + e.getOriginalMessage() + hint);
         } catch (JsonMappingException e) {
             throw new ConfigException(file + ": " + path(e.getPath()) + ": " + e.getOriginalMessage());
         } catch (JsonProcessingException e) {
@@ -157,6 +166,9 @@ public final class ConfigLoader {
             validateKey(at + ".alias", project.alias(), false, keys, errors);
             if (isBlank(project.repo())) {
                 errors.add(at + ".repo: required");
+            } else if (CREDENTIAL_URL.matcher(project.repo()).find()) {
+                // The value itself is not echoed: it contains a credential.
+                errors.add(at + ".repo: must not contain credentials; use the plain URL and set GH_TOKEN in the environment file");
             }
             if (isBlank(project.baseBranch())) {
                 errors.add(at + ".baseBranch: required");

@@ -101,6 +101,40 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void repoUrlWithCredentialsIsRejectedWithoutEchoingThem() throws IOException {
+        String withToken = VALID.replace("https://github.com/acme/autoland-management.git",
+                "https://x-access-token:TOKENVALUE123456@github.com/acme/autoland-management.git");
+        String withUserOnly = VALID.replace("https://github.com/acme/crm.git", "https://TOKENVALUE654321@github.com/acme/crm.git");
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(withToken), ENV));
+        ConfigException userOnly = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(withUserOnly), ENV));
+
+        assertTrue(error.getMessage().contains("projects[0].repo") && error.getMessage().contains("GH_TOKEN"), error.getMessage());
+        assertTrue(!error.getMessage().contains("TOKENVALUE123456"), error.getMessage());
+        assertTrue(userOnly.getMessage().contains("projects[1].repo") && !userOnly.getMessage().contains("TOKENVALUE654321"),
+                userOnly.getMessage());
+    }
+
+    @Test
+    void sshRepoUrlsAreAccepted() throws IOException {
+        String ssh = VALID.replace("https://github.com/acme/autoland-management.git", "git@github.com:acme/autoland-management.git")
+                .replace("https://github.com/acme/crm.git", "ssh://git@github.com/acme/crm.git");
+
+        Config config = ConfigLoader.load(write(ssh), ENV);
+
+        assertEquals("git@github.com:acme/autoland-management.git", config.projects().getFirst().repo());
+    }
+
+    @Test
+    void secretLookingKeyPointsToTheEnvironmentFile() throws IOException {
+        String withSecret = VALID.replace("  groupChatId: -1001234567890", "  groupChatId: -1001234567890\n  botToken: 123:abc");
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(withSecret), ENV));
+
+        assertTrue(error.getMessage().contains("botToken") && error.getMessage().contains("environment file"), error.getMessage());
+    }
+
+    @Test
     void missingStateDirIsReported() throws IOException {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigLoader.load(write(VALID), Map.of("TELEGRAM_BOT_TOKEN", "123:abc")));
