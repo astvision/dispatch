@@ -298,6 +298,25 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void modelAndEffortCanDifferPerPhase() throws IOException {
+        Config config = ConfigLoader.load(write(VALID.replace("    model: opus\n",
+                "    model: opus\n    effort: medium\n    plan: { effort: max }\n    execute: { model: sonnet }\n")), ENV);
+        ConfigException wrongEffort = assertThrows(ConfigException.class,
+                () -> ConfigLoader.load(write(VALID.replace("    model: opus\n", "    model: opus\n    execute: { effort: extreme }\n")), ENV));
+        ConfigException limitInPhase = assertThrows(ConfigException.class,
+                () -> ConfigLoader.load(write(VALID.replace("    model: opus\n", "    model: opus\n    plan: { timeout: 10m }\n")), ENV));
+
+        Config.Project project = config.projects().getFirst();
+        assertEquals("opus", project.planModel(), "the project's model where the phase sets none");
+        assertEquals("max", project.planEffort());
+        assertEquals("sonnet", project.executeModel());
+        assertEquals("medium", project.executeEffort());
+        assertTrue(wrongEffort.getMessage().contains("projects[0].execute.effort: must be one of low, medium, high, xhigh, max, got 'extreme'"),
+                wrongEffort.getMessage());
+        assertTrue(limitInPhase.getMessage().contains("timeout"), "limits stay under limits: " + limitInPhase.getMessage());
+    }
+
+    @Test
     void missingStateDirIsReported() throws IOException {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigLoader.load(write(VALID), Map.of("TELEGRAM_BOT_TOKEN", "123:abc")));

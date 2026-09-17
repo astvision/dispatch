@@ -48,7 +48,7 @@ class PersonalGroupTest {
         db.migrate();
         TestClock clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Config.Project alm = new Config.Project("alm", null, null, "/home/bold/work/alm", "main", "claude-code", "opus", "high", List.of(),
-                null);
+                null, null, null);
         Groups groups = new Groups(List.of(new Config.Group("bold", null, List.of(new Config.Member(100, "Bold")), List.of("alm"))));
         tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.empty()), new ActiveRuns(), clock, () -> { },
                 () -> { });

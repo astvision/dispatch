@@ -92,7 +92,9 @@ class RunExecutorTest {
         assertTrue(prompt.contains("Fix the login timeout on staging"), prompt);
         // Plan mode has the agent save a plan file too: recorded runs wrote each plan twice, as Markdown and as the JSON answer.
         assertTrue(prompt.contains("do not write it to a plan file"), prompt);
-        assertEquals("high", valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--effort"), "the project's effort");
+        List<String> args = Files.readAllLines(worktree.resolve("fake-claude.args"));
+        assertEquals("high", valueAfter(args, "--effort"), "the project's effort, as planning sets none of its own");
+        assertEquals("opus", valueAfter(args, "--model"), "planning's own model");
 
         Map<String, String> run = row("SELECT * FROM run WHERE task_id = ?", id);
         assertEquals("SUCCEEDED", run.get("status"));
@@ -135,7 +137,8 @@ class RunExecutorTest {
         assertEquals(task.get("build_session_id"), valueAfter(args, "--session-id"));
         assertFalse(args.contains("--resume"), args.toString());
         assertEquals("auto", valueAfter(args, "--permission-mode"));
-        assertEquals("high", valueAfter(args, "--effort"));
+        assertEquals("low", valueAfter(args, "--effort"), "execution's own effort");
+        assertFalse(args.contains("--model"), "neither execution nor the project sets a model: Claude Code's default");
 
         String branch = "refs/heads/dispatch/" + id;
         assertEquals("dispatch #" + id + ": Fix the login timeout on staging", origin("log", "-1", "--format=%s", branch));
@@ -339,7 +342,8 @@ class RunExecutorTest {
     }
 
     private long queue(String description) throws IOException {
-        Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, "high", copyFiles, null);
+        Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, "high", copyFiles, null,
+                new Config.PhaseSettings("opus", null), new Config.PhaseSettings(null, "low"));
         Git git = new Git("git", null, Duration.ofSeconds(30));
         Workspaces workspaces = new Workspaces(repos.stateDir, git);
         Delivery delivery = new Delivery(git, new Gh(FakeGh.install(dir.resolve("gh-" + System.nanoTime())).toString(), null,

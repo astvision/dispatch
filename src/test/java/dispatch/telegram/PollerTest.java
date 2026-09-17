@@ -48,7 +48,7 @@ class PollerTest {
         db.migrate();
         TestClock clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null, "main",
-                "claude-code", null, null, List.of(), null);
+                "claude-code", null, null, List.of(), null, null, null);
         Projects projects = new Projects(List.of(alm), project -> Optional.empty());
         Groups groups = new Groups(List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold")),
                 List.of("autoland-management"))));

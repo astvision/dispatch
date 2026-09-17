@@ -244,6 +244,12 @@ public final class ConfigLoader {
         });
     }
 
+    private static void validateEffort(String at, String effort, List<String> errors) {
+        if (effort != null && !EFFORT_LEVELS.contains(effort)) {
+            errors.add(at + ": must be one of " + String.join(", ", EFFORT_LEVELS) + ", got '" + effort + "'");
+        }
+    }
+
     private static List<Config.Project> validateProjects(List<Config.Project> projects, Map<String, Config.Agent> agents,
                                                          List<String> errors) {
         if (projects == null || projects.isEmpty()) {
@@ -278,8 +284,12 @@ public final class ConfigLoader {
             } else if (!agents.containsKey(project.agent())) {
                 errors.add(at + ".agent: '" + project.agent() + "' is not configured under agents");
             }
-            if (project.effort() != null && !EFFORT_LEVELS.contains(project.effort())) {
-                errors.add(at + ".effort: must be one of " + String.join(", ", EFFORT_LEVELS) + ", got '" + project.effort() + "'");
+            validateEffort(at + ".effort", project.effort(), errors);
+            if (project.plan() != null) {
+                validateEffort(at + ".plan.effort", project.plan().effort(), errors);
+            }
+            if (project.execute() != null) {
+                validateEffort(at + ".execute.effort", project.execute().effort(), errors);
             }
             List<String> copyFiles = project.copyFiles() == null ? List.of() : project.copyFiles();
             for (int f = 0; f < copyFiles.size(); f++) {
@@ -294,7 +304,8 @@ public final class ConfigLoader {
                 validateLimitValues(at + ".limits.execute", project.limits().execute(), errors);
             }
             normalized.add(new Config.Project(project.name(), project.alias(), project.repo(), project.path(), project.baseBranch(),
-                    project.agent(), project.model(), project.effort(), List.copyOf(copyFiles), project.limits()));
+                    project.agent(), project.model(), project.effort(), List.copyOf(copyFiles), project.limits(), project.plan(),
+                    project.execute()));
         }
         return List.copyOf(normalized);
     }

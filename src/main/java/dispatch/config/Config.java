@@ -106,6 +106,14 @@ public record Config(
      * @param model  null for the agent's default
      * @param effort the agent's effort level for planning and execution runs; null for its default
      */
+    /** A project's model and effort for planning or for execution runs; either may be null. */
+    public record PhaseSettings(String model, String effort) {
+    }
+
+    /**
+     * @param model  for both phases, unless {@code plan} or {@code execute} sets its own; null leaves it to Claude Code
+     * @param effort likewise
+     */
     public record Project(
             String name,
             String alias,
@@ -116,7 +124,25 @@ public record Config(
             String model,
             String effort,
             List<String> copyFiles,
-            Limits limits) {
+            Limits limits,
+            PhaseSettings plan,
+            PhaseSettings execute) {
+
+        public String planModel() {
+            return plan == null || plan.model() == null ? model : plan.model();
+        }
+
+        public String planEffort() {
+            return plan == null || plan.effort() == null ? effort : plan.effort();
+        }
+
+        public String executeModel() {
+            return execute == null || execute.model() == null ? model : execute.model();
+        }
+
+        public String executeEffort() {
+            return execute == null || execute.effort() == null ? effort : execute.effort();
+        }
     }
 
     public record Secrets(String telegramBotToken, String ghToken) {

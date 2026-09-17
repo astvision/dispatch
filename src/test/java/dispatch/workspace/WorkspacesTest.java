@@ -56,7 +56,7 @@ class WorkspacesTest {
         Path mine = dir.resolve("work/alm");
         GitFixture.sh(dir, "git", "clone", "--quiet", repos.origin.toString(), mine.toString());
         Files.writeString(mine.resolve("README.md"), "my unfinished edit\n");
-        Config.Project project = new Config.Project("alm", null, null, mine.toString(), "main", "claude-code", null, null, List.of(), null);
+        Config.Project project = new Config.Project("alm", null, null, mine.toString(), "main", "claude-code", null, null, List.of(), null, null, null);
 
         assertEquals(Optional.empty(), workspaces.unavailableReason(project));
         Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project, 43);
@@ -70,7 +70,7 @@ class WorkspacesTest {
     @Test
     void missingCloneAtAPathIsReported() {
         Path missing = dir.resolve("work/nothing");
-        Config.Project project = new Config.Project("alm", null, null, missing.toString(), "main", "claude-code", null, null, List.of(), null);
+        Config.Project project = new Config.Project("alm", null, null, missing.toString(), "main", "claude-code", null, null, List.of(), null, null, null);
 
         assertEquals(Optional.of("no git clone at " + missing), workspaces.unavailableReason(project));
     }
@@ -183,7 +183,7 @@ class WorkspacesTest {
 
     @Test
     void projectWithoutCloneIsUnavailable() {
-        Config.Project crm = new Config.Project("crm", null, "https://github.com/acme/crm.git", null, "main", "claude-code", null, null, List.of(), null);
+        Config.Project crm = new Config.Project("crm", null, "https://github.com/acme/crm.git", null, "main", "claude-code", null, null, List.of(), null, null, null);
 
         Optional<String> reason = workspaces.unavailableReason(crm);
 
@@ -221,7 +221,7 @@ class WorkspacesTest {
     }
 
     private Config.Project project(List<String> copyFiles) {
-        return new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, null, copyFiles, null);
+        return new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, null, copyFiles, null, null, null);
     }
 
 }

@@ -61,9 +61,9 @@ class UpdateHandlerTest {
         db = Database.open(dbFile);
         db.migrate();
         Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null, "main",
-                "claude-code", null, null, List.of(), null);
+                "claude-code", null, null, List.of(), null, null, null);
         Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", null, "master",
-                "claude-code", null, null, List.of(), null);
+                "claude-code", null, null, List.of(), null, null, null);
         Projects projects = new Projects(List.of(alm, life), project -> Optional.empty());
         Groups groups = new Groups(List.of(
                 new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
@@ -190,7 +190,7 @@ class UpdateHandlerTest {
     @Test
     void strangerAsksToJoinAndAnAdminApprovesThemFromTheChat() throws Exception {
         Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null, "main",
-                "claude-code", null, null, List.of(), null);
+                "claude-code", null, null, List.of(), null, null, null);
         Projects projects = new Projects(List.of(alm), project -> Optional.empty());
         Groups joinable = new Groups(new Config.Telegram(List.of(100L),
                 List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold")), List.of("autoland-management")))));
