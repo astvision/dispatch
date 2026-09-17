@@ -63,7 +63,7 @@ public final class ClaudeCodeAgent implements Agent {
         Log.info("agent.started", "agent", "claude-code", "pid", process.pid(), "kind", request.kind(),
                 "workdir", request.workdir(), "resume", request.resume());
         writePrompt(process, request.prompt());
-        return new ClaudeRun(process, permissionMode, stdoutLog, stderrLog, cancelGrace);
+        return new ClaudeRun(process, permissionMode, request.workdir(), stdoutLog, stderrLog, cancelGrace);
     }
 
     private static String permissionMode(RunKind kind) {

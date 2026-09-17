@@ -1,9 +1,11 @@
 package dispatch.core;
 
+import dispatch.agent.AgentActivity;
 import dispatch.agent.RunHandle;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Runs being executed by this process, so cancel, timeout and shutdown can reach their agent processes. */
@@ -42,6 +44,12 @@ public final class ActiveRuns {
         if (run != null) {
             run.stop(reason);
         }
+    }
+
+    /** What the task's agent is doing now; empty when the task has no active run or its agent has not started. */
+    public Optional<AgentActivity> activity(long taskId) {
+        ActiveRun run = byTask.get(taskId);
+        return run == null ? Optional.empty() : run.activity();
     }
 
     public void stopAll(StopReason reason) {
@@ -102,6 +110,10 @@ public final class ActiveRuns {
 
         public synchronized StopReason stopReason() {
             return stopReason;
+        }
+
+        public synchronized Optional<AgentActivity> activity() {
+            return handle == null ? Optional.empty() : Optional.of(handle.activity());
         }
     }
 }

@@ -2,6 +2,7 @@ package dispatch.agent.claude;
 
 import dispatch.Log;
 import dispatch.ProcessTrees;
+import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentResult;
 import dispatch.agent.RunHandle;
 import java.io.BufferedReader;
@@ -27,9 +28,9 @@ final class ClaudeRun implements RunHandle {
     private final AtomicBoolean cancelRequested = new AtomicBoolean();
     private final Thread stdoutReader;
 
-    ClaudeRun(Process process, String permissionMode, Path stdoutLog, Path stderrLog, Duration cancelGrace) {
+    ClaudeRun(Process process, String permissionMode, Path workdir, Path stdoutLog, Path stderrLog, Duration cancelGrace) {
         this.process = process;
-        this.parser = new StreamParser(permissionMode);
+        this.parser = new StreamParser(permissionMode, workdir);
         this.stderrLog = stderrLog;
         this.cancelGrace = cancelGrace;
         this.stdoutReader = Thread.ofVirtual().name("agent-stdout-" + process.pid()).start(() -> copyStdout(stdoutLog));
@@ -45,6 +46,11 @@ final class ClaudeRun implements RunHandle {
         int exitCode = process.waitFor();
         stdoutReader.join();
         return parser.result(exitCode, stderrTail());
+    }
+
+    @Override
+    public AgentActivity activity() {
+        return parser.activity();
     }
 
     @Override

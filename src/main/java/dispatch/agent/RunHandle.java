@@ -11,4 +11,7 @@ public interface RunHandle {
 
     /** Starts terminating the process tree (SIGTERM, grace period, SIGKILL) without waiting for it. */
     void cancel();
+
+    /** A snapshot of the agent's progress; safe to call from any thread while the run is active. */
+    AgentActivity activity();
 }

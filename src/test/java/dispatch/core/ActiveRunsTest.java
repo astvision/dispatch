@@ -4,8 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentResult;
 import dispatch.agent.RunHandle;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -56,6 +58,17 @@ class ActiveRunsTest {
         assertNull(run.stopReason());
     }
 
+    @Test
+    void activityComesFromTheRunsAgentOnceAttached() {
+        ActiveRuns.ActiveRun run = activeRuns.register(7, 2);
+        assertEquals(Optional.empty(), activeRuns.activity(7), "no agent started yet");
+
+        run.attach(new CountingHandle());
+
+        assertEquals(Optional.of(new AgentActivity(3, "Bash: make help")), activeRuns.activity(7));
+        assertEquals(Optional.empty(), activeRuns.activity(8));
+    }
+
     private static final class CountingHandle implements RunHandle {
 
         final AtomicInteger cancels = new AtomicInteger();
@@ -73,6 +86,11 @@ class ActiveRunsTest {
         @Override
         public void cancel() {
             cancels.incrementAndGet();
+        }
+
+        @Override
+        public AgentActivity activity() {
+            return new AgentActivity(3, "Bash: make help");
         }
     }
 }

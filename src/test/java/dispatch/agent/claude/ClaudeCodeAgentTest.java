@@ -76,10 +76,12 @@ class ClaudeCodeAgentTest {
         RunRequest request = new RunRequest(RunKind.EXECUTE, workdir, "Implement the approved plan", SESSION, true, List.of(),
                 new BigDecimal("10"), "sonnet", dir.resolve("runs/1/2"));
 
-        AgentResult result = agent.start(request).await();
+        RunHandle handle = agent.start(request);
+        AgentResult result = handle.await();
 
         assertEquals(AgentOutcome.SUCCEEDED, result.outcome(), result.error());
         assertTrue(result.summary().contains("AUTH_TIMEOUT_SECONDS"), result.summary());
+        assertEquals(6, handle.activity().steps(), "tool calls read from the stream");
         List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
         assertEquals("auto", valueAfter(args, "--permission-mode"));
         assertEquals("Read,Edit,Write,Bash", valueAfter(args, "--tools"));

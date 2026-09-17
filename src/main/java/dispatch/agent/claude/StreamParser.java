@@ -3,30 +3,40 @@ package dispatch.agent.claude;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Reads Claude Code's print-mode stream-json output. Only the init event (session id, permission mode) and the final
- * result event decide a run's outcome; every other event type is ignored here.
+ * Reads Claude Code's print-mode stream-json output. The init event (session id, permission mode) and the final result
+ * event decide a run's outcome; tool calls in assistant events feed the live activity. Must never throw: it runs on the
+ * thread that drains the agent's stdout.
  */
 final class StreamParser {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_DENIAL_LENGTH = 200;
+    private static final int MAX_ACTION_LENGTH = 120;
 
     private final String expectedPermissionMode;
+    private final Path workdir;
     private boolean initSeen;
     private String permissionMode;
     private String sessionId;
     private JsonNode result;
+    /** Written by the stdout reader, read by /status; replaced whole, so readers never see a torn value. */
+    private volatile AgentActivity activity = new AgentActivity(0, null);
 
-    StreamParser(String expectedPermissionMode) {
+    /** @param workdir file paths inside it are shown relative in the activity */
+    StreamParser(String expectedPermissionMode, Path workdir) {
         this.expectedPermissionMode = expectedPermissionMode;
+        this.workdir = workdir;
     }
 
     void accept(String line) {
@@ -45,9 +55,19 @@ final class StreamParser {
             initSeen = true;
             sessionId = event.path("session_id").asText(null);
             permissionMode = event.path("permissionMode").asText(null);
+        } else if (type.equals("assistant")) {
+            for (JsonNode block : event.path("message").path("content")) {
+                if (block.path("type").asText().equals("tool_use")) {
+                    activity = new AgentActivity(activity.steps() + 1, describe(block));
+                }
+            }
         } else if (type.equals("result")) {
             result = event;
         }
+    }
+
+    AgentActivity activity() {
+        return activity;
     }
 
     /**
@@ -112,13 +132,38 @@ final class StreamParser {
         for (JsonNode denial : denials) {
             JsonNode input = denial.path("tool_input");
             String shown = input.hasNonNull("command") ? input.get("command").asText() : input.toString();
-            summaries.add(truncate(denial.path("tool_name").asText("?") + ": " + shown));
+            summaries.add(truncate(denial.path("tool_name").asText("?") + ": " + shown, MAX_DENIAL_LENGTH));
         }
         return List.copyOf(summaries);
     }
 
-    private static String truncate(String text) {
-        return text.length() <= MAX_DENIAL_LENGTH ? text : text.substring(0, MAX_DENIAL_LENGTH - 1) + "…";
+    /** "Tool: detail" on one line: the command for Bash, a worktree-relative path for file tools, else the raw input. */
+    private String describe(JsonNode toolUse) {
+        JsonNode input = toolUse.path("input");
+        String detail;
+        if (input.hasNonNull("command")) {
+            detail = input.get("command").asText();
+        } else if (input.hasNonNull("file_path")) {
+            detail = relative(input.get("file_path").asText());
+        } else if (input.hasNonNull("pattern")) {
+            detail = input.get("pattern").asText();
+        } else {
+            detail = input.toString();
+        }
+        return truncate(toolUse.path("name").asText("?") + ": " + detail.replaceAll("\\s+", " ").strip(), MAX_ACTION_LENGTH);
+    }
+
+    private String relative(String file) {
+        try {
+            Path path = Path.of(file);
+            return path.startsWith(workdir) ? workdir.relativize(path).toString() : file;
+        } catch (InvalidPathException e) {
+            return file;
+        }
+    }
+
+    private static String truncate(String text, int limit) {
+        return text.length() <= limit ? text : text.substring(0, limit - 1) + "…";
     }
 
     private static String detail(String stderrTail) {

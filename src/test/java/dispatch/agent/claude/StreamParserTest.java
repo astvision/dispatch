@@ -7,12 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -21,6 +23,9 @@ import org.junit.jupiter.api.Test;
  * plan still had open questions, and with the current one, then the execution run that resumed the latter (auto mode).
  */
 class StreamParserTest {
+
+    /** Where the fixtures were recorded, after sanitizing. */
+    private static final Path WORKTREE = Path.of("/var/lib/dispatch/demo/worktrees/1");
 
     @Test
     void successfulPlanRunYieldsPlanCostTurnsAndDenials() throws IOException {
@@ -54,6 +59,26 @@ class StreamParserTest {
         assertEquals(7, result.turns());
         assertEquals(List.of(), result.denials());
         assertFalse(parser.wrongPermissionMode());
+    }
+
+    @Test
+    void executionRunReportsItsStepsAndLatestActionWithPathsRelativeToTheWorktree() throws IOException {
+        List<String> lines = fixture("execute-success.jsonl");
+        StreamParser parser = new StreamParser("auto", WORKTREE);
+        assertEquals(new AgentActivity(0, null), parser.activity());
+
+        lines.subList(0, 6).forEach(parser::accept);
+        assertEquals(new AgentActivity(2, "Edit: src/main/java/demo/AuthClient.java"), parser.activity());
+
+        lines.subList(6, 13).forEach(parser::accept);
+        AgentActivity heredoc = parser.activity();
+        assertEquals(4, heredoc.steps());
+        assertTrue(heredoc.lastAction().startsWith("Bash: cd /tmp && mkdir -p authclient-test/demo"), heredoc.lastAction());
+        assertFalse(heredoc.lastAction().contains("\n"), "one line: " + heredoc.lastAction());
+        assertTrue(heredoc.lastAction().length() <= 120, heredoc.lastAction());
+
+        lines.subList(13, lines.size()).forEach(parser::accept);
+        assertEquals(new AgentActivity(6, "Bash: git status && git diff"), parser.activity());
     }
 
     @Test
@@ -138,7 +163,7 @@ class StreamParserTest {
     }
 
     private static StreamParser feed(String expectedPermissionMode, List<String> lines) {
-        StreamParser parser = new StreamParser(expectedPermissionMode);
+        StreamParser parser = new StreamParser(expectedPermissionMode, WORKTREE);
         lines.forEach(parser::accept);
         return parser;
     }
