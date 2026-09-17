@@ -13,6 +13,7 @@ import java.util.UUID;
  * @param resume       false for a task's first run (starts {@code sessionId}), true to continue that session
  * @param readOnlyDirs extra directories the agent may read, e.g. downloaded attachments
  * @param model        null for the agent's default
+ * @param effort       the agent's effort level, null for its default
  * @param logBase      path prefix for the raw output files; the agent adds its own extensions
  */
 public record RunRequest(
@@ -24,5 +25,6 @@ public record RunRequest(
         List<Path> readOnlyDirs,
         BigDecimal budgetUsd,
         String model,
+        String effort,
         Path logBase) {
 }

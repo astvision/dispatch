@@ -60,6 +60,7 @@ class AppTest {
                         new Config.RunLimits(Duration.ofSeconds(60), new BigDecimal("10"))),
                 Map.of("claude-code", new Config.Agent(claude.toString())),
                 List.of(new Config.Project("autoland-management", "alm", repos.origin.toString(), null, "main", "claude-code", null,
+                        null,
                         List.of(), null)),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", gh.toString()),
                 new Config.Secrets(FakeTelegram.TOKEN, null));

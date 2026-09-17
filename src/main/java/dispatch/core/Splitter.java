@@ -114,7 +114,7 @@ public final class Splitter {
 
     private AgentResult ask(long draftId, String message) throws SplitFailed {
         RunRequest request = new RunRequest(RunKind.SPLIT, workdir, Prompts.split(message), null, false, List.of(), BUDGET_USD, MODEL,
-                workdir.resolve(draftId + "-" + clock.millis()));
+                null, workdir.resolve(draftId + "-" + clock.millis()));
         RunHandle handle;
         try {
             handle = agent.start(request);

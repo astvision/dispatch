@@ -246,6 +246,18 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void effortIsOneOfClaudeCodesLevels() throws IOException {
+        Config config = ConfigLoader.load(write(VALID.replace("    model: opus\n", "    model: opus\n    effort: xhigh\n")), ENV);
+        ConfigException error = assertThrows(ConfigException.class,
+                () -> ConfigLoader.load(write(VALID.replace("    model: opus\n", "    model: opus\n    effort: extreme\n")), ENV));
+
+        assertEquals("xhigh", config.projects().getFirst().effort());
+        assertNull(config.projects().get(1).effort());
+        assertTrue(error.getMessage().contains("projects[0].effort: must be one of low, medium, high, xhigh, max, got 'extreme'"),
+                error.getMessage());
+    }
+
+    @Test
     void missingStateDirIsReported() throws IOException {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigLoader.load(write(VALID), Map.of("TELEGRAM_BOT_TOKEN", "123:abc")));

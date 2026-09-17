@@ -99,7 +99,7 @@ public final class RunExecutor {
         String prompt = task.planJson() == null ? Prompts.plan(task) : Prompts.correction(task, run);
         Config.RunLimits limits = planLimits.apply(project.get());
         RunRequest request = new RunRequest(RunKind.PLAN, worktree.get(), prompt, task.sessionId(), active.seq() > 1, List.of(),
-                limits.budgetUsd(), project.get().model(), workspaces.runLogBase(task.id(), active.seq()));
+                limits.budgetUsd(), project.get().model(), project.get().effort(), workspaces.runLogBase(task.id(), active.seq()));
         Optional<AgentResult> result = runAgent(active, project.get(), request, limits.timeout());
         if (result.isEmpty() || endedWithoutSuccess(active, result.get(), limits.timeout())) {
             return;
@@ -133,7 +133,7 @@ public final class RunExecutor {
 
         Config.RunLimits limits = executeLimits.apply(project.get());
         RunRequest request = new RunRequest(RunKind.EXECUTE, worktree.get(), Prompts.execute(task, run.instruction()),
-                task.sessionId(), true, List.of(), limits.budgetUsd(), project.get().model(),
+                task.sessionId(), true, List.of(), limits.budgetUsd(), project.get().model(), project.get().effort(),
                 workspaces.runLogBase(task.id(), active.seq()));
         Optional<AgentResult> result = runAgent(active, project.get(), request, limits.timeout());
         if (result.isEmpty() || endedWithoutSuccess(active, result.get(), limits.timeout())) {

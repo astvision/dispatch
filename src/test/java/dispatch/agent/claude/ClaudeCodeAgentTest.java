@@ -46,7 +46,7 @@ class ClaudeCodeAgentTest {
     void planRunGetsThePromptOnStdinAndHeadlessReadOnlyFlags() throws Exception {
         Path attachments = Files.createDirectories(dir.resolve("attachments"));
         RunRequest request = new RunRequest(RunKind.PLAN, workdir, "Plan the login timeout fix", SESSION, false,
-                List.of(attachments), new BigDecimal("2"), "opus", dir.resolve("runs/1/1"));
+                List.of(attachments), new BigDecimal("2"), "opus", "high", dir.resolve("runs/1/1"));
 
         AgentResult result = agent.start(request).await();
 
@@ -65,6 +65,7 @@ class ClaudeCodeAgentTest {
         assertEquals(SESSION.toString(), valueAfter(args, "--session-id"));
         assertFalse(args.contains("--resume"), args.toString());
         assertEquals("opus", valueAfter(args, "--model"));
+        assertEquals("high", valueAfter(args, "--effort"));
         assertEquals(attachments.toString(), valueAfter(args, "--add-dir"));
         assertTrue(valueAfter(args, "--json-schema").contains("\"understanding\""), args.toString());
         Path fixture = Path.of(getClass().getResource("/fixtures/claude/plan-success.jsonl").toURI());
@@ -74,7 +75,7 @@ class ClaudeCodeAgentTest {
     @Test
     void executeRunResumesInAutoModeWithoutCommitPushOrGhAndReturnsTheSummary() throws Exception {
         RunRequest request = new RunRequest(RunKind.EXECUTE, workdir, "Implement the approved plan", SESSION, true, List.of(),
-                new BigDecimal("10"), "sonnet", dir.resolve("runs/1/2"));
+                new BigDecimal("10"), "sonnet", null, dir.resolve("runs/1/2"));
 
         RunHandle handle = agent.start(request);
         AgentResult result = handle.await();
@@ -90,12 +91,13 @@ class ClaudeCodeAgentTest {
         assertEquals(SESSION.toString(), valueAfter(args, "--resume"));
         assertEquals("10", valueAfter(args, "--max-budget-usd"));
         assertFalse(args.contains("--json-schema"), args.toString());
+        assertFalse(args.contains("--effort"), "Claude Code's default effort when the project sets none");
     }
 
     @Test
     void splitRunAnswersWithTopicsWithoutToolsSkillsOrASavedSession() throws Exception {
         RunRequest request = new RunRequest(RunKind.SPLIT, workdir, "Split this message", null, false, List.of(),
-                new BigDecimal("0.25"), "haiku", dir.resolve("splits/7-1"));
+                new BigDecimal("0.25"), "haiku", null, dir.resolve("splits/7-1"));
 
         AgentResult result = agent.start(request).await();
 
@@ -116,7 +118,7 @@ class ClaudeCodeAgentTest {
     @Test
     void agentStartedInTheWrongPermissionModeIsStoppedInsteadOfRunningOn() throws Exception {
         RunHandle handle = agent.start(new RunRequest(RunKind.EXECUTE, workdir, "SCENARIO:wrong-mode", SESSION, true, List.of(),
-                new BigDecimal("10"), "haiku", dir.resolve("runs/1/2")));
+                new BigDecimal("10"), "haiku", null, dir.resolve("runs/1/2")));
         long child = awaitChildPid();
 
         AgentResult result = CompletableFuture.supplyAsync(() -> awaitQuietly(handle)).get(10, TimeUnit.SECONDS);
@@ -129,7 +131,7 @@ class ClaudeCodeAgentTest {
     @Test
     void laterRunsResumeTheSession() throws Exception {
         RunRequest request = new RunRequest(RunKind.PLAN, workdir, "Revise the plan", SESSION, true, List.of(),
-                new BigDecimal("2"), null, dir.resolve("runs/1/2"));
+                new BigDecimal("2"), null, null, dir.resolve("runs/1/2"));
 
         agent.start(request).await();
 
@@ -197,6 +199,7 @@ class ClaudeCodeAgentTest {
 
     private RunRequest plan(String prompt) {
         return new RunRequest(RunKind.PLAN, workdir, prompt, SESSION, false, List.of(), new BigDecimal("2"), null,
+                null,
                 dir.resolve("runs/1/1"));
     }
 

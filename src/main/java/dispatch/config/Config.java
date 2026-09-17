@@ -96,8 +96,10 @@ public record Config(
 
     /**
      * @param repo the URL to clone from; only needed when there is no {@code path}
-     * @param path an existing clone anywhere on this machine, e.g. the developer's own (ADR 0014); null for
-     *             {@code <stateDir>/repos/<name>}
+     * @param path   an existing clone anywhere on this machine, e.g. the developer's own (ADR 0014); null for
+     *               {@code <stateDir>/repos/<name>}
+     * @param model  null for the agent's default
+     * @param effort the agent's effort level for planning and execution runs; null for its default
      */
     public record Project(
             String name,
@@ -107,6 +109,7 @@ public record Config(
             String baseBranch,
             String agent,
             String model,
+            String effort,
             List<String> copyFiles,
             Limits limits) {
     }

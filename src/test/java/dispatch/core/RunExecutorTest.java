@@ -85,6 +85,7 @@ class RunExecutorTest {
         assertEquals(worktree.toString(), task.get("worktree"));
         assertEquals(GitFixture.sh(repos.seed, "git", "rev-parse", "HEAD"), task.get("base_sha"));
         assertTrue(Files.readString(worktree.resolve("fake-claude.prompt")).contains("Fix the login timeout on staging"));
+        assertEquals("high", valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--effort"), "the project's effort");
 
         Map<String, String> run = row("SELECT * FROM run WHERE task_id = ?", id);
         assertEquals("SUCCEEDED", run.get("status"));
@@ -123,6 +124,7 @@ class RunExecutorTest {
         List<String> args = Files.readAllLines(worktree.resolve("fake-claude.args"));
         assertEquals(task.get("session_id"), valueAfter(args, "--resume"));
         assertEquals("auto", valueAfter(args, "--permission-mode"));
+        assertEquals("high", valueAfter(args, "--effort"));
 
         String branch = "refs/heads/dispatch/" + id;
         assertEquals("dispatch #" + id + ": Fix the login timeout on staging", origin("log", "-1", "--format=%s", branch));
@@ -325,7 +327,7 @@ class RunExecutorTest {
     }
 
     private long queue(String description) throws IOException {
-        Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, copyFiles, null);
+        Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, "high", copyFiles, null);
         Git git = new Git("git", null, Duration.ofSeconds(30));
         Workspaces workspaces = new Workspaces(repos.stateDir, git);
         Delivery delivery = new Delivery(git, new Gh(FakeGh.install(dir.resolve("gh-" + System.nanoTime())).toString(), null,

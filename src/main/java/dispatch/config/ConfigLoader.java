@@ -26,6 +26,8 @@ public final class ConfigLoader {
     private static final Pattern TEAM = Pattern.compile("[a-z0-9][a-z0-9-]*");
     private static final Pattern PROJECT_KEY = Pattern.compile("[A-Za-z0-9._-]+");
     private static final Set<String> SUPPORTED_AGENTS = Set.of("claude-code");
+    /** Claude Code's --effort levels, in its own order. */
+    private static final List<String> EFFORT_LEVELS = List.of("low", "medium", "high", "xhigh", "max");
     /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
     private static final Pattern CREDENTIAL_URL = Pattern.compile("^https?://[^/@]*@", Pattern.CASE_INSENSITIVE);
     private static final Pattern SECRET_KEY = Pattern.compile("(?i).*(token|secret|password|passwd|apikey|api_key|credential).*");
@@ -251,6 +253,9 @@ public final class ConfigLoader {
             } else if (!agents.containsKey(project.agent())) {
                 errors.add(at + ".agent: '" + project.agent() + "' is not configured under agents");
             }
+            if (project.effort() != null && !EFFORT_LEVELS.contains(project.effort())) {
+                errors.add(at + ".effort: must be one of " + String.join(", ", EFFORT_LEVELS) + ", got '" + project.effort() + "'");
+            }
             List<String> copyFiles = project.copyFiles() == null ? List.of() : project.copyFiles();
             for (int f = 0; f < copyFiles.size(); f++) {
                 if (!isInsideRepository(copyFiles.get(f))) {
@@ -264,7 +269,7 @@ public final class ConfigLoader {
                 validateLimitValues(at + ".limits.execute", project.limits().execute(), errors);
             }
             normalized.add(new Config.Project(project.name(), project.alias(), project.repo(), project.path(), project.baseBranch(),
-                    project.agent(), project.model(), List.copyOf(copyFiles), project.limits()));
+                    project.agent(), project.model(), project.effort(), List.copyOf(copyFiles), project.limits()));
         }
         return List.copyOf(normalized);
     }

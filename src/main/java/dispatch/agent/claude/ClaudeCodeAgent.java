@@ -97,6 +97,9 @@ public final class ClaudeCodeAgent implements Agent {
         if (request.model() != null) {
             args.addAll(List.of("--model", request.model()));
         }
+        if (request.effort() != null) {
+            args.addAll(List.of("--effort", request.effort()));
+        }
         for (Path dir : request.readOnlyDirs()) {
             args.addAll(List.of("--add-dir", dir.toString()));
         }

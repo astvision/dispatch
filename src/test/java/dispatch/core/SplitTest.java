@@ -92,6 +92,7 @@ class SplitTest {
         RunRequest request = agent.requests.getFirst();
         assertEquals(RunKind.SPLIT, request.kind());
         assertEquals("haiku", request.model());
+        assertNull(request.effort(), "a split is too small to need one");
         assertEquals(0, new BigDecimal("0.25").compareTo(request.budgetUsd()));
         assertEquals(dir.resolve("splits"), request.workdir());
         assertTrue(request.prompt().contains("<message>\n" + MESSAGE + "\n</message>"), request.prompt());
@@ -302,7 +303,7 @@ class SplitTest {
     }
 
     private static Config.Project project(String name) {
-        return new Config.Project(name, null, "https://github.com/acme/" + name + ".git", null, "main", "claude-code", null, List.of(), null);
+        return new Config.Project(name, null, "https://github.com/acme/" + name + ".git", null, "main", "claude-code", null, null, List.of(), null);
     }
 
     private Map<String, String> row(String sql, Object... params) {

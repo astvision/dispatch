@@ -44,6 +44,7 @@ projects:
     baseBranch: main
     agent: claude-code
     # model: sonnet               # execution needs a model with auto mode (Sonnet, Opus); Haiku runs fail
+    # effort: high                # low, medium, high, xhigh or max; Claude Code's default when unset
     # copyFiles: [.env]           # must be git-ignored; copied into worktrees for execution runs only
     # limits:
     #   plan: { timeout: 20m, budgetUsd: 3 }
