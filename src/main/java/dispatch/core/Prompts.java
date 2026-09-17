@@ -9,9 +9,11 @@ final class Prompts {
     /**
      * The language rule is explicit on purpose: a recorded run given "the same language as the task" answered an English
      * task in Dutch. Questions are kept for what cannot be assumed, because a plan with open questions cannot be approved.
+     * Plan mode also tells the agent to save its plan to a file, and recorded runs then wrote each plan twice.
      */
     private static final String PLAN_FORMAT = """
-            Return the plan as JSON matching the provided schema:
+            Return the plan only as JSON matching the provided schema; do not write it to a plan file or anywhere else. \
+            Its fields:
             - understanding: what the task asks for, in your own words
             - findings: relevant facts from the code; for a bug, its root cause
             - steps: the concrete changes you would make, in order

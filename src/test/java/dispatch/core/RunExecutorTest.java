@@ -88,7 +88,10 @@ class RunExecutorTest {
         Path worktree = repos.stateDir.resolve("worktrees/" + id);
         assertEquals(worktree.toString(), task.get("worktree"));
         assertEquals(GitFixture.sh(repos.seed, "git", "rev-parse", "HEAD"), task.get("base_sha"));
-        assertTrue(Files.readString(worktree.resolve("fake-claude.prompt")).contains("Fix the login timeout on staging"));
+        String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
+        assertTrue(prompt.contains("Fix the login timeout on staging"), prompt);
+        // Plan mode has the agent save a plan file too: recorded runs wrote each plan twice, as Markdown and as the JSON answer.
+        assertTrue(prompt.contains("do not write it to a plan file"), prompt);
         assertEquals("high", valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--effort"), "the project's effort");
 
         Map<String, String> run = row("SELECT * FROM run WHERE task_id = ?", id);
@@ -224,6 +227,7 @@ class RunExecutorTest {
         assertEquals(worktree, task.get("worktree"));
         String prompt = Files.readString(Path.of(worktree, "fake-claude.prompt"));
         assertTrue(prompt.contains("Also cover the mobile login") && prompt.contains("Fix the login timeout"), prompt);
+        assertTrue(prompt.contains("do not write it to a plan file"), prompt);
         List<String> args = Files.readAllLines(Path.of(worktree, "fake-claude.args"));
         assertEquals(task.get("session_id"), valueAfter(args, "--resume"));
         assertEquals("plan", valueAfter(args, "--permission-mode"));
