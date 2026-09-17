@@ -1,0 +1,50 @@
+package dispatch.cli;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Path;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+class CliTest {
+
+    private static final Locations DEFAULTS = Locations.of("Linux", Map.of(), Path.of("home", "bold"));
+    private static final Path DEFAULT_CONFIG = DEFAULTS.configFile();
+
+    @Test
+    void withoutArgumentsTheBotRunsFromTheDefaultConfig() {
+        assertEquals(new Cli.Run(DEFAULT_CONFIG), parse());
+        assertEquals(new Cli.Run(DEFAULT_CONFIG), parse("run"));
+        assertEquals(new Cli.Run(Path.of("team.yaml")), parse("run", "--config", "team.yaml"));
+    }
+
+    @Test
+    void aConfigFileAloneRunsTheBotAsTheSystemdUnitDoes() {
+        assertEquals(new Cli.Run(Path.of("/etc/dispatch/backend.yaml")), parse("/etc/dispatch/backend.yaml"));
+    }
+
+    @Test
+    void helpIsShownOnRequest() {
+        assertEquals(new Cli.Help(), parse("--help"));
+        assertEquals(new Cli.Help(), parse("help"));
+        assertTrue(Cli.usage(DEFAULTS).contains(DEFAULT_CONFIG.toString()), "the help names the default config file");
+    }
+
+    @Test
+    void mistakesAreExplained() {
+        assertTrue(error("frobnicate").contains("unknown command 'frobnicate'"));
+        assertTrue(error("run", "--force").contains("run does not take --force"));
+        assertTrue(error("run", "--config").contains("--config needs a value"));
+        assertTrue(error("run", "extra").contains("run does not take 'extra'"));
+    }
+
+    private static Cli.Invocation parse(String... args) {
+        return Cli.parse(args, DEFAULTS);
+    }
+
+    private static String error(String... args) {
+        return assertThrows(CliException.class, () -> Cli.parse(args, DEFAULTS)).getMessage();
+    }
+}
