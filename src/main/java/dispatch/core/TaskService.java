@@ -7,6 +7,7 @@ import dispatch.Log;
 import dispatch.config.Config;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
+import dispatch.domain.Plan;
 import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
 import dispatch.domain.Task;
@@ -94,6 +95,82 @@ public final class TaskService {
         tx.afterCommit(wakeScheduler);
         tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "requester", who.ref()));
         return CreateResult.CREATED;
+    }
+
+    /**
+     * Approves the plan with run number {@code planSeq} and queues its execution (ADR 0006). A plan with open questions
+     * cannot be approved: members answer them by replying, which is a correction.
+     */
+    public ApproveResult approve(Tx tx, Requester who, long taskId, int planSeq) {
+        Instant now = clock.instant();
+        if (!members.contains(who.ref())) {
+            tx.afterCommit(() -> Log.warn("task.approve_not_allowed", "task", taskId, "requester", who.ref()));
+            return ApproveResult.NOT_ALLOWED;
+        }
+        Optional<Task> found = Tasks.find(tx, taskId);
+        if (found.isEmpty()) {
+            return ApproveResult.NOT_FOUND;
+        }
+        Task task = found.get();
+        if (task.phase() != Phase.AWAITING_APPROVAL) {
+            return ApproveResult.WRONG_STATE;
+        }
+        OptionalInt latestPlan = Runs.latestSucceededPlanSeq(tx, taskId);
+        if (latestPlan.isEmpty() || latestPlan.getAsInt() != planSeq) {
+            return ApproveResult.STALE_PLAN;
+        }
+        if (!Plan.parse(task.planJson()).questions().isEmpty()) {
+            return ApproveResult.OPEN_QUESTIONS;
+        }
+        if (!Tasks.changePhase(tx, taskId, Phase.AWAITING_APPROVAL, Phase.EXECUTING, now)) {
+            return ApproveResult.WRONG_STATE;
+        }
+        // The run carries the plan it implements, so what was approved stays on record.
+        Runs.insert(tx, new Runs.NewRun(taskId, Runs.nextSeq(tx, taskId), RunKind.EXECUTE, task.planJson(), who), now);
+        Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.EXECUTING, "approved plan " + planSeq, now);
+        enqueue(tx, taskId, OutboxKind.EXECUTION_QUEUED, task.chatRef(), task.originRef(),
+                Json.object().put("taskId", taskId).put("by", who.name()), now);
+        tx.afterCommit(wakeScheduler);
+        logTransition(tx, taskId, Phase.AWAITING_APPROVAL, Phase.EXECUTING, who.ref());
+        return ApproveResult.APPROVED;
+    }
+
+    /**
+     * A member's reply to the plan with run number {@code planSeq}: the task is planned again in the same session, with
+     * the reply as the run's instruction. Refusals are answered under the reply.
+     *
+     * @param originRef channel reference of the reply
+     */
+    public CorrectResult correct(Tx tx, Requester who, long taskId, int planSeq, String text, String originRef, String chatRef) {
+        Instant now = clock.instant();
+        if (!members.contains(who.ref())) {
+            notAllowed(tx, who, originRef, chatRef, now);
+            return CorrectResult.NOT_ALLOWED;
+        }
+        if (text == null || text.isBlank()) {
+            return CorrectResult.EMPTY;
+        }
+        Task task = Tasks.find(tx, taskId).orElseThrow(() -> new IllegalStateException("task " + taskId + " does not exist"));
+        if (task.phase() != Phase.AWAITING_APPROVAL) {
+            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef,
+                    Json.object().put("taskId", taskId).put("reason", "phase").put("phase", task.phase().name()), now);
+            return CorrectResult.REFUSED;
+        }
+        OptionalInt latestPlan = Runs.latestSucceededPlanSeq(tx, taskId);
+        if (latestPlan.isEmpty() || latestPlan.getAsInt() != planSeq
+                || !Tasks.changePhase(tx, taskId, Phase.AWAITING_APPROVAL, Phase.PLANNING, now)) {
+            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef,
+                    Json.object().put("taskId", taskId).put("reason", "stale"), now);
+            return CorrectResult.REFUSED;
+        }
+        int seq = Runs.nextSeq(tx, taskId);
+        Runs.insert(tx, new Runs.NewRun(taskId, seq, RunKind.PLAN, text.strip(), who), now);
+        Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.PLANNING, "correction", now);
+        enqueue(tx, taskId, OutboxKind.CORRECTION_QUEUED, chatRef, originRef,
+                Json.object().put("taskId", taskId).put("by", who.name()), now);
+        tx.afterCommit(wakeScheduler);
+        logTransition(tx, taskId, Phase.AWAITING_APPROVAL, Phase.PLANNING, who.ref());
+        return CorrectResult.CORRECTED;
     }
 
     /** Rejects the plan with run number {@code planSeq}; a button on an older plan is refused as stale. */

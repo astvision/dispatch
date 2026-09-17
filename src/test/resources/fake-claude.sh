@@ -1,7 +1,8 @@
 #!/bin/sh
 # Stands in for the claude CLI in tests: records how it was called, then behaves as the prompt asks.
-# SCENARIO:<name> applies to any run. Without one, a planning run replays the recorded plan and an execution run
-# (auto mode) edits README.md and replays the recorded execution.
+# SCENARIO:<name> applies to any run. Otherwise a planning run replays the recorded plan, and an execution run (auto mode)
+# edits README.md and replays the recorded execution unless an exec scenario (exec-fail, nochange, leaky-summary) says
+# otherwise; those names never match the general scenarios, so such a task still gets its plan first.
 printf '%s\n' "$@" > fake-claude.args
 env > fake-claude.env
 prompt=$(cat)
@@ -48,6 +49,24 @@ case "$prompt" in
       cat "$FAKE_CLAUDE_FIXTURES/plan-success.jsonl"
       exit 0
     fi
+    case "$prompt" in
+      *SCENARIO:exec-fail*)
+        echo "fatal: model overloaded" >&2
+        exit 1
+        ;;
+      *SCENARIO:nochange*)
+        cat "$FAKE_CLAUDE_FIXTURES/execute-success.jsonl"
+        exit 0
+        ;;
+      *SCENARIO:leaky-summary*)
+        # Split, so secret scanners never see a token-shaped literal in this file.
+        token="gh""p_0123456789abcdefghijABCDEFGHIJ012345"
+        printf 'fixed by fake claude\n' >> README.md
+        printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-session","permissionMode":"auto"}'
+        printf '{"type":"result","subtype":"success","is_error":false,"session_id":"fake-session","total_cost_usd":0.2,"num_turns":3,"permission_denials":[],"result":"Configured the client with %s from the old script."}\n' "$token"
+        exit 0
+        ;;
+    esac
     printf 'fixed by fake claude\n' >> README.md
     cat "$FAKE_CLAUDE_FIXTURES/execute-success.jsonl"
     exit 0

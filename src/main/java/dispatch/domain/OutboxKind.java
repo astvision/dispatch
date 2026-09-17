@@ -4,6 +4,10 @@ package dispatch.domain;
 public enum OutboxKind {
     TASK_QUEUED,
     PLAN_READY,
+    EXECUTION_QUEUED,
+    CORRECTION_QUEUED,
+    CORRECTION_REFUSED,
+    TASK_COMPLETED,
     TASK_FAILED,
     TASK_REJECTED,
     TASK_CANCELLED,

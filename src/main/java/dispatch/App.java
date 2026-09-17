@@ -19,6 +19,8 @@ import dispatch.telegram.Poller;
 import dispatch.telegram.Renderer;
 import dispatch.telegram.TelegramException;
 import dispatch.telegram.UpdateHandler;
+import dispatch.workspace.Delivery;
+import dispatch.workspace.Gh;
 import dispatch.workspace.Git;
 import dispatch.workspace.Workspaces;
 import java.nio.file.Path;
@@ -61,7 +63,11 @@ public final class App {
      */
     public static App start(Config config, BotApi api, Map<String, String> environment, Clock clock, Consumer<Throwable> onFatal) {
         Path stateDir = config.stateDir();
-        Workspaces workspaces = new Workspaces(stateDir, new Git("git", config.secrets().ghToken(), Duration.ofMinutes(5)));
+        Git git = new Git("git", config.secrets().ghToken(), Duration.ofMinutes(5));
+        Workspaces workspaces = new Workspaces(stateDir, git);
+        Delivery delivery = new Delivery(git, new Gh(config.delivery().ghCommand(), config.secrets().ghToken(), Duration.ofMinutes(2)),
+                config.delivery().authorName(), config.delivery().authorEmail());
+        Redactor redactor = Redactor.fromEnvironment(environment);
         workspaces.createDirectories().ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
         Database db = Database.open(stateDir.resolve("dispatch.db"));
         db.migrate();
@@ -76,8 +82,8 @@ public final class App {
                 schedulerSignal::wake, outboxSignal::wake);
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(config.agents().get("claude-code").command(), environment, Duration.ofSeconds(10)));
-        RunExecutor executor = new RunExecutor(db, projects, workspaces, agents, transitions, activeRuns, config::planLimits,
-                schedulerSignal::wake);
+        RunExecutor executor = new RunExecutor(db, projects, workspaces, delivery, agents, transitions, activeRuns,
+                config::planLimits, config::executeLimits, redactor, schedulerSignal::wake);
 
         new Recovery(db, transitions, Duration.ofSeconds(10)).run();
         projects.all().forEach(project -> projects.unavailableReason(project).ifPresent(reason ->
@@ -85,8 +91,7 @@ public final class App {
 
         Renderer renderer = new Renderer(Renderer.mongolian(), clock);
         registerCommandMenu(api, renderer, config.telegram().groupChatId());
-        OutboxSender sender = new OutboxSender(db, api, renderer, Redactor.fromEnvironment(environment), outboxSignal, clock,
-                Duration.ofSeconds(30));
+        OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
         UpdateHandler handler = new UpdateHandler(db, tasks, projects, api, renderer, config.telegram().groupChatId(),
                 botUsername, clock, outboxSignal::wake);
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));

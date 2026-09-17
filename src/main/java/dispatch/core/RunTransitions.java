@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * State changes caused by runs rather than members. Each call is its own transaction; a result that arrives after the
@@ -65,10 +66,38 @@ public final class RunTransitions {
             Events.record(tx, taskId, seq, ACTOR, Phase.PLANNING, Phase.AWAITING_APPROVAL, "plan ready", now);
             ObjectNode payload = Json.object().put("taskId", taskId).put("planSeq", seq).put("project", task.project());
             payload.set("plan", Json.read(plan.toJson()));
-            payload.put("costUsd", result.costUsd() == null ? null : result.costUsd().toPlainString());
-            payload.put("durationSeconds", run.startedAt() == null ? 0 : Duration.between(run.startedAt(), now).toSeconds());
+            putCostAndDuration(payload, run, result, now);
             enqueue(tx, task, OutboxKind.PLAN_READY, payload, now);
             logTransition(tx, taskId, seq, Phase.PLANNING, Phase.AWAITING_APPROVAL);
+        });
+    }
+
+    /**
+     * An execution run whose changes were delivered.
+     *
+     * @param files paths the delivery commit changed; empty when the run changed nothing
+     * @param prUrl the task's pull request, null when nothing has been delivered
+     */
+    public void completed(long taskId, int seq, AgentResult result, List<String> files, String prUrl) {
+        db.transaction(tx -> {
+            Instant now = clock.instant();
+            Task task = task(tx, taskId);
+            Run run = run(tx, taskId, seq);
+            if (!finishRun(tx, run, RunStatus.SUCCEEDED, null, null, result, result.summary(), now)) {
+                return;
+            }
+            if (!Tasks.completed(tx, taskId, prUrl, now)) {
+                ignoredResult(tx, task, seq);
+                return;
+            }
+            Events.record(tx, taskId, seq, ACTOR, Phase.EXECUTING, Phase.COMPLETED,
+                    files.isEmpty() ? "no changes" : "delivered " + files.size() + " changed files", now);
+            ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("prUrl", prUrl)
+                    .put("filesChanged", files.size()).put("summary", result.summary());
+            result.denials().forEach(payload.putArray("denials")::add);
+            putCostAndDuration(payload, run, result, now);
+            enqueue(tx, task, OutboxKind.TASK_COMPLETED, payload, now);
+            logTransition(tx, taskId, seq, Phase.EXECUTING, Phase.COMPLETED);
         });
     }
 
@@ -117,6 +146,11 @@ public final class RunTransitions {
         tx.afterCommit(() -> Log.info("run.finished", "task", run.taskId(), "run", run.seq(), "status", status,
                 "reason", reason, "cost_usd", finish.costUsd(), "turns", finish.turns()));
         return true;
+    }
+
+    private static void putCostAndDuration(ObjectNode payload, Run run, AgentResult result, Instant now) {
+        payload.put("costUsd", result.costUsd() == null ? null : result.costUsd().toPlainString());
+        payload.put("durationSeconds", run.startedAt() == null ? 0 : Duration.between(run.startedAt(), now).toSeconds());
     }
 
     private void enqueue(Tx tx, Task task, OutboxKind kind, ObjectNode payload, Instant now) {

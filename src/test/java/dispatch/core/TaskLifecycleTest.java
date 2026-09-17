@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
@@ -14,6 +15,7 @@ import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
 import dispatch.domain.Plan;
 import dispatch.domain.Requester;
+import dispatch.domain.RunKind;
 import dispatch.store.Database;
 import dispatch.store.Runs;
 import dispatch.testing.SqlRows;
@@ -39,6 +41,8 @@ class TaskLifecycleTest {
     private static final String CHAT = "telegram:-100";
     private static final Plan PLAN = new Plan("Make the auth timeout configurable", List.of("AuthClient.java:14 hard-codes 30s"),
             List.of("Read auth.timeout", "Add AuthClientTimeoutTest"), List.of(), List.of());
+    private static final Plan PLAN_WITH_QUESTION = new Plan("Make the auth timeout configurable", List.of(),
+            List.of("Read auth.timeout"), List.of(), List.of("Which environments need a longer timeout?"));
 
     @TempDir
     Path dir;
@@ -297,6 +301,166 @@ class TaskLifecycleTest {
     }
 
     @Test
+    void approvingAPlanQueuesItsExecutionAndSaysWhoApproved() {
+        long id = awaitingApproval("70");
+
+        ApproveResult result = db.transactionReturning(tx -> tasks.approve(tx, ALI, id, 1));
+
+        assertEquals(ApproveResult.APPROVED, result);
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        Map<String, String> run = row("SELECT * FROM run WHERE task_id = ? AND seq = 2", id);
+        assertEquals("EXECUTE", run.get("kind"));
+        assertEquals("QUEUED", run.get("status"));
+        assertEquals(PLAN, Plan.parse(run.get("instruction")), "the run implements exactly the approved plan");
+        assertEquals("telegram:200", run.get("requested_by"));
+        assertEquals("Ali", run.get("requested_by_name"));
+        Map<String, String> event = row("SELECT * FROM task_event WHERE task_id = ? AND to_phase = 'EXECUTING'", id);
+        assertEquals("AWAITING_APPROVAL", event.get("from_phase"));
+        assertEquals("telegram:200", event.get("actor"));
+        Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'EXECUTION_QUEUED'");
+        assertEquals(CHAT + "/70", message.get("reply_to_ref"));
+        assertEquals("Ali", Json.read(message.get("payload")).get("by").asText());
+        assertEquals(2, schedulerWakes.get(), "woken when the task was created and when it was approved");
+    }
+
+    @Test
+    void secondApprovalOfTheSamePlanIsRefused() {
+        long id = awaitingApproval("71");
+        db.transaction(tx -> tasks.approve(tx, ALI, id, 1));
+
+        assertEquals(ApproveResult.WRONG_STATE, db.transactionReturning(tx -> tasks.approve(tx, BOLD, id, 1)));
+        assertEquals("2", row("SELECT count(*) AS n FROM run WHERE task_id = ?", id).get("n"));
+    }
+
+    @Test
+    void planWithOpenQuestionsCannotBeApproved() {
+        long id = awaitingApproval("72", PLAN_WITH_QUESTION);
+
+        assertEquals(ApproveResult.OPEN_QUESTIONS, db.transactionReturning(tx -> tasks.approve(tx, ALI, id, 1)));
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("1", row("SELECT count(*) AS n FROM run WHERE task_id = ?", id).get("n"));
+    }
+
+    @Test
+    void approveIsRefusedForStalePlansOtherPhasesUnknownTasksAndNonMembers() {
+        long awaiting = awaitingApproval("73");
+        long planning = create(BOLD, "alm", "Another task", "74");
+
+        assertEquals(ApproveResult.STALE_PLAN, db.transactionReturning(tx -> tasks.approve(tx, ALI, awaiting, 2)));
+        assertEquals(ApproveResult.WRONG_STATE, db.transactionReturning(tx -> tasks.approve(tx, ALI, planning, 1)));
+        assertEquals(ApproveResult.NOT_FOUND, db.transactionReturning(tx -> tasks.approve(tx, ALI, 999, 1)));
+        assertEquals(ApproveResult.NOT_ALLOWED, db.transactionReturning(tx -> tasks.approve(tx, STRANGER, awaiting, 1)));
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", awaiting).get("phase"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'EXECUTION_QUEUED'").get("n"));
+    }
+
+    @Test
+    void correctionReplansWithTheReplyAsInstruction() {
+        long id = awaitingApproval("80");
+
+        CorrectResult result = db.transactionReturning(
+                tx -> tasks.correct(tx, ALI, id, 1, "  Use a config property, not an env var\n", CHAT + "/81", CHAT));
+
+        assertEquals(CorrectResult.CORRECTED, result);
+        assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        Map<String, String> run = row("SELECT * FROM run WHERE task_id = ? AND seq = 2", id);
+        assertEquals("PLAN", run.get("kind"));
+        assertEquals("QUEUED", run.get("status"));
+        assertEquals("Use a config property, not an env var", run.get("instruction"));
+        assertEquals("Ali", run.get("requested_by_name"));
+        Map<String, String> event = row("SELECT * FROM task_event WHERE task_id = ? AND from_phase = 'AWAITING_APPROVAL'", id);
+        assertEquals("PLANNING", event.get("to_phase"));
+        assertEquals("telegram:200", event.get("actor"));
+        Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'CORRECTION_QUEUED'");
+        assertEquals(CHAT + "/81", message.get("reply_to_ref"));
+        assertEquals(id, Json.read(message.get("payload")).get("taskId").asLong());
+        assertEquals(2, schedulerWakes.get());
+    }
+
+    @Test
+    void correctionOfASupersededPlanOrABusyTaskIsRefusedWithTheReason() {
+        long id = awaitingApproval("82");
+
+        assertEquals(CorrectResult.REFUSED, db.transactionReturning(tx -> tasks.correct(tx, ALI, id, 9, "old plan", CHAT + "/83", CHAT)));
+        db.transaction(tx -> tasks.correct(tx, ALI, id, 1, "first correction", CHAT + "/84", CHAT));
+        assertEquals(CorrectResult.REFUSED, db.transactionReturning(tx -> tasks.correct(tx, BOLD, id, 1, "second", CHAT + "/85", CHAT)));
+
+        JsonNode stale = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/83").get("payload"));
+        assertEquals("stale", stale.get("reason").asText());
+        Map<String, String> busy = row("SELECT * FROM outbox WHERE reply_to_ref = ?", CHAT + "/85");
+        assertEquals("CORRECTION_REFUSED", busy.get("kind"));
+        assertEquals("phase", Json.read(busy.get("payload")).get("reason").asText());
+        assertEquals("PLANNING", Json.read(busy.get("payload")).get("phase").asText());
+        assertEquals("2", row("SELECT count(*) AS n FROM run WHERE task_id = ?", id).get("n"));
+    }
+
+    @Test
+    void correctionFromNonMemberIsToldNoAndBlankReplyIsIgnored() {
+        long id = awaitingApproval("86");
+
+        assertEquals(CorrectResult.NOT_ALLOWED, db.transactionReturning(tx -> tasks.correct(tx, STRANGER, id, 1, "do it", CHAT + "/87", CHAT)));
+        assertEquals(CorrectResult.EMPTY, db.transactionReturning(tx -> tasks.correct(tx, ALI, id, 1, " \n ", CHAT + "/88", CHAT)));
+
+        assertEquals("NOT_ALLOWED", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", CHAT + "/87").get("kind"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = ?", CHAT + "/88").get("n"));
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+    }
+
+    @Test
+    void deliveredExecutionCompletesTheTaskWithItsPullRequestAndSummary() {
+        long id = executing("90");
+        clock.advance(Duration.ofMinutes(4));
+
+        transitions.completed(id, 2, executionResult(List.of("Bash: git push origin dispatch/1")),
+                List.of("README.md", "src/Auth.java"), "https://github.com/acme/alm/pull/7");
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("COMPLETED", task.get("phase"));
+        assertEquals("https://github.com/acme/alm/pull/7", task.get("pr_url"));
+        assertEquals("2026-09-17T10:04:00.000Z", task.get("completed_at"));
+        Map<String, String> run = row("SELECT * FROM run WHERE task_id = ? AND seq = 2", id);
+        assertEquals("SUCCEEDED", run.get("status"));
+        assertEquals("Made the auth timeout configurable.", run.get("output"));
+        assertEquals("EXECUTING", row("SELECT from_phase FROM task_event WHERE task_id = ? AND to_phase = 'COMPLETED'", id).get("from_phase"));
+        Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'TASK_COMPLETED'");
+        assertEquals(CHAT + "/90", message.get("reply_to_ref"));
+        JsonNode payload = Json.read(message.get("payload"));
+        assertEquals(id, payload.get("taskId").asLong());
+        assertEquals("autoland-management", payload.get("project").asText());
+        assertEquals("https://github.com/acme/alm/pull/7", payload.get("prUrl").asText());
+        assertEquals(2, payload.get("filesChanged").asInt());
+        assertEquals("Made the auth timeout configurable.", payload.get("summary").asText());
+        assertEquals("Bash: git push origin dispatch/1", payload.get("denials").get(0).asText());
+        assertEquals("0.42", payload.get("costUsd").asText());
+        assertEquals(240, payload.get("durationSeconds").asLong());
+    }
+
+    @Test
+    void executionWithoutChangesCompletesWithoutPullRequest() {
+        long id = executing("91");
+
+        transitions.completed(id, 2, executionResult(List.of()), List.of(), null);
+
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertNull(row("SELECT pr_url FROM task WHERE id = ?", id).get("pr_url"));
+        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED'").get("payload"));
+        assertTrue(payload.get("prUrl").isNull());
+        assertEquals(0, payload.get("filesChanged").asInt());
+    }
+
+    @Test
+    void failedDeliveryFailsTheExecutingTask() {
+        long id = executing("92");
+
+        transitions.failed(id, 2, FailureReason.DELIVERY, "git push failed", executionResult(List.of()));
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("FAILED", task.get("phase"));
+        assertEquals("DELIVERY", task.get("failure_reason"));
+        assertEquals("EXECUTING", row("SELECT from_phase FROM task_event WHERE task_id = ? AND to_phase = 'FAILED'", id).get("from_phase"));
+    }
+
+    @Test
     void cancellingQueuedTaskCancelsItsRun() {
         long id = create(BOLD, "alm", "Fix login timeout", "40");
 
@@ -406,11 +570,29 @@ class TaskLifecycleTest {
     }
 
     private long awaitingApproval(String messageId) {
+        return awaitingApproval(messageId, PLAN);
+    }
+
+    private long awaitingApproval(String messageId, Plan plan) {
         long id = create(BOLD, "alm", "Fix login timeout", messageId);
         ClaimedRun run = claim();
         assertEquals(id, run.taskId(), "claim() takes the oldest queued run; create earlier tasks after this helper");
-        transitions.planSucceeded(id, run.seq(), PLAN, agentResult(List.of()));
+        transitions.planSucceeded(id, run.seq(), plan, agentResult(List.of()));
         return id;
+    }
+
+    /** A task whose approved plan's execution run (seq 2) is running. */
+    private long executing(String messageId) {
+        long id = awaitingApproval(messageId);
+        db.transaction(tx -> tasks.approve(tx, ALI, id, 1));
+        ClaimedRun run = claim();
+        assertEquals(new ClaimedRun(id, 2, RunKind.EXECUTE), run);
+        return id;
+    }
+
+    private static AgentResult executionResult(List<String> denials) {
+        return new AgentResult(AgentOutcome.SUCCEEDED, 0, "session-1", null, "Made the auth timeout configurable.",
+                new BigDecimal("0.42"), 12, denials, null);
     }
 
     private static AgentResult agentResult(List<String> denials) {

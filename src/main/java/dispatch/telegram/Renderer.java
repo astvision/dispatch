@@ -18,7 +18,11 @@ public final class Renderer {
 
     static final int MESSAGE_LIMIT = 4096;
     static final int CAPTION_LIMIT = 1024;
+    /** Limits on escaped text, so markup-heavy agent output cannot push a message past Telegram's limit. */
     private static final int DETAIL_LIMIT = 1500;
+    private static final int SUMMARY_LIMIT = 2500;
+    private static final int DENIAL_LIMIT = 200;
+    private static final int DENIALS_SHOWN = 5;
 
     public record Button(String text, String data) {
     }
@@ -51,6 +55,12 @@ public final class Renderer {
         return switch (kind) {
             case TASK_QUEUED -> plain(format("task.queued", taskId(payload), escape(payload.path("project").asText())));
             case PLAN_READY -> plan(payload);
+            case EXECUTION_QUEUED -> plain(format("task.executionQueued", taskId(payload), escape(payload.path("by").asText())));
+            case CORRECTION_QUEUED -> plain(format("task.correctionQueued", taskId(payload)));
+            case CORRECTION_REFUSED -> plain(payload.path("reason").asText().equals("stale")
+                    ? format("task.correctionStale", taskId(payload))
+                    : format("task.correctionRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case TASK_COMPLETED -> completed(payload);
             case TASK_FAILED -> plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText())))
                     + detail(payload.path("detail").asText("")));
             case TASK_REJECTED -> plain(format("task.rejected", taskId(payload), escape(payload.path("by").asText())));
@@ -71,7 +81,12 @@ public final class Renderer {
     private Rendered plan(JsonNode payload) {
         String taskId = taskId(payload);
         JsonNode plan = payload.path("plan");
-        List<Button> buttons = List.of(new Button(text("button.reject"), "reject:" + taskId + ":" + payload.path("planSeq").asInt()));
+        String planRef = taskId + ":" + payload.path("planSeq").asInt();
+        boolean openQuestions = !plan.path("questions").isEmpty();
+        // With open questions there is nothing to approve yet: members answer by replying (a correction).
+        List<Button> buttons = openQuestions
+                ? List.of(new Button(text("button.reject"), "reject:" + planRef))
+                : List.of(new Button(text("button.approve"), "approve:" + planRef), new Button(text("button.reject"), "reject:" + planRef));
         String title = format("plan.title", taskId, escape(payload.path("project").asText()));
 
         StringBuilder html = new StringBuilder(title).append("\n\n")
@@ -80,9 +95,11 @@ public final class Renderer {
         htmlSection(html, "plan.findings", plan.path("findings"), false);
         htmlSection(html, "plan.steps", plan.path("steps"), true);
         htmlSection(html, "plan.risks", plan.path("risks"), false);
-        if (!plan.path("questions").isEmpty()) {
+        if (openQuestions) {
             htmlSection(html, "plan.questions", plan.path("questions"), true);
             html.append("<i>").append(text("plan.questionsHint")).append("</i>\n");
+        } else {
+            html.append("\n<i>").append(text("plan.replyHint")).append("</i>\n");
         }
         html.append("\n<i>").append(format("plan.footer", money(payload.path("costUsd")),
                 duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>");
@@ -125,6 +142,32 @@ public final class Renderer {
         return md.toString();
     }
 
+    private Rendered completed(JsonNode payload) {
+        int filesChanged = payload.path("filesChanged").asInt();
+        StringBuilder html = new StringBuilder(format("task.completed", taskId(payload), escape(payload.path("project").asText())))
+                .append('\n')
+                .append(filesChanged == 0 ? text("task.completedNoChanges") : format("task.completedPr", escape(payload.path("prUrl").asText())));
+        String summary = payload.path("summary").asText("").strip();
+        if (!summary.isEmpty()) {
+            html.append("\n\n").append(escapeWithin(summary, SUMMARY_LIMIT));
+        }
+        JsonNode denials = payload.path("denials");
+        if (!denials.isEmpty()) {
+            html.append("\n\n").append(format("task.denials", denials.size()));
+            int shown = 0;
+            for (JsonNode denial : denials) {
+                if (shown++ == DENIALS_SHOWN) {
+                    html.append("\n…");
+                    break;
+                }
+                html.append("\n• ").append(escapeWithin(denial.asText(), DENIAL_LIMIT));
+            }
+        }
+        html.append("\n\n<i>").append(format("task.completedFooter", filesChanged, money(payload.path("costUsd")),
+                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>");
+        return plain(html.toString());
+    }
+
     private Rendered taskList(JsonNode tasks) {
         if (tasks.isEmpty()) {
             return plain(text("tasks.empty"));
@@ -155,7 +198,7 @@ public final class Renderer {
     }
 
     private String detail(String detail) {
-        return detail.isBlank() ? "" : "\n<pre>" + escape(truncate(detail, DETAIL_LIMIT)) + "</pre>";
+        return detail.isBlank() ? "" : "\n<pre>" + escapeWithin(detail, DETAIL_LIMIT) + "</pre>";
     }
 
     private String age(Instant createdAt) {
@@ -202,6 +245,19 @@ public final class Renderer {
 
     static String escape(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /** Escapes {@code text} and cuts the result to at most {@code limit} chars, never inside an entity. */
+    private static String escapeWithin(String text, int limit) {
+        StringBuilder escaped = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            String next = escape(String.valueOf(text.charAt(i)));
+            if (escaped.length() + next.length() > limit - 1) {
+                return escaped.append('…').toString();
+            }
+            escaped.append(next);
+        }
+        return escaped.toString();
     }
 
     private static String truncate(String text, int limit) {

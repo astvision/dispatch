@@ -82,8 +82,8 @@ class AppTest {
         assertTrue(queued.get("text").asText().contains("#1"), queued.toString());
         assertEquals(10, queued.get("reply_parameters").get("message_id").asLong());
         JsonNode plan = telegram.awaitRequest("sendMessage", WAIT).json();
-        assertTrue(plan.get("text").asText().contains("Staging орчинд"), plan.toString());
-        assertEquals("reject:1:1", plan.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
+        assertTrue(plan.get("text").asText().contains("The user reports that login"), plan.toString());
+        assertEquals("reject:1:1", plan.get("reply_markup").get("inline_keyboard").get(0).get(1).get("callback_data").asText());
 
         telegram.pushUpdate(Json.read("""
                 {"update_id":2,"callback_query":{"id":"cb-2","from":{"id":200,"is_bot":false,"first_name":"Ali"},

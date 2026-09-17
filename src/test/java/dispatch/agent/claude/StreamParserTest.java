@@ -16,12 +16,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** Fixtures were recorded from Claude Code 2.1.274: planning (plan mode, --json-schema) and execution (auto mode, resumed). */
+/**
+ * Fixtures were recorded from Claude Code 2.1.274: planning runs (plan mode, --json-schema) with the first prompt, whose
+ * plan still had open questions, and with the current one, then the execution run that resumed the latter (auto mode).
+ */
 class StreamParserTest {
 
     @Test
     void successfulPlanRunYieldsPlanCostTurnsAndDenials() throws IOException {
-        StreamParser parser = feed("plan", fixture("plan-success.jsonl"));
+        StreamParser parser = feed("plan", fixture("plan-with-questions.jsonl"));
 
         AgentResult result = parser.result(0, "");
 
@@ -55,9 +58,9 @@ class StreamParserTest {
 
     @Test
     void agentStartedInAnotherPermissionModeFailsEvenWithASuccessResult() throws IOException {
-        StreamParser parser = feed("auto", List.of(fixture("plan-success.jsonl").getFirst()));
+        StreamParser parser = feed("auto", List.of(fixture("plan-with-questions.jsonl").getFirst()));
         assertTrue(parser.wrongPermissionMode(), "detected as soon as the init event arrives");
-        fixture("plan-success.jsonl").stream().skip(1).forEach(parser::accept);
+        fixture("plan-with-questions.jsonl").stream().skip(1).forEach(parser::accept);
 
         AgentResult result = parser.result(0, "");
 
@@ -91,7 +94,7 @@ class StreamParserTest {
 
     @Test
     void processThatExitsWithoutResultFailsWithExitCodeAndStderr() throws IOException {
-        StreamParser parser = feed("plan", List.of(fixture("plan-success.jsonl").getFirst()));
+        StreamParser parser = feed("plan", List.of(fixture("plan-with-questions.jsonl").getFirst()));
 
         AgentResult result = parser.result(143, "Terminated");
 
@@ -116,7 +119,7 @@ class StreamParserTest {
 
     @Test
     void successResultWithNonZeroExitFails() throws IOException {
-        StreamParser parser = feed("plan", fixture("plan-success.jsonl"));
+        StreamParser parser = feed("plan", fixture("plan-with-questions.jsonl"));
 
         AgentResult result = parser.result(2, "segfault");
 
@@ -126,7 +129,7 @@ class StreamParserTest {
 
     @Test
     void malformedLinesAreSkipped() throws IOException {
-        List<String> lines = new java.util.ArrayList<>(fixture("plan-success.jsonl"));
+        List<String> lines = new java.util.ArrayList<>(fixture("plan-with-questions.jsonl"));
         lines.add(3, "not json at all {");
 
         AgentResult result = feed("plan", lines).result(0, "");

@@ -22,7 +22,7 @@ class RendererTest {
     private final Renderer renderer = new Renderer(messages, clock);
 
     @Test
-    void planIsRenderedWithEscapedContentNumberedStepsCostDurationAndRejectButton() {
+    void planIsRenderedWithEscapedContentNumberedStepsCostDurationAndApproveAndRejectButtons() {
         ObjectNode payload = planPayload(List.of("Read <auth.timeout> & default to 60s", "Add AuthClientTimeoutTest"), List.of());
 
         Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, payload);
@@ -37,7 +37,9 @@ class RendererTest {
         assertTrue(html.contains("$0.17"), html);
         assertTrue(html.contains("1 мин 50 сек"), html);
         assertFalse(html.contains(messages.getString("plan.questions")), html);
-        assertEquals(List.of(new Renderer.Button(messages.getString("button.reject"), "reject:42:1")), rendered.buttons());
+        assertTrue(html.contains(messages.getString("plan.replyHint")), html);
+        assertEquals(List.of(new Renderer.Button(messages.getString("button.approve"), "approve:42:1"),
+                new Renderer.Button(messages.getString("button.reject"), "reject:42:1")), rendered.buttons());
     }
 
     @Test
@@ -48,6 +50,8 @@ class RendererTest {
         assertTrue(rendered.html().contains(messages.getString("plan.questions")), rendered.html());
         assertTrue(rendered.html().contains("1. Which environment reads auth.timeout?"), rendered.html());
         assertTrue(rendered.html().contains(messages.getString("plan.questionsHint")), rendered.html());
+        assertEquals(List.of(new Renderer.Button(messages.getString("button.reject"), "reject:42:1")), rendered.buttons(),
+                "no Approve while questions are open; answers come as replies");
     }
 
     @Test
@@ -61,7 +65,7 @@ class RendererTest {
         assertEquals("plan-42.md", rendered.document().fileName());
         assertTrue(rendered.document().markdown().contains("150. Step 150 touches"), rendered.document().markdown());
         assertTrue(rendered.html().length() <= 1024, "caption limit");
-        assertEquals("reject:42:1", rendered.buttons().getFirst().data());
+        assertEquals("approve:42:1", rendered.buttons().getFirst().data());
     }
 
     @Test
@@ -72,6 +76,59 @@ class RendererTest {
 
         assertTrue(rendered.html().contains(messages.getString("failure.TIMEOUT")), rendered.html());
         assertTrue(rendered.html().length() <= 4096, "message limit");
+    }
+
+    @Test
+    void failureDetailFullOfMarkupStaysWithinTheLimitOnceEscaped() {
+        ObjectNode payload = Json.object().put("taskId", 42).put("reason", "AGENT").put("detail", "<&>".repeat(3000));
+
+        String html = renderer.render(OutboxKind.TASK_FAILED, payload).html();
+
+        assertTrue(html.length() <= 4096, "message limit, got " + html.length());
+        assertFalse(html.matches("(?s).*&[a-z]*….*"), "an entity must not be cut in half");
+    }
+
+    @Test
+    void completedTaskLinksThePullRequestWithSummaryDenialsCostAndDuration() {
+        String html = renderer.render(OutboxKind.TASK_COMPLETED,
+                completedPayload("https://github.com/acme/alm/pull/7", 2, List.of("Bash: git push origin dispatch/42"))).html();
+
+        assertTrue(html.contains("#42"), html);
+        assertTrue(html.contains("autoland-management"), html);
+        assertTrue(html.contains("https://github.com/acme/alm/pull/7"), html);
+        assertTrue(html.contains("Made the timeout &lt;configurable&gt;"), html);
+        assertTrue(html.contains("• Bash: git push origin dispatch/42"), html);
+        assertTrue(html.contains("$0.42"), html);
+        assertTrue(html.contains("4 мин"), html);
+    }
+
+    @Test
+    void completedTaskWithoutChangesSaysNoPullRequestWasOpened() {
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, completedPayload(null, 0, List.of())).html();
+
+        assertTrue(html.contains(messages.getString("task.completedNoChanges")), html);
+        assertFalse(html.contains("github.com"), html);
+    }
+
+    @Test
+    void hugeSummaryFullOfMarkupStaysWithinTheMessageLimit() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 3, List.of("Bash: " + "x".repeat(300)));
+        payload.put("summary", "<&>".repeat(3000));
+
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload).html();
+
+        assertTrue(html.length() <= 4096, "message limit, got " + html.length());
+        assertTrue(html.contains("https://github.com/acme/alm/pull/7"), "the link survives a long summary");
+    }
+
+    @Test
+    void refusedCorrectionSaysWhy() {
+        String stale = renderer.render(OutboxKind.CORRECTION_REFUSED, Json.object().put("taskId", 42).put("reason", "stale")).html();
+        String busy = renderer.render(OutboxKind.CORRECTION_REFUSED,
+                Json.object().put("taskId", 42).put("reason", "phase").put("phase", "EXECUTING")).html();
+
+        assertEquals(new java.text.MessageFormat(messages.getString("task.correctionStale")).format(new Object[] {"42"}), stale);
+        assertTrue(busy.contains(messages.getString("phase.EXECUTING")), busy);
     }
 
     @Test
@@ -118,12 +175,22 @@ class RendererTest {
         return payload;
     }
 
+    private static ObjectNode completedPayload(String prUrl, int filesChanged, List<String> denials) {
+        ObjectNode payload = Json.object().put("taskId", 42).put("project", "autoland-management").put("prUrl", prUrl)
+                .put("filesChanged", filesChanged).put("summary", "Made the timeout <configurable>.")
+                .put("costUsd", "0.42").put("durationSeconds", 250);
+        denials.forEach(payload.putArray("denials")::add);
+        return payload;
+    }
+
     private static ObjectNode samplePayload(OutboxKind kind) {
         return switch (kind) {
             case TASK_QUEUED -> Json.object().put("taskId", 1).put("project", "autoland-management");
             case PLAN_READY -> planPayload(List.of("Do it"), List.of());
             case TASK_FAILED -> Json.object().put("taskId", 1).put("reason", "AGENT").put("detail", "boom");
-            case TASK_REJECTED, TASK_CANCELLED -> Json.object().put("taskId", 1).put("by", "Ali");
+            case TASK_REJECTED, TASK_CANCELLED, EXECUTION_QUEUED, CORRECTION_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");
+            case CORRECTION_REFUSED -> Json.object().put("taskId", 1).put("reason", "phase").put("phase", "PLANNING");
+            case TASK_COMPLETED -> completedPayload("https://github.com/acme/alm/pull/7", 1, List.of("Bash: gh pr list"));
             case TASK_LIST -> {
                 ObjectNode payload = Json.object();
                 payload.putArray("tasks");

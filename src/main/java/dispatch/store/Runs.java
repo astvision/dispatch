@@ -85,6 +85,11 @@ public final class Runs {
         return tx.list("SELECT " + COLUMNS + " FROM run WHERE status = ? ORDER BY task_id, seq", Runs::map, status);
     }
 
+    public static int nextSeq(Tx tx, long taskId) {
+        return tx.one("SELECT coalesce(max(seq), 0) + 1 AS seq FROM run WHERE task_id = ?", row -> row.intValue("seq"), taskId)
+                .orElseThrow();
+    }
+
     public static OptionalInt latestSucceededPlanSeq(Tx tx, long taskId) {
         return tx.one("SELECT max(seq) AS seq FROM run WHERE task_id = ? AND kind = ? AND status = ?",
                         row -> row.intOrNull("seq"), taskId, RunKind.PLAN, RunStatus.SUCCEEDED)

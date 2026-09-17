@@ -70,6 +70,14 @@ public final class Tasks {
                 Phase.AWAITING_APPROVAL, planJson, now, id, Phase.PLANNING) == 1;
     }
 
+    /** @param prUrl null keeps the task's existing pull request, if any */
+    public static boolean completed(Tx tx, long id, String prUrl, Instant now) {
+        return tx.update("""
+                        UPDATE task SET phase = ?, pr_url = COALESCE(?, pr_url), completed_at = ?, updated_at = ?
+                        WHERE id = ? AND phase = ?""",
+                Phase.COMPLETED, prUrl, now, now, id, Phase.EXECUTING) == 1;
+    }
+
     public static boolean failed(Tx tx, long id, FailureReason reason, String detail, Instant now) {
         return tx.update("""
                         UPDATE task SET phase = ?, failure_reason = ?, failure_detail = ?, completed_at = ?, updated_at = ?

@@ -1,6 +1,7 @@
 package dispatch.core;
 
 import dispatch.Log;
+import dispatch.Redactor;
 import dispatch.agent.Agent;
 import dispatch.agent.AgentResult;
 import dispatch.agent.AgentStartException;
@@ -11,54 +12,67 @@ import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
 import dispatch.domain.InvalidPlanException;
 import dispatch.domain.Plan;
+import dispatch.domain.Run;
 import dispatch.domain.RunKind;
 import dispatch.domain.Task;
 import dispatch.store.Database;
+import dispatch.store.Runs;
 import dispatch.store.Tasks;
+import dispatch.workspace.Delivery;
 import dispatch.workspace.WorkspaceException;
 import dispatch.workspace.Workspaces;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 
 /**
- * Carries one claimed run to its end on the calling thread: worktree, agent process, timeout watchdog, and exactly one
- * outcome transition. Whatever goes wrong, the run never stays RUNNING.
+ * Carries one claimed run to its end on the calling thread: worktree, agent process, timeout watchdog, delivery of an
+ * execution run's changes, and exactly one outcome transition. Whatever goes wrong, the run never stays RUNNING.
  */
 public final class RunExecutor {
 
     private final Database db;
     private final Projects projects;
     private final Workspaces workspaces;
+    private final Delivery delivery;
     private final Map<String, Agent> agents;
     private final RunTransitions transitions;
     private final ActiveRuns activeRuns;
     private final Function<Config.Project, Config.RunLimits> planLimits;
+    private final Function<Config.Project, Config.RunLimits> executeLimits;
+    private final Redactor redactor;
     private final Runnable wakeScheduler;
 
-    public RunExecutor(Database db, Projects projects, Workspaces workspaces, Map<String, Agent> agents,
-                       RunTransitions transitions, ActiveRuns activeRuns,
-                       Function<Config.Project, Config.RunLimits> planLimits, Runnable wakeScheduler) {
+    /** @param redactor masks secrets in the agent's summary before it becomes a commit message and pull request */
+    public RunExecutor(Database db, Projects projects, Workspaces workspaces, Delivery delivery, Map<String, Agent> agents,
+                       RunTransitions transitions, ActiveRuns activeRuns, Function<Config.Project, Config.RunLimits> planLimits,
+                       Function<Config.Project, Config.RunLimits> executeLimits, Redactor redactor, Runnable wakeScheduler) {
         this.db = db;
         this.projects = projects;
         this.workspaces = workspaces;
+        this.delivery = delivery;
         this.agents = Map.copyOf(agents);
         this.transitions = transitions;
         this.activeRuns = activeRuns;
         this.planLimits = planLimits;
+        this.executeLimits = executeLimits;
+        this.redactor = redactor;
         this.wakeScheduler = wakeScheduler;
     }
 
     public void execute(ClaimedRun claimed) {
         ActiveRuns.ActiveRun active = activeRuns.register(claimed.taskId(), claimed.seq());
         try {
-            if (claimed.kind() == RunKind.PLAN) {
-                plan(claimed, active);
-            } else {
-                transitions.failed(claimed.taskId(), claimed.seq(), FailureReason.INTERNAL,
-                        claimed.kind() + " runs are not supported until M2", null);
+            switch (claimed.kind()) {
+                case PLAN -> plan(active);
+                case EXECUTE -> implement(active);
+                case DELIVER -> transitions.failed(claimed.taskId(), claimed.seq(), FailureReason.INTERNAL,
+                        "DELIVER runs are not supported yet", null);
             }
         } catch (RuntimeException e) {
             Log.error("run.crashed", e, "task", claimed.taskId(), "run", claimed.seq());
@@ -69,91 +83,188 @@ public final class RunExecutor {
         }
     }
 
-    private void plan(ClaimedRun claimed, ActiveRuns.ActiveRun active) {
-        long taskId = claimed.taskId();
-        int seq = claimed.seq();
-        Task task = db.transactionReturning(tx -> Tasks.find(tx, taskId))
-                .orElseThrow(() -> new IllegalStateException("claimed run for missing task " + taskId));
-        Optional<Config.Project> configured = projects.byName(task.project());
-        if (configured.isEmpty()) {
-            transitions.failed(taskId, seq, FailureReason.SETUP, "project " + task.project() + " is no longer configured", null);
+    private void plan(ActiveRuns.ActiveRun active) {
+        Task task = task(active.taskId());
+        Run run = run(active);
+        Optional<Config.Project> project = project(task, active);
+        if (project.isEmpty() || stoppedBeforeAgent(active)) {
             return;
         }
-        Config.Project project = configured.get();
-        if (active.stopReason() != null) {
-            finish(taskId, seq, active.stopReason(), null, null);
+        Optional<Path> worktree = task.worktree() == null ? createWorktree(task, project.get(), active) : existingWorktree(task, active);
+        if (worktree.isEmpty() || stoppedBeforeAgent(active)) {
             return;
         }
 
-        Workspaces.PreparedWorktree worktree;
+        // A task that already has a plan is being corrected: this run's instruction is the member's reply.
+        String prompt = task.planJson() == null ? Prompts.plan(task) : Prompts.correction(task, run);
+        Config.RunLimits limits = planLimits.apply(project.get());
+        RunRequest request = new RunRequest(RunKind.PLAN, worktree.get(), prompt, task.sessionId(), active.seq() > 1, List.of(),
+                limits.budgetUsd(), project.get().model(), workspaces.runLogBase(task.id(), active.seq()));
+        Optional<AgentResult> result = runAgent(active, project.get(), request, limits.timeout());
+        if (result.isEmpty() || endedWithoutSuccess(active, result.get(), limits.timeout())) {
+            return;
+        }
+        finishPlan(active, result.get());
+    }
+
+    private void implement(ActiveRuns.ActiveRun active) {
+        Task task = task(active.taskId());
+        Run run = run(active);
+        Optional<Config.Project> project = project(task, active);
+        if (project.isEmpty() || stoppedBeforeAgent(active)) {
+            return;
+        }
+        Optional<Path> worktree = existingWorktree(task, active);
+        if (worktree.isEmpty()) {
+            return;
+        }
+        String startSha;
         try {
-            // No copyFiles here: planning needs no local secrets (.env), and whatever the agent can read may end up
-            // quoted in a plan posted to the group. They are copied only when an execution run starts.
-            worktree = workspaces.createWorktree(project, taskId);
-            transitions.recordWorktree(taskId, worktree.path(), worktree.baseSha());
+            // Local-only files (e.g. .env) the build and tests need; never part of planning runs.
+            workspaces.copyFiles(project.get(), worktree.get());
+            startSha = delivery.head(worktree.get());
         } catch (WorkspaceException e) {
-            transitions.failed(taskId, seq, FailureReason.SETUP, e.getMessage(), null);
+            transitions.failed(task.id(), active.seq(), FailureReason.SETUP, e.getMessage(), null);
             return;
         }
-        if (active.stopReason() != null) {
-            finish(taskId, seq, active.stopReason(), null, null);
+        if (stoppedBeforeAgent(active)) {
             return;
         }
 
-        Config.RunLimits limits = planLimits.apply(project);
-        RunRequest request = new RunRequest(RunKind.PLAN, worktree.path(), Prompts.plan(task), task.sessionId(), seq > 1,
-                List.of(), limits.budgetUsd(), project.model(), workspaces.runLogBase(taskId, seq));
+        Config.RunLimits limits = executeLimits.apply(project.get());
+        RunRequest request = new RunRequest(RunKind.EXECUTE, worktree.get(), Prompts.execute(task, run.instruction()),
+                task.sessionId(), true, List.of(), limits.budgetUsd(), project.get().model(),
+                workspaces.runLogBase(task.id(), active.seq()));
+        Optional<AgentResult> result = runAgent(active, project.get(), request, limits.timeout());
+        if (result.isEmpty() || endedWithoutSuccess(active, result.get(), limits.timeout())) {
+            return;
+        }
+        deliver(task, run, worktree.get(), startSha, result.get());
+    }
+
+    private void deliver(Task task, Run run, Path worktree, String startSha, AgentResult result) {
+        String summary = result.summary() == null ? "" : redactor.redact(result.summary()).strip();
+        List<String> trailers = new ArrayList<>(List.of("Requested-by: " + task.requester().name()));
+        if (run.requestedByName() != null) {
+            trailers.add("Approved-by: " + run.requestedByName());
+        }
+        Delivery.Commit commit = new Delivery.Commit("dispatch #" + task.id() + ": " + task.title(), summary, trailers);
+        Delivery.Result delivered;
+        try {
+            delivered = delivery.deliver(worktree, task.id(), task.baseBranch(), startSha, commit, task.prUrl());
+        } catch (WorkspaceException e) {
+            transitions.failed(task.id(), run.seq(), FailureReason.DELIVERY, e.getMessage(), result);
+            return;
+        }
+        transitions.completed(task.id(), run.seq(), result, delivered.files(), delivered.prUrl());
+    }
+
+    /** No copyFiles here: planning needs no local secrets, and whatever the agent reads may be quoted in the group. */
+    private Optional<Path> createWorktree(Task task, Config.Project project, ActiveRuns.ActiveRun active) {
+        try {
+            Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project, task.id());
+            transitions.recordWorktree(task.id(), worktree.path(), worktree.baseSha());
+            return Optional.of(worktree.path());
+        } catch (WorkspaceException e) {
+            transitions.failed(task.id(), active.seq(), FailureReason.SETUP, e.getMessage(), null);
+            return Optional.empty();
+        }
+    }
+
+    /** Later runs continue in the worktree the first planning run created. */
+    private Optional<Path> existingWorktree(Task task, ActiveRuns.ActiveRun active) {
+        if (task.worktree() != null && Files.isDirectory(task.worktree())) {
+            return Optional.of(task.worktree());
+        }
+        transitions.failed(task.id(), active.seq(), FailureReason.SETUP, "worktree " + task.worktree() + " is missing", null);
+        return Optional.empty();
+    }
+
+    private Optional<Config.Project> project(Task task, ActiveRuns.ActiveRun active) {
+        Optional<Config.Project> project = projects.byName(task.project());
+        if (project.isEmpty()) {
+            transitions.failed(task.id(), active.seq(), FailureReason.SETUP,
+                    "project " + task.project() + " is no longer configured", null);
+        }
+        return project;
+    }
+
+    /** Starts the agent and waits for it under the timeout; empty when the run's failure is already recorded. */
+    private Optional<AgentResult> runAgent(ActiveRuns.ActiveRun active, Config.Project project, RunRequest request,
+                                           Duration timeout) {
+        long taskId = active.taskId();
+        int seq = active.seq();
         RunHandle handle;
         try {
             handle = agents.get(project.agent()).start(request);
         } catch (AgentStartException e) {
             transitions.failed(taskId, seq, FailureReason.AGENT, e.getMessage(), null);
-            return;
+            return Optional.empty();
         }
         transitions.recordProcess(taskId, seq, handle.process());
         active.attach(handle);
 
         Thread watchdog = Thread.ofVirtual().name("run-timeout-" + taskId + "." + seq).start(() -> {
             try {
-                Thread.sleep(limits.timeout());
+                Thread.sleep(timeout);
                 active.stop(ActiveRuns.StopReason.TIMEOUT);
             } catch (InterruptedException e) {
                 // The run ended before the timeout; nothing to stop.
             }
         });
-        AgentResult result;
         try {
-            result = handle.await();
+            return Optional.of(handle.await());
         } catch (InterruptedException e) {
             handle.cancel();
             Thread.currentThread().interrupt();
             transitions.failed(taskId, seq, FailureReason.INTERRUPTED, "run thread was interrupted", null);
-            return;
+            return Optional.empty();
         } finally {
             watchdog.interrupt();
         }
-        finish(taskId, seq, active.stopReason(), result, limits.timeout());
+    }
+
+    /** Records how the run ended unless its agent succeeded; returns false when the run goes on. */
+    private boolean endedWithoutSuccess(ActiveRuns.ActiveRun active, AgentResult result, Duration timeout) {
+        ActiveRuns.StopReason stopReason = active.stopReason();
+        if (stopReason != null) {
+            recordStop(active, stopReason, result, timeout);
+            return true;
+        }
+        switch (result.outcome()) {
+            case SUCCEEDED -> {
+                return false;
+            }
+            case BUDGET_EXCEEDED -> transitions.failed(active.taskId(), active.seq(), FailureReason.BUDGET, result.error(), result);
+            case FAILED -> transitions.failed(active.taskId(), active.seq(), FailureReason.AGENT, result.error(), result);
+        }
+        return true;
+    }
+
+    private boolean stoppedBeforeAgent(ActiveRuns.ActiveRun active) {
+        ActiveRuns.StopReason stopReason = active.stopReason();
+        if (stopReason == null) {
+            return false;
+        }
+        recordStop(active, stopReason, null, null);
+        return true;
     }
 
     /** @param result null when the run was stopped before its agent started */
-    private void finish(long taskId, int seq, ActiveRuns.StopReason stopReason, AgentResult result, Duration timeout) {
-        if (stopReason != null) {
-            switch (stopReason) {
-                case CANCELLED -> transitions.cancelled(taskId, seq, result);
-                case TIMEOUT -> transitions.failed(taskId, seq, FailureReason.TIMEOUT, "stopped after " + format(timeout), result);
-                case INTERRUPTED -> transitions.failed(taskId, seq, FailureReason.INTERRUPTED,
-                        "Dispatch stopped while the run was active", result);
-            }
-            return;
-        }
-        switch (result.outcome()) {
-            case SUCCEEDED -> finishPlan(taskId, seq, result);
-            case BUDGET_EXCEEDED -> transitions.failed(taskId, seq, FailureReason.BUDGET, result.error(), result);
-            case FAILED -> transitions.failed(taskId, seq, FailureReason.AGENT, result.error(), result);
+    private void recordStop(ActiveRuns.ActiveRun active, ActiveRuns.StopReason stopReason, AgentResult result, Duration timeout) {
+        long taskId = active.taskId();
+        int seq = active.seq();
+        switch (stopReason) {
+            case CANCELLED -> transitions.cancelled(taskId, seq, result);
+            case TIMEOUT -> transitions.failed(taskId, seq, FailureReason.TIMEOUT, "stopped after " + format(timeout), result);
+            case INTERRUPTED -> transitions.failed(taskId, seq, FailureReason.INTERRUPTED,
+                    "Dispatch stopped while the run was active", result);
         }
     }
 
-    private void finishPlan(long taskId, int seq, AgentResult result) {
+    private void finishPlan(ActiveRuns.ActiveRun active, AgentResult result) {
+        long taskId = active.taskId();
+        int seq = active.seq();
         if (result.structuredOutput() == null) {
             transitions.failed(taskId, seq, FailureReason.AGENT, "agent finished without returning a plan", result);
             return;
@@ -163,6 +274,16 @@ public final class RunExecutor {
         } catch (InvalidPlanException e) {
             transitions.failed(taskId, seq, FailureReason.AGENT, "plan did not match the schema: " + e.getMessage(), result);
         }
+    }
+
+    private Task task(long taskId) {
+        return db.transactionReturning(tx -> Tasks.find(tx, taskId))
+                .orElseThrow(() -> new IllegalStateException("claimed run for missing task " + taskId));
+    }
+
+    private Run run(ActiveRuns.ActiveRun active) {
+        return db.transactionReturning(tx -> Runs.find(tx, active.taskId(), active.seq()))
+                .orElseThrow(() -> new IllegalStateException("claimed run " + active.taskId() + "." + active.seq() + " is missing"));
     }
 
     private void failAfterCrash(ClaimedRun claimed, RuntimeException cause) {
