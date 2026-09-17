@@ -18,7 +18,7 @@ public final class Tasks {
 
     private static final String COLUMNS = """
             id, project, title, description, phase, priority, requester_ref, requester_name, origin_ref, chat_ref, session_id,
-            base_branch, base_sha, worktree, plan_json, pr_url, topic_ref, failure_reason, failure_detail,
+            build_session_id, base_branch, base_sha, worktree, plan_json, pr_url, topic_ref, failure_reason, failure_detail,
             created_at, started_at, completed_at, updated_at""";
 
     private Tasks() {
@@ -145,6 +145,10 @@ public final class Tasks {
                 Phase.FAILED, reason, detail, now, now, id, Phase.PLANNING, Phase.EXECUTING) == 1;
     }
 
+    public static void recordBuildSession(Tx tx, long id, UUID buildSessionId, Instant now) {
+        tx.update("UPDATE task SET build_session_id = ?, updated_at = ? WHERE id = ?", buildSessionId, now, id);
+    }
+
     public static void recordWorktree(Tx tx, long id, Path worktree, String baseSha, Instant now) {
         tx.update("UPDATE task SET worktree = ?, base_sha = ?, updated_at = ? WHERE id = ?", worktree, baseSha, now, id);
     }
@@ -161,6 +165,7 @@ public final class Tasks {
                 row.string("origin_ref"),
                 row.string("chat_ref"),
                 row.uuid("session_id"),
+                row.uuid("build_session_id"),
                 row.string("base_branch"),
                 row.string("base_sha"),
                 row.path("worktree"),

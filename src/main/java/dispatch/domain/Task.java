@@ -5,8 +5,11 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * A task as stored. Nullable: baseSha, worktree, planJson, prUrl, topicRef, failureReason, failureDetail, startedAt, completedAt.
+ * A task as stored. Nullable: buildSessionId, baseSha, worktree, planJson, prUrl, topicRef, failureReason, failureDetail,
+ * startedAt, completedAt.
  *
+ * @param sessionId      the planning session: the plan and its corrections (ADR 0017)
+ * @param buildSessionId the building session, once the first execution run started it from the approved plan
  * @param originRef channel reference of the message that created the task; replies thread under it
  * @param chatRef   channel reference of the chat the task belongs to: its project's group chat, or the requester's private
  *                  chat when that group has none (ADR 0014)
@@ -23,6 +26,7 @@ public record Task(
         String originRef,
         String chatRef,
         UUID sessionId,
+        UUID buildSessionId,
         String baseBranch,
         String baseSha,
         Path worktree,

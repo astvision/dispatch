@@ -22,6 +22,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * State changes caused by runs rather than members. Each call is its own transaction; a result that arrives after the
@@ -40,6 +41,10 @@ public final class RunTransitions {
         this.db = db;
         this.clock = clock;
         this.wakeOutbox = wakeOutbox;
+    }
+
+    public void recordBuildSession(long taskId, UUID buildSessionId) {
+        db.transaction(tx -> Tasks.recordBuildSession(tx, taskId, buildSessionId, clock.instant()));
     }
 
     public void recordWorktree(long taskId, Path worktree, String baseSha) {

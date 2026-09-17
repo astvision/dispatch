@@ -65,7 +65,7 @@ final class Prompts {
     /** @param planJson the approved plan, as stored on the execution run */
     static String execute(Task task, String planJson) {
         return """
-                The team approved your plan for this task. Implement it now in this repository. Nobody can answer \
+                The team approved the plan below for this task. Implement it now in this repository. Nobody can answer \
                 questions while you work: where something is unclear, make the most reasonable choice and say so in your \
                 summary.
 

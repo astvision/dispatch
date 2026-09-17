@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Function;
 
 /**
@@ -131,9 +132,16 @@ public final class RunExecutor {
             return;
         }
 
+        // The first execution run starts the building session from the approved plan; later ones continue it (ADR 0017).
+        UUID buildSession = task.buildSessionId();
+        boolean resume = buildSession != null;
+        if (!resume) {
+            buildSession = UUID.randomUUID();
+            transitions.recordBuildSession(task.id(), buildSession);
+        }
         Config.RunLimits limits = executeLimits.apply(project.get());
         RunRequest request = new RunRequest(RunKind.EXECUTE, worktree.get(), Prompts.execute(task, run.instruction()),
-                task.sessionId(), true, List.of(), limits.budgetUsd(), project.get().model(), project.get().effort(),
+                buildSession, resume, List.of(), limits.budgetUsd(), project.get().model(), project.get().effort(),
                 workspaces.runLogBase(task.id(), active.seq()));
         Optional<AgentResult> result = runAgent(active, project.get(), request, limits.timeout());
         if (result.isEmpty() || endedWithoutSuccess(active, result.get(), limits.timeout())) {

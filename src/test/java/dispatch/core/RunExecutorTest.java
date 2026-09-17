@@ -2,6 +2,7 @@ package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -102,7 +103,7 @@ class RunExecutorTest {
     }
 
     @Test
-    void approvedPlanIsImplementedInTheSameSessionAndDeliveredAsADraftPullRequest() throws Exception {
+    void approvedPlanIsImplementedInAFreshBuildingSessionAndDeliveredAsADraftPullRequest() throws Exception {
         long id = queue("Fix the login timeout on staging");
         runNext();
         approve(id);
@@ -124,8 +125,12 @@ class RunExecutorTest {
         assertTrue(prompt.contains("Do not commit"), prompt);
         // A recorded Sonnet run answered a Mongolian task in English until the summary rule named the language explicitly.
         assertTrue(prompt.contains("a task written in Mongolian gets a Mongolian summary"), prompt);
+        assertFalse(prompt.contains("your plan"), "the building session never saw the plan being made: " + prompt);
         List<String> args = Files.readAllLines(worktree.resolve("fake-claude.args"));
-        assertEquals(task.get("session_id"), valueAfter(args, "--resume"));
+        assertNotNull(task.get("build_session_id"));
+        assertNotEquals(task.get("session_id"), task.get("build_session_id"), "execution does not carry the investigation (ADR 0017)");
+        assertEquals(task.get("build_session_id"), valueAfter(args, "--session-id"));
+        assertFalse(args.contains("--resume"), args.toString());
         assertEquals("auto", valueAfter(args, "--permission-mode"));
         assertEquals("high", valueAfter(args, "--effort"));
 
