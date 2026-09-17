@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["understanding", "findings", "steps", "risks", "questions"],
+  "properties": {
+    "understanding": {"type": "string", "description": "What the task asks for, in your own words"},
+    "findings": {"type": "array", "items": {"type": "string"}, "description": "Relevant facts from the code; for a bug, its root cause"},
+    "steps": {"type": "array", "items": {"type": "string"}, "description": "The concrete changes to make, in order"},
+    "risks": {"type": "array", "items": {"type": "string"}, "description": "What could break or needs attention"},
+    "questions": {"type": "array", "items": {"type": "string"}, "description": "Questions that must be answered before implementing; empty if none"}
+  }
+}

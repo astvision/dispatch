@@ -1,0 +1,36 @@
+# /etc/dispatch/<team>.yaml - configuration for one team's instance (M1 keys only).
+team: backend
+
+# stateDir defaults to $STATE_DIRECTORY, which systemd sets from StateDirectory=dispatch/<team>.
+# stateDir: /var/lib/dispatch/backend
+
+telegram:
+  groupChatId: -1001234567890     # the team group (negative id); see README "Find the ids"
+  members:                        # people allowed to create and cancel tasks
+    - id: 123456789
+      name: Bold
+    - id: 222333444
+      name: Ali
+
+scheduler:
+  maxConcurrentRuns: 2
+
+limits:
+  plan:
+    timeout: 15m                  # s, m or h
+    budgetUsd: 2                  # --max-budget-usd per planning run (can overshoot slightly)
+
+agents:
+  claude-code:
+    command: /home/dispatch-backend/.local/bin/claude
+
+projects:
+  - name: autoland-management     # clone lives at <stateDir>/repos/autoland-management
+    alias: alm
+    repo: https://github.com/acme/autoland-management.git
+    baseBranch: main
+    agent: claude-code
+    # model: opus
+    # copyFiles: [.env]           # must be git-ignored; copied from the clone into each worktree
+    # limits:
+    #   plan: { timeout: 20m, budgetUsd: 3 }

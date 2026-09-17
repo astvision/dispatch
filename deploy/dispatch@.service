@@ -1,0 +1,24 @@
+# One Dispatch instance per team (ADR 0005): systemctl enable --now dispatch@backend
+[Unit]
+Description=Dispatch for team %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dispatch-%i
+Group=dispatch-%i
+EnvironmentFile=/etc/dispatch/%i.env
+StateDirectory=dispatch/%i
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/dispatch/%i
+ExecStart=/usr/bin/java -jar /opt/dispatch/dispatch.jar /etc/dispatch/%i.yaml
+Restart=on-failure
+RestartSec=10
+# SIGTERM goes to Dispatch only, so it can stop its agents itself and record their runs as INTERRUPTED (ADR 0008).
+# With the default control-group mode, agents would be killed directly and their runs misreported as agent errors.
+KillMode=mixed
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,121 @@
+package dispatch.store;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import dispatch.domain.Phase;
+import java.math.BigDecimal;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class DatabaseTest {
+
+    @TempDir
+    Path dir;
+
+    private Database db;
+
+    @BeforeEach
+    void open() {
+        db = Database.open(dir.resolve("dispatch.db"));
+        db.migrate();
+    }
+
+    @AfterEach
+    void close() {
+        db.close();
+    }
+
+    @Test
+    void afterCommitActionsRunOnlyOnceTheWorkIsCommitted() {
+        List<String> seenByAction = new ArrayList<>();
+
+        db.transaction(tx -> {
+            tx.update("INSERT INTO kv (key, value) VALUES (?, ?)", "telegram.offset", "42");
+            tx.afterCommit(() -> seenByAction.add(readOffset().orElse("missing")));
+            assertTrue(seenByAction.isEmpty());
+        });
+
+        assertEquals(List.of("42"), seenByAction);
+    }
+
+    @Test
+    void failingWorkIsRolledBackAndItsAfterCommitActionsAreDropped() {
+        AtomicBoolean actionRan = new AtomicBoolean();
+
+        assertThrows(IllegalStateException.class, () -> db.transaction(tx -> {
+            tx.update("INSERT INTO kv (key, value) VALUES (?, ?)", "telegram.offset", "42");
+            tx.afterCommit(() -> actionRan.set(true));
+            throw new IllegalStateException("handler bug");
+        }));
+
+        assertEquals(Optional.empty(), readOffset());
+        assertTrue(!actionRan.get());
+    }
+
+    @Test
+    void migratingAgainKeepsExistingData() {
+        db.transaction(tx -> tx.update("INSERT INTO kv (key, value) VALUES ('k', 'v')"));
+
+        db.migrate();
+
+        assertEquals("v", db.transactionReturning(tx -> tx.one("SELECT value FROM kv WHERE key = 'k'", row -> row.string("value"))).orElseThrow());
+    }
+
+    @Test
+    void nestedTransactionIsRejected() {
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> db.transaction(outer -> db.transaction(inner -> inner.update("SELECT 1"))));
+
+        assertTrue(error.getMessage().contains("nested"), error.getMessage());
+    }
+
+    @Test
+    void typedParametersRoundTrip() {
+        UUID session = UUID.fromString("63d36fba-124d-4737-8020-d37d4998abca");
+        Instant at = Instant.parse("2026-09-17T10:15:30.123456Z");
+
+        db.transaction(tx -> {
+            tx.update("CREATE TEMP TABLE sample (at TEXT, phase TEXT, session TEXT, cost TEXT, pid INTEGER, missing TEXT)");
+            tx.update("INSERT INTO sample VALUES (?, ?, ?, ?, ?, ?)", at, Phase.AWAITING_APPROVAL, session, new BigDecimal("0.168185"), 81234L, null);
+        });
+
+        Sample sample = db.transactionReturning(tx -> tx.one("SELECT * FROM sample", row -> new Sample(
+                row.string("at"), row.instant("at"), row.enumValue("phase", Phase.class), row.uuid("session"),
+                row.decimal("cost"), row.longOrNull("pid"), row.instant("missing")))).orElseThrow();
+
+        assertEquals("2026-09-17T10:15:30.123Z", sample.rawAt());
+        assertEquals(Instant.parse("2026-09-17T10:15:30.123Z"), sample.at());
+        assertEquals(Phase.AWAITING_APPROVAL, sample.phase());
+        assertEquals(session, sample.session());
+        assertEquals(new BigDecimal("0.168185"), sample.cost());
+        assertEquals(81234L, sample.pid());
+        assertNull(sample.missing());
+    }
+
+    @Test
+    void insertReturnsGeneratedId() {
+        long first = db.transactionReturning(tx -> tx.insert("INSERT INTO kv (key, value) VALUES ('a', '1')"));
+        long second = db.transactionReturning(tx -> tx.insert("INSERT INTO kv (key, value) VALUES ('b', '2')"));
+
+        assertEquals(first + 1, second);
+    }
+
+    private Optional<String> readOffset() {
+        return db.transactionReturning(tx -> tx.one("SELECT value FROM kv WHERE key = 'telegram.offset'", row -> row.string("value")));
+    }
+
+    private record Sample(String rawAt, Instant at, Phase phase, UUID session, BigDecimal cost, Long pid, Instant missing) {
+    }
+}

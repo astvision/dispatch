@@ -1,0 +1,210 @@
+package dispatch.telegram;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import dispatch.domain.OutboxKind;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.MessageFormat;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.ResourceBundle;
+
+/** Turns outbox payloads into Telegram HTML. Every piece of task or agent text is escaped. */
+public final class Renderer {
+
+    static final int MESSAGE_LIMIT = 4096;
+    static final int CAPTION_LIMIT = 1024;
+    private static final int DETAIL_LIMIT = 1500;
+
+    public record Button(String text, String data) {
+    }
+
+    public record Document(String fileName, String markdown) {
+    }
+
+    /** @param document non-null when the content is sent as a file; {@code html} is then its caption */
+    public record Rendered(String html, List<Button> buttons, Document document) {
+    }
+
+    private final ResourceBundle messages;
+    private final Clock clock;
+
+    public Renderer(ResourceBundle messages, Clock clock) {
+        this.messages = messages;
+        this.clock = clock;
+    }
+
+    public static ResourceBundle mongolian() {
+        return ResourceBundle.getBundle("messages", Locale.of("mn"),
+                ResourceBundle.Control.getNoFallbackControl(ResourceBundle.Control.FORMAT_PROPERTIES));
+    }
+
+    public String text(String key) {
+        return messages.getString(key);
+    }
+
+    public Rendered render(OutboxKind kind, JsonNode payload) {
+        return switch (kind) {
+            case TASK_QUEUED -> plain(format("task.queued", taskId(payload), escape(payload.path("project").asText())));
+            case PLAN_READY -> plan(payload);
+            case TASK_FAILED -> plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText())))
+                    + detail(payload.path("detail").asText("")));
+            case TASK_REJECTED -> plain(format("task.rejected", taskId(payload), escape(payload.path("by").asText())));
+            case TASK_CANCELLED -> plain(format("task.cancelled", taskId(payload), escape(payload.path("by").asText())));
+            case TASK_LIST -> taskList(payload.path("tasks"));
+            case TASK_NOT_FOUND -> plain(format("task.notFound", taskId(payload)));
+            case CANCEL_REFUSED -> plain(format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case NOT_ALLOWED -> plain(format("member.notAllowed", escape(payload.path("name").asText())));
+            case UNKNOWN_PROJECT -> plain(format("project.unknown", escape(payload.path("given").asText()),
+                    projectList(payload.path("projects"))));
+            case PROJECT_UNAVAILABLE -> plain(format("project.unavailable", escape(payload.path("project").asText()),
+                    escape(payload.path("reason").asText())));
+            case TASK_USAGE -> plain(text("task.usage"));
+            case HELP -> plain(format("help", projectList(payload.path("projects")), escape(payload.path("bot").asText())));
+        };
+    }
+
+    private Rendered plan(JsonNode payload) {
+        String taskId = taskId(payload);
+        JsonNode plan = payload.path("plan");
+        List<Button> buttons = List.of(new Button(text("button.reject"), "reject:" + taskId + ":" + payload.path("planSeq").asInt()));
+        String title = format("plan.title", taskId, escape(payload.path("project").asText()));
+
+        StringBuilder html = new StringBuilder(title).append("\n\n")
+                .append("<b>").append(text("plan.understanding")).append("</b>\n")
+                .append(escape(plan.path("understanding").asText())).append('\n');
+        htmlSection(html, "plan.findings", plan.path("findings"), false);
+        htmlSection(html, "plan.steps", plan.path("steps"), true);
+        htmlSection(html, "plan.risks", plan.path("risks"), false);
+        if (!plan.path("questions").isEmpty()) {
+            htmlSection(html, "plan.questions", plan.path("questions"), true);
+            html.append("<i>").append(text("plan.questionsHint")).append("</i>\n");
+        }
+        html.append("\n<i>").append(format("plan.footer", money(payload.path("costUsd")),
+                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>");
+
+        if (html.length() <= MESSAGE_LIMIT) {
+            return new Rendered(html.toString(), buttons, null);
+        }
+        String caption = truncate(title + "\n" + text("plan.document"), CAPTION_LIMIT);
+        return new Rendered(caption, buttons, new Document("plan-" + taskId + ".md", markdown(payload)));
+    }
+
+    private void htmlSection(StringBuilder html, String labelKey, JsonNode items, boolean numbered) {
+        if (items.isEmpty()) {
+            return;
+        }
+        html.append("\n<b>").append(text(labelKey)).append("</b>\n");
+        int number = 1;
+        for (JsonNode item : items) {
+            html.append(numbered ? number++ + ". " : "• ").append(escape(item.asText())).append('\n');
+        }
+    }
+
+    private String markdown(JsonNode payload) {
+        JsonNode plan = payload.path("plan");
+        StringBuilder md = new StringBuilder("# #").append(taskId(payload)).append(' ')
+                .append(payload.path("project").asText()).append("\n\n## ").append(text("plan.understanding")).append("\n\n")
+                .append(plan.path("understanding").asText()).append('\n');
+        for (String[] section : new String[][] {{"plan.findings", "findings"}, {"plan.steps", "steps"},
+                {"plan.risks", "risks"}, {"plan.questions", "questions"}}) {
+            JsonNode items = plan.path(section[1]);
+            if (items.isEmpty()) {
+                continue;
+            }
+            md.append("\n## ").append(text(section[0])).append("\n\n");
+            int number = 1;
+            for (JsonNode item : items) {
+                md.append(number++).append(". ").append(item.asText()).append('\n');
+            }
+        }
+        return md.toString();
+    }
+
+    private Rendered taskList(JsonNode tasks) {
+        if (tasks.isEmpty()) {
+            return plain(text("tasks.empty"));
+        }
+        StringBuilder html = new StringBuilder(text("tasks.header"));
+        for (JsonNode task : tasks) {
+            String line = "\n\n" + format("tasks.line", String.valueOf(task.path("id").asLong()),
+                    escape(task.path("project").asText()), text("phase." + task.path("phase").asText()),
+                    age(Instant.parse(task.path("createdAt").asText())), escape(task.path("title").asText()));
+            if (html.length() + line.length() > MESSAGE_LIMIT - 2) {
+                html.append("\n…");
+                break;
+            }
+            html.append(line);
+        }
+        return plain(html.toString());
+    }
+
+    private String projectList(JsonNode projects) {
+        List<String> names = new ArrayList<>();
+        for (JsonNode project : projects) {
+            String name = escape(project.path("name").asText());
+            names.add(project.hasNonNull("alias")
+                    ? "<code>" + escape(project.get("alias").asText()) + "</code> (" + name + ")"
+                    : "<code>" + name + "</code>");
+        }
+        return String.join(", ", names);
+    }
+
+    private String detail(String detail) {
+        return detail.isBlank() ? "" : "\n<pre>" + escape(truncate(detail, DETAIL_LIMIT)) + "</pre>";
+    }
+
+    private String age(Instant createdAt) {
+        Duration age = Duration.between(createdAt, clock.instant());
+        return age.toMinutes() < 1 ? text("age.justNow") : duration(age.truncatedTo(java.time.temporal.ChronoUnit.MINUTES));
+    }
+
+    private String duration(Duration duration) {
+        long hours = duration.toHours();
+        long minutes = duration.toMinutesPart();
+        long seconds = duration.toSecondsPart();
+        List<String> parts = new ArrayList<>();
+        if (hours > 0) {
+            parts.add(format("duration.hours", hours));
+        }
+        if (minutes > 0) {
+            parts.add(format("duration.minutes", minutes));
+        }
+        if (seconds > 0 || parts.isEmpty()) {
+            parts.add(format("duration.seconds", seconds));
+        }
+        return String.join(" ", parts);
+    }
+
+    private static String money(JsonNode costUsd) {
+        return costUsd.isTextual() ? "$" + new BigDecimal(costUsd.asText()).setScale(2, RoundingMode.HALF_UP).toPlainString() : "—";
+    }
+
+    private static String taskId(JsonNode payload) {
+        return String.valueOf(payload.path("taskId").asLong());
+    }
+
+    private String format(String key, Object... args) {
+        Object[] texts = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            texts[i] = String.valueOf(args[i]);   // strings, so MessageFormat never applies number grouping
+        }
+        return new MessageFormat(text(key), Locale.ROOT).format(texts);
+    }
+
+    private static Rendered plain(String html) {
+        return new Rendered(html, List.of(), null);
+    }
+
+    static String escape(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private static String truncate(String text, int limit) {
+        return text.length() <= limit ? text : text.substring(0, limit - 1) + "…";
+    }
+}
