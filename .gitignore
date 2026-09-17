@@ -14,3 +14,6 @@ dev.yaml
 *.db
 *.db-shm
 *.db-wal
+
+# A jar copied next to the launchers to run them from the checkout
+bin/dispatch.jar

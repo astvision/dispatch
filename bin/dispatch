@@ -1,0 +1,16 @@
+#!/bin/sh
+# Runs Dispatch from dispatch.jar in this script's directory: dispatch init, dispatch check, dispatch run, ...
+# Uses $JAVA_HOME/bin/java when JAVA_HOME is set, otherwise java on PATH. Needs Java 25 or later.
+self=$0
+while [ -h "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname "$self")/$target ;;
+  esac
+done
+java=java
+if [ -n "$JAVA_HOME" ]; then
+  java=$JAVA_HOME/bin/java
+fi
+exec "$java" -jar "$(dirname "$self")/dispatch.jar" "$@"

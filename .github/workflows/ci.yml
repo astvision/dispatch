@@ -27,3 +27,13 @@ jobs:
       - name: Build and test
         shell: bash
         run: ./mvnw --batch-mode verify
+      - name: Launcher (macOS, Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cp target/dispatch-*.jar bin/dispatch.jar && bin/dispatch --help
+      - name: Launcher (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          for %%f in (target\dispatch-*.jar) do copy "%%f" bin\dispatch.jar
+          call bin\dispatch.cmd --help
