@@ -90,4 +90,21 @@ final class Prompts {
                 and commands unchanged.
                 """.formatted(task.id(), task.requester().name(), task.description(), planJson);
     }
+
+    /**
+     * Shared context is repeated in every topic because each part becomes a task on its own: in a recorded split, "staging:
+     * fix X, add Y" gave "staging: fix X" and "staging: add Y" (ADR 0013).
+     */
+    static String split(String message) {
+        return """
+                Split the message below into independent development tasks, one per topic. If it is one task, return exactly \
+                one topic. Do not invent anything: each topic must contain only what the message says about that topic, in \
+                the message language, together with any shared context in the message (such as a project, environment or \
+                deadline) that applies to it.
+
+                <message>
+                %s
+                </message>
+                """.formatted(message);
+    }
 }

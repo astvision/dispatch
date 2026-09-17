@@ -43,7 +43,7 @@ public final class Workspaces {
             if (!Files.exists(stateDir)) {
                 Files.createDirectories(stateDir, ownerOnly);
             }
-            for (String sub : List.of("repos", "worktrees", "runs")) {
+            for (String sub : List.of("repos", "worktrees", "runs", "splits")) {
                 Path dir = stateDir.resolve(sub);
                 if (!Files.exists(dir)) {
                     Files.createDirectory(dir, ownerOnly);
@@ -71,6 +71,11 @@ public final class Workspaces {
     }
 
     /** Where a run's raw agent output goes; the agent appends its own extensions. */
+    /** Where splits run (ADR 0013): an empty directory of their own, which also keeps their logs. */
+    public Path splitsDir() {
+        return stateDir.resolve("splits");
+    }
+
     public Path runLogBase(long taskId, int seq) {
         return stateDir.resolve("runs").resolve(Long.toString(taskId)).resolve(Integer.toString(seq));
     }

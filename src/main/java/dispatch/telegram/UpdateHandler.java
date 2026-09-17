@@ -293,6 +293,11 @@ public final class UpdateHandler {
             case NOT_REQUESTER -> "callback.notRequester";
             case CHOOSE_PROJECT_FIRST -> "callback.chooseProjectFirst";
             case PROJECT_UNAVAILABLE -> "callback.projectUnavailable";
+            case SPLITTING -> "callback.splitting";
+            case SPLIT -> "callback.split";
+            case KEPT_WHOLE -> "callback.keptWhole";
+            case ALREADY_SPLIT -> "callback.alreadySplit";
+            case CANNOT_SPLIT -> "callback.cannotSplit";
         });
         if (choice != DraftChoice.PROJECT_CHOSEN && choice != DraftChoice.CREATED) {
             return;

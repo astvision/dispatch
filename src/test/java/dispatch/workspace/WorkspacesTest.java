@@ -110,7 +110,7 @@ class WorkspacesTest {
         Optional<String> warning = freshWorkspaces.createDirectories();
 
         assertEquals(Optional.empty(), warning);
-        for (String sub : List.of("", "repos", "worktrees", "runs")) {
+        for (String sub : List.of("", "repos", "worktrees", "runs", "splits")) {
             assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(fresh.resolve(sub))), sub);
         }
     }

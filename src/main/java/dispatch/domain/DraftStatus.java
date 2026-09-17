@@ -5,5 +5,7 @@ public enum DraftStatus {
     OPEN,
     CREATED,
     /** Nobody answered within a day. */
-    EXPIRED
+    EXPIRED,
+    /** Split into parts, each a draft of its own (ADR 0013). */
+    SPLIT
 }

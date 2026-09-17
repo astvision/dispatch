@@ -12,6 +12,7 @@ import dispatch.core.RunExecutor;
 import dispatch.core.RunTransitions;
 import dispatch.core.Scheduler;
 import dispatch.core.Signal;
+import dispatch.core.Splitter;
 import dispatch.core.TaskService;
 import dispatch.store.Database;
 import dispatch.telegram.BotApi;
@@ -42,6 +43,7 @@ public final class App {
     private final Scheduler scheduler;
     private final OutboxSender sender;
     private final DraftExpiry draftExpiry;
+    private final Splitter splitter;
     private final ActiveRuns activeRuns;
     private final Consumer<Throwable> onFatal;
     private final AtomicBoolean stopping = new AtomicBoolean();
@@ -50,13 +52,14 @@ public final class App {
     private Thread senderThread;
     private Thread draftExpiryThread;
 
-    private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, ActiveRuns activeRuns,
-                Consumer<Throwable> onFatal) {
+    private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, Splitter splitter,
+                ActiveRuns activeRuns, Consumer<Throwable> onFatal) {
         this.db = db;
         this.poller = poller;
         this.scheduler = scheduler;
         this.sender = sender;
         this.draftExpiry = draftExpiry;
+        this.splitter = splitter;
         this.activeRuns = activeRuns;
         this.onFatal = onFatal;
     }
@@ -86,14 +89,18 @@ public final class App {
         ActiveRuns activeRuns = new ActiveRuns();
         RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake);
         Groups groups = new Groups(config.telegram().groups());
+        Splitter[] splitter = new Splitter[1];
         TaskService tasks = new TaskService(groups, projects, activeRuns, clock,
-                schedulerSignal::wake, outboxSignal::wake, taskTopics);
+                schedulerSignal::wake, outboxSignal::wake, taskTopics, draftId -> splitter[0].start(draftId));
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(config.agents().get("claude-code").command(), environment, Duration.ofSeconds(10)));
         RunExecutor executor = new RunExecutor(db, projects, workspaces, delivery, agents, transitions, activeRuns,
                 config::planLimits, config::executeLimits, redactor, schedulerSignal::wake);
+        // Splitting happens before a project is chosen, so it cannot use the project's agent (ADR 0013).
+        splitter[0] = new Splitter(db, tasks, agents.get("claude-code"), workspaces.splitsDir(), clock, Duration.ofMinutes(1));
 
         new Recovery(db, transitions, Duration.ofSeconds(10)).run();
+        db.transaction(tasks::failInterruptedSplits);
         projects.all().forEach(project -> projects.unavailableReason(project).ifPresent(reason ->
                 Log.error("project.unavailable", null, "project", project.name(), "reason", reason)));
 
@@ -110,7 +117,7 @@ public final class App {
                         .start(app[0].guarded(() -> executor.execute(run))),
                 Duration.ofSeconds(5));
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
-        app[0] = new App(db, poller, scheduler, sender, draftExpiry, activeRuns, onFatal);
+        app[0] = new App(db, poller, scheduler, sender, draftExpiry, splitter[0], activeRuns, onFatal);
         app[0].startThreads();
         Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "task_topics", taskTopics, "groups", groups.all().size(),
                 "projects", config.projects().size(), "state_dir", stateDir);
@@ -131,6 +138,7 @@ public final class App {
         poller.stop();
         pollerThread.interrupt();
         scheduler.stop();
+        splitter.stop();
         try {
             schedulerThread.join(Duration.ofSeconds(10));
             activeRuns.stopAll(ActiveRuns.StopReason.INTERRUPTED);

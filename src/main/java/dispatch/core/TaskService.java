@@ -6,6 +6,7 @@ import dispatch.Json;
 import dispatch.Log;
 import dispatch.config.Config;
 import dispatch.domain.Draft;
+import dispatch.domain.DraftStatus;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
@@ -14,6 +15,7 @@ import dispatch.domain.Requester;
 import dispatch.domain.Run;
 import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
+import dispatch.domain.SplitState;
 import dispatch.domain.Task;
 import dispatch.store.Drafts;
 import dispatch.store.Events;
@@ -34,6 +36,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.LongConsumer;
 
 /**
  * What members can do, independent of the channel they use. Every method works inside the caller's transaction so
@@ -52,16 +55,23 @@ public final class TaskService {
     private final Runnable wakeScheduler;
     private final Runnable wakeOutbox;
     private final boolean taskTopics;
+    private final LongConsumer startSplit;
 
+    /** Without topics or splitting: for tests that need neither. */
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
                        Runnable wakeOutbox) {
-        this(groups, projects, activeRuns, clock, wakeScheduler, wakeOutbox, false);
+        this(groups, projects, activeRuns, clock, wakeScheduler, wakeOutbox, false,
+                draftId -> Log.warn("split.not_wired", "draft", draftId));
     }
 
-    /** @param taskTopics the channel can give each task its own topic in the requester's private chat */
+    /**
+     * @param taskTopics the channel can give each task its own topic in the requester's private chat
+     * @param startSplit starts splitting a draft's message in the background once ✂️ was pressed (ADR 0013)
+     */
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
-                       Runnable wakeOutbox, boolean taskTopics) {
+                       Runnable wakeOutbox, boolean taskTopics, LongConsumer startSplit) {
         this.taskTopics = taskTopics;
+        this.startSplit = startSplit;
         this.groups = groups;
         this.projects = projects;
         this.activeRuns = activeRuns;
@@ -98,9 +108,9 @@ public final class TaskService {
             enqueue(tx, null, OutboxKind.NO_PROJECTS, chatRef, originRef, Json.object(), now);
             return DraftResult.NO_PROJECTS;
         }
-        Optional<Config.Project> named = projectKey == null ? Optional.empty() : projects.find(projectKey).filter(offered::contains);
-        String project = named.map(Config.Project::name).orElse(offered.size() == 1 ? offered.getFirst().name() : null);
-        long id = Drafts.insert(tx, new Drafts.NewDraft(who, chatRef, originRef, description, project), now);
+        String named = projectKey == null ? null : projects.find(projectKey).map(Config.Project::name).orElse(null);
+        String project = preselected(offered, named);
+        long id = Drafts.insert(tx, new Drafts.NewDraft(who, chatRef, originRef, description, project, null, null), now);
         enqueue(tx, null, OutboxKind.DRAFT_PROMPT, chatRef, originRef, draftPayload(tx, id).orElseThrow(), now);
         tx.afterCommit(() -> Log.info("draft.created", "draft", id, "requester", who.ref(), "project", project));
         return DraftResult.DRAFTED;
@@ -141,7 +151,10 @@ public final class TaskService {
         return DraftChoice.CREATED;
     }
 
-    /** What a draft's prompt shows: while open, the projects to choose from; once created, the task. */
+    /**
+     * What a draft's prompt shows: while open, the projects to choose from and how far a split has come; once created, the
+     * task; once split, its parts.
+     */
     public Optional<ObjectNode> draftPayload(Tx tx, long draftId) {
         return Drafts.find(tx, draftId).map(draft -> {
             ObjectNode payload = Json.object().put("draftId", draft.id()).put("title", title(draft.description()))
@@ -152,8 +165,107 @@ public final class TaskService {
                     .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
             payload.put("priority", draft.taskId() == null ? null
                     : Tasks.find(tx, draft.taskId()).map(task -> task.priority().name()).orElse(null));
+            payload.put("split", draft.splitState() == null ? null : draft.splitState().name());
+            payload.put("splittable", draft.status() == DraftStatus.OPEN && draft.parentId() == null
+                    && (draft.splitState() == null || draft.splitState() == SplitState.FAILED));
+            ArrayNode topics = payload.putArray("topics");
+            draft.topics().forEach(topics::add);
+            if (draft.parentId() != null) {
+                payload.put("part", draft.part()).put("parts",
+                        Drafts.find(tx, draft.parentId()).map(parent -> parent.topics().size()).orElse(0));
+            }
             return payload;
         });
+    }
+
+    /**
+     * ✂️ on a draft's prompt: the agent looks for the independent tasks in its message, in the background (ADR 0013).
+     *
+     * @param promptRef the prompt the button was pressed on; it is redrawn with the answer
+     */
+    public DraftChoice split(Tx tx, Requester who, long draftId, String promptRef) {
+        Optional<DraftChoice> refused = refusal(Drafts.find(tx, draftId), who);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        if (!Drafts.startSplit(tx, draftId, promptRef, clock.instant())) {
+            return DraftChoice.CANNOT_SPLIT;
+        }
+        tx.afterCommit(() -> Log.info("split.started", "draft", draftId, "requester", who.ref()));
+        tx.afterCommit(() -> startSplit.accept(draftId));
+        return DraftChoice.SPLITTING;
+    }
+
+    /** The agent's topics: several are proposed on the prompt, a single one leaves the draft as it was. */
+    public void splitProposed(Tx tx, long draftId, List<String> topics) {
+        boolean several = topics.size() > 1;
+        finishSplit(tx, draftId, several ? SplitState.PROPOSED : SplitState.ONE_TOPIC, several ? topics : List.of(),
+                "topics", topics.size());
+    }
+
+    /** The prompt shows that the split failed and offers ✂️ again; the detail goes to the log. */
+    public void splitFailed(Tx tx, long draftId, String error) {
+        finishSplit(tx, draftId, SplitState.FAILED, List.of(), "error", error);
+    }
+
+    /** Splits that a previous process left running end as failed (ADR 0013); must run before anything splits. */
+    public int failInterruptedSplits(Tx tx) {
+        List<Draft> interrupted = Drafts.openAndSplitting(tx);
+        interrupted.forEach(draft -> splitFailed(tx, draft.id(), "Dispatch restarted while splitting"));
+        return interrupted.size();
+    }
+
+    private void finishSplit(Tx tx, long draftId, SplitState state, List<String> topics, String detailName, Object detail) {
+        Instant now = clock.instant();
+        if (!Drafts.finishSplit(tx, draftId, state, topics, now)) {
+            // Given as one task, or expired, while the agent worked: its prompt already shows that.
+            tx.afterCommit(() -> Log.info("split.discarded", "draft", draftId, "state", state));
+            return;
+        }
+        Draft draft = Drafts.find(tx, draftId).orElseThrow();
+        Outbox.enqueueEdit(tx, null, OutboxKind.DRAFT_PROMPT, draft.chatRef(), draft.promptRef(), draftPayload(tx, draftId).orElseThrow(), now);
+        tx.afterCommit(wakeOutbox);
+        if (state == SplitState.FAILED) {
+            tx.afterCommit(() -> Log.warn("split.failed", "draft", draftId, detailName, detail));
+        } else {
+            tx.afterCommit(() -> Log.info("split.finished", "draft", draftId, "state", state, detailName, detail));
+        }
+    }
+
+    /**
+     * Takes the proposal: each part becomes a draft with its own prompt, under the message it came from. A project chosen
+     * for the whole message carries over.
+     */
+    public DraftChoice acceptSplit(Tx tx, Requester who, long draftId) {
+        Instant now = clock.instant();
+        Optional<Draft> found = Drafts.find(tx, draftId);
+        Optional<DraftChoice> refused = refusal(found, who);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        if (!Drafts.split(tx, draftId, now)) {
+            return DraftChoice.CANNOT_SPLIT;
+        }
+        Draft whole = found.get();
+        String project = preselected(offeredProjects(who.ref()), whole.project());
+        for (int part = 1; part <= whole.topics().size(); part++) {
+            // Unique per part, while still naming the message its task replies under.
+            String originRef = whole.originRef() + "#" + part;
+            long id = Drafts.insert(tx, new Drafts.NewDraft(who, whole.chatRef(), originRef, whole.topics().get(part - 1), project,
+                    draftId, part), now);
+            enqueue(tx, null, OutboxKind.DRAFT_PROMPT, whole.chatRef(), originRef, draftPayload(tx, id).orElseThrow(), now);
+        }
+        tx.afterCommit(() -> Log.info("split.accepted", "draft", draftId, "parts", whole.topics().size()));
+        return DraftChoice.SPLIT;
+    }
+
+    /** Declines the proposal: the prompt asks for the whole message's project and priority again, without ✂️. */
+    public DraftChoice keepWhole(Tx tx, Requester who, long draftId) {
+        Optional<DraftChoice> refused = refusal(Drafts.find(tx, draftId), who);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        return Drafts.keepWhole(tx, draftId, clock.instant()) ? DraftChoice.KEPT_WHOLE : DraftChoice.CANNOT_SPLIT;
     }
 
     /** Closes drafts created before {@code createdBefore} that nobody answered, telling their writers. */
@@ -247,7 +359,16 @@ public final class TaskService {
             case OPEN -> Optional.empty();
             case CREATED -> Optional.of(DraftChoice.ALREADY_CREATED);
             case EXPIRED -> Optional.of(DraftChoice.EXPIRED);
+            case SPLIT -> Optional.of(DraftChoice.ALREADY_SPLIT);
         };
+    }
+
+    /** The project named or chosen, if the member can still use it; otherwise their only project, if they have just one. */
+    private static String preselected(List<Config.Project> offered, String named) {
+        if (named != null && offered.stream().anyMatch(project -> project.name().equals(named))) {
+            return named;
+        }
+        return offered.size() == 1 ? offered.getFirst().name() : null;
     }
 
     /** The member's projects that can take tasks now, in config order. */
