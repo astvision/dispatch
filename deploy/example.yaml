@@ -5,12 +5,16 @@ team: backend
 # stateDir: /var/lib/dispatch/backend
 
 telegram:
-  groupChatId: -1001234567890     # the team group (negative id); see README "Find the ids"
-  members:                        # people allowed to create and cancel tasks
-    - id: 123456789
-      name: Bold
-    - id: 222333444
-      name: Ali
+  groups:                         # each group: its chat, its members, the projects it owns (ADR 0012)
+    - name: backend
+      chatId: -1001234567890      # the group's (negative) id; see README "Find the ids"
+      members:                    # people who may give and cancel this group's tasks
+        - id: 123456789
+          name: Bold
+        - id: 222333444
+          name: Ali
+      projects:                   # every project belongs to exactly one group
+        - autoland-management
 
 delivery:                         # Dispatch commits, pushes dispatch/<task> and opens a draft PR (ADR 0007)
   authorName: Dispatch (backend)

@@ -4,7 +4,7 @@ import dispatch.agent.Agent;
 import dispatch.agent.claude.ClaudeCodeAgent;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
-import dispatch.core.Members;
+import dispatch.core.Groups;
 import dispatch.core.Projects;
 import dispatch.core.Recovery;
 import dispatch.core.RunExecutor;
@@ -78,7 +78,8 @@ public final class App {
         Projects projects = new Projects(config.projects(), workspaces::unavailableReason);
         ActiveRuns activeRuns = new ActiveRuns();
         RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake);
-        TaskService tasks = new TaskService(new Members(config.telegram().members()), projects, activeRuns, clock,
+        Groups groups = new Groups(config.telegram().groups());
+        TaskService tasks = new TaskService(groups, projects, activeRuns, clock,
                 schedulerSignal::wake, outboxSignal::wake);
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(config.agents().get("claude-code").command(), environment, Duration.ofSeconds(10)));
@@ -90,10 +91,9 @@ public final class App {
                 Log.error("project.unavailable", null, "project", project.name(), "reason", reason)));
 
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
-        registerCommandMenu(api, renderer, config.telegram().groupChatId());
+        registerCommandMenus(api, renderer, groups);
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
-        UpdateHandler handler = new UpdateHandler(db, tasks, projects, api, renderer, config.telegram().groupChatId(),
-                botUsername, clock, outboxSignal::wake);
+        UpdateHandler handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, botUsername, clock, outboxSignal::wake);
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         App[] app = new App[1];
@@ -103,7 +103,7 @@ public final class App {
                 Duration.ofSeconds(5));
         app[0] = new App(db, poller, scheduler, sender, activeRuns, onFatal);
         app[0].startThreads();
-        Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "group", config.telegram().groupChatId(),
+        Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "groups", groups.all().size(),
                 "projects", config.projects().size(), "state_dir", stateDir);
         return app[0];
     }
@@ -159,14 +159,20 @@ public final class App {
         };
     }
 
-    /** Best effort: fails while the bot is not yet in the group, and works again on the next start. */
-    private static void registerCommandMenu(BotApi api, Renderer renderer, long groupChatId) {
+    /** Best effort: a group's menu fails while the bot is not yet in it, and works again on the next start. */
+    private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups) {
+        for (Config.Group group : groups.all()) {
+            try {
+                api.setMyCommands(group.chatId(), commands(renderer, "task", "status", "history", "cancel", "help"));
+            } catch (TelegramException e) {
+                Log.warn("telegram.command_menu_failed", "group", group.name(), "chat_id", group.chatId(), "error", e.getMessage());
+            }
+        }
         try {
-            api.setMyCommands(groupChatId, commands(renderer, "task", "status", "history", "cancel", "help"));
             // No /task in private chats: tasks start in the group (ADR 0011).
             api.setPrivateChatCommands(commands(renderer, "status", "history", "cancel", "help"));
         } catch (TelegramException e) {
-            Log.warn("telegram.command_menu_failed", "group", groupChatId, "error", e.getMessage());
+            Log.warn("telegram.command_menu_failed", "scope", "all_private_chats", "error", e.getMessage());
         }
     }
 

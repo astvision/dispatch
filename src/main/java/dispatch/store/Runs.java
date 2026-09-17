@@ -9,12 +9,13 @@ import dispatch.domain.RunStatus;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.time.Instant;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 
 /** SQL for the run table, including the scheduler's claim rules. */
 public final class Runs {
@@ -89,17 +90,23 @@ public final class Runs {
         return tx.one("SELECT " + COLUMNS + " FROM run WHERE task_id = ? AND seq = ?", Runs::map, taskId, seq);
     }
 
-    /** Running and queued runs, oldest queued first. */
-    public static List<InProgress> inProgress(Tx tx) {
+    /** Running and queued runs of {@code projects}, oldest queued first. */
+    public static List<InProgress> inProgress(Tx tx, Set<String> projects) {
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+        List<Object> params = new ArrayList<>(List.of(RunStatus.RUNNING, RunStatus.QUEUED));
+        params.addAll(projects);
         return tx.list("""
                         SELECT r.task_id, r.seq, r.kind, r.status, r.queued_at, r.started_at, t.project, t.title
                         FROM run r JOIN task t ON t.id = r.task_id
-                        WHERE r.status IN (?, ?)
+                        WHERE r.status IN (?, ?) AND t.project IN (""" + Tx.placeholders(projects.size()) + """
+                        )
                         ORDER BY r.queued_at, r.task_id, r.seq""",
                 row -> new InProgress(row.longValue("task_id"), row.intValue("seq"), row.enumValue("kind", RunKind.class),
                         row.enumValue("status", RunStatus.class), row.instant("queued_at"), row.instant("started_at"),
                         row.string("project"), row.string("title")),
-                RunStatus.RUNNING, RunStatus.QUEUED);
+                params.toArray());
     }
 
     public static List<Run> forTask(Tx tx, long taskId) {
@@ -113,7 +120,7 @@ public final class Runs {
         }
         record Cost(long taskId, BigDecimal usd) {
         }
-        String placeholders = String.join(", ", Collections.nCopies(taskIds.size(), "?"));
+        String placeholders = Tx.placeholders(taskIds.size());
         Map<Long, BigDecimal> totals = new HashMap<>();
         for (Cost cost : tx.list("SELECT task_id, cost_usd FROM run WHERE cost_usd IS NOT NULL AND task_id IN (" + placeholders + ")",
                 row -> new Cost(row.longValue("task_id"), row.decimal("cost_usd")), taskIds.toArray())) {

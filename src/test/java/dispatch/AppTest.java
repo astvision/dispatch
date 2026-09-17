@@ -53,7 +53,8 @@ class AppTest {
         Path claude = FakeClaude.install(Files.createDirectories(dir.resolve("bin")));
         Path gh = FakeGh.install(dir.resolve("bin"));
         config = new Config("backend", repos.stateDir,
-                new Config.Telegram(GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali"))),
+                new Config.Telegram(List.of(new Config.Group("backend", GROUP,
+                        List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("autoland-management")))),
                 new Config.Scheduler(2),
                 new Config.Limits(new Config.RunLimits(Duration.ofSeconds(60), new BigDecimal("2")),
                         new Config.RunLimits(Duration.ofSeconds(60), new BigDecimal("10"))),

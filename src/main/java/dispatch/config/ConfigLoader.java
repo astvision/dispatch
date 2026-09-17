@@ -29,6 +29,8 @@ public final class ConfigLoader {
     /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
     private static final Pattern CREDENTIAL_URL = Pattern.compile("^https?://[^/@]*@", Pattern.CASE_INSENSITIVE);
     private static final Pattern SECRET_KEY = Pattern.compile("(?i).*(token|secret|password|passwd|apikey|api_key|credential).*");
+    /** Keys of the single-group config that ADR 0012 replaced with telegram.groups. */
+    private static final Set<String> SINGLE_GROUP_KEYS = Set.of("groupChatId", "members");
 
     private ConfigLoader() {
     }
@@ -41,7 +43,6 @@ public final class ConfigLoader {
             errors.add("team: required; lowercase letters, digits and '-' (e.g. backend)");
         }
         Path stateDir = stateDir(raw.stateDir() != null ? raw.stateDir() : env.get("STATE_DIRECTORY"), errors);
-        validateTelegram(raw.telegram(), errors);
         if (raw.scheduler() == null || raw.scheduler().maxConcurrentRuns() < 1) {
             errors.add("scheduler.maxConcurrentRuns: required, at least 1");
         }
@@ -49,6 +50,7 @@ public final class ConfigLoader {
         Map<String, Config.Agent> agents = raw.agents() == null ? Map.of() : raw.agents();
         validateAgents(agents, errors);
         List<Config.Project> projects = validateProjects(raw.projects(), agents, errors);
+        Config.Telegram telegram = validateTelegram(raw.telegram(), projects, errors);
         Config.Delivery delivery = validateDelivery(raw.delivery(), errors);
 
         String token = env.get("TELEGRAM_BOT_TOKEN");
@@ -60,7 +62,7 @@ public final class ConfigLoader {
         if (!errors.isEmpty()) {
             throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));
         }
-        return new Config(raw.team(), stateDir, raw.telegram(), raw.scheduler(), raw.limits(), Map.copyOf(agents),
+        return new Config(raw.team(), stateDir, telegram, raw.scheduler(), raw.limits(), Map.copyOf(agents),
                 projects, delivery, new Config.Secrets(token, ghToken));
     }
 
@@ -70,6 +72,9 @@ public final class ConfigLoader {
         } catch (UnrecognizedPropertyException e) {
             String hint = SECRET_KEY.matcher(e.getPropertyName()).matches()
                     ? " (secrets never go in this file: put them in the environment file, see deploy/example.env)"
+                    : SINGLE_GROUP_KEYS.contains(e.getPropertyName())
+                    ? " (the group and its members now go under telegram.groups, each with name, chatId, members and projects;"
+                            + " see deploy/example.yaml)"
                     : "";
             throw new ConfigException(file + ": " + path(e.getPath()) + ": " + e.getOriginalMessage() + hint);
         } catch (JsonMappingException e) {
@@ -94,29 +99,71 @@ public final class ConfigLoader {
         return path;
     }
 
-    private static void validateTelegram(Config.Telegram telegram, List<String> errors) {
-        if (telegram == null) {
-            errors.add("telegram: required");
-            return;
+    private static Config.Telegram validateTelegram(Config.Telegram telegram, List<Config.Project> projects, List<String> errors) {
+        List<Config.Group> groups = telegram == null || telegram.groups() == null ? List.of() : telegram.groups();
+        if (groups.isEmpty()) {
+            errors.add("telegram.groups: at least one group is required");
+            return new Config.Telegram(List.of());
         }
-        if (telegram.groupChatId() >= 0) {
-            errors.add("telegram.groupChatId: must be the (negative) chat id of the team group, got " + telegram.groupChatId());
+        Set<String> names = new HashSet<>();
+        Set<Long> chats = new HashSet<>();
+        Map<String, Integer> listings = new HashMap<>();
+        Set<String> projectNames = new HashSet<>();
+        projects.forEach(project -> projectNames.add(project.name()));
+        List<Config.Group> normalized = new ArrayList<>();
+        for (int i = 0; i < groups.size(); i++) {
+            Config.Group group = groups.get(i);
+            String at = "telegram.groups[" + i + "]";
+            if (isBlank(group.name()) || !PROJECT_KEY.matcher(group.name()).matches()) {
+                errors.add(at + ".name: required; letters, digits, '.', '_' and '-' only");
+            } else if (!names.add(group.name().toLowerCase())) {
+                errors.add(at + ".name: '" + group.name() + "' is used by more than one group");
+            }
+            if (group.chatId() >= 0) {
+                errors.add(at + ".chatId: must be the (negative) chat id of the group, got " + group.chatId());
+            } else if (!chats.add(group.chatId())) {
+                errors.add(at + ".chatId: " + group.chatId() + " is used by more than one group");
+            }
+            List<Config.Member> members = group.members() == null ? List.of() : group.members();
+            validateMembers(at, members, errors);
+            List<String> owned = group.projects() == null ? List.of() : group.projects();
+            if (owned.isEmpty()) {
+                errors.add(at + ".projects: at least one project is required");
+            }
+            for (int p = 0; p < owned.size(); p++) {
+                String name = owned.get(p);
+                if (!projectNames.contains(name)) {
+                    errors.add(at + ".projects[" + p + "]: '" + name + "' is not a configured project");
+                } else if (listings.merge(name, 1, Integer::sum) == 2) {
+                    errors.add("telegram.groups: '" + name + "' is listed in more than one group; a project belongs to exactly one");
+                }
+            }
+            normalized.add(new Config.Group(group.name(), group.chatId(), List.copyOf(members), List.copyOf(owned)));
         }
-        if (telegram.members() == null || telegram.members().isEmpty()) {
-            errors.add("telegram.members: at least one member is required");
+        for (int i = 0; i < projects.size(); i++) {
+            if (!listings.containsKey(projects.get(i).name())) {
+                errors.add("projects[" + i + "]: '" + projects.get(i).name() + "' is not listed in any group");
+            }
+        }
+        return new Config.Telegram(List.copyOf(normalized));
+    }
+
+    private static void validateMembers(String at, List<Config.Member> members, List<String> errors) {
+        if (members.isEmpty()) {
+            errors.add(at + ".members: at least one member is required");
             return;
         }
         Set<Long> seen = new HashSet<>();
-        for (int i = 0; i < telegram.members().size(); i++) {
-            Config.Member member = telegram.members().get(i);
-            String at = "telegram.members[" + i + "]";
+        for (int i = 0; i < members.size(); i++) {
+            Config.Member member = members.get(i);
+            String memberAt = at + ".members[" + i + "]";
             if (member.id() <= 0) {
-                errors.add(at + ".id: must be a positive Telegram user id, got " + member.id());
+                errors.add(memberAt + ".id: must be a positive Telegram user id, got " + member.id());
             } else if (!seen.add(member.id())) {
-                errors.add(at + ".id: " + member.id() + " is listed more than once");
+                errors.add(memberAt + ".id: " + member.id() + " is listed more than once");
             }
             if (isBlank(member.name())) {
-                errors.add(at + ".name: required");
+                errors.add(memberAt + ".name: required");
             }
         }
     }

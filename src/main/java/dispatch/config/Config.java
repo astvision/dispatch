@@ -41,7 +41,11 @@ public record Config(
                 override.budgetUsd() != null ? override.budgetUsd() : defaults.budgetUsd());
     }
 
-    public record Telegram(long groupChatId, List<Member> members) {
+    public record Telegram(List<Group> groups) {
+    }
+
+    /** A team's chat with its members and the projects it owns; every project belongs to exactly one group (ADR 0012). */
+    public record Group(String name, long chatId, List<Member> members, List<String> projects) {
     }
 
     public record Member(long id, String name) {

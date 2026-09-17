@@ -67,11 +67,16 @@ class TaskLifecycleTest {
                 "claude-code", null, List.of(), null);
         Config.Project crm = new Config.Project("crm", null, "https://github.com/acme/crm.git", "develop",
                 "claude-code", null, List.of(), null);
-        Projects projects = new Projects(List.of(alm, crm),
+        Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", "master",
+                "claude-code", null, List.of(), null);
+        Projects projects = new Projects(List.of(alm, crm, life),
                 project -> project.name().equals("crm") ? Optional.of("repos/crm is not cloned") : Optional.empty());
-        Members members = new Members(List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")));
+        Groups groups = new Groups(List.of(
+                new Config.Group("backend", -100, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
+                        List.of("autoland-management", "crm")),
+                new Config.Group("mobile", -300, List.of(new Config.Member(300, "Sara")), List.of("life"))));
         activeRuns = new ActiveRuns();
-        tasks = new TaskService(members, projects, activeRuns, clock, schedulerWakes::incrementAndGet, outboxWakes::incrementAndGet);
+        tasks = new TaskService(groups, projects, activeRuns, clock, schedulerWakes::incrementAndGet, outboxWakes::incrementAndGet);
         transitions = new RunTransitions(db, clock, outboxWakes::incrementAndGet);
     }
 
@@ -512,6 +517,27 @@ class TaskLifecycleTest {
         assertEquals(CHAT + "/40", message.get("reply_to_ref"));
         assertEquals("Ali", Json.read(message.get("payload")).get("by").asText());
         assertEquals("CANCELLED", row("SELECT to_phase FROM task_event WHERE task_id = ? ORDER BY id DESC LIMIT 1", id).get("to_phase"));
+    }
+
+    @Test
+    void cancelOfATaskOutsideTheMembersGroupsLooksLikeAnUnknownTask() {
+        long id = create(BOLD, "alm", "Fix login timeout", "52");
+        Requester sara = new Requester("telegram:300", "Sara");
+
+        CancelResult result = db.transactionReturning(tx -> tasks.cancel(tx, sara, id, "telegram:300/1", "telegram:300"));
+
+        assertEquals(CancelResult.NOT_FOUND, result);
+        assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("TASK_NOT_FOUND", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:300/1'").get("kind"));
+    }
+
+    @Test
+    void taskGivenInAGroupChatIsOnlyForThatGroupsProjects() {
+        CreateResult result = db.transactionReturning(tx -> tasks.create(tx, BOLD, "life", "Fix it", CHAT + "/53", CHAT));
+
+        assertEquals(CreateResult.UNKNOWN_PROJECT, result);
+        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/53").get("payload"));
+        assertEquals(2, payload.get("projects").size(), "only the group's own projects are offered");
     }
 
     @Test

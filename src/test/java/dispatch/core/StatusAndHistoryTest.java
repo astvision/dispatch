@@ -33,6 +33,8 @@ import org.junit.jupiter.api.io.TempDir;
 class StatusAndHistoryTest {
 
     private static final Requester BOLD = new Requester("telegram:100", "Bold");
+    private static final Requester ALI = new Requester("telegram:200", "Ali");
+    private static final java.util.Set<String> LIFE = java.util.Set.of("life");
     private static final String CHAT = "telegram:-100";
     private static final Plan PLAN = new Plan("Make the auth timeout configurable", List.of(), List.of("Read auth.timeout"),
             List.of(), List.of());
@@ -55,9 +57,13 @@ class StatusAndHistoryTest {
         clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", "master", "claude-code", null,
                 List.of(), null);
+        Config.Project alm = new Config.Project("alm", null, "https://github.com/acme/alm.git", "main", "claude-code", null,
+                List.of(), null);
         activeRuns = new ActiveRuns();
-        tasks = new TaskService(new Members(List.of(new Config.Member(100, "Bold"))), new Projects(List.of(life), p -> Optional.empty()),
-                activeRuns, clock, () -> { }, () -> { });
+        Groups groups = new Groups(List.of(
+                new Config.Group("mobile", -100, List.of(new Config.Member(100, "Bold")), List.of("life")),
+                new Config.Group("backend", -200, List.of(new Config.Member(200, "Ali")), List.of("alm"))));
+        tasks = new TaskService(groups, new Projects(List.of(life, alm), p -> Optional.empty()), activeRuns, clock, () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { });
     }
 
@@ -78,7 +84,7 @@ class StatusAndHistoryTest {
         long queued = create("Rename the report", "3");
         clock.advance(Duration.ofMinutes(4));
 
-        db.transaction(tx -> tasks.status(tx, CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.status(tx, LIFE, CHAT + "/99", CHAT));
 
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'STATUS'");
         assertEquals(CHAT + "/99", message.get("reply_to_ref"));
@@ -102,7 +108,7 @@ class StatusAndHistoryTest {
 
     @Test
     void statusWithNothingGoingOnHasEmptySections() {
-        db.transaction(tx -> tasks.status(tx, CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.status(tx, LIFE, CHAT + "/99", CHAT));
 
         JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'STATUS'").get("payload"));
         assertEquals(0, payload.get("running").size() + payload.get("queued").size() + payload.get("awaitingApproval").size());
@@ -117,7 +123,7 @@ class StatusAndHistoryTest {
         long completed = completed("Add make help", "40");
         create("Still planning", "41");
 
-        db.transaction(tx -> tasks.history(tx, CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.history(tx, LIFE, CHAT + "/99", CHAT));
 
         JsonNode listed = Json.read(row("SELECT payload FROM outbox WHERE kind = 'HISTORY'").get("payload")).get("tasks");
         assertEquals(10, listed.size());
@@ -145,7 +151,7 @@ class StatusAndHistoryTest {
         clock.advance(Duration.ofSeconds(62));
         transitions.completed(id, 3, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
 
-        db.transaction(tx -> tasks.timeline(tx, id, CHAT + "/52", CHAT));
+        db.transaction(tx -> tasks.timeline(tx, LIFE, id, CHAT + "/52", CHAT));
 
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'TASK_TIMELINE'");
         assertEquals(CHAT + "/52", message.get("reply_to_ref"));
@@ -172,11 +178,36 @@ class StatusAndHistoryTest {
 
     @Test
     void timelineOfAnUnknownTaskSaysItWasNotFound() {
-        db.transaction(tx -> tasks.timeline(tx, 999, CHAT + "/60", CHAT));
+        db.transaction(tx -> tasks.timeline(tx, LIFE, 999, CHAT + "/60", CHAT));
 
         Map<String, String> message = row("SELECT * FROM outbox");
         assertEquals("TASK_NOT_FOUND", message.get("kind"));
         assertEquals(CHAT + "/60", message.get("reply_to_ref"));
+    }
+
+    @Test
+    void statusHistoryAndTimelineShowOnlyTheViewersProjects() {
+        long other = createFor(ALI, "alm", "Backend work", "70", "telegram:-200");
+        claim();
+        transitions.planSucceeded(other, 1, PLAN, result("0.10"));
+        db.transaction(tx -> tasks.reject(tx, ALI, other, 1));
+        long mine = create("Mobile work", "71");
+
+        db.transaction(tx -> tasks.status(tx, LIFE, CHAT + "/72", CHAT));
+        db.transaction(tx -> tasks.history(tx, LIFE, CHAT + "/73", CHAT));
+        db.transaction(tx -> tasks.timeline(tx, LIFE, other, CHAT + "/74", CHAT));
+
+        JsonNode status = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/72").get("payload"));
+        assertEquals(1, status.get("queued").size());
+        assertEquals(mine, status.get("queued").get(0).get("taskId").asLong());
+        JsonNode history = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/73").get("payload"));
+        assertEquals(0, history.get("tasks").size(), "the rejected backend task is not the viewer's to see");
+        assertEquals("TASK_NOT_FOUND", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", CHAT + "/74").get("kind"));
+    }
+
+    private long createFor(Requester who, String project, String text, String messageId, String chat) {
+        db.transaction(tx -> tasks.create(tx, who, project, text, chat + "/" + messageId, chat));
+        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", chat + "/" + messageId).get("id"));
     }
 
     private long create(String text, String messageId) {

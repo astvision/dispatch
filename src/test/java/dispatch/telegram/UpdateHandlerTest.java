@@ -9,7 +9,7 @@ import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
-import dispatch.core.Members;
+import dispatch.core.Groups;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
 import dispatch.core.TaskService;
@@ -37,6 +37,7 @@ import org.junit.jupiter.api.io.TempDir;
 class UpdateHandlerTest {
 
     private static final long GROUP = -1001234567890L;
+    private static final long MOBILE_GROUP = -1009876543210L;
 
     @TempDir
     Path dir;
@@ -57,12 +58,18 @@ class UpdateHandlerTest {
         db.migrate();
         Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", "main",
                 "claude-code", null, List.of(), null);
-        Projects projects = new Projects(List.of(alm), project -> Optional.empty());
-        Members members = new Members(List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")));
-        TaskService tasks = new TaskService(members, projects, new ActiveRuns(), clock, () -> { }, () -> { });
+        Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", "master",
+                "claude-code", null, List.of(), null);
+        Projects projects = new Projects(List.of(alm, life), project -> Optional.empty());
+        Groups groups = new Groups(List.of(
+                new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
+                        List.of("autoland-management")),
+                new Config.Group("mobile", MOBILE_GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
+                        List.of("life"))));
+        TaskService tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { });
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
-        handler = new UpdateHandler(db, tasks, projects, api, renderer, GROUP, FakeTelegram.BOT_USERNAME, clock, () -> { });
+        handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, FakeTelegram.BOT_USERNAME, clock, () -> { });
     }
 
     @AfterEach
@@ -321,6 +328,38 @@ class UpdateHandlerTest {
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
         assertEquals(renderer.text("callback.unknown"),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+    }
+
+    @Test
+    void eachConfiguredGroupIsServedAndSeesOnlyItsOwnProjects() throws Exception {
+        long backendTask = taskAwaitingApproval();
+
+        handler.handle(message(570, 70, 300, "Sara", MOBILE_GROUP, "supergroup", "/status", null));
+        handler.handle(message(571, 71, 999, "Stranger", GROUP, "supergroup", "/status", null));
+
+        JsonNode mobile = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:" + MOBILE_GROUP + "/70").get("payload"));
+        assertEquals(0, mobile.get("awaitingApproval").size(), "backend's task is not shown in the mobile group");
+        JsonNode backend = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/71").get("payload"));
+        assertEquals(backendTask, backend.get("awaitingApproval").get(0).get("taskId").asLong());
+        Thread.sleep(100);
+        assertTrue(telegram.drain("leaveChat").isEmpty(), "configured groups are never left");
+    }
+
+    @Test
+    void privateCommandsCoverEveryGroupOfTheMemberAndNoOthers() {
+        long backendTask = taskAwaitingApproval();
+
+        handler.handle(message(572, 72, 100, "Bold", 100L, "private", "/status", null));
+        handler.handle(message(573, 73, 300, "Sara", 300L, "private", "/status", null));
+        handler.handle(message(574, 74, 300, "Sara", 300L, "private", "/help", null));
+
+        JsonNode bold = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/72'").get("payload"));
+        assertEquals(backendTask, bold.get("awaitingApproval").get(0).get("taskId").asLong());
+        JsonNode sara = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:300/73'").get("payload"));
+        assertEquals(0, sara.get("awaitingApproval").size());
+        JsonNode help = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:300/74'").get("payload"));
+        assertEquals(1, help.get("projects").size());
+        assertEquals("life", help.get("projects").get(0).get("name").asText());
     }
 
     @Test

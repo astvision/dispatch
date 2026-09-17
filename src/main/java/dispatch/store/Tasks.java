@@ -6,8 +6,10 @@ import dispatch.domain.Requester;
 import dispatch.domain.Task;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /** SQL for the task table. Phase changes are conditional: they return false when the task already moved on. */
@@ -54,15 +56,27 @@ public final class Tasks {
                 Tasks::map, Phase.PLANNING, Phase.AWAITING_APPROVAL, Phase.EXECUTING);
     }
 
-    /** Tasks in {@code phase}, the longest unchanged first. */
-    public static List<Task> withPhase(Tx tx, Phase phase) {
-        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase = ? ORDER BY updated_at, id", Tasks::map, phase);
+    /** Tasks of {@code projects} in {@code phase}, the longest unchanged first. */
+    public static List<Task> withPhase(Tx tx, Phase phase, Set<String> projects) {
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+        List<Object> params = new ArrayList<>(List.of(phase));
+        params.addAll(projects);
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase = ? AND project IN (" + Tx.placeholders(projects.size()) + ")"
+                + " ORDER BY updated_at, id", Tasks::map, params.toArray());
     }
 
-    /** The {@code limit} most recently finished tasks, newest first. */
-    public static List<Task> finished(Tx tx, int limit) {
-        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase IN (?, ?, ?, ?) ORDER BY completed_at DESC, id DESC LIMIT ?",
-                Tasks::map, Phase.COMPLETED, Phase.FAILED, Phase.REJECTED, Phase.CANCELLED, limit);
+    /** The {@code limit} most recently finished tasks of {@code projects}, newest first. */
+    public static List<Task> finished(Tx tx, Set<String> projects, int limit) {
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+        List<Object> params = new ArrayList<>(List.of(Phase.COMPLETED, Phase.FAILED, Phase.REJECTED, Phase.CANCELLED));
+        params.addAll(projects);
+        params.add(limit);
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase IN (?, ?, ?, ?) AND project IN ("
+                + Tx.placeholders(projects.size()) + ") ORDER BY completed_at DESC, id DESC LIMIT ?", Tasks::map, params.toArray());
     }
 
     /** Moves {@code from} to {@code to}; entering a finished phase stamps completed_at. */

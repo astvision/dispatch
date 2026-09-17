@@ -31,9 +31,11 @@ class ConfigLoaderTest {
 
         assertEquals("backend", config.team());
         assertEquals(Path.of("/var/lib/dispatch/backend"), config.stateDir());
-        assertEquals(-1001234567890L, config.telegram().groupChatId());
-        assertEquals(List.of(new Config.Member(123456789L, "Bold"), new Config.Member(222333444L, "Ali")),
-                config.telegram().members());
+        Config.Group backend = config.telegram().groups().getFirst();
+        assertEquals("backend", backend.name());
+        assertEquals(-1001234567890L, backend.chatId());
+        assertEquals(List.of(new Config.Member(123456789L, "Bold"), new Config.Member(222333444L, "Ali")), backend.members());
+        assertEquals(List.of("autoland-management", "crm"), backend.projects());
         assertEquals(2, config.scheduler().maxConcurrentRuns());
         assertEquals("/usr/local/bin/claude", config.agents().get("claude-code").command());
         assertEquals(new Config.Delivery("Dispatch (backend)", "dispatch-backend@users.noreply.github.com", "gh"), config.delivery());
@@ -50,6 +52,53 @@ class ConfigLoaderTest {
         assertEquals(List.of(), crm.copyFiles());
         assertEquals(new Config.RunLimits(Duration.ofMinutes(15), new BigDecimal("2")), config.planLimits(crm));
         assertEquals(new Config.RunLimits(Duration.ofMinutes(60), new BigDecimal("10")), config.executeLimits(crm));
+    }
+
+    @Test
+    void personMayBeAMemberOfSeveralGroups() throws IOException {
+        Config config = ConfigLoader.load(write(VALID.replace(TWO_PROJECTS_IN_BACKEND, BACKEND_AND_MOBILE)), ENV);
+
+        assertEquals(2, config.telegram().groups().size());
+        Config.Group mobile = config.telegram().groups().get(1);
+        assertEquals(List.of("crm"), mobile.projects());
+        assertEquals(123456789L, mobile.members().getFirst().id());
+    }
+
+    @Test
+    void everyProjectBelongsToExactlyOneGroupOfKnownProjects() throws IOException {
+        String broken = VALID.replace(TWO_PROJECTS_IN_BACKEND, """
+                      projects:
+                        - autoland-management
+                        - billing
+                    - name: mobile
+                      chatId: -1001234567890
+                      members:
+                        - id: 555
+                          name: Sara
+                      projects:
+                        - autoland-management
+                """);
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(broken), ENV));
+
+        String message = error.getMessage();
+        assertTrue(message.contains("telegram.groups[0].projects[1]: 'billing' is not a configured project"), message);
+        assertTrue(message.contains("'autoland-management' is listed in more than one group"), message);
+        assertTrue(message.contains("projects[1]: 'crm' is not listed in any group"), message);
+        assertTrue(message.contains("telegram.groups[1].chatId: -1001234567890 is used by more than one group"), message);
+    }
+
+    @Test
+    void singleGroupKeysFromBeforeGroupsPointToTheNewShape() throws IOException {
+        String old = """
+                team: backend
+                telegram:
+                  groupChatId: -1001234567890
+                """;
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(old), ENV));
+
+        assertTrue(error.getMessage().contains("groupChatId") && error.getMessage().contains("telegram.groups"), error.getMessage());
     }
 
     @Test
@@ -134,7 +183,7 @@ class ConfigLoaderTest {
 
         String message = error.getMessage();
         assertTrue(message.contains("TELEGRAM_BOT_TOKEN"), message);
-        assertTrue(message.contains("telegram.members[1].id"), message);
+        assertTrue(message.contains("telegram.groups[0].members[1].id"), message);
         assertTrue(message.contains("'crm' is used by more than one project"), message);
         assertTrue(message.contains("projects[0].copyFiles[0]"), message);
         assertTrue(message.contains("projects[0].agent: 'codex' is not configured under agents"), message);
@@ -167,7 +216,7 @@ class ConfigLoaderTest {
 
     @Test
     void secretLookingKeyPointsToTheEnvironmentFile() throws IOException {
-        String withSecret = VALID.replace("  groupChatId: -1001234567890", "  groupChatId: -1001234567890\n  botToken: 123:abc");
+        String withSecret = VALID.replace("      chatId: -1001234567890", "      chatId: -1001234567890\n      botToken: 123:abc");
 
         ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(withSecret), ENV));
 
@@ -182,6 +231,24 @@ class ConfigLoaderTest {
         assertTrue(error.getMessage().contains("stateDir"), error.getMessage());
     }
 
+    private static final String TWO_PROJECTS_IN_BACKEND = """
+                  projects:
+                    - autoland-management
+                    - crm
+            """;
+
+    private static final String BACKEND_AND_MOBILE = """
+                  projects:
+                    - autoland-management
+                - name: mobile
+                  chatId: -1009876543210
+                  members:
+                    - id: 123456789
+                      name: Bold
+                  projects:
+                    - crm
+            """;
+
     private Path write(String yaml) throws IOException {
         Path file = dir.resolve("backend.yaml");
         Files.writeString(file, yaml);
@@ -191,12 +258,17 @@ class ConfigLoaderTest {
     private static final String VALID = """
             team: backend
             telegram:
-              groupChatId: -1001234567890
-              members:
-                - id: 123456789
-                  name: Bold
-                - id: 222333444
-                  name: Ali
+              groups:
+                - name: backend
+                  chatId: -1001234567890
+                  members:
+                    - id: 123456789
+                      name: Bold
+                    - id: 222333444
+                      name: Ali
+                  projects:
+                    - autoland-management
+                    - crm
             delivery:
               authorName: Dispatch (backend)
               authorEmail: dispatch-backend@users.noreply.github.com

@@ -32,6 +32,11 @@ public final class Tx {
         return List.copyOf(afterCommit);
     }
 
+    /** "?, ?, ?" for an IN list of {@code count} parameters; callers handle an empty list themselves. */
+    static String placeholders(int count) {
+        return String.join(", ", java.util.Collections.nCopies(count, "?"));
+    }
+
     public int update(String sql, Object... params) {
         try (PreparedStatement statement = prepare(sql, params)) {
             return statement.executeUpdate();

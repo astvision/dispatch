@@ -331,8 +331,9 @@ class RunExecutorTest {
                 Duration.ofSeconds(30)), "Dispatch (backend)", "dispatch-backend@example.com");
         Projects projects = new Projects(List.of(alm), workspaces::unavailableReason);
         TestClock clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
-        tasks = new TaskService(new Members(List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali"))), projects,
-                activeRuns, clock, schedulerWakes::incrementAndGet, () -> { });
+        Groups groups = new Groups(List.of(new Config.Group("backend", -100,
+                List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm"))));
+        tasks = new TaskService(groups, projects, activeRuns, clock, schedulerWakes::incrementAndGet, () -> { });
         RunTransitions transitions = new RunTransitions(db, clock, () -> { });
         executorUnderTest = new RunExecutor(db, projects, workspaces, delivery, Map.of("claude-code", agent()), transitions,
                 activeRuns, project -> new Config.RunLimits(planTimeout, new BigDecimal("2")),

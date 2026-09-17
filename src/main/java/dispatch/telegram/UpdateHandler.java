@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
+import dispatch.core.Groups;
 import dispatch.core.Projects;
 import dispatch.core.TaskService;
 import dispatch.domain.OutboxKind;
@@ -20,9 +21,10 @@ import java.util.Set;
 
 /**
  * Turns one Telegram update into core calls. The update's effects and the next offset commit in one transaction, so a
- * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). The configured team group and
- * members' private chats with the bot are served (ADR 0011); other groups are left, other private chats ignored. Besides
- * commands and buttons, a reply to a plan message is a correction.
+ * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). The configured groups and
+ * members' private chats with the bot are served (ADR 0011, 0012); other groups are left, other private chats ignored. A
+ * group sees only its own projects, a member those of all their groups. Besides commands and buttons, a reply to a plan
+ * message is a correction.
  */
 public final class UpdateHandler {
 
@@ -31,22 +33,22 @@ public final class UpdateHandler {
 
     private final Database db;
     private final TaskService tasks;
+    private final Groups groups;
     private final Projects projects;
     private final BotApi api;
     private final Renderer renderer;
-    private final long groupChatId;
     private final String botUsername;
     private final Clock clock;
     private final Runnable wakeOutbox;
 
-    public UpdateHandler(Database db, TaskService tasks, Projects projects, BotApi api, Renderer renderer, long groupChatId,
+    public UpdateHandler(Database db, TaskService tasks, Groups groups, Projects projects, BotApi api, Renderer renderer,
                          String botUsername, Clock clock, Runnable wakeOutbox) {
         this.db = db;
         this.tasks = tasks;
+        this.groups = groups;
         this.projects = projects;
         this.api = api;
         this.renderer = renderer;
-        this.groupChatId = groupChatId;
         this.botUsername = botUsername;
         this.clock = clock;
         this.wakeOutbox = wakeOutbox;
@@ -80,18 +82,18 @@ public final class UpdateHandler {
         long chatId = chat.path("id").asLong();
         JsonNode from = message.path("from");
         boolean privateChat = isPrivateChatOf(chat, from);
-        if (privateChat && tasks.isMember(Refs.user(from.get("id").asLong()))) {
+        if (privateChat && groups.isMember(Refs.user(from.get("id").asLong()))) {
             onChatMessage(tx, message, true);
             return;
         }
-        if (chatId != groupChatId) {
+        if (!groups.isGroupChat(Refs.chat(chatId))) {
             ignoreForeignChat(tx, chat, from);
             return;
         }
         if (message.has("migrate_to_chat_id")) {
             long newChatId = message.get("migrate_to_chat_id").asLong();
             tx.afterCommit(() -> Log.error("telegram.group_migrated", null, "chat_id", chatId, "new_chat_id", newChatId,
-                    "action", "set telegram.groupChatId to the new id and restart"));
+                    "action", "set the group's chatId in telegram.groups to the new id and restart"));
             return;
         }
         if (from.has("id")) {
@@ -106,6 +108,7 @@ public final class UpdateHandler {
         Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
         String origin = Refs.message(chatId, message.path("message_id").asLong());
         String chatRef = Refs.chat(chatId);
+        Set<String> visible = privateChat ? groups.projectsOfMember(who.ref()) : groups.projectsOfChat(chatRef);
         Optional<Command> parsed = Command.parse(message);
         if (parsed.isEmpty()) {
             correction(tx, message, who, origin, chatRef);
@@ -126,14 +129,14 @@ public final class UpdateHandler {
                 String text = projectAndText.length > 1 ? projectAndText[1].strip() : "";
                 tasks.create(tx, who, projectAndText[0], withRepliedMessage(text, message.path("reply_to_message")), origin, chatRef);
             }
-            case "status" -> tasks.status(tx, origin, chatRef);
+            case "status" -> tasks.status(tx, visible, origin, chatRef);
             case "history" -> taskId(command.args()).ifPresentOrElse(
-                    id -> tasks.timeline(tx, id, origin, chatRef),
-                    () -> tasks.history(tx, origin, chatRef));
+                    id -> tasks.timeline(tx, visible, id, origin, chatRef),
+                    () -> tasks.history(tx, visible, origin, chatRef));
             case "cancel" -> taskId(command.args()).ifPresentOrElse(
                     id -> tasks.cancel(tx, who, id, origin, chatRef),
-                    () -> help(tx, origin, chatRef, privateChat));
-            case "help", "start" -> help(tx, origin, chatRef, privateChat);
+                    () -> help(tx, visible, origin, chatRef, privateChat));
+            case "help", "start" -> help(tx, visible, origin, chatRef, privateChat);
             default -> {
                 // Telegram marks any leading "/word" as a command, so a correction like "/api/login fails too" lands here.
                 if (!correction(tx, message, who, origin, chatRef)) {
@@ -166,7 +169,7 @@ public final class UpdateHandler {
         String callbackId = callback.path("id").asText();
         JsonNode from = callback.path("from");
         JsonNode chat = callback.path("message").path("chat");
-        boolean servedChat = chat.path("id").asLong() == groupChatId || isPrivateChatOf(chat, from);
+        boolean servedChat = groups.isGroupChat(Refs.chat(chat.path("id").asLong())) || isPrivateChatOf(chat, from);
         String[] parts = callback.path("data").asText().split(":");
         boolean known = parts.length == 3 && (parts[0].equals("approve") || parts[0].equals("reject"));
         if (!servedChat || !known || !from.has("id")) {
@@ -206,7 +209,7 @@ public final class UpdateHandler {
         JsonNode chat = change.path("chat");
         long chatId = chat.path("id").asLong();
         String status = change.path("new_chat_member").path("status").asText();
-        if (chatId == groupChatId) {
+        if (groups.isGroupChat(Refs.chat(chatId))) {
             tx.afterCommit(() -> Log.info("telegram.membership_changed", "chat_id", chatId, "status", status));
         } else if (JOINED_STATUSES.contains(status) && isGroup(chat)) {
             leave(tx, chatId, change.path("from"));
@@ -237,10 +240,11 @@ public final class UpdateHandler {
         tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callbackId, text)));
     }
 
-    private void help(Tx tx, String origin, String chatRef, boolean privateChat) {
+    private void help(Tx tx, Set<String> visible, String origin, String chatRef, boolean privateChat) {
         ObjectNode payload = Json.object().put("bot", botUsername).put("privateChat", privateChat);
         ArrayNode listed = payload.putArray("projects");
-        projects.all().forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
+        projects.all().stream().filter(project -> visible.contains(project.name()))
+                .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
         enqueue(tx, OutboxKind.HELP, chatRef, origin, payload);
     }
 

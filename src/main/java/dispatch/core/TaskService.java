@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -37,26 +38,21 @@ public final class TaskService {
     private static final int HISTORY_SIZE = 10;
     private static final int INSTRUCTION_LENGTH = 200;
 
-    private final Members members;
+    private final Groups groups;
     private final Projects projects;
     private final ActiveRuns activeRuns;
     private final Clock clock;
     private final Runnable wakeScheduler;
     private final Runnable wakeOutbox;
 
-    public TaskService(Members members, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
+    public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
                        Runnable wakeOutbox) {
-        this.members = members;
+        this.groups = groups;
         this.projects = projects;
         this.activeRuns = activeRuns;
         this.clock = clock;
         this.wakeScheduler = wakeScheduler;
         this.wakeOutbox = wakeOutbox;
-    }
-
-    /** Whether {@code requesterRef} is on the team's allowlist, for channels that serve members only (e.g. private chats). */
-    public boolean isMember(String requesterRef) {
-        return members.contains(requesterRef);
     }
 
     /**
@@ -69,7 +65,7 @@ public final class TaskService {
             tx.afterCommit(() -> Log.info("task.duplicate_ignored", "origin", originRef));
             return CreateResult.DUPLICATE;
         }
-        if (!members.contains(who.ref())) {
+        if (!groups.isMember(who.ref())) {
             notAllowed(tx, who, originRef, chatRef, now);
             return CreateResult.NOT_ALLOWED;
         }
@@ -77,15 +73,22 @@ public final class TaskService {
             enqueue(tx, null, OutboxKind.TASK_USAGE, chatRef, originRef, Json.object(), now);
             return CreateResult.EMPTY;
         }
-        Optional<Config.Project> found = projects.find(projectKey);
+        // A group offers only its own projects (ADR 0012).
+        Set<String> offered = groups.projectsOfChat(chatRef);
+        Optional<Config.Project> found = projects.find(projectKey).filter(project -> offered.contains(project.name()));
         if (found.isEmpty()) {
             ObjectNode payload = Json.object().put("given", projectKey);
             ArrayNode known = payload.putArray("projects");
-            projects.all().forEach(project -> known.addObject().put("name", project.name()).put("alias", project.alias()));
+            projects.all().stream().filter(project -> offered.contains(project.name()))
+                    .forEach(project -> known.addObject().put("name", project.name()).put("alias", project.alias()));
             enqueue(tx, null, OutboxKind.UNKNOWN_PROJECT, chatRef, originRef, payload, now);
             return CreateResult.UNKNOWN_PROJECT;
         }
         Config.Project project = found.get();
+        if (!groups.isMemberOfProjectGroup(who.ref(), project.name())) {
+            notAllowed(tx, who, originRef, chatRef, now);
+            return CreateResult.NOT_ALLOWED;
+        }
         Optional<String> unavailable = projects.unavailableReason(project);
         if (unavailable.isPresent()) {
             enqueue(tx, null, OutboxKind.PROJECT_UNAVAILABLE, chatRef, originRef,
@@ -115,7 +118,7 @@ public final class TaskService {
      */
     public ApproveResult approve(Tx tx, Requester who, long taskId, int planSeq) {
         Instant now = clock.instant();
-        if (!members.contains(who.ref())) {
+        if (!groups.isMember(who.ref())) {
             tx.afterCommit(() -> Log.warn("task.approve_not_allowed", "task", taskId, "requester", who.ref()));
             return ApproveResult.NOT_ALLOWED;
         }
@@ -160,7 +163,7 @@ public final class TaskService {
      */
     public CorrectResult correct(Tx tx, Requester who, long taskId, int planSeq, String text, String originRef, String chatRef) {
         Instant now = clock.instant();
-        if (!members.contains(who.ref())) {
+        if (!groups.isMember(who.ref())) {
             notAllowed(tx, who, originRef, chatRef, now);
             return CorrectResult.NOT_ALLOWED;
         }
@@ -198,7 +201,7 @@ public final class TaskService {
     /** The requester rejects the plan with run number {@code planSeq}; a button on an older plan is refused as stale. */
     public RejectResult reject(Tx tx, Requester who, long taskId, int planSeq) {
         Instant now = clock.instant();
-        if (!members.contains(who.ref())) {
+        if (!groups.isMember(who.ref())) {
             tx.afterCommit(() -> Log.warn("task.reject_not_allowed", "task", taskId, "requester", who.ref()));
             return RejectResult.NOT_ALLOWED;
         }
@@ -228,14 +231,18 @@ public final class TaskService {
         return RejectResult.REJECTED;
     }
 
-    /** Cancels an active task; a running agent is stopped after commit and its run ends as CANCELLED. */
+    /**
+     * Cancels an active task of the member's groups, or one they requested; a running agent is stopped after commit and its
+     * run ends as CANCELLED. Another group's task is answered as not found, so its existence does not leak.
+     */
     public CancelResult cancel(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
-        if (!members.contains(who.ref())) {
+        if (!groups.isMember(who.ref())) {
             notAllowed(tx, who, originRef, chatRef, now);
             return CancelResult.NOT_ALLOWED;
         }
-        Optional<Task> found = Tasks.find(tx, taskId);
+        Optional<Task> found = Tasks.find(tx, taskId).filter(task ->
+                task.requester().ref().equals(who.ref()) || groups.isMemberOfProjectGroup(who.ref(), task.project()));
         if (found.isEmpty()) {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
             return CancelResult.NOT_FOUND;
@@ -259,12 +266,15 @@ public final class TaskService {
         return CancelResult.CANCELLED;
     }
 
-    /** Posts what Dispatch is doing now: running runs with their agent's latest action, then queued runs, then plans awaiting approval. */
-    public void status(Tx tx, String originRef, String chatRef) {
+    /**
+     * Posts what Dispatch is doing on {@code visibleProjects}: running runs with their agent's latest action, then queued
+     * runs, then plans awaiting approval.
+     */
+    public void status(Tx tx, Set<String> visibleProjects, String originRef, String chatRef) {
         ObjectNode payload = Json.object();
         ArrayNode running = payload.putArray("running");
         ArrayNode queued = payload.putArray("queued");
-        for (Runs.InProgress run : Runs.inProgress(tx)) {
+        for (Runs.InProgress run : Runs.inProgress(tx, visibleProjects)) {
             boolean isRunning = run.status() == RunStatus.RUNNING;
             ObjectNode item = (isRunning ? running : queued).addObject().put("taskId", run.taskId()).put("project", run.project())
                     .put("title", run.title()).put("kind", run.kind().name());
@@ -277,16 +287,16 @@ public final class TaskService {
             }
         }
         ArrayNode awaiting = payload.putArray("awaitingApproval");
-        for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL)) {
+        for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL, visibleProjects)) {
             awaiting.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                     .put("requester", task.requester().name()).put("since", text(task.updatedAt()));
         }
         enqueue(tx, null, OutboxKind.STATUS, chatRef, originRef, payload, clock.instant());
     }
 
-    /** Posts the most recently finished tasks, newest first, with their total cost. */
-    public void history(Tx tx, String originRef, String chatRef) {
-        List<Task> finished = Tasks.finished(tx, HISTORY_SIZE);
+    /** Posts the most recently finished tasks of {@code visibleProjects}, newest first, with their total cost. */
+    public void history(Tx tx, Set<String> visibleProjects, String originRef, String chatRef) {
+        List<Task> finished = Tasks.finished(tx, visibleProjects, HISTORY_SIZE);
         Map<Long, BigDecimal> costs = Runs.costs(tx, finished.stream().map(Task::id).toList());
         ObjectNode payload = Json.object();
         ArrayNode listed = payload.putArray("tasks");
@@ -299,9 +309,9 @@ public final class TaskService {
         enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, payload, clock.instant());
     }
 
-    /** Posts one task's timeline: its runs in order, how it ended, and what it cost. */
-    public void timeline(Tx tx, long taskId, String originRef, String chatRef) {
-        Optional<Task> found = Tasks.find(tx, taskId);
+    /** Posts one task's timeline: its runs in order, how it ended, and what it cost. Tasks outside {@code visibleProjects} are not found. */
+    public void timeline(Tx tx, Set<String> visibleProjects, long taskId, String originRef, String chatRef) {
+        Optional<Task> found = Tasks.find(tx, taskId).filter(task -> visibleProjects.contains(task.project()));
         if (found.isEmpty()) {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), clock.instant());
             return;

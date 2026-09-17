@@ -8,7 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
-import dispatch.core.Members;
+import dispatch.core.Groups;
 import dispatch.core.Projects;
 import dispatch.core.TaskService;
 import dispatch.store.Database;
@@ -50,11 +50,12 @@ class PollerTest {
         Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", "main",
                 "claude-code", null, List.of(), null);
         Projects projects = new Projects(List.of(alm), project -> Optional.empty());
-        TaskService tasks = new TaskService(new Members(List.of(new Config.Member(100, "Bold"))), projects, new ActiveRuns(),
-                clock, () -> { }, () -> { });
+        Groups groups = new Groups(List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold")),
+                List.of("autoland-management"))));
+        TaskService tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
-        UpdateHandler handler = new UpdateHandler(db, tasks, projects, api, new Renderer(Renderer.mongolian(), clock, FakeTelegram.BOT_USERNAME), GROUP,
-                FakeTelegram.BOT_USERNAME, clock, () -> { });
+        UpdateHandler handler = new UpdateHandler(db, tasks, groups, projects, api,
+                new Renderer(Renderer.mongolian(), clock, FakeTelegram.BOT_USERNAME), FakeTelegram.BOT_USERNAME, clock, () -> { });
         poller = new Poller(api, handler, 0, Duration.ofMillis(50), Duration.ofMillis(200));
     }
 
