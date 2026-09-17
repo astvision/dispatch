@@ -17,13 +17,17 @@ public final class Cli {
     private Cli() {
     }
 
-    public sealed interface Invocation permits Run, Check, ProjectAdd, Help {
+    public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Help {
     }
 
     public record Run(Path configFile) implements Invocation {
     }
 
     public record Check(Path configFile) implements Invocation {
+    }
+
+    /** @param force replaces an existing config and secrets file */
+    public record Init(Path configFile, boolean force) implements Invocation {
     }
 
     /** Options left out are null: they come from the clone, or the config's only group. */
@@ -39,6 +43,7 @@ public final class Cli {
                 usage: dispatch [command] [--config FILE]
 
                 commands:
+                  init     set up your own Dispatch: bot, you, Claude Code, projects
                   run      start the bot (the default)
                   check    check the config, bot token, agent, projects and GitHub CLI
                   project add FOLDER [--name NAME] [--alias ALIAS] [--base BRANCH] [--model MODEL]
@@ -83,6 +88,10 @@ public final class Cli {
                 yield new ProjectAdd(arguments.configFile(defaults), Path.of(arguments.positional().get(1)), arguments.values().get("name"),
                         arguments.values().get("alias"), arguments.values().get("base"), arguments.values().get("model"),
                         arguments.values().get("effort"), arguments.values().get("group"));
+            }
+            case "init" -> {
+                arguments.allow(0, Set.of("config", "force"));
+                yield new Init(arguments.configFile(defaults), arguments.switches().contains("force"));
             }
             case "check" -> {
                 arguments.allow(0, Set.of("config"));

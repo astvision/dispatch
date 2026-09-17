@@ -43,6 +43,12 @@ class CliTest {
     }
 
     @Test
+    void initWritesTheDefaultOrAGivenConfig() {
+        assertEquals(new Cli.Init(DEFAULT_CONFIG, false), parse("init"));
+        assertEquals(new Cli.Init(Path.of("mine.yaml"), true), parse("init", "--force", "--config", "mine.yaml"));
+    }
+
+    @Test
     void helpIsShownOnRequest() {
         assertEquals(new Cli.Help(), parse("--help"));
         assertEquals(new Cli.Help(), parse("help"));
