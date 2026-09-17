@@ -112,7 +112,8 @@ public final class OutboxSender implements Runnable {
         long chatId = Refs.chatId(message.chatRef());
         Long replyTo = message.replyToRef() == null ? null : Refs.messageId(message.replyToRef());
         Long thread = message.replyToRef() == null ? null : Refs.threadId(message.replyToRef());
-        if (task.isPresent() && task.get().topicRef() != null && message.chatRef().equals(task.get().requester().ref())) {
+        boolean inTaskTopic = task.isPresent() && task.get().topicRef() != null && message.chatRef().equals(task.get().requester().ref());
+        if (inTaskTopic) {
             // The task's own topic; the message that gave the task is outside it, in General.
             thread = Long.parseLong(task.get().topicRef());
             replyTo = null;
@@ -125,7 +126,11 @@ public final class OutboxSender implements Runnable {
             db.transaction(tx -> Outbox.markSent(tx, message.id(), attempts, Refs.message(chatId, sentId, null), clock.instant()));
             Log.info("outbox.sent", "id", message.id(), "kind", message.kind(), "task", message.taskId(), "attempt", attempts);
         } catch (TelegramException e) {
-            handleFailure(message, attempts, e);
+            if (inTaskTopic && e.getMessage().contains("message thread not found")) {
+                forgetTopic(message, attempts, task.get(), e);
+            } else {
+                handleFailure(message, attempts, e);
+            }
             return;
         }
         if (task.isPresent() && OUTCOMES.contains(message.kind())) {
@@ -162,6 +167,20 @@ public final class OutboxSender implements Runnable {
         } catch (TelegramException e) {
             handleFailure(message, attempts, e);
         }
+    }
+
+    /**
+     * The requester deleted the task's topic, or Telegram lost it (tdlib/telegram-bot-api#847). The chat itself is fine, so
+     * instead of falling back to the group, the task's messages go to General from now on, starting with this one.
+     */
+    private void forgetTopic(Outbox.Message message, int attempts, Task task, TelegramException error) {
+        Instant now = clock.instant();
+        Log.warn("outbox.topic_gone", "id", message.id(), "kind", message.kind(), "task", task.id(), "thread", task.topicRef(),
+                "error", error.getMessage());
+        db.transaction(tx -> {
+            Tasks.forgetTopic(tx, task.id(), now);
+            Outbox.retryLater(tx, message.id(), attempts, now, error.getMessage());
+        });
     }
 
     /** Best effort: the name shows how the task ended; the outcome message itself was already sent. */

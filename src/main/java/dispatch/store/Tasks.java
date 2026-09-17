@@ -58,6 +58,10 @@ public final class Tasks {
         tx.update("UPDATE task SET topic_ref = ?, updated_at = ? WHERE id = ?", topicRef, now, id);
     }
 
+    public static void forgetTopic(Tx tx, long id, Instant now) {
+        tx.update("UPDATE task SET topic_ref = NULL, updated_at = ? WHERE id = ?", now, id);
+    }
+
     public static boolean existsWithOrigin(Tx tx, String originRef) {
         return tx.one("SELECT 1 AS found FROM task WHERE origin_ref = ?", row -> true, originRef).isPresent();
     }

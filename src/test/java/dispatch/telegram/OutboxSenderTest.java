@@ -233,6 +233,28 @@ class OutboxSenderTest {
     }
 
     @Test
+    void messageForATopicThatIsGoneGoesToGeneralInsteadOfTheGroup() throws Exception {
+        // What Telegram answers for a topic the requester deleted, and for older topics after Bot API 10.0 (tdlib/telegram-bot-api#847).
+        telegram.respond("sendMessage", 400, "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: message thread not found\"}");
+        long taskId = task("NORMAL");
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '500' WHERE id = ?", taskId));
+        dispatch.domain.Task task = db.transactionReturning(tx -> dispatch.store.Tasks.find(tx, taskId)).orElseThrow();
+        long id = db.transactionReturning(tx -> Outbox.enqueueForRequester(tx, task, OutboxKind.PLAN_READY, planPayload(taskId), clock.instant()));
+
+        sender.deliverDue();
+
+        assertEquals(500, telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json().get("message_thread_id").asLong());
+        assertNull(SqlRows.single(dbFile, "SELECT topic_ref FROM task WHERE id = ?", taskId).get("topic_ref"), "the topic is forgotten");
+        assertEquals("telegram:100", row(id).get("chat_ref"), "no fallback to the group");
+        assertTrue(sender.deliverDue(), "due again at once");
+        JsonNode inGeneral = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
+        assertEquals(100, inGeneral.get("chat_id").asLong());
+        assertFalse(inGeneral.has("message_thread_id"), inGeneral.toString());
+        assertEquals(5, inGeneral.get("reply_parameters").get("message_id").asLong(), "under the message that gave the task");
+        assertEquals("SENT", row(id).get("status"));
+    }
+
+    @Test
     void finishedTasksTopicIsRenamedWithItsOutcome() throws Exception {
         long taskId = task("NORMAL");
         db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '500', phase = 'COMPLETED' WHERE id = ?", taskId));
