@@ -20,5 +20,6 @@ public enum OutboxKind {
     UNKNOWN_PROJECT,
     PROJECT_UNAVAILABLE,
     TASK_USAGE,
+    TASK_IN_GROUP_ONLY,
     HELP
 }

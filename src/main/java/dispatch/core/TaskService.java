@@ -54,6 +54,11 @@ public final class TaskService {
         this.wakeOutbox = wakeOutbox;
     }
 
+    /** Whether {@code requesterRef} is on the team's allowlist, for channels that serve members only (e.g. private chats). */
+    public boolean isMember(String requesterRef) {
+        return members.contains(requesterRef);
+    }
+
     /**
      * @param originRef channel reference of the command message; the task's replies thread under it
      * @param chatRef   channel reference of the chat

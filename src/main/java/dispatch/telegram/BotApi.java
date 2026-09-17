@@ -102,10 +102,19 @@ public final class BotApi {
      * a bare "/task" reaches this bot only if it was the last bot to post there, and picking from the menu avoids that.
      */
     public void setMyCommands(long chatId, List<BotCommand> commands) {
+        setMyCommands(Json.object().put("type", "chat").put("chat_id", chatId), commands);
+    }
+
+    /** Sets the command menu of every private chat with the bot. */
+    public void setPrivateChatCommands(List<BotCommand> commands) {
+        setMyCommands(Json.object().put("type", "all_private_chats"), commands);
+    }
+
+    private void setMyCommands(ObjectNode scope, List<BotCommand> commands) {
         ObjectNode body = Json.object();
         ArrayNode listed = body.putArray("commands");
         commands.forEach(command -> listed.addObject().put("command", command.command()).put("description", command.description()));
-        body.putObject("scope").put("type", "chat").put("chat_id", chatId);
+        body.set("scope", scope);
         call("setMyCommands", body, requestTimeout);
     }
 

@@ -139,6 +139,16 @@ class BotApiTest {
     }
 
     @Test
+    void privateChatMenuIsRegisteredForAllPrivateChats() throws Exception {
+        api.setPrivateChatCommands(List.of(new BotApi.BotCommand("status", "Одоо юу хийж байна")));
+
+        JsonNode body = telegram.awaitRequest("setMyCommands", Duration.ofSeconds(1)).json();
+        assertEquals("all_private_chats", body.get("scope").get("type").asText());
+        assertFalse(body.get("scope").has("chat_id"));
+        assertEquals("status", body.get("commands").get(0).get("command").asText());
+    }
+
+    @Test
     void getMeReturnsTheBotUsername() {
         assertEquals(FakeTelegram.BOT_USERNAME, api.getMe().get("username").asText());
     }

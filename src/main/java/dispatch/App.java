@@ -161,13 +161,16 @@ public final class App {
 
     /** Best effort: fails while the bot is not yet in the group, and works again on the next start. */
     private static void registerCommandMenu(BotApi api, Renderer renderer, long groupChatId) {
-        List<BotApi.BotCommand> commands = List.of("task", "status", "history", "cancel", "help").stream()
-                .map(name -> new BotApi.BotCommand(name, renderer.text("command." + name)))
-                .toList();
         try {
-            api.setMyCommands(groupChatId, commands);
+            api.setMyCommands(groupChatId, commands(renderer, "task", "status", "history", "cancel", "help"));
+            // No /task in private chats: tasks start in the group (ADR 0011).
+            api.setPrivateChatCommands(commands(renderer, "status", "history", "cancel", "help"));
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "group", groupChatId, "error", e.getMessage());
         }
+    }
+
+    private static List<BotApi.BotCommand> commands(Renderer renderer, String... names) {
+        return java.util.Arrays.stream(names).map(name -> new BotApi.BotCommand(name, renderer.text("command." + name))).toList();
     }
 }

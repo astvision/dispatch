@@ -93,7 +93,9 @@ public final class Renderer {
             case PROJECT_UNAVAILABLE -> plain(format("project.unavailable", escape(payload.path("project").asText()),
                     escape(payload.path("reason").asText())));
             case TASK_USAGE -> plain(text("task.usage"));
-            case HELP -> plain(format("help", projectList(payload.path("projects")), escape(payload.path("bot").asText())));
+            case TASK_IN_GROUP_ONLY -> plain(format("task.inGroupOnly", escape(payload.path("bot").asText())));
+            case HELP -> plain(format(payload.path("privateChat").asBoolean() ? "help.private" : "help",
+                    projectList(payload.path("projects")), escape(payload.path("bot").asText())));
         };
         return hint == null ? rendered : new Rendered(rendered.html() + "\n\n" + hint, rendered.buttons(), rendered.document());
     }

@@ -20,9 +20,9 @@ import java.util.Set;
 
 /**
  * Turns one Telegram update into core calls. The update's effects and the next offset commit in one transaction, so a
- * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). Only the configured team group
- * is served: other groups are left, private chats ignored. Besides commands and buttons, a reply to a plan message is a
- * correction.
+ * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). The configured team group and
+ * members' private chats with the bot are served (ADR 0011); other groups are left, other private chats ignored. Besides
+ * commands and buttons, a reply to a plan message is a correction.
  */
 public final class UpdateHandler {
 
@@ -78,8 +78,14 @@ public final class UpdateHandler {
     private void onMessage(Tx tx, JsonNode message) {
         JsonNode chat = message.path("chat");
         long chatId = chat.path("id").asLong();
+        JsonNode from = message.path("from");
+        boolean privateChat = isPrivateChatOf(chat, from);
+        if (privateChat && tasks.isMember(Refs.user(from.get("id").asLong()))) {
+            onChatMessage(tx, message, true);
+            return;
+        }
         if (chatId != groupChatId) {
-            ignoreForeignChat(tx, chat, message.path("from"));
+            ignoreForeignChat(tx, chat, from);
             return;
         }
         if (message.has("migrate_to_chat_id")) {
@@ -88,10 +94,15 @@ public final class UpdateHandler {
                     "action", "set telegram.groupChatId to the new id and restart"));
             return;
         }
-        JsonNode from = message.path("from");
-        if (!from.has("id")) {
-            return;
+        if (from.has("id")) {
+            onChatMessage(tx, message, false);
         }
+    }
+
+    /** A message in the team group, or in a member's private chat with the bot, from someone with a user id. */
+    private void onChatMessage(Tx tx, JsonNode message, boolean privateChat) {
+        long chatId = message.path("chat").path("id").asLong();
+        JsonNode from = message.path("from");
         Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
         String origin = Refs.message(chatId, message.path("message_id").asLong());
         String chatRef = Refs.chat(chatId);
@@ -105,7 +116,12 @@ public final class UpdateHandler {
             return;
         }
         switch (command.name()) {
+            // Tasks start in the group, so the whole team sees every one arrive (ADR 0011).
             case "task" -> {
+                if (privateChat) {
+                    enqueue(tx, OutboxKind.TASK_IN_GROUP_ONLY, chatRef, origin, Json.object().put("bot", botUsername));
+                    return;
+                }
                 String[] projectAndText = command.args().split("\\s+", 2);
                 String text = projectAndText.length > 1 ? projectAndText[1].strip() : "";
                 tasks.create(tx, who, projectAndText[0], withRepliedMessage(text, message.path("reply_to_message")), origin, chatRef);
@@ -116,8 +132,8 @@ public final class UpdateHandler {
                     () -> tasks.history(tx, origin, chatRef));
             case "cancel" -> taskId(command.args()).ifPresentOrElse(
                     id -> tasks.cancel(tx, who, id, origin, chatRef),
-                    () -> help(tx, origin, chatRef));
-            case "help", "start" -> help(tx, origin, chatRef);
+                    () -> help(tx, origin, chatRef, privateChat));
+            case "help", "start" -> help(tx, origin, chatRef, privateChat);
             default -> {
                 // Telegram marks any leading "/word" as a command, so a correction like "/api/login fails too" lands here.
                 if (!correction(tx, message, who, origin, chatRef)) {
@@ -149,10 +165,11 @@ public final class UpdateHandler {
     private void onCallback(Tx tx, JsonNode callback) {
         String callbackId = callback.path("id").asText();
         JsonNode from = callback.path("from");
-        long chatId = callback.path("message").path("chat").path("id").asLong();
+        JsonNode chat = callback.path("message").path("chat");
+        boolean servedChat = chat.path("id").asLong() == groupChatId || isPrivateChatOf(chat, from);
         String[] parts = callback.path("data").asText().split(":");
         boolean known = parts.length == 3 && (parts[0].equals("approve") || parts[0].equals("reject"));
-        if (chatId != groupChatId || !known || !from.has("id")) {
+        if (!servedChat || !known || !from.has("id")) {
             answer(tx, callbackId, "callback.unknown");
             return;
         }
@@ -218,12 +235,21 @@ public final class UpdateHandler {
         tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callbackId, text)));
     }
 
-    private void help(Tx tx, String origin, String chatRef) {
-        ObjectNode payload = Json.object().put("bot", botUsername);
+    private void help(Tx tx, String origin, String chatRef, boolean privateChat) {
+        ObjectNode payload = Json.object().put("bot", botUsername).put("privateChat", privateChat);
         ArrayNode listed = payload.putArray("projects");
         projects.all().forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
-        Outbox.enqueue(tx, null, OutboxKind.HELP, chatRef, origin, payload, clock.instant());
+        enqueue(tx, OutboxKind.HELP, chatRef, origin, payload);
+    }
+
+    private void enqueue(Tx tx, OutboxKind kind, String chatRef, String origin, ObjectNode payload) {
+        Outbox.enqueue(tx, null, kind, chatRef, origin, payload, clock.instant());
         tx.afterCommit(wakeOutbox);
+    }
+
+    /** A private chat is its user's own: Telegram gives it the user's id. */
+    private static boolean isPrivateChatOf(JsonNode chat, JsonNode from) {
+        return chat.path("type").asText().equals("private") && from.has("id") && chat.path("id").asLong() == from.get("id").asLong();
     }
 
     private static String withRepliedMessage(String text, JsonNode repliedTo) {

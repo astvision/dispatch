@@ -124,13 +124,72 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void privateChatIsIgnored() throws Exception {
-        handler.handle(message(505, 15, 100, "Bold", 100L, "private", "/task alm Fix it", null));
+    void nonMemberInAPrivateChatIsIgnored() throws Exception {
+        handler.handle(message(505, 15, 999, "Sara", 999L, "private", "/status", null));
 
-        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
         assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"));
+        assertEquals(506, handler.nextOffset());
         Thread.sleep(100);
         assertTrue(telegram.drain("leaveChat").isEmpty());
+    }
+
+    @Test
+    void memberGetsStatusHistoryAndHelpInTheirPrivateChat() {
+        handler.handle(message(560, 60, 100, "Bold", 100L, "private", "/status", null));
+        handler.handle(message(561, 61, 100, "Bold", 100L, "private", "/history 7", null));
+        handler.handle(message(562, 62, 100, "Bold", 100L, "private", "/start", null));
+
+        Map<String, String> status = row("SELECT * FROM outbox WHERE reply_to_ref = 'telegram:100/60'");
+        assertEquals("STATUS", status.get("kind"));
+        assertEquals("telegram:100", status.get("chat_ref"));
+        assertEquals("TASK_NOT_FOUND", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:100/61'").get("kind"));
+        Map<String, String> help = row("SELECT * FROM outbox WHERE reply_to_ref = 'telegram:100/62'");
+        assertEquals("HELP", help.get("kind"));
+        assertTrue(Json.read(help.get("payload")).get("privateChat").asBoolean());
+    }
+
+    @Test
+    void taskSentPrivatelyIsPointedToTheGroup() {
+        handler.handle(message(563, 63, 100, "Bold", 100L, "private", "/task alm Fix it", null));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
+        Map<String, String> reply = row("SELECT * FROM outbox");
+        assertEquals("TASK_IN_GROUP_ONLY", reply.get("kind"));
+        assertEquals("telegram:100/63", reply.get("reply_to_ref"));
+    }
+
+    @Test
+    void memberCanCancelFromTheirPrivateChat() {
+        handler.handle(message(564, 64, 100, "Bold", GROUP, "supergroup", "/task alm Fix it", null));
+
+        handler.handle(message(565, 65, 100, "Bold", 100L, "private", "/cancel 1", null));
+
+        assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = 1").get("phase"));
+    }
+
+    @Test
+    void planButtonsWorkInTheRequestersPrivateChat() throws Exception {
+        long taskId = taskAwaitingApproval(List.of());
+
+        handler.handle(privateCallback(566, 100, "Bold", "approve:" + taskId + ":1"));
+
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        assertEquals(renderer.text("callback.approved"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+    }
+
+    @Test
+    void replyToThePlanInThePrivateChatIsACorrection() {
+        long taskId = taskAwaitingApproval(List.of());
+        long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'PLAN_READY'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:100/2000", clock.instant()));
+
+        handler.handle(message(567, 67, 100, "Bold", 100L, "private", "Also cover the mobile login", """
+                {"message_id":2000,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":100,"type":"private"},
+                 "date":1789640000,"text":"plan"}"""));
+
+        assertEquals("Also cover the mobile login", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction"));
+        assertEquals("telegram:100", row("SELECT chat_ref FROM outbox WHERE kind = 'CORRECTION_QUEUED'").get("chat_ref"));
     }
 
     @Test
@@ -241,6 +300,19 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void buttonDataFromAnotherPersonsPrivateChatIsRefused() throws Exception {
+        long taskId = taskAwaitingApproval(List.of());
+        JsonNode forged = Json.read(privateCallback(568, 100, "Bold", "approve:" + taskId + ":1").toString()
+                .replace("\"from\":{\"id\":100", "\"from\":{\"id\":200"));
+
+        handler.handle(forged);
+
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        assertEquals(renderer.text("callback.unknown"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+    }
+
+    @Test
     void helpListsTheProjects() {
         handler.handle(message(530, 30, 999, "Sara", GROUP, "supergroup", "/help", null));
 
@@ -289,6 +361,17 @@ class UpdateHandlerTest {
                  "chat":{"id":%d,"title":"Team","type":"%s"},"date":1789640000,"text":%s%s%s}}"""
                 .formatted(updateId, messageId, fromId, firstName, firstName.toLowerCase(), chatId, chatType,
                         Json.MAPPER.valueToTree(text), entities, reply));
+    }
+
+    /** A button pressed in the presser's own private chat with the bot. */
+    static JsonNode privateCallback(long updateId, long fromId, String firstName, String data) {
+        return Json.read("""
+                {"update_id":%d,"callback_query":{"id":"cb-%d",
+                 "from":{"id":%d,"is_bot":false,"first_name":"%s"},
+                 "message":{"message_id":88,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},
+                            "chat":{"id":%d,"type":"private"},"date":1789640000,"text":"plan"},
+                 "chat_instance":"456","data":"%s"}}"""
+                .formatted(updateId, updateId, fromId, firstName, fromId, data));
     }
 
     static JsonNode callback(long updateId, long fromId, String firstName, String data) {

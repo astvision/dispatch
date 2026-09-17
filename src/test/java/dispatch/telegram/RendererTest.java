@@ -215,6 +215,17 @@ class RendererTest {
     }
 
     @Test
+    void privateHelpListsThePrivateCommandsWithoutTask() {
+        ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot").put("privateChat", true);
+        payload.putArray("projects").addObject().put("name", "life").putNull("alias");
+
+        String html = renderer.render(OutboxKind.HELP, payload).html();
+
+        assertTrue(html.contains("/status") && html.contains("/history") && html.contains("/cancel"), html);
+        assertFalse(html.contains("<code>/task "), html);
+    }
+
+    @Test
     void everyKindRendersWithinTelegramLimitsWithoutPlaceholders() {
         for (OutboxKind kind : OutboxKind.values()) {
             for (boolean fellBack : new boolean[] {false, true}) {
@@ -328,6 +339,7 @@ class RendererTest {
             }
             case PROJECT_UNAVAILABLE -> Json.object().put("project", "crm").put("reason", "no clone");
             case TASK_USAGE -> Json.object();
+            case TASK_IN_GROUP_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case HELP -> {
                 ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot");
                 payload.putArray("projects").addObject().put("name", "crm").putNull("alias");
