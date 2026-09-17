@@ -19,6 +19,7 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 - The hard boundary is the instance's OS user. Give it access to its groups' repositories only, and a GitHub token scoped to them (ADR 0005). All groups of one instance share that user and token (ADR 0012): run a separate instance for any team that must not reach another team's repositories. The token can push branches and open pull requests; draft status and human review keep agent changes from merging on their own (ADR 0007).
 - Claude Code's permission modes and deny rules are guardrails, not a security boundary (ADR 0009).
 - Task text and repository content can steer the agent (prompt injection). Planning is read-only, and code changes need a member's approval first (ADR 0006).
+- Splitting a message (✂️, ADR 0013) sends it to Haiku with no tools at all, not even read-only ones. The model can only answer with text, and each part is shown to the member before it becomes a draft.
 - Execution runs in auto mode: the agent edits files and runs builds and tests as the instance user, within what Claude's classifier allows (ADR 0009).
 
 ## Secrets
@@ -34,7 +35,7 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 
 ## State on disk
 
-The state directory holds the SQLite database, git worktrees and raw agent transcripts under `runs/`, including everything the agent read.
+The state directory holds the SQLite database, git worktrees and raw agent transcripts: under `runs/`, including everything the agent read, and under `splits/`, including every message a member asked to split.
 - Dispatch creates it owner-only, and startup warns if it is open to other users.
 - Protect, back up and delete it the same way as the source code it contains.
 

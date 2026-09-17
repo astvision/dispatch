@@ -23,6 +23,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Telegram | Offset advanced only after commit; outcome messages go through an outbox | 0010 |
 | Private details | Plan, corrections and full result go to the requester's private chat, with a one-line outcome in the group and a group fallback; only the requester decides on their plan | 0011 |
 | Groups, private tasks, priority | One bot serves several groups, each with members and projects; tasks are given privately with project and priority buttons; priority orders the queue | 0012 |
+| Splitting | Only on request (✂️): Haiku without tools proposes the parts of a message, and the member splits it or keeps it whole | 0013 |
 
 Also decided without an ADR:
 - Only members of a configured group act, for their groups' projects, in their own private chat with the bot; groups get announcements and read-only reports.
@@ -69,7 +70,7 @@ The instance user has `claude` and `gh` installed, file access only to its team'
           core commands │                          │ outbox rows
 ┌──────────────────────▼──────────────────────────┴──────────────┐
 │ core       TaskService   Scheduler -> RunExecutor   Recovery   │
-│                                                     Sweeper    │
+│            Splitter                                 Sweeper    │
 └───────┬─────────────────────────┬─────────────────────┬────────┘
    store (SQLite)          workspace (git, gh)     agent: Agent
                                                    ClaudeCodeAgent
@@ -77,10 +78,10 @@ The instance user has `claude` and `gh` installed, file access only to its team'
 
 | Package | Responsibility |
 |---|---|
-| `Main`, `App` | `Main` validates config and installs the shutdown hook. `App` wires everything explicitly: it migrates the DB, checks the bot token (`getMe`), runs `Recovery`, registers the command menus (group, private chats), and starts the poller, scheduler and outbox threads. A loop that dies unexpectedly is fatal. |
+| `Main`, `App` | `Main` validates config and installs the shutdown hook. `App` wires everything explicitly: it migrates the DB, checks the bot token (`getMe`, which also says whether the bot has topics in private chats), runs `Recovery`, fails splits a previous process left running, registers the command menus (group, private chats), and starts the poller, scheduler, outbox and draft-expiry threads. A loop that dies unexpectedly is fatal. |
 | `config` | YAML + env loading into records. Startup fails naming the invalid field. |
 | `store` | SQLite access and migrations (`PRAGMA user_version`); conditional updates. One connection behind a lock. |
-| `core` | `TaskService`: the channel-neutral commands `create / approve / reject / correct / cancel / status / history / timeline` (later `followUp / retry`). `Scheduler` picks runs; `RunExecutor` drives one run; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
+| `core` | `TaskService`: the channel-neutral commands `draft / split / create / approve / reject / correct / cancel / status / history / timeline / stats` (later `followUp / retry`). `Scheduler` picks runs; `RunExecutor` drives one run; `Splitter` runs splits beside them; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
 | `agent` | `Agent` interface and `ClaudeCodeAgent` (CLI subprocess + stream-json parser). Tests run the real adapter against a fake `claude` shell script that replays recorded output. `CodexAgent` comes later. |
 | `workspace` | Clone, fetch, worktree add/remove, `copyFiles`, commit, push, `gh pr create`. |
 | `telegram` | Bot API client (`java.net.http` + Jackson), `Poller`, `UpdateHandler` (parses updates, calls `TaskService`), `OutboxSender`, status edits, `messages_mn.properties`. |
@@ -91,10 +92,10 @@ The instance user has `claude` and `gh` installed, file access only to its team'
 
 | Table | Key columns |
 |---|---|
-| `task` | `id` (#42), `project`, `title` (first line, ≤ 80 chars), `description`, `phase`, `priority` (`URGENT / NORMAL / LOW`), `requester_ref/name`, `origin_ref` (unique, e.g. `telegram:-100123/5567`), `chat_ref`, `session_id` (UUID), `base_branch`, `base_sha`, `worktree`, `plan_json`, `failure_reason/detail`, `created_at`, `started_at`, `completed_at`, `pr_url`. The branch is always `dispatch/<id>` and is not stored. |
+| `task` | `id` (#42), `project`, `title` (first line, ≤ 80 chars), `description`, `phase`, `priority` (`URGENT / NORMAL / LOW`), `requester_ref/name`, `origin_ref` (unique, e.g. `telegram:-100123/5567`), `chat_ref`, `session_id` (UUID), `base_branch`, `base_sha`, `worktree`, `plan_json`, `failure_reason/detail`, `created_at`, `started_at`, `completed_at`, `pr_url`, `topic_ref` (the task's topic in the requester's private chat, once created). The branch is always `dispatch/<id>` and is not stored. |
 | `run` | `task_id`, `seq` (run 42.2), `kind` (`PLAN / EXECUTE / DELIVER`), `status` (`QUEUED / RUNNING / SUCCEEDED / FAILED / CANCELLED`), `instruction` (task text, correction, or the approved plan), `requested_by`, `requested_by_name`, `pid`, `pid_start`, `queued_at`, `started_at`, `finished_at`, `exit_code`, `failure_reason` (`SETUP / AGENT / TIMEOUT / BUDGET / INTERRUPTED / DELIVERY / INTERNAL`), `error_detail`, `cost_usd`, `turns`, `output`, `denials`. The raw log path is derived: `runs/<task>/<seq>`. |
-| `outbox` | `task_id`, `kind`, `chat_ref`, `reply_to_ref`, `fallback_chat_ref/reply_to_ref` (where a refused private message goes instead), `fell_back`, `payload`, `status` (`PENDING / SENT / FAILED`), `attempts`, `next_attempt_at`, `last_error`, `sent_ref` |
-| `draft` | `requester_ref/name`, `chat_ref` (private chat), `origin_ref` (unique message), `description`, `project` (once chosen), `status` (`OPEN / CREATED / EXPIRED`), `task_id` |
+| `outbox` | `task_id`, `kind`, `chat_ref`, `reply_to_ref`, `edit_ref` (a message this row redraws instead of sending a new one), `fallback_chat_ref/reply_to_ref` (where a refused private message goes instead), `fell_back`, `payload`, `status` (`PENDING / SENT / FAILED`), `attempts`, `next_attempt_at`, `last_error`, `sent_ref` |
+| `draft` | `requester_ref/name`, `chat_ref` (private chat), `origin_ref` (unique: the message, plus `#<part>` for a part), `description`, `project` (once chosen), `status` (`OPEN / CREATED / EXPIRED / SPLIT`), `task_id`, `prompt_ref` (the prompt ✂️ was pressed on), `split_state` (`SPLITTING / PROPOSED / ONE_TOPIC / KEPT / FAILED`), `topics` (the proposed parts, JSON), `parent_id` and `part` (for a part) |
 | `task_event` | `task_id`, `run_seq`, `at`, `actor`, `from_phase`, `to_phase`, `reason` (append-only audit) |
 | `kv` | Telegram `getUpdates` offset |
 
@@ -135,9 +136,21 @@ A transition that loses a race updates 0 rows and is logged.
 **Give a task (draft).**
 1. A member writes the task in their private chat, forwards a message there, or sends `/task [project] [text]` (the first word counts as the project only if it is one of theirs; a replied-to message becomes the text). Anything written privately that is neither a command nor a reply to a plan is a task.
 2. One transaction: a `draft` (OPEN) + a prompt in the outbox + offset. The prompt asks with buttons for the project, unless the member can use only one or named one, and for the priority. Only the projects of the member's groups that can take tasks are offered.
-3. A project button records the choice; the priority button gives the task. Both redraw the prompt in place (best effort). Only the draft's writer can answer it. A draft nobody answers expires after 24 h (checked every minute), with a note.
-4. Giving the task is one transaction: `task` (PLANNING, with priority; `chat_ref` is the project's group) + `run` 1 (PLAN, QUEUED) + event + the group's announcement + the draft marked CREATED.
+3. A project button records the choice; the priority button gives the task. Both redraw the prompt in place (best effort). Only the draft's writer can answer it. A draft nobody answers expires after 24 h (checked every minute), with a note naming it.
+4. Giving the task is one transaction: `task` (PLANNING, with priority; `chat_ref` is the project's group) + `run` 1 (PLAN, QUEUED) + event + the group's announcement + the draft marked CREATED. With topics on, a topic for the task is created in the requester's private chat (below).
 5. `/task` and `/cancel` in a group are answered with a pointer to the private chat.
+
+**Split a message (ADR 0013).**
+1. A whole message's prompt has ✂️. Pressing it is one transaction: the draft becomes SPLITTING and remembers the prompt; after commit the `Splitter` starts on its own virtual thread. The prompt is redrawn with "splitting…"; project and priority stay available.
+2. The `Splitter` runs a SPLIT agent run (below): at most two at a time, $0.25 budget, one-minute timeout. Its answer must be one to ten non-blank texts.
+3. One transaction records the outcome and enqueues an outbox edit of the remembered prompt:
+   - several topics: PROPOSED, and the prompt lists them with [✂️ N даалгавар болгох] [Нэг даалгавар];
+   - one topic: ONE_TOPIC, and the prompt says so;
+   - anything else (agent failure, budget, timeout, unusable answer): FAILED, and the prompt offers ✂️ again. The detail is logged.
+4. Splitting is one transaction: the draft becomes SPLIT, and each part becomes an OPEN draft (`origin_ref` `<message>#<n>`, the whole message's project if still available) with its own prompt under the original message. Keeping it whole (KEPT) redraws the prompt with project and priority, without ✂️.
+5. An answer for a draft that was given or expired meanwhile is discarded. On stop, running splits are cancelled and not recorded; on start, drafts still SPLITTING become FAILED.
+
+**Task topics.** When @BotFather has topics on for the bot's private chats (`getMe` reports `has_topics_enabled`), giving a task enqueues `createForumTopic` in the requester's private chat, named `#7 · project · title` and colored by priority. The task's private messages (plan, corrections, execution notice, result) go into that topic, and anything written there that is not a command corrects the latest plan. When the outcome is sent, the topic is renamed with ✅ ❌ 🚫 🛑. A topic that cannot be created leaves the task in General; one that is gone later (deleted, or `message thread not found`) is forgotten, and the task's messages go to General.
 
 **Plan run.**
 1. `git fetch origin <base>`, then `git worktree add -b dispatch/<id> worktrees/<id> origin/<base>`. Record `base_sha`. `copyFiles` are **not** copied: planning needs no local secrets, and whatever the agent can read may be quoted in a plan posted to the group.
@@ -180,7 +193,7 @@ The task becomes COMPLETED with PR link, files changed, cost, duration and any d
 
 ## Telegram boundary
 
-- Bot API over `java.net.http` + Jackson: `getUpdates` (50 s long poll), `sendMessage`, `editMessageText`, `sendDocument`, `answerCallbackQuery`, `getFile`, `leaveChat`.
+- Bot API over `java.net.http` + Jackson: `getUpdates` (50 s long poll), `sendMessage`, `editMessageText`, `sendDocument`, `answerCallbackQuery`, `createForumTopic`, `editForumTopic`, `getFile`, `leaveChat`.
 - Privacy mode stays on. The bot then receives:
   - `/cmd@thisbot` always;
   - a bare `/cmd` only if Dispatch was the last bot to post in the group (verified in Telegram's docs; groups with other bots, e.g. claude-login-bot, lose bare commands);
@@ -189,16 +202,16 @@ The task becomes COMPLETED with PR link, files changed, cost, duration and any d
   
   So at startup Dispatch registers a command menu for each group (`setMyCommands`, chat scope: `/status`, `/history`, `/stats`, `/help`); picking a command from the menu reaches it. `/cmd@otherbot` is ignored. Edited messages are ignored. Never make the bot a group admin: admins receive every message.
 - Members' private chats with the bot are served: task messages, `/task`, `/start`, `/help`, `/status`, `/history`, `/stats`, `/cancel`, buttons and replies to plans, with their own command menu (`all_private_chats` scope). Private chats of non-members are ignored and logged. Groups not in the config: `leaveChat` + WARN. A group migrated to a supergroup is logged at ERROR with the new chat ID.
-- Buttons: draft project / priority, plan Approve / Reject, status priority, stats view / period. Replies: correction (to a plan), later follow-up (to a result). Commands later: `/retry <id>`, `/projects`.
+- Buttons: draft project / priority / ✂️ and the split proposal's split / keep whole, plan Approve / Reject, status priority, stats view / period. Replies: correction (to a plan), later follow-up (to a result). Commands later: `/retry <id>`, `/projects`.
 - Durability (ADR 0010): the offset is stored in the same transaction as an update's effects. Every bot message except live status edits goes through the outbox, whose sender retries with backoff from 5 s to 5 min, honours `retry_after` on 429, falls back from a refused private chat to the group, marks other messages FAILED after 24 h or immediately on a permanent error, and logs every attempt.
-- Rendering: `messages_mn.properties` (ResourceBundle), HTML parse mode with escaping; agent text is cut after escaping so a message never passes Telegram's limit. Messages redrawn in place by a button (draft prompt, status, stats) are edited directly, best effort and redacted like outbox messages. Live progress is `/status` on demand.
+- Rendering: `messages_mn.properties` (ResourceBundle), HTML parse mode with escaping; agent text is cut after escaping so a message never passes Telegram's limit. Messages redrawn in place by a button (draft prompt, status, stats) are edited directly, best effort and redacted like outbox messages. A redraw that a background step causes (a split's answer) is an outbox row with `edit_ref`, retried like any other; a retried edit that Telegram reports as "not modified" counts as sent. Live progress is `/status` on demand.
 - Attachments: photos (largest size) and documents from the command and replied message go to `attachments/<task>/` and are listed in the prompt. Files over 20 MB are skipped and the skip is reported.
 
 ## Agent boundary
 
 ```java
 interface Agent { RunHandle start(RunRequest request); }
-record RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId, boolean resume,
+record RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId /* null for SPLIT */, boolean resume,
                   List<Path> readOnlyDirs, BigDecimal budgetUsd, String model, Path logBase) {}
 interface RunHandle {
     ProcessHandle process();                // pid + start time, stored for orphan detection
@@ -215,6 +228,7 @@ The timeout is enforced by `RunExecutor` (a watchdog calls `cancel()`), not by t
 |---|---|
 | PLAN | `--permission-mode plan --tools Read,Bash --json-schema <plan schema, compacted to one line>` |
 | EXECUTE | `--permission-mode auto --tools Read,Edit,Write,Bash --disallowedTools "Bash(git commit *)" "Bash(git push *)" "Bash(gh *)"` |
+| SPLIT | `--permission-mode plan --tools "" --json-schema <topics schema> --system-prompt <one line> --no-session-persistence --disable-slash-commands --model haiku`, no session flags, run in `splits/` |
 
 - The agent's environment excludes `TELEGRAM_BOT_TOKEN` and `GH_TOKEN`; only Dispatch's own git/gh calls get the token. This is a guardrail: processes running as the same user can still read each other's environment.
 - The init event's `permissionMode` must equal the requested mode (`plan` or `auto`). Otherwise the run is stopped at once and fails as `AGENT`: Claude Code does not refuse a mode the model lacks.
@@ -238,11 +252,12 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
 - **Language:** "the same language as the task" produced a Dutch plan for an English task. The prompt now names the language rule explicitly, and a Mongolian task then got a Mongolian plan.
 - **Denials are normal:** plan mode denies writes such as `mkdir ~/.claude/plans` and some compound shell commands. They are recorded in `run.denials`, not treated as failures.
 - **Questions:** with the first plan prompt ("questions that must be answered before implementing"), a simple task got three questions, and such a plan cannot be approved. With the current rule, the same kind of task got none, and its assumptions were listed under risks.
+- **Splitting:** with the default system prompt, a split cost about $0.02 and 5 seconds, and a $0.05 cap was exceeded on a cold run. With `--system-prompt`, no tools, no skills and no saved session, a three-topic Mongolian message cost $0.015 in 2.9 s, and a one-topic message $0.014 in 3.5 s. Shared context ("staging дээр:") was repeated in each topic, as the prompt asks. Haiku once nested its answer (`{"topics": {"topics": [...]}}`), got a schema error back, and answered correctly on the next turn, so the budget leaves room for a retry.
 - **Auto mode is model-dependent:** with Haiku, `--permission-mode auto` started in `default` mode, fresh or resumed. The edit was denied ("no approval surface") and the run still ended as `success` with nothing changed. Sonnet and Opus started in `auto`. A resumed Sonnet run then edited, compiled and checked the change for $0.16. It also wrote scratch files under `/tmp`, outside the worktree, which is allowed because the OS user is the boundary.
 
 ## Background execution
 
-- Plain threads, all virtual: Telegram poller, outbox sender, scheduler loop, draft expiry (every minute), later an hourly sweeper, and one thread per active run.
+- Plain threads, all virtual: Telegram poller, outbox sender, scheduler loop, draft expiry (every minute), later an hourly sweeper, one thread per active run, and one per split (at most two agents at once, outside the run queue and its limits).
 - The scheduler wakes on each commit that queues a run, and every 5 s. It claims the most urgent `QUEUED` run, oldest first among equals, that may start: a run that must wait never holds back the ones behind it. A run may start when:
   - fewer than `maxConcurrentRuns` runs are active (default 2), and
   - the run is a PLAN, or its project has no active EXECUTE/DELIVER run.
@@ -266,6 +281,9 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
 | Timeout / budget | FAILED `TIMEOUT` / `BUDGET`; reply or `/retry`. |
 | Commit / push / PR fails | FAILED `DELIVERY`; `/retry` runs delivery only. |
 | Project clone missing / clone fails | Project unavailable + ERROR; `/task` explains why. |
+| Split fails (agent error, budget, timeout, unusable answer) | Draft split FAILED + WARN with the detail; the prompt says so and offers ✂️ again. |
+| Stop or crash during a split | The draft stays SPLITTING until the next start, which fails it and redraws its prompt. |
+| Task topic deleted or not found | The task forgets its topic + WARN; its messages go to General, never to the group fallback. |
 | Invalid config | Startup fails, naming the field. |
 | SQLite error | Logged; the process exits non-zero and systemd restarts it (recovery above). |
 
@@ -277,14 +295,14 @@ The full threat model is in [SECURITY.md](../SECURITY.md).
 
 - **Secrets:** only in the 0600 environment file. The YAML rejects unknown keys and repository URLs with embedded credentials.
 - **Redaction:** a `Redactor` masks the values of the secret variables and common credential formats. `Main` installs it for every log line and stack trace; `OutboxSender` applies it to payloads before rendering, so every Telegram message is covered.
-- **State on disk:** the database file (and its `-wal`/`-shm` files) is created `rw-------`, and `repos/`, `worktrees/` and `runs/` are created `rwx------`. Startup warns if the state directory is open to other users.
+- **State on disk:** the database file (and its `-wal`/`-shm` files) is created `rw-------`, and `repos/`, `worktrees/`, `runs/` and `splits/` are created `rwx------`. Startup warns if the state directory is open to other users.
 - **Chat content in logs:** a Telegram update that fails to process is logged with its id and type only, never its content.
 
 ## Observability
 
 - logfmt lines to stdout, collected by journald. One line per transition, e.g. `event=task.transition task=42 run=42.2 from=AWAITING_APPROVAL to=EXECUTING actor=telegram:222333444`.
 - The `task_event` table is the audit trail; `/history <id>` renders a task's runs (time, duration, cost, failure) and outcome, and `/status` shows what is running now.
-- Per-run raw agent output and stderr live under `runs/`. `sqlite3 dispatch.db` is the debugging console.
+- Per-run raw agent output and stderr live under `runs/`, and each split's under `splits/<draft>-<epoch millis>`. `sqlite3 dispatch.db` is the debugging console.
 
 ## Configuration
 
@@ -338,7 +356,7 @@ Changing members or projects requires a restart, which interrupts active runs. R
 | **M2** execution (built) | `[Approve]` (refused while questions are open), corrections by replying to a plan, execution run (auto mode, deny rules, verified permission mode, execute limits, `copyFiles`), delivery (one commit, push, draft PR), completed/failed outcomes, plan prompt that states assumptions as risks instead of asking |
 | **M3a** private details and reports (built) | Task details to the requester's private chat with group fallback and one-line group outcomes, requester-only decisions, private-chat commands and menu, `/status` with live agent activity (replaces `/tasks`), `/history` and `/history <id>` |
 | **M3b** groups, private tasks, priority (built) | Several groups per instance with members and projects, scoped reports, tasks given privately as drafts with project and priority buttons, priority-ordered queue with changes from `/status`, `/history` with who and when, `/stats` |
-| **M3c** topics | Splitting a message that covers several topics into tasks, and a Telegram topic per task in the private chat |
+| **M3c** topics and splitting (built) | A Telegram topic per task in the requester's private chat (when @BotFather has topics on), and splitting a message into tasks on request with ✂️ |
 | **M3d** interaction and ops | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
 | **M4** | `CodexAgent` |
 
@@ -363,4 +381,6 @@ Tests throughout: unit tests for transitions and scheduler rules; end-to-end tes
 15. A requester's private chat is addressed by their requester reference (for Telegram, a private chat's id is the user's id), so no chat id is stored per member.
 16. Reports are scoped by group membership: a group chat sees its projects, a member privately those of all their groups, and nobody sees another group's tasks.
 17. A task's `chat_ref` is its project's group at the time it was given, so later config changes do not re-route its messages.
-18. Buttons that change a message's content redraw it in place; the durable path (outbox) is kept for messages that report outcomes.
+18. Buttons that change a message's content redraw it in place; the durable path (outbox) is kept for messages that report outcomes and for redraws caused by background work.
+19. Splitting always uses the `claude-code` agent, whatever the projects use: a message is split before its project is chosen.
+20. A part of a split message keeps the message's reference with `#<part>` appended, so references stay unique while the part's task still replies under the message that gave it.

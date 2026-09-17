@@ -3,7 +3,7 @@
 Dispatch takes development tasks that members write to its Telegram bot and has Claude Code plan them in a git worktree. Once the requester approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance and bot can serve several groups, each with its own members and projects.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M3b.** Tasks are given in the private chat with project and priority buttons; the plan, corrections and result stay there, and each group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Telegram topics per task come next, then follow-ups and `/retry`.
+- Status: **M3c.** Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. Each group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Follow-ups and `/retry` come next.
 
 ## Security
 
@@ -24,7 +24,7 @@ Requires JDK 25+ and git. The Maven wrapper downloads Maven itself.
 
 The examples use the instance `backend`.
 
-**1. Create the bot.** Create it with @BotFather. Leave privacy mode enabled (the default) and do not make the bot a group admin, because admins receive every message. Add the bot to each group it serves. Every member opens the bot once and presses **Start**: tasks are given in that private chat.
+**1. Create the bot.** Create it with @BotFather. Leave privacy mode enabled (the default) and do not make the bot a group admin, because admins receive every message. Add the bot to each group it serves. Every member opens the bot once and presses **Start**: tasks are given in that private chat. Optionally, turn on topics (threaded mode) for the bot's private chats in @BotFather: each task then gets its own topic there. Dispatch checks this at startup (`task_topics=true` in the `dispatch.started` log line).
 
 **2. Find the ids before starting Dispatch.** Dispatch leaves any group whose id is not in `telegram.groups`.
 1. In each group, each member sends `/help@<bot_username>`.
@@ -72,8 +72,9 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 |---|---|
 | write the task as a message (or forward one) | Asks with buttons for the project (skipped if you have only one) and the priority 🔴 🟡 🟢, then queues the task |
 | `/task alm Fix the login timeout` | The same, with the project already named |
+| **✂️ Салгах** on that prompt | Haiku lists the separate tasks in your message (about $0.015, a few seconds). **✂️ N даалгавар болгох** gives each its own prompt; **Нэг даалгавар** keeps the message as one task |
 | **Approve** on the plan | The agent implements it; Dispatch commits, pushes `dispatch/N` and sends you the draft PR link and summary |
-| reply to the plan | A correction: the agent revises the plan in the same session |
+| reply to the plan, or write in the task's topic | A correction: the agent revises the plan in the same session |
 | **Reject** on the plan | Closes the task |
 | `/status` | What is running (with the agent's latest action), queued and awaiting approval in your groups, with buttons to change your tasks' priority |
 | `/history`, `/history N` | The last 10 finished tasks with who gave them and when; task N's timeline |
@@ -106,7 +107,7 @@ Locally, `claude` uses your own login. Your plugins and MCP servers are not load
   SELECT id, kind, status, attempts, last_error FROM outbox WHERE status <> 'SENT';
   SELECT * FROM task_event WHERE task_id = 42 ORDER BY id;
   ```
-- **Raw agent output:** `/var/lib/dispatch/backend/runs/<task>/<run>.jsonl` and `.stderr`.
+- **Raw agent output:** `/var/lib/dispatch/backend/runs/<task>/<run>.jsonl` and `.stderr`; splits under `splits/<draft>-<epoch millis>.jsonl`. Grep the log for `event=split.` to see what each split cost.
 - **Restarts:** stopping or restarting interrupts active runs. They fail as `INTERRUPTED` and the group is told.
 - **Worktrees:** they accumulate under `worktrees/` until the M3 sweep. Remove finished ones with `git -C repos/<project> worktree remove --force worktrees/<id>`; a task whose worktree is gone can no longer be corrected or executed.
 - **Delivery:** commits are made without hooks or signing, as `delivery.authorName`. A failed push or PR creation fails the task as `DELIVERY`; the commit stays in the worktree.

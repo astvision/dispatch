@@ -21,7 +21,7 @@ A repository a group hands tasks for, together with how Dispatch works on it: it
 _Avoid_: Repo, service, workspace
 
 **Task**:
-A piece of development work on one project that a member explicitly gives Dispatch in their private chat with the bot, with a priority.
+A piece of development work on one project that a member explicitly gives Dispatch in their private chat with the bot, with a priority. One message can give several tasks when the member splits it into parts.
 _Avoid_: Job, ticket, request
 
 **Priority**:
