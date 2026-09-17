@@ -25,6 +25,8 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Groups, private tasks, priority | One bot serves several groups, each with members and projects; tasks are given privately with project and priority buttons; priority orders the queue | 0012 |
 | Splitting | Only on request (✂️): Haiku without tools proposes the parts of a message, and the member splits it or keeps it whole | 0013 |
 | Personal instances | A developer's own bot and instance on their own machine (macOS, Windows, Linux): projects at any `path`, groups without a chat, `effort` per project, set up with `dispatch init` | 0014 |
+| Joining a shared bot | People who write to a team's bot ask to join; `telegram.admins` approve them per group in Telegram, and the config is updated without a restart | 0015 |
+| Setup | One-line install, an arrow-key `dispatch init` for a personal or a team bot, and a per-user background service on each OS | 0016 |
 
 Also decided without an ADR:
 - Only members of a configured group act, for their groups' projects, in their own private chat with the bot; groups get announcements and read-only reports.
@@ -94,7 +96,7 @@ projects                   wherever each project's path points; Dispatch adds wo
 |---|---|
 | `Main`, `App` | `Main` validates config and installs the shutdown hook. `App` wires everything explicitly: it migrates the DB, checks the bot token (`getMe`, which also says whether the bot has topics in private chats), runs `Recovery`, fails splits a previous process left running, registers the command menus (group, private chats), and starts the poller, scheduler, outbox and draft-expiry threads. A loop that dies unexpectedly is fatal. |
 | `config` | YAML + env loading into records. Startup fails naming the invalid field. |
-| `cli` | The `dispatch` command: `init` (guided personal setup), `project add` (adds a clone to the config without reformatting it), `check` (config, bot, agent, projects, gh), and `run`. Per-OS default locations; the secrets file beside the config is merged under the process environment. |
+| `cli` | The `dispatch` command: `init` (the setup wizard, on a JLine terminal), `project add`, `check`, `service install/start/stop/status/uninstall` (systemd user unit, launchd agent, Task Scheduler task), and `run` (with `--log-file` for services). Per-OS default locations; the secrets file beside the config is merged under the process environment. `install.sh` and `install.ps1` build and install it. |
 | `store` | SQLite access and migrations (`PRAGMA user_version`); conditional updates. One connection behind a lock. |
 | `core` | `TaskService`: the channel-neutral commands `draft / split / create / approve / reject / correct / cancel / status / history / timeline / stats` (later `followUp / retry`). `Scheduler` picks runs; `RunExecutor` drives one run; `Splitter` runs splits beside them; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
 | `agent` | `Agent` interface and `ClaudeCodeAgent` (CLI subprocess + stream-json parser). Tests run the real adapter against a fake `claude` shell script that replays recorded output. `CodexAgent` comes later. |
@@ -112,6 +114,7 @@ projects                   wherever each project's path points; Dispatch adds wo
 | `outbox` | `task_id`, `kind`, `chat_ref`, `reply_to_ref`, `edit_ref` (a message this row redraws instead of sending a new one), `fallback_chat_ref/reply_to_ref` (where a refused private message goes instead), `fell_back`, `payload`, `status` (`PENDING / SENT / FAILED`), `attempts`, `next_attempt_at`, `last_error`, `sent_ref` |
 | `draft` | `requester_ref/name`, `chat_ref` (private chat), `origin_ref` (unique: the message, plus `#<part>` for a part), `description`, `project` (once chosen), `status` (`OPEN / CREATED / EXPIRED / SPLIT`), `task_id`, `prompt_ref` (the prompt ✂️ was pressed on), `split_state` (`SPLITTING / PROPOSED / ONE_TOPIC / KEPT / FAILED`), `topics` (the proposed parts, JSON), `parent_id` and `part` (for a part) |
 | `task_event` | `task_id`, `run_seq`, `at`, `actor`, `from_phase`, `to_phase`, `reason` (append-only audit) |
+| `join_request` | `requester_ref/name`, `username`, `status` (`OPEN / APPROVED / DENIED`), `group_name`, `decided_by(_name)`, `created_at`, `decided_at` |
 | `kv` | Telegram `getUpdates` offset |
 
 Finished runs are never modified; a retry or follow-up creates a new run. All timestamps are UTC.
@@ -164,6 +167,12 @@ A transition that loses a race updates 0 rows and is logged.
    - anything else (agent failure, budget, timeout, unusable answer): FAILED, and the prompt offers ✂️ again. The detail is logged.
 4. Splitting is one transaction: the draft becomes SPLIT, and each part becomes an OPEN draft (`origin_ref` `<message>#<n>`, the whole message's project if still available) with its own prompt under the original message. Keeping it whole (KEPT) redraws the prompt with project and priority, without ✂️.
 5. An answer for a draft that was given or expired meanwhile is discarded. On stop, running splits are cancelled and not recorded; on start, drafts still SPLITTING become FAILED.
+
+**Join a shared bot (ADR 0015).**
+1. A private message from someone who is not a member, while `telegram.admins` is set, becomes an OPEN `join_request`. The person is told an admin will decide, and each admin gets their name, @handle and id with a button per group and Deny. Without admins, such messages are only logged.
+2. While a request is open, or within a day of a Deny, further messages from that person send nothing.
+3. Allowing: the member is inserted into that group in the config file, in place, and the edited file must validate before it atomically replaces the old one. The running `Groups` are then replaced, so the person can give tasks at once. If the config cannot be written, the request stays open and the error is logged.
+4. The person is told the decision; the admin's message is redrawn with it; stale buttons answer that it was already decided.
 
 **Task topics.** When @BotFather has topics on for the bot's private chats (`getMe` reports `has_topics_enabled`), giving a task enqueues `createForumTopic` in the requester's private chat, named `#7 · project · title` and colored by priority. The task's private messages (plan, corrections, execution notice, result) go into that topic, and anything written there that is not a command corrects the latest plan. When the outcome is sent, the topic is renamed with ✅ ❌ 🚫 🛑. A topic that cannot be created leaves the task in General; one that is gone later (deleted, or `message thread not found`) is forgotten, and the task's messages go to General.
 
@@ -363,7 +372,7 @@ projects:
     limits: { execute: { timeout: 90m, budgetUsd: 15 } }   # optional override
 ```
 
-A group's `chatId` is optional: a personal bot's group has none, and its tasks stay in the requester's private chat (ADR 0014). Changing members or projects requires a restart, which interrupts active runs. Reloading config without a restart can come later.
+A group's `chatId` is optional: a personal bot's group has none, and its tasks stay in the requester's private chat (ADR 0014). `telegram.admins` lists who approves people asking to join (ADR 0015); group names are at most 40 characters, so they fit in a button. Changing members or projects requires a restart, which interrupts active runs. Reloading config without a restart can come later.
 
 ## Milestones
 
@@ -375,7 +384,8 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **M3b** groups, private tasks, priority (built) | Several groups per instance with members and projects, scoped reports, tasks given privately as drafts with project and priority buttons, priority-ordered queue with changes from `/status`, `/history` with who and when, `/stats` |
 | **M3c** topics and splitting (built) | A Telegram topic per task in the requester's private chat (when @BotFather has topics on), and splitting a message into tasks on request with ✂️ |
 | **M3d** personal instances (built) | `path` and `effort` per project, groups without a chat, owner-only state and secrets on every OS, `dispatch init / project add / check / run`, launchers, CI on Linux, macOS and Windows |
-| **M3e** interaction and ops | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
+| **M3e** setup and team bot (built) | One-line install (`install.sh`, `install.ps1`), arrow-key `dispatch init` for a personal or team bot, joining a shared bot by admin approval in Telegram, `dispatch service` on Linux, macOS and Windows |
+| **M3f** interaction and ops | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
 | **M4** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
@@ -403,4 +413,6 @@ Tests throughout: unit tests for transitions and scheduler rules; end-to-end tes
 19. Splitting always uses the `claude-code` agent, whatever the projects use: a message is split before its project is chosen.
 20. A part of a split message keeps the message's reference with `#<part>` appended, so references stay unique while the part's task still replies under the message that gave it.
 21. `dispatch project add` inserts lines where SnakeYAML found the existing nodes instead of re-serializing the file, so comments stay in place. The edited file must validate before it atomically replaces the config.
-22. `dispatch init` makes the first person who messages the bot its member only after they confirm the name at the terminal, since someone else may have found the bot first.
+22. `dispatch init` makes the first person who messages the bot its member only after they confirm the name at the terminal, since someone else may have found the bot first. Granting access never defaults to yes.
+23. A background service runs `dispatch run --log-file` with the PATH setup ran with, since services start with a minimal PATH that would miss `claude`, `git` and `gh`.
+24. The running instance edits its own config only to add an approved member; everything else in the config changes by hand and a restart.

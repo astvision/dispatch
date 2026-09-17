@@ -12,6 +12,10 @@ _Avoid_: Team, tenant, organization, workspace
 A person listed in one or more groups. They may give tasks for, and cancel tasks of, their groups' projects. Other people in a group chat can read the bot's announcements but cannot act on tasks.
 _Avoid_: User, operator, admin
 
+**Admin**:
+A person who decides who may use a shared bot. When someone new writes to it, admins choose the group to add them to, or deny them.
+_Avoid_: Owner, moderator
+
 **Requester**:
 The member who created a task. Its plan is theirs to approve, correct or reject, and its details reach them in their private chat with the bot.
 _Avoid_: Owner, author, assignee

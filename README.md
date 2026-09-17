@@ -3,7 +3,7 @@
 Dispatch takes development tasks that members write to its Telegram bot and has Claude Code plan them in a git worktree. Once the requester approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance and bot can serve several groups, each with its own members and projects.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M3d.** Each developer can run their own Dispatch on macOS, Windows or Linux, set up with `dispatch init`, for clones wherever they are. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Follow-ups and `/retry` come next.
+- Status: **M3e.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Follow-ups and `/retry` come next.
 
 ## Security
 
@@ -20,43 +20,65 @@ Requires JDK 25+ and git. The Maven wrapper downloads Maven itself.
 ./mvnw verify                       # tests, then target/dispatch-0.1.0.jar
 ```
 
-## Your own Dispatch (macOS, Windows, Linux)
+## Get started (macOS, Windows, Linux)
 
-Each developer can run Dispatch on their own machine with their own bot, for projects wherever their clones are (ADR 0014). It runs as you: the agent can read what you can, and whoever controls your Telegram account or your bot token can make it act as you.
+Dispatch runs on your own machine, with a bot for just you or one your team shares (ADR 0014–0016). It runs as you: the agent can read what you can, and whoever controls the bot's admin accounts or its token can make it act as you.
 
 **You need** Java 25 or later, git, Claude Code (run `claude` once to log in), and the GitHub CLI logged in with `gh auth login` for pull requests.
 
-**1. Install.** Build the jar with `./mvnw package`, put it next to the launcher, and put that folder on your PATH:
-- **macOS, Linux:** copy `target/dispatch-0.1.0.jar` to `~/.local/share/dispatch/dispatch.jar` and `bin/dispatch` next to it, then `ln -s ~/.local/share/dispatch/dispatch ~/.local/bin/dispatch`.
-- **Windows:** copy `target\dispatch-0.1.0.jar` to `%LOCALAPPDATA%\Programs\Dispatch\dispatch.jar` and `bin\dispatch.cmd` next to it, then add that folder to your PATH.
+**1. Install** with one command. It builds Dispatch and puts `dispatch` on your PATH:
 
-**2. Set up.** Create a bot with @BotFather (`/newbot`), then run `dispatch init`. It asks for these, one step at a time:
-1. the bot token, typed without being shown;
-2. you: open your bot, press Start, and confirm the name it shows;
-3. the `claude` command, found for you when it is on your PATH;
-4. your project folders, each with a name, the branch tasks start from, and optionally the model and effort;
-5. the commit author.
+```sh
+# macOS, Linux
+curl -fsSL https://raw.githubusercontent.com/astvision/dispatch/main/install.sh | sh
+# while the repository is private:
+gh api -H "Accept: application/vnd.github.raw" repos/astvision/dispatch/contents/install.sh | sh
+```
 
-It writes the config, and the token into a file only you can read:
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/astvision/dispatch/main/install.ps1 | iex
+# while the repository is private:
+gh api -H "Accept: application/vnd.github.raw" repos/astvision/dispatch/contents/install.ps1 | Out-String | iex
+```
 
-| | Config | Secrets | State |
+**2. Set up** with `dispatch init`. Create a bot with @BotFather (`/newbot`) first. The wizard uses the arrow keys and asks, step by step:
+1. **Who will use this bot:** just you, or your team.
+2. **The bot token:** typed masked, then checked with Telegram.
+3. **People:** you open the bot, press Start and confirm your name. For a team, teammates press Start while it waits, and when you add the bot to your team group it finds that group for its announcements.
+4. **Claude Code:** found on your PATH, or given.
+5. **Projects:** the folders of your git clones, each with the branch tasks start from and, from a list, the model and effort.
+6. **Commits:** the author of Dispatch's commits.
+
+It shows a summary and writes nothing until you confirm. Then it offers to keep Dispatch running in the background, also after a restart.
+
+| | Config | Secrets (only you can read) | State and log |
 |---|---|---|---|
 | macOS, Linux | `~/.config/dispatch/dispatch.yaml` | `~/.config/dispatch/dispatch.env` | `~/.local/state/dispatch` |
 | Windows | `%APPDATA%\Dispatch\dispatch.yaml` | `%APPDATA%\Dispatch\dispatch.env` | `%LOCALAPPDATA%\Dispatch` |
 
-**3. Check and run.**
+**3. Use it.** Write a task to the bot in Telegram (see [Use it](#use-it)). From the terminal:
 
 ```sh
-dispatch check                                   # bot token, claude, projects, gh; says what to fix
-dispatch run                                     # keep it running while you work; Ctrl+C stops it
-dispatch project add ~/work/crm --effort high    # another clone later; restart dispatch run to use it
+dispatch check                                   # config, bot token, claude, projects, gh: says what to fix
+dispatch service status                          # also: start, stop, install, uninstall
+dispatch project add ~/work/crm --effort high    # add another clone, then: dispatch service stop && dispatch service start
+dispatch run                                     # run in this terminal instead of the background
 ```
 
-Your bot has no group chat: tasks, plans and results stay in your private chat with it. The config is plain YAML that you may edit by hand, and `dispatch check` validates it. For each project it holds `path` (your clone), `baseBranch`, and optionally `model` and `effort` (`low`, `medium`, `high`, `xhigh` or `max`). Dispatch works in its own worktrees under the state directory and only adds `dispatch/<task>` branches to your clone.
+The service is a systemd user service on Linux, a launchd agent on macOS and a Task Scheduler task on Windows. It starts at login and restarts after a failure. On Linux, it keeps running after you log out only once lingering is on; `dispatch service status` says so.
 
-## Set up a team instance
+### A bot for your team
 
-The examples use the instance `backend`.
+One machine runs the team's bot, with clones of the team's projects: a small server or an always-on computer. Run `dispatch init` there and choose **My team**. Everyone writes their tasks to the same bot, in their own private chat, and the team group gets a one-line announcement per task and outcome.
+
+- **Joining later:** someone new opens the bot and writes to it. The bot's admins (you, after `init`) get their name with a button per group and **Deny**. Allowing adds them to the config and they can give tasks at once, no restart needed. After a Deny, a person can ask again a day later.
+- **Admins:** `telegram.admins` in the config lists the Telegram user ids of the people who decide.
+- **Config:** plain YAML you may edit by hand; `dispatch check` validates it. Per project: `path` (the clone), `baseBranch`, and optionally `model` and `effort` (`low`, `medium`, `high`, `xhigh` or `max`). Dispatch works in its own worktrees under the state directory and only adds `dispatch/<task>` branches to the clone.
+
+## Set up a team instance with systemd (Linux server)
+
+For a dedicated server with an OS user per team, run Dispatch as a system service instead. The examples use the instance `backend`.
 
 **1. Create the bot.** Create it with @BotFather. Leave privacy mode enabled (the default) and do not make the bot a group admin, because admins receive every message. Add the bot to each group it serves. Every member opens the bot once and presses **Start**: tasks are given in that private chat. Optionally, turn on topics (threaded mode) for the bot's private chats in @BotFather: each task then gets its own topic there. Dispatch checks this at startup (`task_topics=true` in the `dispatch.started` log line).
 
@@ -122,9 +144,9 @@ Only configured members can give tasks, and only for their groups' projects. Onl
 ## Run from a checkout
 
 ```sh
-./mvnw package
-java -jar target/dispatch-0.1.0.jar init --config dev.yaml    # dev.yaml and dev.env are git-ignored
-java -jar target/dispatch-0.1.0.jar run --config dev.yaml
+./install.sh                           # builds this checkout and installs it; .\install.ps1 on Windows
+dispatch init --config dev.yaml        # dev.yaml and dev.env are git-ignored
+dispatch run --config dev.yaml
 ```
 
 Locally, `claude` uses your own login. Your plugins and MCP servers are not loaded into agent runs, but the repository's `CLAUDE.md` is.

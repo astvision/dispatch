@@ -21,6 +21,7 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 - Task text and repository content can steer the agent (prompt injection). Planning is read-only, and code changes need a member's approval first (ADR 0006).
 - Splitting a message (✂️, ADR 0013) sends it to Haiku with no tools at all, not even read-only ones. The model can only answer with text, and each part is shown to the member before it becomes a draft.
 - Execution runs in auto mode: the agent edits files and runs builds and tests as the instance user, within what Claude's classifier allows (ADR 0009).
+- A shared bot's admins (ADR 0015) decide in Telegram who becomes a member, so their Telegram accounts are as sensitive as shell access to the bot's machine. A stranger can cause at most one message to each admin per day, and nothing else; every decision is logged.
 - A personal instance (ADR 0014) runs as the developer, so its boundary is the developer's own OS account: the agent can read their SSH keys, other repositories and saved logins. Anyone who controls their Telegram account or bot token can make it run commands as them. `dispatch init` makes only the person confirmed at the terminal a member. Nothing about projects, paths or agents can be changed from Telegram.
 
 ## Secrets
@@ -33,6 +34,11 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
   - What gets replaced with `[redacted]`: the values of Dispatch's secret variables, plus common credential formats (Telegram bot tokens, Anthropic, OpenAI, GitHub and AWS keys, private keys, credentials in URLs).
   - Limit: redaction is best effort, so a secret in an unknown format can still pass.
 - **Local secret files:** planning runs never get `copyFiles` such as `.env`, so local secrets cannot end up quoted in a plan posted to the group. Execution runs do get them, because builds and tests need them. Each must be git-ignored, so delivery never commits the file itself, but the agent could still copy a value into a tracked file or its summary. Review draft pull requests with that in mind.
+
+## Installing
+
+- `install.sh` and `install.ps1` build Dispatch from source over HTTPS (or through the authenticated GitHub CLI while the repository is private). Read a script before piping it into a shell if you do not trust the source.
+- The background service (ADR 0016) runs as the user who installed it, with the PATH setup ran with, and logs to `dispatch.log` in the owner-only state directory.
 
 ## State on disk
 
