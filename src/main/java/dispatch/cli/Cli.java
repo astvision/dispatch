@@ -17,10 +17,13 @@ public final class Cli {
     private Cli() {
     }
 
-    public sealed interface Invocation permits Run, Help {
+    public sealed interface Invocation permits Run, Check, Help {
     }
 
     public record Run(Path configFile) implements Invocation {
+    }
+
+    public record Check(Path configFile) implements Invocation {
     }
 
     public record Help() implements Invocation {
@@ -32,6 +35,7 @@ public final class Cli {
 
                 commands:
                   run      start the bot (the default)
+                  check    check the config, bot token, agent, projects and GitHub CLI
                   help     show this help
 
                 FILE defaults to %s
@@ -58,6 +62,10 @@ public final class Cli {
             case "run" -> {
                 arguments.allow(0, Set.of("config"));
                 yield new Run(arguments.configFile(defaults));
+            }
+            case "check" -> {
+                arguments.allow(0, Set.of("config"));
+                yield new Check(arguments.configFile(defaults));
             }
             default -> throw new CliException("unknown command '" + command + "'");
         };

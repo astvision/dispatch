@@ -58,8 +58,11 @@ public final class Git {
         return runProcess(commandLine, dir, ghToken, timeout, describe(args));
     }
 
-    /** Shared with {@link Gh}: nothing may prompt, the token travels only in the environment, and a hang is killed. */
-    static Result runProcess(List<String> commandLine, Path dir, String ghToken, Duration timeout, String description) {
+    /**
+     * Runs any command the way git and gh are run: nothing may prompt, the token travels only in the environment, and a hang
+     * is killed. Throws {@link WorkspaceException} when the command cannot start or times out.
+     */
+    public static Result runProcess(List<String> commandLine, Path dir, String ghToken, Duration timeout, String description) {
         ProcessBuilder builder = new ProcessBuilder(commandLine).directory(dir.toFile());
         builder.environment().put("GIT_TERMINAL_PROMPT", "0");
         if (ghToken != null) {

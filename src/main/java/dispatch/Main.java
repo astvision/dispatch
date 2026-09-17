@@ -1,7 +1,9 @@
 package dispatch;
 
+import dispatch.cli.CheckCommand;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
+import dispatch.cli.ConsoleTerminal;
 import dispatch.cli.Locations;
 import dispatch.cli.RunCommand;
 import dispatch.config.ConfigException;
@@ -30,6 +32,7 @@ public final class Main {
         switch (invocation) {
             case Cli.Help help -> System.out.print(Cli.usage(defaults));
             case Cli.Run run -> run(run.configFile());
+            case Cli.Check check -> System.exit(new CheckCommand(new ConsoleTerminal(), BotApi::create).run(check.configFile(), System.getenv()));
         }
     }
 

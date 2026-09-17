@@ -26,6 +26,12 @@ class CliTest {
     }
 
     @Test
+    void checkLooksAtTheDefaultOrAGivenConfig() {
+        assertEquals(new Cli.Check(DEFAULT_CONFIG), parse("check"));
+        assertEquals(new Cli.Check(Path.of("team.yaml")), parse("check", "--config", "team.yaml"));
+    }
+
+    @Test
     void helpIsShownOnRequest() {
         assertEquals(new Cli.Help(), parse("--help"));
         assertEquals(new Cli.Help(), parse("help"));
