@@ -34,8 +34,11 @@ public final class Renderer {
     public record Document(String fileName, String markdown) {
     }
 
-    /** @param document non-null when the content is sent as a file; {@code html} is then its caption */
-    public record Rendered(String html, List<Button> buttons, Document document) {
+    /**
+     * @param keyboard rows of inline buttons, empty for none
+     * @param document non-null when the content is sent as a file; {@code html} is then its caption
+     */
+    public record Rendered(String html, List<List<Button>> keyboard, Document document) {
     }
 
     private final ResourceBundle messages;
@@ -105,7 +108,7 @@ public final class Renderer {
             case HELP -> plain(format(payload.path("privateChat").asBoolean() ? "help.private" : "help",
                     projectList(payload.path("projects")), escape(payload.path("bot").asText())));
         };
-        return hint == null ? rendered : new Rendered(rendered.html() + "\n\n" + hint, rendered.buttons(), rendered.document());
+        return hint == null ? rendered : new Rendered(rendered.html() + "\n\n" + hint, rendered.keyboard(), rendered.document());
     }
 
     /** @param hint the Start hint of a message that fell back to the group, null otherwise */
@@ -115,9 +118,9 @@ public final class Renderer {
         String planRef = taskId + ":" + payload.path("planSeq").asInt();
         boolean openQuestions = !plan.path("questions").isEmpty();
         // With open questions there is nothing to approve yet: members answer by replying (a correction).
-        List<Button> buttons = openQuestions
+        List<List<Button>> buttons = List.of(openQuestions
                 ? List.of(new Button(text("button.reject"), "reject:" + planRef))
-                : List.of(new Button(text("button.approve"), "approve:" + planRef), new Button(text("button.reject"), "reject:" + planRef));
+                : List.of(new Button(text("button.approve"), "approve:" + planRef), new Button(text("button.reject"), "reject:" + planRef)));
         String title = format("plan.title", taskId, escape(payload.path("project").asText()));
 
         StringBuilder html = new StringBuilder(title).append("\n\n")
@@ -211,7 +214,7 @@ public final class Renderer {
         if (!running.isEmpty()) {
             blocks.add(text("status.running"));
             for (JsonNode run : running) {
-                String line = format("status.runLine", taskId(run), escape(run.path("project").asText()),
+                String line = icon(run) + format("status.runLine", taskId(run), escape(run.path("project").asText()),
                         text("kind." + run.path("kind").asText()), age(Instant.parse(run.path("startedAt").asText())));
                 if (run.hasNonNull("steps")) {
                     line += " · " + format("status.steps", run.path("steps").asInt());
@@ -226,7 +229,7 @@ public final class Renderer {
         if (!queued.isEmpty()) {
             blocks.add("\n" + text("status.queued"));
             for (JsonNode run : queued) {
-                blocks.add(format("status.queuedLine", taskId(run), escape(run.path("project").asText()),
+                blocks.add(icon(run) + format("status.queuedLine", taskId(run), escape(run.path("project").asText()),
                         text("kind." + run.path("kind").asText()), age(Instant.parse(run.path("queuedAt").asText())))
                         + "\n   " + escapeWithin(run.path("title").asText(), TITLE_LIMIT));
             }
@@ -234,12 +237,22 @@ public final class Renderer {
         if (!awaiting.isEmpty()) {
             blocks.add("\n" + text("status.awaiting"));
             for (JsonNode task : awaiting) {
-                blocks.add(format("status.awaitingLine", taskId(task), escape(task.path("project").asText()),
+                blocks.add(icon(task) + format("status.awaitingLine", taskId(task), escape(task.path("project").asText()),
                         escape(task.path("requester").asText()), age(Instant.parse(task.path("since").asText())))
                         + "\n   " + escapeWithin(task.path("title").asText(), TITLE_LIMIT));
             }
         }
-        return plain(joinWithin(blocks, "\n"));
+        List<List<Button>> keyboard = new ArrayList<>();
+        for (JsonNode task : payload.path("mine")) {
+            String id = taskId(task);
+            List<Button> row = new ArrayList<>();
+            for (String priority : PRIORITIES) {
+                String current = priority.equals(task.path("priority").asText()) ? "✓" : "";
+                row.add(new Button("#" + id + " " + current + PRIORITY_ICONS.get(priority), "prio:" + id + ":" + priority));
+            }
+            keyboard.add(row);
+        }
+        return new Rendered(joinWithin(blocks, "\n"), keyboard, null);
     }
 
     private Rendered history(JsonNode tasks) {
@@ -249,7 +262,7 @@ public final class Renderer {
         List<String> blocks = new ArrayList<>(List.of(text("history.header")));
         for (JsonNode task : tasks) {
             String phase = task.path("phase").asText();
-            StringBuilder block = new StringBuilder("\n").append(format("history.line", OUTCOME_ICONS.getOrDefault(phase, "•"),
+            StringBuilder block = new StringBuilder("\n").append(format("history.line", (OUTCOME_ICONS.getOrDefault(phase, "•") + " " + icon(task)).strip(),
                     taskId(task), escape(task.path("project").asText()), money(task.path("costUsd")),
                     age(Instant.parse(task.path("completedAt").asText()))))
                     .append("\n").append(escapeWithin(task.path("title").asText(), TITLE_LIMIT));
@@ -382,6 +395,15 @@ public final class Renderer {
 
     private static String money(JsonNode costUsd) {
         return costUsd.isTextual() ? "$" + new BigDecimal(costUsd.asText()).setScale(2, RoundingMode.HALF_UP).toPlainString() : "—";
+    }
+
+    private static final List<String> PRIORITIES = List.of("URGENT", "NORMAL", "LOW");
+    private static final java.util.Map<String, String> PRIORITY_ICONS = java.util.Map.of("URGENT", "🔴", "NORMAL", "🟡", "LOW", "🟢");
+
+    /** The priority icon and a space, or nothing for items from before priorities existed. */
+    private static String icon(JsonNode item) {
+        String icon = PRIORITY_ICONS.get(item.path("priority").asText());
+        return icon == null ? "" : icon + " ";
     }
 
     private static final java.util.Map<String, String> OUTCOME_ICONS =

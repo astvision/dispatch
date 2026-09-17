@@ -56,7 +56,7 @@ public final class BotApi {
     }
 
     /** @return the sent message's id */
-    public long sendMessage(long chatId, String html, Long replyToMessageId, List<Renderer.Button> buttons) {
+    public long sendMessage(long chatId, String html, Long replyToMessageId, List<List<Renderer.Button>> buttons) {
         ObjectNode body = Json.object().put("chat_id", chatId).put("text", html).put("parse_mode", "HTML");
         body.putObject("link_preview_options").put("is_disabled", true);
         if (replyToMessageId != null) {
@@ -70,7 +70,7 @@ public final class BotApi {
 
     /** @return the sent message's id */
     public long sendDocument(long chatId, String fileName, byte[] content, String captionHtml, Long replyToMessageId,
-                             List<Renderer.Button> buttons) {
+                             List<List<Renderer.Button>> buttons) {
         String boundary = "dispatch-" + UUID.randomUUID();
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         field(body, boundary, "chat_id", Long.toString(chatId));
@@ -92,6 +92,14 @@ public final class BotApi {
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
                 .build();
         return send("sendDocument", request).path("message_id").asLong();
+    }
+
+    /** Replaces a sent message's text and buttons, e.g. a status report after one of its buttons was used. */
+    public void editMessageText(long chatId, long messageId, String html, List<List<Renderer.Button>> buttons) {
+        ObjectNode body = Json.object().put("chat_id", chatId).put("message_id", messageId).put("text", html).put("parse_mode", "HTML");
+        body.putObject("link_preview_options").put("is_disabled", true);
+        body.set("reply_markup", keyboard(buttons));
+        call("editMessageText", body, requestTimeout);
     }
 
     public record BotCommand(String command, String description) {
@@ -178,10 +186,13 @@ public final class BotApi {
         return Json.object().put("message_id", messageId).put("allow_sending_without_reply", true);
     }
 
-    private static ObjectNode keyboard(List<Renderer.Button> buttons) {
+    private static ObjectNode keyboard(List<List<Renderer.Button>> rows) {
         ObjectNode markup = Json.object();
-        ArrayNode row = markup.putArray("inline_keyboard").addArray();
-        buttons.forEach(button -> row.addObject().put("text", button.text()).put("callback_data", button.data()));
+        ArrayNode keyboard = markup.putArray("inline_keyboard");
+        for (List<Renderer.Button> buttons : rows) {
+            ArrayNode row = keyboard.addArray();
+            buttons.forEach(button -> row.addObject().put("text", button.text()).put("callback_data", button.data()));
+        }
         return markup;
     }
 

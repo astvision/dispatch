@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Phase;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
 import dispatch.testing.SqlRows;
@@ -64,6 +65,29 @@ class RunsClaimTest {
     }
 
     @Test
+    void moreUrgentRunIsClaimedFirstAndTheOldestAmongEquals() {
+        long low = queue("alm", RunKind.PLAN, T0, Priority.LOW);
+        long normal = queue("alm", RunKind.PLAN, T0.plusSeconds(1), Priority.NORMAL);
+        long urgent = queue("crm", RunKind.PLAN, T0.plusSeconds(2), Priority.URGENT);
+        long laterUrgent = queue("crm", RunKind.PLAN, T0.plusSeconds(3), Priority.URGENT);
+
+        assertEquals(urgent, claim(10, T0).orElseThrow().taskId());
+        assertEquals(laterUrgent, claim(10, T0).orElseThrow().taskId());
+        assertEquals(normal, claim(10, T0).orElseThrow().taskId());
+        assertEquals(low, claim(10, T0).orElseThrow().taskId());
+    }
+
+    @Test
+    void urgentExecutionWaitingForItsProjectDoesNotBlockOtherWork() {
+        queue("alm", RunKind.EXECUTE, T0, Priority.NORMAL);
+        claim(10, T0).orElseThrow();
+        queue("alm", RunKind.EXECUTE, T0.plusSeconds(1), Priority.URGENT);
+        long lowPlan = queue("crm", RunKind.PLAN, T0.plusSeconds(2), Priority.LOW);
+
+        assertEquals(lowPlan, claim(10, T0).orElseThrow().taskId());
+    }
+
+    @Test
     void executionWaitsForItsProjectsRunningExecutionWhilePlansAndOtherProjectsProceed() {
         long runningExecution = queue("alm", RunKind.EXECUTE, T0);
         claim(10, T0).orElseThrow();
@@ -84,9 +108,13 @@ class RunsClaimTest {
     }
 
     private long queue(String project, RunKind kind, Instant queuedAt) {
+        return queue(project, kind, queuedAt, Priority.NORMAL);
+    }
+
+    private long queue(String project, RunKind kind, Instant queuedAt, Priority priority) {
         return db.transactionReturning(tx -> {
             long id = Tasks.insert(tx, new Tasks.NewTask(project, "t", "t", new Requester("telegram:1", "Bold"),
-                    "telegram:-1/" + UUID.randomUUID(), "telegram:-1", UUID.randomUUID(), "main"), Phase.PLANNING, queuedAt);
+                    "telegram:-1/" + UUID.randomUUID(), "telegram:-1", UUID.randomUUID(), "main", priority), Phase.PLANNING, queuedAt);
             Runs.insert(tx, new Runs.NewRun(id, 1, kind, "t", new Requester("telegram:1", "Bold")), queuedAt);
             return id;
         });

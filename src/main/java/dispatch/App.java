@@ -93,7 +93,8 @@ public final class App {
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
         registerCommandMenus(api, renderer, groups);
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
-        UpdateHandler handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, botUsername, clock, outboxSignal::wake);
+        UpdateHandler handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, redactor, botUsername, clock,
+                outboxSignal::wake);
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         App[] app = new App[1];

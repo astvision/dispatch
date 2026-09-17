@@ -55,7 +55,8 @@ class PollerTest {
         TaskService tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
         UpdateHandler handler = new UpdateHandler(db, tasks, groups, projects, api,
-                new Renderer(Renderer.mongolian(), clock, FakeTelegram.BOT_USERNAME), FakeTelegram.BOT_USERNAME, clock, () -> { });
+                new Renderer(Renderer.mongolian(), clock, FakeTelegram.BOT_USERNAME), dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME,
+                clock, () -> { });
         poller = new Poller(api, handler, 0, Duration.ofMillis(50), Duration.ofMillis(200));
     }
 

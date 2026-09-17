@@ -114,12 +114,27 @@ class DatabaseTest {
         assertEquals("FAILED", dispatch.testing.SqlRows.single(file, "SELECT status FROM outbox WHERE id = 1").get("status"));
     }
 
+    @Test
+    void version3TasksBecomeNormalPriority() throws Exception {
+        Path file = databaseAtVersion(3, """
+                INSERT INTO task (id, project, title, description, phase, requester_ref, requester_name, origin_ref, chat_ref,
+                                  session_id, base_branch, created_at, updated_at)
+                VALUES (1, 'alm', 't', 't', 'PLANNING', 'telegram:1', 'Bold', 'telegram:-1/5', 'telegram:-1',
+                        '63d36fba-124d-4737-8020-d37d4998abca', 'main', '2026-09-17T10:00:00.000Z', '2026-09-17T10:00:00.000Z')""");
+
+        try (Database upgraded = Database.open(file)) {
+            upgraded.migrate();
+
+            assertEquals(dispatch.domain.Priority.NORMAL, upgraded.transactionReturning(tx -> Tasks.find(tx, 1)).orElseThrow().priority());
+        }
+    }
+
     /** A state file as an older Dispatch left it: the first {@code version} migrations applied, then {@code inserts}. */
     private Path databaseAtVersion(int version, String... inserts) throws Exception {
         Path file = dir.resolve("v" + version + ".db");
         try (java.sql.Connection connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file);
              java.sql.Statement statement = connection.createStatement()) {
-            String[] scripts = {"/db/001-init.sql", "/db/002-execution.sql"};
+            String[] scripts = {"/db/001-init.sql", "/db/002-execution.sql", "/db/003-private-messages.sql"};
             for (int i = 0; i < version; i++) {
                 try (java.io.InputStream script = getClass().getResourceAsStream(scripts[i])) {
                     String sqlText = new String(script.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);

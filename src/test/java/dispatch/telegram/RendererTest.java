@@ -38,8 +38,8 @@ class RendererTest {
         assertTrue(html.contains("1 мин 50 сек"), html);
         assertFalse(html.contains(messages.getString("plan.questions")), html);
         assertTrue(html.contains(messages.getString("plan.replyHint")), html);
-        assertEquals(List.of(new Renderer.Button(messages.getString("button.approve"), "approve:42:1"),
-                new Renderer.Button(messages.getString("button.reject"), "reject:42:1")), rendered.buttons());
+        assertEquals(List.of(List.of(new Renderer.Button(messages.getString("button.approve"), "approve:42:1"),
+                new Renderer.Button(messages.getString("button.reject"), "reject:42:1"))), rendered.keyboard());
     }
 
     @Test
@@ -50,7 +50,7 @@ class RendererTest {
         assertTrue(rendered.html().contains(messages.getString("plan.questions")), rendered.html());
         assertTrue(rendered.html().contains("1. Which environment reads auth.timeout?"), rendered.html());
         assertTrue(rendered.html().contains(messages.getString("plan.questionsHint")), rendered.html());
-        assertEquals(List.of(new Renderer.Button(messages.getString("button.reject"), "reject:42:1")), rendered.buttons(),
+        assertEquals(List.of(List.of(new Renderer.Button(messages.getString("button.reject"), "reject:42:1"))), rendered.keyboard(),
                 "no Approve while questions are open; answers come as replies");
     }
 
@@ -65,7 +65,7 @@ class RendererTest {
         assertEquals("plan-42.md", rendered.document().fileName());
         assertTrue(rendered.document().markdown().contains("150. Step 150 touches"), rendered.document().markdown());
         assertTrue(rendered.html().length() <= 1024, "caption limit");
-        assertEquals("approve:42:1", rendered.buttons().getFirst().data());
+        assertEquals("approve:42:1", rendered.keyboard().getFirst().getFirst().data());
     }
 
     @Test
@@ -162,27 +162,40 @@ class RendererTest {
         String html = renderer.render(OutboxKind.STATUS, statusPayload()).html();
 
         assertTrue(html.contains(messages.getString("status.running")), html);
-        assertTrue(html.contains("<b>#3</b> life · " + messages.getString("kind.EXECUTE") + " · 4 мин · 5 алхам"), html);
+        assertTrue(html.contains("🟡 <b>#3</b> life · " + messages.getString("kind.EXECUTE") + " · 4 мин · 5 алхам"), html);
         assertTrue(html.contains("Fix the &lt;login&gt; timeout"), html);
         assertTrue(html.contains("└ Bash: ./gradlew test"), html);
         assertTrue(html.contains(messages.getString("status.queued")), html);
-        assertTrue(html.contains("<b>#4</b> life · " + messages.getString("kind.PLAN")), html);
+        assertTrue(html.contains("🔴 <b>#4</b> life · " + messages.getString("kind.PLAN")), html);
         assertTrue(html.contains(messages.getString("status.awaiting")), html);
-        assertTrue(html.contains("<b>#2</b> life · Bold · 1 цаг"), html);
+        assertTrue(html.contains("🟢 <b>#2</b> life · Bold · 1 цаг"), html);
         assertTrue(html.indexOf("#3") < html.indexOf("#4") && html.indexOf("#4") < html.indexOf("#2"), html);
+    }
+
+    @Test
+    void privateStatusHasARowOfPriorityButtonsPerOwnTaskWithTheCurrentOneMarked() {
+        ObjectNode payload = statusPayload();
+        payload.putArray("mine").addObject().put("taskId", 4).put("priority", "URGENT");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.STATUS, payload);
+
+        assertEquals(List.of(List.of(new Renderer.Button("#4 ✓🔴", "prio:4:URGENT"), new Renderer.Button("#4 🟡", "prio:4:NORMAL"),
+                new Renderer.Button("#4 🟢", "prio:4:LOW"))), rendered.keyboard());
     }
 
     @Test
     void statusOfARunStillPreparingShowsNoActivityLine() {
         ObjectNode payload = Json.object();
         payload.putArray("running").addObject().put("taskId", 3).put("project", "life").put("title", "Fix it").put("kind", "PLAN")
-                .put("startedAt", "2026-09-17T10:29:50Z");
+                .put("priority", "NORMAL").put("startedAt", "2026-09-17T10:29:50Z");
         payload.putArray("queued");
         payload.putArray("awaitingApproval");
+        payload.putArray("mine");
 
         String html = renderer.render(OutboxKind.STATUS, payload).html();
 
         assertTrue(html.contains("<b>#3</b> life · " + messages.getString("kind.PLAN") + " · " + messages.getString("age.justNow")), html);
+        assertTrue(rendered(payload).keyboard().isEmpty());
         assertFalse(html.contains("└"), html);
     }
 
@@ -192,6 +205,7 @@ class RendererTest {
         payload.putArray("running");
         payload.putArray("queued");
         payload.putArray("awaitingApproval");
+        payload.putArray("mine");
 
         assertEquals(messages.getString("status.empty"), renderer.render(OutboxKind.STATUS, payload).html());
     }
@@ -200,7 +214,7 @@ class RendererTest {
     void historyShowsEachOutcomeWithPullRequestFailureCostAndAge() {
         String html = renderer.render(OutboxKind.HISTORY, historyPayload()).html();
 
-        assertTrue(html.contains("✅ <b>#2</b> life · $0.42 · 3 цаг"), html);
+        assertTrue(html.contains("✅ 🟡 <b>#2</b> life · $0.42 · 3 цаг"), html);
         assertTrue(html.contains("https://github.com/acme/life/pull/1"), html);
         assertTrue(html.contains("❌ <b>#5</b> life"), html);
         assertTrue(html.contains(messages.getString("failure.DELIVERY")), html);
@@ -295,21 +309,27 @@ class RendererTest {
         return payload;
     }
 
+    private Renderer.Rendered rendered(ObjectNode statusPayload) {
+        return renderer.render(OutboxKind.STATUS, statusPayload);
+    }
+
     private static ObjectNode statusPayload() {
         ObjectNode payload = Json.object();
         payload.putArray("running").addObject().put("taskId", 3).put("project", "life").put("title", "Fix the <login> timeout")
-                .put("kind", "EXECUTE").put("startedAt", "2026-09-17T10:26:00Z").put("steps", 5).put("lastAction", "Bash: ./gradlew test");
+                .put("kind", "EXECUTE").put("priority", "NORMAL").put("startedAt", "2026-09-17T10:26:00Z").put("steps", 5)
+                .put("lastAction", "Bash: ./gradlew test");
         payload.putArray("queued").addObject().put("taskId", 4).put("project", "life").put("title", "Rename the report")
-                .put("kind", "PLAN").put("queuedAt", "2026-09-17T10:29:30Z");
+                .put("kind", "PLAN").put("priority", "URGENT").put("queuedAt", "2026-09-17T10:29:30Z");
         payload.putArray("awaitingApproval").addObject().put("taskId", 2).put("project", "life").put("title", "Add make help")
-                .put("requester", "Bold").put("since", "2026-09-17T09:30:00Z");
+                .put("priority", "LOW").put("requester", "Bold").put("since", "2026-09-17T09:30:00Z");
+        payload.putArray("mine");
         return payload;
     }
 
     private static ObjectNode historyPayload() {
         ObjectNode payload = Json.object();
         com.fasterxml.jackson.databind.node.ArrayNode tasks = payload.putArray("tasks");
-        tasks.addObject().put("taskId", 2).put("project", "life").put("title", "Add make help").put("phase", "COMPLETED")
+        tasks.addObject().put("taskId", 2).put("project", "life").put("title", "Add make help").put("phase", "COMPLETED").put("priority", "NORMAL")
                 .put("prUrl", "https://github.com/acme/life/pull/1").putNull("failureReason").put("costUsd", "0.42")
                 .put("completedAt", "2026-09-17T07:30:00Z");
         tasks.addObject().put("taskId", 5).put("project", "life").put("title", "Fix login").put("phase", "FAILED")

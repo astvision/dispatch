@@ -2,6 +2,7 @@ package dispatch.store;
 
 import dispatch.domain.FailureReason;
 import dispatch.domain.Phase;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Task;
 import java.nio.file.Path;
@@ -16,7 +17,7 @@ import java.util.UUID;
 public final class Tasks {
 
     private static final String COLUMNS = """
-            id, project, title, description, phase, requester_ref, requester_name, origin_ref, chat_ref, session_id,
+            id, project, title, description, phase, priority, requester_ref, requester_name, origin_ref, chat_ref, session_id,
             base_branch, base_sha, worktree, plan_json, pr_url, failure_reason, failure_detail,
             created_at, started_at, completed_at, updated_at""";
 
@@ -31,16 +32,17 @@ public final class Tasks {
             String originRef,
             String chatRef,
             UUID sessionId,
-            String baseBranch) {
+            String baseBranch,
+            Priority priority) {
     }
 
     public static long insert(Tx tx, NewTask task, Phase phase, Instant now) {
         return tx.insert("""
-                        INSERT INTO task (project, title, description, phase, requester_ref, requester_name, origin_ref, chat_ref,
-                                          session_id, base_branch, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                task.project(), task.title(), task.description(), phase, task.requester().ref(), task.requester().name(),
-                task.originRef(), task.chatRef(), task.sessionId(), task.baseBranch(), now, now);
+                        INSERT INTO task (project, title, description, phase, priority, requester_ref, requester_name, origin_ref,
+                                          chat_ref, session_id, base_branch, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                task.project(), task.title(), task.description(), phase, task.priority(), task.requester().ref(),
+                task.requester().name(), task.originRef(), task.chatRef(), task.sessionId(), task.baseBranch(), now, now);
     }
 
     public static Optional<Task> find(Tx tx, long id) {
@@ -88,6 +90,12 @@ public final class Tasks {
                 to, completedAt, now, id, from) == 1;
     }
 
+    /** Sets the priority of a task that has not finished; false when it has. */
+    public static boolean changePriority(Tx tx, long id, Priority priority, Instant now) {
+        return tx.update("UPDATE task SET priority = ?, updated_at = ? WHERE id = ? AND phase IN (?, ?, ?)",
+                priority, now, id, Phase.PLANNING, Phase.AWAITING_APPROVAL, Phase.EXECUTING) == 1;
+    }
+
     public static boolean planned(Tx tx, long id, String planJson, Instant now) {
         return tx.update("""
                         UPDATE task SET phase = ?, plan_json = ?, updated_at = ?
@@ -121,6 +129,7 @@ public final class Tasks {
                 row.string("title"),
                 row.string("description"),
                 row.enumValue("phase", Phase.class),
+                row.enumValue("priority", Priority.class),
                 new Requester(row.string("requester_ref"), row.string("requester_name")),
                 row.string("origin_ref"),
                 row.string("chat_ref"),

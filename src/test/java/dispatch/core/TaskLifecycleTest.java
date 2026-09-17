@@ -15,6 +15,7 @@ import dispatch.config.Config;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
 import dispatch.domain.Plan;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
 import dispatch.store.Database;
@@ -500,6 +501,33 @@ class TaskLifecycleTest {
         assertEquals("FAILED", task.get("phase"));
         assertEquals("DELIVERY", task.get("failure_reason"));
         assertEquals("EXECUTING", row("SELECT from_phase FROM task_event WHERE task_id = ? AND to_phase = 'FAILED'", id).get("from_phase"));
+    }
+
+    @Test
+    void requesterChangesTheirTasksPriority() {
+        long id = create(BOLD, "alm", "Fix login timeout", "93");
+
+        assertEquals(PriorityResult.CHANGED, db.transactionReturning(tx -> tasks.changePriority(tx, BOLD, id, Priority.URGENT)));
+        assertEquals(PriorityResult.UNCHANGED, db.transactionReturning(tx -> tasks.changePriority(tx, BOLD, id, Priority.URGENT)));
+
+        assertEquals("URGENT", row("SELECT priority FROM task WHERE id = ?", id).get("priority"));
+        Map<String, String> event = row("SELECT * FROM task_event WHERE task_id = ? AND reason LIKE 'priority%'", id);
+        assertEquals("priority NORMAL -> URGENT", event.get("reason"));
+        assertEquals("telegram:100", event.get("actor"));
+        assertEquals("PLANNING", event.get("to_phase"));
+    }
+
+    @Test
+    void priorityIsTheRequestersToChangeAndOnlyWhileTheTaskIsActive() {
+        long finished = awaitingApproval("95");
+        db.transaction(tx -> tasks.reject(tx, BOLD, finished, 1));
+        long active = create(BOLD, "alm", "Fix login timeout", "94");
+
+        assertEquals(PriorityResult.NOT_REQUESTER, db.transactionReturning(tx -> tasks.changePriority(tx, ALI, active, Priority.LOW)));
+        assertEquals(PriorityResult.NOT_ALLOWED, db.transactionReturning(tx -> tasks.changePriority(tx, STRANGER, active, Priority.LOW)));
+        assertEquals(PriorityResult.NOT_FOUND, db.transactionReturning(tx -> tasks.changePriority(tx, BOLD, 999, Priority.LOW)));
+        assertEquals(PriorityResult.FINISHED, db.transactionReturning(tx -> tasks.changePriority(tx, BOLD, finished, Priority.LOW)));
+        assertEquals("NORMAL", row("SELECT priority FROM task WHERE id = ?", active).get("priority"));
     }
 
     @Test

@@ -2,6 +2,7 @@ package dispatch.store;
 
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Run;
 import dispatch.domain.RunKind;
@@ -56,9 +57,10 @@ public final class Runs {
     }
 
     /**
-     * Claims the oldest queued run that may start now: fewer than {@code maxConcurrentRuns} runs are active, and an
-     * execution-type run also needs its project to have no other execution running (builds and tests of the same
-     * project can clash on ports and test databases). Planning runs only need a free slot.
+     * Claims the most urgent queued run that may start now, the oldest among equals: fewer than {@code maxConcurrentRuns}
+     * runs are active, and an execution-type run also needs its project to have no other execution running (builds and
+     * tests of the same project can clash on ports and test databases). Planning runs only need a free slot. A run that
+     * cannot start yet never holds back the ones after it.
      */
     public static Optional<ClaimedRun> claimNext(Tx tx, int maxConcurrentRuns, Instant now) {
         int running = tx.one("SELECT count(*) AS n FROM run WHERE status = ?", row -> row.intValue("n"), RunStatus.RUNNING)
@@ -73,10 +75,10 @@ public final class Runs {
                           AND (r.kind = ? OR NOT EXISTS (
                                 SELECT 1 FROM run busy JOIN task busy_task ON busy_task.id = busy.task_id
                                 WHERE busy.status = ? AND busy.kind IN (?, ?) AND busy_task.project = t.project))
-                        ORDER BY r.queued_at, r.task_id, r.seq
+                        ORDER BY CASE t.priority WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END, r.queued_at, r.task_id, r.seq
                         LIMIT 1""",
                 row -> new ClaimedRun(row.longValue("task_id"), row.intValue("seq"), row.enumValue("kind", RunKind.class)),
-                RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE, RunKind.DELIVER);
+                RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE, RunKind.DELIVER, Priority.URGENT, Priority.NORMAL);
         next.ifPresent(run -> {
             tx.update("UPDATE run SET status = ?, started_at = ? WHERE task_id = ? AND seq = ? AND status = ?",
                     RunStatus.RUNNING, now, run.taskId(), run.seq(), RunStatus.QUEUED);

@@ -5,10 +5,13 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
+import dispatch.Redactor;
 import dispatch.core.Groups;
+import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
 import dispatch.core.TaskService;
 import dispatch.domain.OutboxKind;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Kv;
@@ -37,18 +40,21 @@ public final class UpdateHandler {
     private final Projects projects;
     private final BotApi api;
     private final Renderer renderer;
+    private final Redactor redactor;
     private final String botUsername;
     private final Clock clock;
     private final Runnable wakeOutbox;
 
+    /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Groups groups, Projects projects, BotApi api, Renderer renderer,
-                         String botUsername, Clock clock, Runnable wakeOutbox) {
+                         Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox) {
         this.db = db;
         this.tasks = tasks;
         this.groups = groups;
         this.projects = projects;
         this.api = api;
         this.renderer = renderer;
+        this.redactor = redactor;
         this.botUsername = botUsername;
         this.clock = clock;
         this.wakeOutbox = wakeOutbox;
@@ -129,7 +135,7 @@ public final class UpdateHandler {
                 String text = projectAndText.length > 1 ? projectAndText[1].strip() : "";
                 tasks.create(tx, who, projectAndText[0], withRepliedMessage(text, message.path("reply_to_message")), origin, chatRef);
             }
-            case "status" -> tasks.status(tx, visible, origin, chatRef);
+            case "status" -> tasks.status(tx, visible, privateChat ? who.ref() : null, origin, chatRef);
             case "history" -> taskId(command.args()).ifPresentOrElse(
                     id -> tasks.timeline(tx, visible, id, origin, chatRef),
                     () -> tasks.history(tx, visible, origin, chatRef));
@@ -171,18 +177,26 @@ public final class UpdateHandler {
         JsonNode chat = callback.path("message").path("chat");
         boolean servedChat = groups.isGroupChat(Refs.chat(chat.path("id").asLong())) || isPrivateChatOf(chat, from);
         String[] parts = callback.path("data").asText().split(":");
-        boolean known = parts.length == 3 && (parts[0].equals("approve") || parts[0].equals("reject"));
+        boolean known = parts.length == 3 && Set.of("approve", "reject", "prio").contains(parts[0]);
         if (!servedChat || !known || !from.has("id")) {
             answer(tx, callbackId, "callback.unknown");
             return;
         }
         Optional<Long> taskId = taskId(parts[1]);
-        Optional<Long> planSeq = taskId(parts[2]);
-        if (taskId.isEmpty() || planSeq.isEmpty()) {
+        if (taskId.isEmpty()) {
             answer(tx, callbackId, "callback.unknown");
             return;
         }
         Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
+        if (parts[0].equals("prio")) {
+            onPriorityButton(tx, callback, who, taskId.get(), parts[2]);
+            return;
+        }
+        Optional<Long> planSeq = taskId(parts[2]);
+        if (planSeq.isEmpty()) {
+            answer(tx, callbackId, "callback.unknown");
+            return;
+        }
         int seq = planSeq.get().intValue();
         String answer = parts[0].equals("approve")
                 ? switch (tasks.approve(tx, who, taskId.get(), seq)) {
@@ -203,6 +217,38 @@ public final class UpdateHandler {
                     case STALE_PLAN -> "callback.stale";
                 };
         answer(tx, callbackId, answer);
+    }
+
+    /** A priority button under a status report: change it, then redraw that report so it shows the new order. */
+    private void onPriorityButton(Tx tx, JsonNode callback, Requester who, long taskId, String value) {
+        String callbackId = callback.path("id").asText();
+        Priority priority;
+        try {
+            priority = Priority.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            answer(tx, callbackId, "callback.unknown");
+            return;
+        }
+        PriorityResult result = tasks.changePriority(tx, who, taskId, priority);
+        answer(tx, callbackId, switch (result) {
+            case CHANGED -> "callback.priorityChanged";
+            case UNCHANGED -> "callback.priorityUnchanged";
+            case NOT_ALLOWED -> "callback.notAllowed";
+            case NOT_FOUND -> "callback.notFound";
+            case NOT_REQUESTER -> "callback.notRequester";
+            case FINISHED -> "callback.wrongState";
+        });
+        if (result != PriorityResult.CHANGED) {
+            return;
+        }
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        long messageId = message.path("message_id").asLong();
+        boolean privateChat = isPrivateChatOf(message.path("chat"), callback.path("from"));
+        Set<String> visible = privateChat ? groups.projectsOfMember(who.ref()) : groups.projectsOfChat(Refs.chat(chatId));
+        ObjectNode payload = tasks.statusPayload(tx, visible, privateChat ? who.ref() : null);
+        Renderer.Rendered status = renderer.render(OutboxKind.STATUS, Json.read(redactor.redact(payload.toString())));
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, status.html(), status.keyboard())));
     }
 
     private void onMembershipChange(Tx tx, JsonNode change) {

@@ -16,6 +16,7 @@ public record Task(
         String title,
         String description,
         Phase phase,
+        Priority priority,
         Requester requester,
         String originRef,
         String chatRef,

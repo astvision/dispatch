@@ -8,6 +8,7 @@ import dispatch.config.Config;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Run;
 import dispatch.domain.RunKind;
@@ -21,6 +22,7 @@ import dispatch.store.Tx;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -102,7 +104,7 @@ public final class TaskService {
 
         String description = text.strip();
         long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, chatRef,
-                UUID.randomUUID(), project.baseBranch()), Phase.PLANNING, now);
+                UUID.randomUUID(), project.baseBranch(), Priority.NORMAL), Phase.PLANNING, now);
         Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, description, who), now);
         Events.record(tx, id, null, who.ref(), null, Phase.PLANNING, "created", now);
         enqueue(tx, id, OutboxKind.TASK_QUEUED, chatRef, originRef,
@@ -231,6 +233,36 @@ public final class TaskService {
         return RejectResult.REJECTED;
     }
 
+    /** The requester moves their unfinished task up or down the queue; a running agent is not affected (ADR 0012). */
+    public PriorityResult changePriority(Tx tx, Requester who, long taskId, Priority priority) {
+        Instant now = clock.instant();
+        if (!groups.isMember(who.ref())) {
+            return PriorityResult.NOT_ALLOWED;
+        }
+        Optional<Task> found = Tasks.find(tx, taskId);
+        if (found.isEmpty()) {
+            return PriorityResult.NOT_FOUND;
+        }
+        Task task = found.get();
+        if (!task.requester().ref().equals(who.ref())) {
+            return PriorityResult.NOT_REQUESTER;
+        }
+        if (!task.phase().isActive()) {
+            return PriorityResult.FINISHED;
+        }
+        if (task.priority() == priority) {
+            return PriorityResult.UNCHANGED;
+        }
+        if (!Tasks.changePriority(tx, taskId, priority, now)) {
+            return PriorityResult.FINISHED;
+        }
+        String change = "priority " + task.priority() + " -> " + priority;
+        Events.record(tx, taskId, null, who.ref(), task.phase(), task.phase(), change, now);
+        tx.afterCommit(() -> Log.info("task.priority_changed", "task", taskId, "from", task.priority(), "to", priority,
+                "actor", who.ref()));
+        return PriorityResult.CHANGED;
+    }
+
     /**
      * Cancels an active task of the member's groups, or one they requested; a running agent is stopped after commit and its
      * run ends as CANCELLED. Another group's task is answered as not found, so its existence does not leak.
@@ -269,15 +301,28 @@ public final class TaskService {
     /**
      * Posts what Dispatch is doing on {@code visibleProjects}: running runs with their agent's latest action, then queued
      * runs, then plans awaiting approval.
+     *
+     * @param viewerRef the member asking in their private chat, whose active tasks get priority buttons; null in a group
      */
-    public void status(Tx tx, Set<String> visibleProjects, String originRef, String chatRef) {
+    public void status(Tx tx, Set<String> visibleProjects, String viewerRef, String originRef, String chatRef) {
+        enqueue(tx, null, OutboxKind.STATUS, chatRef, originRef, statusPayload(tx, visibleProjects, viewerRef), clock.instant());
+    }
+
+    /** The content of a status message, also used to update one in place after a priority change. */
+    public ObjectNode statusPayload(Tx tx, Set<String> visibleProjects, String viewerRef) {
         ObjectNode payload = Json.object();
+        Map<Long, Task> active = new LinkedHashMap<>();
+        for (Task task : Tasks.active(tx)) {
+            if (visibleProjects.contains(task.project())) {
+                active.put(task.id(), task);
+            }
+        }
         ArrayNode running = payload.putArray("running");
         ArrayNode queued = payload.putArray("queued");
         for (Runs.InProgress run : Runs.inProgress(tx, visibleProjects)) {
             boolean isRunning = run.status() == RunStatus.RUNNING;
             ObjectNode item = (isRunning ? running : queued).addObject().put("taskId", run.taskId()).put("project", run.project())
-                    .put("title", run.title()).put("kind", run.kind().name());
+                    .put("title", run.title()).put("kind", run.kind().name()).put("priority", priority(active.get(run.taskId())));
             if (isRunning) {
                 item.put("startedAt", text(run.startedAt()));
                 activeRuns.activity(run.taskId()).ifPresent(activity ->
@@ -289,9 +334,13 @@ public final class TaskService {
         ArrayNode awaiting = payload.putArray("awaitingApproval");
         for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL, visibleProjects)) {
             awaiting.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
-                    .put("requester", task.requester().name()).put("since", text(task.updatedAt()));
+                    .put("priority", task.priority().name()).put("requester", task.requester().name())
+                    .put("since", text(task.updatedAt()));
         }
-        enqueue(tx, null, OutboxKind.STATUS, chatRef, originRef, payload, clock.instant());
+        ArrayNode mine = payload.putArray("mine");
+        active.values().stream().filter(task -> task.requester().ref().equals(viewerRef))
+                .forEach(task -> mine.addObject().put("taskId", task.id()).put("priority", task.priority().name()));
+        return payload;
     }
 
     /** Posts the most recently finished tasks of {@code visibleProjects}, newest first, with their total cost. */
@@ -303,7 +352,7 @@ public final class TaskService {
         for (Task task : finished) {
             BigDecimal cost = costs.get(task.id());
             listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
-                    .put("phase", task.phase().name()).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
+                    .put("phase", task.phase().name()).put("priority", task.priority().name()).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
                     .put("costUsd", cost == null ? null : cost.toPlainString()).put("completedAt", text(task.completedAt()));
         }
         enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, payload, clock.instant());
@@ -318,7 +367,8 @@ public final class TaskService {
         }
         Task task = found.get();
         ObjectNode payload = Json.object().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
-                .put("requester", task.requester().name()).put("phase", task.phase().name()).put("prUrl", task.prUrl())
+                .put("requester", task.requester().name()).put("phase", task.phase().name()).put("priority", task.priority().name())
+                .put("prUrl", task.prUrl())
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
                 .put("completedAt", text(task.completedAt()));
         ArrayNode runs = payload.putArray("runs");
@@ -365,6 +415,11 @@ public final class TaskService {
 
     private static String text(Instant instant) {
         return instant == null ? null : instant.toString();
+    }
+
+    /** A run's task is active while the run is queued or running; null only if it finished between the two reads. */
+    private static String priority(Task task) {
+        return task == null ? null : task.priority().name();
     }
 
     private static String name(Enum<?> constant) {

@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 
 class BotApiTest {
 
-    private static final List<Renderer.Button> REJECT = List.of(new Renderer.Button("Татгалзах", "reject:42:1"));
+    private static final List<List<Renderer.Button>> REJECT = List.of(List.of(new Renderer.Button("Татгалзах", "reject:42:1")));
 
     private FakeTelegram telegram;
     private BotApi api;
@@ -146,6 +146,28 @@ class BotApiTest {
         assertEquals("all_private_chats", body.get("scope").get("type").asText());
         assertFalse(body.get("scope").has("chat_id"));
         assertEquals("status", body.get("commands").get(0).get("command").asText());
+    }
+
+    @Test
+    void keyboardRowsStaySeparateRows() throws Exception {
+        api.sendMessage(-100L, "x", null, List.of(List.of(new Renderer.Button("a", "1")),
+                List.of(new Renderer.Button("b", "2"), new Renderer.Button("c", "3"))));
+
+        JsonNode rows = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json().get("reply_markup").get("inline_keyboard");
+        assertEquals(2, rows.size());
+        assertEquals("c", rows.get(1).get(1).get("text").asText());
+    }
+
+    @Test
+    void editMessageTextReplacesTheTextAndKeyboardOfASentMessage() throws Exception {
+        api.editMessageText(100L, 77L, "<b>new</b>", List.of(List.of(new Renderer.Button("b", "prio:4:LOW"))));
+
+        JsonNode body = telegram.awaitRequest("editMessageText", Duration.ofSeconds(1)).json();
+        assertEquals(100, body.get("chat_id").asLong());
+        assertEquals(77, body.get("message_id").asLong());
+        assertEquals("<b>new</b>", body.get("text").asText());
+        assertEquals("HTML", body.get("parse_mode").asText());
+        assertEquals("prio:4:LOW", body.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
     }
 
     @Test

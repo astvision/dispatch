@@ -69,7 +69,8 @@ class UpdateHandlerTest {
         TaskService tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { });
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
-        handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, FakeTelegram.BOT_USERNAME, clock, () -> { });
+        handler = new UpdateHandler(db, tasks, groups, projects, api, renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME,
+                clock, () -> { });
     }
 
     @AfterEach
@@ -360,6 +361,33 @@ class UpdateHandlerTest {
         JsonNode help = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:300/74'").get("payload"));
         assertEquals(1, help.get("projects").size());
         assertEquals("life", help.get("projects").get(0).get("name").asText());
+    }
+
+    @Test
+    void priorityButtonChangesThePriorityAndUpdatesTheStatusMessageInPlace() throws Exception {
+        handler.handle(message(580, 80, 100, "Bold", GROUP, "supergroup", "/task alm Fix the login timeout", null));
+
+        handler.handle(privateCallback(581, 100, "Bold", "prio:1:URGENT"));
+
+        assertEquals("URGENT", row("SELECT priority FROM task WHERE id = 1").get("priority"));
+        assertEquals(renderer.text("callback.priorityChanged"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode edit = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(100, edit.get("chat_id").asLong());
+        assertEquals(88, edit.get("message_id").asLong(), "the status message the button belongs to");
+        assertTrue(edit.get("text").asText().contains("🔴"), edit.toString());
+        assertEquals("prio:1:URGENT", edit.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
+    }
+
+    @Test
+    void priorityButtonOfSomeoneElsesTaskIsRefused() throws Exception {
+        handler.handle(message(582, 82, 100, "Bold", GROUP, "supergroup", "/task alm Fix the login timeout", null));
+
+        handler.handle(privateCallback(583, 200, "Ali", "prio:1:LOW"));
+
+        assertEquals("NORMAL", row("SELECT priority FROM task WHERE id = 1").get("priority"));
+        assertEquals(renderer.text("callback.notRequester"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
     @Test

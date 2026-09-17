@@ -12,6 +12,7 @@ import dispatch.agent.RunHandle;
 import dispatch.config.Config;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Runs;
@@ -84,7 +85,8 @@ class StatusAndHistoryTest {
         long queued = create("Rename the report", "3");
         clock.advance(Duration.ofMinutes(4));
 
-        db.transaction(tx -> tasks.status(tx, LIFE, CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.changePriority(tx, BOLD, queued, Priority.URGENT));
+        db.transaction(tx -> tasks.status(tx, LIFE, null, CHAT + "/99", CHAT));
 
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'STATUS'");
         assertEquals(CHAT + "/99", message.get("reply_to_ref"));
@@ -99,6 +101,10 @@ class StatusAndHistoryTest {
         assertEquals(5, run.get("steps").asInt());
         assertEquals("Bash: ./gradlew test", run.get("lastAction").asText());
         assertEquals(queued, payload.get("queued").get(0).get("taskId").asLong());
+        assertEquals("URGENT", payload.get("queued").get(0).get("priority").asText());
+        assertEquals("NORMAL", run.get("priority").asText());
+        assertEquals("NORMAL", payload.get("awaitingApproval").get(0).get("priority").asText());
+        assertEquals(0, payload.get("mine").size(), "no priority buttons in a group chat");
         assertEquals("2026-09-17T10:02:00Z", payload.get("queued").get(0).get("queuedAt").asText());
         JsonNode plan = payload.get("awaitingApproval").get(0);
         assertEquals(awaiting, plan.get("taskId").asLong());
@@ -108,7 +114,7 @@ class StatusAndHistoryTest {
 
     @Test
     void statusWithNothingGoingOnHasEmptySections() {
-        db.transaction(tx -> tasks.status(tx, LIFE, CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.status(tx, LIFE, null, CHAT + "/99", CHAT));
 
         JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'STATUS'").get("payload"));
         assertEquals(0, payload.get("running").size() + payload.get("queued").size() + payload.get("awaitingApproval").size());
@@ -193,7 +199,7 @@ class StatusAndHistoryTest {
         db.transaction(tx -> tasks.reject(tx, ALI, other, 1));
         long mine = create("Mobile work", "71");
 
-        db.transaction(tx -> tasks.status(tx, LIFE, CHAT + "/72", CHAT));
+        db.transaction(tx -> tasks.status(tx, LIFE, null, CHAT + "/72", CHAT));
         db.transaction(tx -> tasks.history(tx, LIFE, CHAT + "/73", CHAT));
         db.transaction(tx -> tasks.timeline(tx, LIFE, other, CHAT + "/74", CHAT));
 
@@ -203,6 +209,33 @@ class StatusAndHistoryTest {
         JsonNode history = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/73").get("payload"));
         assertEquals(0, history.get("tasks").size(), "the rejected backend task is not the viewer's to see");
         assertEquals("TASK_NOT_FOUND", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", CHAT + "/74").get("kind"));
+    }
+
+    @Test
+    void privateStatusOffersPriorityChangesForTheViewersOwnActiveTasks() {
+        long mine = create("Mobile work", "80");
+        long awaiting = create("Other mobile work", "81");
+        claim();
+        transitions.planSucceeded(mine, 1, PLAN, result("0.1"));
+
+        db.transaction(tx -> tasks.status(tx, LIFE, BOLD.ref(), "telegram:100/82", "telegram:100"));
+
+        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'STATUS'").get("payload"));
+        assertEquals(2, payload.get("mine").size());
+        assertEquals(mine, payload.get("mine").get(0).get("taskId").asLong());
+        assertEquals("NORMAL", payload.get("mine").get(0).get("priority").asText());
+        assertEquals(awaiting, payload.get("mine").get(1).get("taskId").asLong());
+    }
+
+    @Test
+    void historyShowsEachTasksPriority() {
+        long id = completed("Add make help", "83");
+        db.transaction(tx -> tx.update("UPDATE task SET priority = 'LOW' WHERE id = ?", id));
+
+        db.transaction(tx -> tasks.history(tx, LIFE, CHAT + "/84", CHAT));
+
+        assertEquals("LOW", Json.read(row("SELECT payload FROM outbox WHERE kind = 'HISTORY'").get("payload"))
+                .get("tasks").get(0).get("priority").asText());
     }
 
     private long createFor(Requester who, String project, String text, String messageId, String chat) {

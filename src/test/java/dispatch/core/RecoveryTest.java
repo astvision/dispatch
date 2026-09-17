@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Phase;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
 import dispatch.store.Database;
@@ -113,7 +114,7 @@ class RecoveryTest {
     private long task(String project) {
         return db.transactionReturning(tx -> {
             long id = Tasks.insert(tx, new Tasks.NewTask(project, "t", "t", new Requester("telegram:1", "Bold"),
-                    "telegram:-1/" + UUID.randomUUID(), "telegram:-1", UUID.randomUUID(), "main"), Phase.PLANNING, clock.instant());
+                    "telegram:-1/" + UUID.randomUUID(), "telegram:-1", UUID.randomUUID(), "main", Priority.NORMAL), Phase.PLANNING, clock.instant());
             Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, "t", new Requester("telegram:1", "Bold")), clock.instant());
             return id;
         });
