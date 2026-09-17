@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** A running {@code claude -p} process: stdout is copied line by line to the run log and fed to the parser. */
@@ -27,18 +28,26 @@ final class ClaudeRun implements RunHandle {
     private final StreamParser parser;
     private final AtomicBoolean cancelRequested = new AtomicBoolean();
     private final Thread stdoutReader;
+    private final Instant processStart;
 
     ClaudeRun(Process process, String permissionMode, Path workdir, Path stdoutLog, Path stderrLog, Duration cancelGrace) {
         this.process = process;
         this.parser = new StreamParser(permissionMode, workdir);
         this.stderrLog = stderrLog;
         this.cancelGrace = cancelGrace;
+        // Read now: the OS stops reporting it once the process has exited.
+        this.processStart = process.toHandle().info().startInstant().orElse(null);
         this.stdoutReader = Thread.ofVirtual().name("agent-stdout-" + process.pid()).start(() -> copyStdout(stdoutLog));
     }
 
     @Override
     public ProcessHandle process() {
         return process.toHandle();
+    }
+
+    @Override
+    public Instant processStart() {
+        return processStart;
     }
 
     @Override

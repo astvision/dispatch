@@ -209,7 +209,7 @@ public final class RunExecutor {
             transitions.failed(taskId, seq, FailureReason.AGENT, e.getMessage(), null);
             return Optional.empty();
         }
-        transitions.recordProcess(taskId, seq, handle.process());
+        transitions.recordProcess(taskId, seq, handle.process().pid(), handle.processStart());
         active.attach(handle);
 
         Thread watchdog = Thread.ofVirtual().name("run-timeout-" + taskId + "." + seq).start(() -> {

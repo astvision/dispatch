@@ -2,6 +2,7 @@ package dispatch.agent.claude;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -129,6 +130,15 @@ class ClaudeCodeAgentTest {
         assertEquals(AgentOutcome.FAILED, result.outcome());
         assertTrue(result.error().contains("permission mode 'default' instead of 'auto'"), result.error());
         assertTrue(FakeClaude.childEnds(child), "the stopped run's children must be gone");
+    }
+
+    @Test
+    void startTimeIsKnownAfterTheAgentHasExited() throws Exception {
+        RunHandle handle = agent.start(plan("Plan it"));
+        handle.await();
+
+        assertFalse(handle.process().isAlive());
+        assertNotNull(handle.processStart(), "with the pid, it tells a crashed run's orphan from a process that reused the pid");
     }
 
     @Test
