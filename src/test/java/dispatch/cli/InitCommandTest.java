@@ -165,6 +165,7 @@ class InitCommandTest {
 
     @Test
     void pressingEnterNeverGrantsAccess() {
+        waitForPeople = Duration.ofSeconds(2); // nobody else presses Start: no need to wait long to see that
         telegram.pushUpdate(start(1, 666, "Stranger"));
         ScriptedTerminal terminal = new ScriptedTerminal("", TOKEN, "");
 
@@ -187,6 +188,7 @@ class InitCommandTest {
     }
 
     private final RecordingService service = new RecordingService();
+    private Duration waitForPeople = Duration.ofSeconds(10);
 
     private int init(ScriptedTerminal terminal, boolean force) {
         Path jar;
@@ -196,7 +198,7 @@ class InitCommandTest {
             throw new java.io.UncheckedIOException(e);
         }
         return new InitCommand(terminal, token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)),
-                locations, Duration.ofSeconds(10), new ServiceCommand(terminal, service, jar)).run(new Cli.Init(config, force), Map.of("PATH", ""));
+                locations, waitForPeople, new ServiceCommand(terminal, service, jar)).run(new Cli.Init(config, force), Map.of("PATH", ""));
     }
 
     /** A background service that only remembers what it was asked to run. */

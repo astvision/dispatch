@@ -8,7 +8,6 @@ import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 
 /** `dispatch service install | start | stop | status | uninstall` (ADR 0016). */

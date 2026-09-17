@@ -40,7 +40,7 @@ public final class Main {
             return;
         }
         switch (invocation) {
-            case Cli.Help help -> System.out.print(Cli.usage(defaults));
+            case Cli.Help _ -> System.out.print(Cli.usage(defaults));
             case Cli.Run run -> run(run.configFile(), run.logFile());
             case Cli.Init init -> {
                 JLineTerminal terminal = JLineTerminal.system();

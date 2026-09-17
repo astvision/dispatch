@@ -96,7 +96,7 @@ class JLineTerminalTest {
         Attributes noEcho = new Attributes();
         noEcho.setLocalFlag(Attributes.LocalFlag.ECHO, false);
         return new JLineTerminal(new ExternalTerminal(null, "test", "xterm-256color", new ByteArrayInputStream(keys.getBytes(StandardCharsets.UTF_8)),
-                screen, StandardCharsets.UTF_8, org.jline.terminal.Terminal.SignalHandler.SIG_DFL, false, noEcho, new Size(80, 24)));
+                screen, StandardCharsets.UTF_8, org.jline.terminal.Terminal.SignalHandler.SIG_DFL, false, noEcho, Size.of(80, 24)));
     }
 
     private String shown() {
