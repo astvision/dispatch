@@ -1,9 +1,9 @@
 # Dispatch
 
-Dispatch takes development tasks from a team's Telegram group and has Claude Code plan them in a git worktree. Once a member approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance serves one team, with its own bot.
+Dispatch takes development tasks that members write to its Telegram bot and has Claude Code plan them in a git worktree. Once the requester approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance and bot can serve several groups, each with its own members and projects.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M3a.** Tasks start in the group; plans, corrections and results reach the requester privately, and approved plans end as draft PRs. `/status` shows what the agent is doing, `/history` what was done. Follow-ups and `/retry` come next.
+- Status: **M3b.** Tasks are given in the private chat with project and priority buttons; the plan, corrections and result stay there, and each group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Telegram topics per task come next, then follow-ups and `/retry`.
 
 ## Security
 
@@ -22,12 +22,12 @@ Requires JDK 25+ and git. The Maven wrapper downloads Maven itself.
 
 ## Set up a team instance
 
-The examples use the team `backend`.
+The examples use the instance `backend`.
 
-**1. Create the bot.** Create it with @BotFather. Leave privacy mode enabled (the default) and do not make the bot a group admin, because admins receive every message. Add the bot to the team group. Every member should also open the bot once and press **Start**, so their task details can reach them privately; until they do, the details are posted in the group.
+**1. Create the bot.** Create it with @BotFather. Leave privacy mode enabled (the default) and do not make the bot a group admin, because admins receive every message. Add the bot to each group it serves. Every member opens the bot once and presses **Start**: tasks are given in that private chat.
 
-**2. Find the ids before starting Dispatch.** With a wrong `groupChatId`, Dispatch leaves the group it sees messages from.
-1. In the group, each member sends `/help@<bot_username>`.
+**2. Find the ids before starting Dispatch.** Dispatch leaves any group whose id is not in `telegram.groups`.
+1. In each group, each member sends `/help@<bot_username>`.
 2. Read the ids:
 
 ```sh
@@ -62,34 +62,32 @@ systemctl enable --now dispatch@backend
 
 Check that `journalctl -u dispatch@backend` shows `event=dispatch.started`, then send `/help@<bot_username>` in the group. Set a monthly spend limit on the team's API key in the Anthropic Console.
 
-In the config, set `delivery.authorName`/`authorEmail` (the git identity of delivery commits) and `limits.execute`. The GitHub token needs Contents and Pull requests read/write on the team's repositories. Execution runs in auto mode, which not every model has: set the project's `model` to Sonnet or Opus, or leave it unset if the account's default model is one of them. With Haiku, every execution run fails with a permission-mode error.
+In the config, list each group under `telegram.groups` with its `chatId`, `members` and the `projects` it owns (a person may be in several groups; every project belongs to exactly one). Set `delivery.authorName`/`authorEmail` (the git identity of delivery commits) and `limits.execute`. The GitHub token needs Contents and Pull requests read/write on the team's repositories. Execution runs in auto mode, which not every model has: set the project's `model` to Sonnet or Opus, or leave it unset if the account's default model is one of them. With Haiku, every execution run fails with a permission-mode error.
 
-## Use it in the group
+## Use it
 
-Pick commands from the `/` menu. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot; a bare `/command` is lost when another bot posted more recently.
+**In your private chat with the bot**
 
-| In the group | Effect |
+| You | Dispatch |
 |---|---|
-| `/task@bot alm Fix the login timeout on staging` | Creates task #N. The group gets a one-line acknowledgement; the plan goes to you privately |
-| reply to any message with `/task@bot alm` | That message becomes the task (extra text is appended) |
-| `/status@bot` | What is running now (with the agent's latest action), queued, and awaiting approval |
-| `/history@bot`, `/history@bot N` | The last 10 finished tasks; task N's timeline with durations and costs |
-| `/cancel@bot N` | Cancels task N, stopping its agent if one is running |
-| `/help@bot` | Commands and projects |
+| write the task as a message (or forward one) | Asks with buttons for the project (skipped if you have only one) and the priority 🔴 🟡 🟢, then queues the task |
+| `/task alm Fix the login timeout` | The same, with the project already named |
+| **Approve** on the plan | The agent implements it; Dispatch commits, pushes `dispatch/N` and sends you the draft PR link and summary |
+| reply to the plan | A correction: the agent revises the plan in the same session |
+| **Reject** on the plan | Closes the task |
+| `/status` | What is running (with the agent's latest action), queued and awaiting approval in your groups, with buttons to change your tasks' priority |
+| `/history`, `/history N` | The last 10 finished tasks with who gave them and when; task N's timeline |
+| `/stats` | Your numbers, each group's and per person, for 7 days, this month or all time |
+| `/cancel N` | Cancels task N |
 
-| In your private chat with the bot | Effect |
-|---|---|
-| **Approve** on a plan | The agent implements the plan; Dispatch commits, pushes `dispatch/N`, and you get the draft PR link and summary |
-| reply to a plan | A correction: the agent revises the plan in the same session |
-| **Reject** on a plan | Closes the task |
-| `/status`, `/history [N]`, `/cancel N`, `/help` | As in the group |
+**In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot` and `/stats@bot` there cover that group's projects. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
 
-The group sees each outcome in one line: done with the PR link, failed with the reason, rejected, or cancelled. Only members listed in the config can act. Only the requester can approve, correct or reject their plan, and any member can cancel. A plan with open questions has no Approve button: answer the questions by replying to it.
+Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject or reprioritize their task; any member of the project's group can cancel it. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
 
 ## Run locally
 
 ```sh
-cp deploy/example.yaml dev.yaml                      # edit group, members, claude path, projects
+cp deploy/example.yaml dev.yaml                      # edit groups, members, claude path, projects
 export TELEGRAM_BOT_TOKEN=... STATE_DIRECTORY=$HOME/.local/state/dispatch-dev
 git clone <repo> "$STATE_DIRECTORY/repos/<project>"
 java -jar target/dispatch-0.1.0.jar dev.yaml

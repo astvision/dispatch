@@ -9,13 +9,14 @@ Do not open an issue. Contact the maintainers privately, or use GitHub's private
 Dispatch lets people in a Telegram group make an AI coding agent run commands on a server. Treat access to it like shell access to that server.
 
 **Who can make the agent act**
-- Only members listed in the instance config, only in the configured group or their own private chat with the bot, and only through commands, buttons and replies to plans. Everyone else is refused or ignored.
-- Only a task's requester can approve, correct or reject its plan (ADR 0011).
+- Only members listed in a group of the instance config, for the projects of their groups, in their own private chat with the bot, and only through messages, commands, buttons and replies to plans. Everyone else is refused or ignored.
+- Only a task's requester can approve, correct, reject or reprioritize it (ADR 0011, 0012). Any member of the project's group can cancel it.
+- Reports (`/status`, `/history`, `/stats`) only cover the viewer's groups, or in a group chat that group's projects. Another group's task is answered as not found.
 - Plans and results go to the requester's private chat. If Telegram refuses that chat (the requester never pressed Start, or blocked the bot), the message is posted in the team group instead, where everyone in the group can read it.
 - Anyone who controls a member's Telegram account, the bot token or the configured group can act as that member.
 
 **Boundaries**
-- The hard boundary is the instance's OS user. Give it access to its own team's repositories only, and a GitHub token scoped to them (ADR 0005). The token can push branches and open pull requests; draft status and human review keep agent changes from merging on their own (ADR 0007).
+- The hard boundary is the instance's OS user. Give it access to its groups' repositories only, and a GitHub token scoped to them (ADR 0005). All groups of one instance share that user and token (ADR 0012): run a separate instance for any team that must not reach another team's repositories. The token can push branches and open pull requests; draft status and human review keep agent changes from merging on their own (ADR 0007).
 - Claude Code's permission modes and deny rules are guardrails, not a security boundary (ADR 0009).
 - Task text and repository content can steer the agent (prompt injection). Planning is read-only, and code changes need a member's approval first (ADR 0006).
 - Execution runs in auto mode: the agent edits files and runs builds and tests as the instance user, within what Claude's classifier allows (ADR 0009).
