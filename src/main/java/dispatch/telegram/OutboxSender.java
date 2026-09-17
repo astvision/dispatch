@@ -105,6 +105,10 @@ public final class OutboxSender implements Runnable {
             db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, "render failed: " + e.getMessage()));
             return;
         }
+        if (message.editRef() != null) {
+            edit(message, attempts, rendered);
+            return;
+        }
         long chatId = Refs.chatId(message.chatRef());
         Long replyTo = message.replyToRef() == null ? null : Refs.messageId(message.replyToRef());
         Long thread = message.replyToRef() == null ? null : Refs.threadId(message.replyToRef());
@@ -127,6 +131,21 @@ public final class OutboxSender implements Runnable {
         if (task.isPresent() && OUTCOMES.contains(message.kind())) {
             renameTopic(task.get());
         }
+    }
+
+    /** Redraws a message sent earlier. No sent reference is recorded: replies are still found through the original's row. */
+    private void edit(Outbox.Message message, int attempts, Renderer.Rendered rendered) {
+        try {
+            api.editMessageText(Refs.chatId(message.chatRef()), Refs.messageId(message.editRef()), rendered.html(), rendered.keyboard());
+        } catch (TelegramException e) {
+            if (!e.getMessage().contains("message is not modified")) {
+                handleFailure(message, attempts, e);
+                return;
+            }
+            // A retried edit that Telegram had applied before its response was lost.
+        }
+        db.transaction(tx -> Outbox.markSent(tx, message.id(), attempts, null, clock.instant()));
+        Log.info("outbox.edited", "id", message.id(), "kind", message.kind(), "attempt", attempts);
     }
 
     /** Opens the task's topic; its color shows the priority. A topic that cannot be made leaves the task in General. */

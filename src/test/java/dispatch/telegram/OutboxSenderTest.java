@@ -2,6 +2,7 @@ package dispatch.telegram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -72,6 +73,36 @@ class OutboxSenderTest {
         assertEquals("telegram:-100/1000", row.get("sent_ref"));
         assertEquals("1", row.get("attempts"));
         assertFalse(sender.deliverDue(), "nothing left to send");
+    }
+
+    @Test
+    void editRedrawsItsMessageInPlaceAndLeavesRepliesPointingAtTheOriginal() throws Exception {
+        long id = enqueueEdit(Json.object().put("draftId", 7).put("title", "Fix login timeout").put("status", "CREATED")
+                .put("project", "life").put("taskId", 9).put("priority", "URGENT"));
+
+        assertTrue(sender.deliverDue());
+
+        JsonNode body = telegram.awaitRequest("editMessageText", Duration.ofSeconds(1)).json();
+        assertEquals(100, body.get("chat_id").asLong());
+        assertEquals(77, body.get("message_id").asLong());
+        assertTrue(body.get("text").asText().contains("#9"), body.toString());
+        assertTrue(telegram.drain("sendMessage").isEmpty(), "no new message");
+        Map<String, String> row = row(id);
+        assertEquals("SENT", row.get("status"));
+        assertNull(row.get("sent_ref"), "the edited message keeps its own outbox row");
+    }
+
+    @Test
+    void editWhoseTextIsAlreadyShownCountsAsDone() {
+        // What Telegram answers when a retried edit had already been applied before its response was lost.
+        telegram.respond("editMessageText", 400, "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: message is not "
+                + "modified: specified new message content and reply markup are exactly the same as a current content and reply "
+                + "markup of the message\"}");
+        long id = enqueueEdit(Json.object().put("draftId", 7).put("title", "Fix login timeout").put("status", "EXPIRED"));
+
+        sender.deliverDue();
+
+        assertEquals("SENT", row(id).get("status"));
     }
 
     @Test
@@ -261,6 +292,11 @@ class OutboxSenderTest {
 
     private long enqueue(OutboxKind kind, ObjectNode payload) {
         return db.transactionReturning(tx -> Outbox.enqueue(tx, null, kind, "telegram:-100", "telegram:-100/55", payload, clock.instant()));
+    }
+
+    private long enqueueEdit(ObjectNode draftPayload) {
+        return db.transactionReturning(tx -> Outbox.enqueueEdit(tx, null, OutboxKind.DRAFT_PROMPT, "telegram:100", "telegram:100/77",
+                draftPayload, clock.instant()));
     }
 
     private long enqueuePrivate(OutboxKind kind, ObjectNode payload) {

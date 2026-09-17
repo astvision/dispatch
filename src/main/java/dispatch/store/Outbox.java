@@ -16,6 +16,7 @@ public final class Outbox {
     /**
      * A pending message as the sender sees it.
      *
+     * @param editRef         the message this one redraws in place; null for a new message
      * @param fallbackChatRef where the message goes if its chat refuses it; null when it has no fallback
      * @param fellBack        the message already went to its fallback
      */
@@ -25,6 +26,7 @@ public final class Outbox {
             OutboxKind kind,
             String chatRef,
             String replyToRef,
+            String editRef,
             String fallbackChatRef,
             String fallbackReplyToRef,
             boolean fellBack,
@@ -72,17 +74,29 @@ public final class Outbox {
                 task.groupOriginRef(), payload, now);
     }
 
+    /**
+     * Redraws the message {@code editRef} in {@code chatRef} with a fresh rendering of {@code payload}, e.g. a prompt whose
+     * buttons changed after a background step. The edited message keeps its own row, so replies to it are still found.
+     */
+    public static long enqueueEdit(Tx tx, Long taskId, OutboxKind kind, String chatRef, String editRef, JsonNode payload,
+                                   Instant now) {
+        return tx.insert("""
+                        INSERT INTO outbox (task_id, kind, chat_ref, edit_ref, payload, status, next_attempt_at, created_at)
+                        VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)""",
+                taskId, kind, chatRef, editRef, Json.write(payload), now, now);
+    }
+
     /** The pending message that has waited longest past its next attempt time. */
     public static Optional<Message> nextDue(Tx tx, Instant now) {
         return tx.one("""
-                        SELECT id, task_id, kind, chat_ref, reply_to_ref, fallback_chat_ref, fallback_reply_to_ref, fell_back,
+                        SELECT id, task_id, kind, chat_ref, reply_to_ref, edit_ref, fallback_chat_ref, fallback_reply_to_ref, fell_back,
                                payload, attempts, created_at
                         FROM outbox
                         WHERE status = 'PENDING' AND next_attempt_at <= ?
                         ORDER BY next_attempt_at, id
                         LIMIT 1""",
                 row -> new Message(row.longValue("id"), row.longOrNull("task_id"), row.enumValue("kind", OutboxKind.class),
-                        row.string("chat_ref"), row.string("reply_to_ref"), row.string("fallback_chat_ref"),
+                        row.string("chat_ref"), row.string("reply_to_ref"), row.string("edit_ref"), row.string("fallback_chat_ref"),
                         row.string("fallback_reply_to_ref"), row.intValue("fell_back") == 1, row.string("payload"),
                         row.intValue("attempts"), row.instant("created_at")),
                 now);
