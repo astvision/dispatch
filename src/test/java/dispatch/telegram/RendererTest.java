@@ -268,6 +268,52 @@ class RendererTest {
     }
 
     @Test
+    void statsShowTheSummaryWithButtonsForEveryViewAndPeriod() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.STATS, statsPayload("me"));
+
+        String html = rendered.html();
+        assertTrue(html.contains(messages.getString("stats.view.me")) && html.contains(messages.getString("stats.period.month")), html);
+        assertTrue(html.contains("12") && html.contains("✅ 9") && html.contains("❌ 1") && html.contains("🚫 2"), html);
+        assertTrue(html.contains("$4.10") && html.contains("$0.34"), html);
+        assertTrue(html.contains("14 мин"), html);
+        assertTrue(html.contains("75%"), html);
+        List<List<Renderer.Button>> keyboard = rendered.keyboard();
+        assertEquals(List.of(new Renderer.Button("✓ " + messages.getString("stats.view.me"), "stats:month:me"),
+                new Renderer.Button("backend", "stats:month:group:backend"), new Renderer.Button("mobile", "stats:month:group:mobile")),
+                keyboard.get(0));
+        assertEquals(new Renderer.Button(messages.getString("stats.view.people"), "stats:month:people"), keyboard.get(1).get(0));
+        assertEquals(List.of(new Renderer.Button(messages.getString("stats.period.week"), "stats:week:me"),
+                new Renderer.Button("✓ " + messages.getString("stats.period.month"), "stats:month:me"),
+                new Renderer.Button(messages.getString("stats.period.all"), "stats:all:me")), keyboard.get(2));
+    }
+
+    @Test
+    void groupStatsInAGroupChatOfferNoPersonalView() {
+        ObjectNode payload = statsPayload("group:backend").put("canViewMe", false);
+        payload.putArray("groups").removeAll().add("backend");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.STATS, payload);
+
+        assertTrue(rendered.html().contains("backend"), rendered.html());
+        assertEquals("✓ backend", rendered.keyboard().get(0).get(0).text());
+        assertTrue(rendered.keyboard().stream().flatMap(List::stream).noneMatch(button -> button.data().endsWith(":me")));
+    }
+
+    @Test
+    void peopleStatsListEachPersonAndEmptyStatsSaySo() {
+        ObjectNode people = statsPayload("people");
+        people.putArray("people").addObject().put("name", "Sara <qa>").put("tasks", 2).put("completed", 1).put("costUsd", "0.10");
+        ObjectNode empty = statsPayload("me");
+        ((ObjectNode) empty.get("summary")).put("tasks", 0);
+
+        String peopleHtml = renderer.render(OutboxKind.STATS, people).html();
+        String emptyHtml = renderer.render(OutboxKind.STATS, empty).html();
+
+        assertTrue(peopleHtml.contains("Sara &lt;qa&gt;") && peopleHtml.contains("$0.10"), peopleHtml);
+        assertTrue(emptyHtml.contains(messages.getString("stats.empty")), emptyHtml);
+    }
+
+    @Test
     void timelineShowsEachRunWithTimeDurationAndCostThenTheOutcome() {
         String html = renderer.render(OutboxKind.TASK_TIMELINE, timelinePayload()).html();
 
@@ -353,6 +399,16 @@ class RendererTest {
         return payload;
     }
 
+    private static ObjectNode statsPayload(String view) {
+        ObjectNode payload = Json.object().put("view", view).put("period", "month").put("canViewMe", true);
+        payload.putArray("groups").add("backend").add("mobile");
+        payload.putObject("summary").put("tasks", 12).put("completed", 9).put("failed", 1).put("rejected", 2).put("cancelled", 0)
+                .put("active", 0).put("pullRequests", 9).put("costUsd", "4.10").put("averageCostUsd", "0.34")
+                .put("medianMinutesToPr", 14).put("approvedWithoutCorrectionPercent", 75);
+        payload.putArray("people");
+        return payload;
+    }
+
     private Renderer.Rendered rendered(ObjectNode statusPayload) {
         return renderer.render(OutboxKind.STATUS, statusPayload);
     }
@@ -428,6 +484,7 @@ class RendererTest {
             case TASK_COMPLETED -> completedPayload("https://github.com/acme/alm/pull/7", 1, List.of("Bash: gh pr list"));
             case STATUS -> statusPayload();
             case HISTORY -> historyPayload();
+            case STATS -> statsPayload("me");
             case TASK_TIMELINE -> timelinePayload();
             case TASK_NOT_FOUND -> Json.object().put("taskId", 99);
             case CANCEL_REFUSED -> Json.object().put("taskId", 1).put("phase", "REJECTED");

@@ -23,7 +23,10 @@ import dispatch.store.Tasks;
 import dispatch.store.Tx;
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -517,6 +520,53 @@ public final class TaskService {
         }
         payload.put("costUsd", total == null ? null : total.toPlainString());
         enqueue(tx, null, OutboxKind.TASK_TIMELINE, chatRef, originRef, payload, clock.instant());
+    }
+
+    /** Posts statistics for this month: the viewer's own in a private chat, the group's in a group chat (ADR 0012). */
+    public void stats(Tx tx, String viewerRef, List<String> groupNames, String originRef, String chatRef) {
+        String view = viewerRef != null ? "me" : "group:" + groupNames.getFirst();
+        ObjectNode payload = statsPayload(tx, viewerRef, groupNames, view, "month")
+                .orElseThrow(() -> new IllegalStateException("default statistics view " + view + " refused"));
+        enqueue(tx, null, OutboxKind.STATS, chatRef, originRef, payload, clock.instant());
+    }
+
+    /**
+     * Statistics of tasks given in {@code period} ("week": the last 7 days, "month": since the 1st, "all").
+     *
+     * @param viewerRef  the member asking in their private chat; null in a group chat, which has no "me" view
+     * @param groupNames the groups whose tasks the viewer may count
+     * @param view       "me", "group:&lt;name&gt;" (one of {@code groupNames}) or "people" (per requester)
+     * @return empty when the viewer may not ask for this view or the period is unknown
+     */
+    public Optional<ObjectNode> statsPayload(Tx tx, String viewerRef, List<String> groupNames, String view, String period) {
+        Instant now = clock.instant();
+        Instant since;
+        switch (period) {
+            case "week" -> since = now.minus(Duration.ofDays(7));
+            case "month" -> since = now.atZone(clock.getZone()).withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS).toInstant();
+            case "all" -> since = null;
+            default -> {
+                return Optional.empty();
+            }
+        }
+        Set<String> projectsOfGroups = new HashSet<>();
+        groupNames.forEach(name -> projectsOfGroups.addAll(groups.projectsOfGroup(name)));
+        List<Task> given;
+        if (view.equals("me") && viewerRef != null) {
+            given = Tasks.createdSince(tx, projectsOfGroups, since).stream().filter(task -> task.requester().ref().equals(viewerRef)).toList();
+        } else if (view.equals("people")) {
+            given = Tasks.createdSince(tx, projectsOfGroups, since);
+        } else if (view.startsWith("group:") && groupNames.contains(view.substring("group:".length()))) {
+            given = Tasks.createdSince(tx, groups.projectsOfGroup(view.substring("group:".length())), since);
+        } else {
+            return Optional.empty();
+        }
+        List<Runs.Cost> runs = Runs.costsOf(tx, given.stream().map(Task::id).toList());
+        ObjectNode payload = Json.object().put("view", view).put("period", period).put("canViewMe", viewerRef != null);
+        groupNames.forEach(payload.putArray("groups")::add);
+        payload.set("summary", Statistics.summary(given, runs));
+        payload.set("people", view.equals("people") ? Statistics.people(given, runs) : Json.MAPPER.createArrayNode());
+        return Optional.of(payload);
     }
 
     private void notAllowed(Tx tx, Requester who, String originRef, String chatRef, Instant now) {

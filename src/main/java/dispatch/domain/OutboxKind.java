@@ -21,6 +21,7 @@ public enum OutboxKind {
     STATUS,
     HISTORY,
     TASK_TIMELINE,
+    STATS,
     TASK_NOT_FOUND,
     CANCEL_REFUSED,
     NOT_ALLOWED,

@@ -69,6 +69,20 @@ public final class Tasks {
                 + " ORDER BY updated_at, id", Tasks::map, params.toArray());
     }
 
+    /** Tasks of {@code projects} given at or after {@code since}, or ever when it is null. */
+    public static List<Task> createdSince(Tx tx, Set<String> projects, Instant since) {
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+        List<Object> params = new ArrayList<>(projects);
+        String sql = "SELECT " + COLUMNS + " FROM task WHERE project IN (" + Tx.placeholders(projects.size()) + ")";
+        if (since != null) {
+            sql += " AND created_at >= ?";
+            params.add(since);
+        }
+        return tx.list(sql + " ORDER BY id", Tasks::map, params.toArray());
+    }
+
     /** The {@code limit} most recently finished tasks of {@code projects}, newest first. */
     public static List<Task> finished(Tx tx, Set<String> projects, int limit) {
         if (projects.isEmpty()) {

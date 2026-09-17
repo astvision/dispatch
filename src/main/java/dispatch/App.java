@@ -173,13 +173,13 @@ public final class App {
         for (Config.Group group : groups.all()) {
             try {
                 // Groups only read: tasks are given and cancelled privately (ADR 0012).
-                api.setMyCommands(group.chatId(), commands(renderer, "status", "history", "help"));
+                api.setMyCommands(group.chatId(), commands(renderer, "status", "history", "stats", "help"));
             } catch (TelegramException e) {
                 Log.warn("telegram.command_menu_failed", "group", group.name(), "chat_id", group.chatId(), "error", e.getMessage());
             }
         }
         try {
-            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "cancel", "help"));
+            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "stats", "cancel", "help"));
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "scope", "all_private_chats", "error", e.getMessage());
         }

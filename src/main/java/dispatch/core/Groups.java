@@ -48,6 +48,20 @@ public final class Groups {
         return groups.stream().anyMatch(group -> group.projects().contains(project) && contains(group, requesterRef));
     }
 
+    /** Names of the groups {@code requesterRef} is in, in config order. */
+    public List<String> groupsOfMember(String requesterRef) {
+        return groups.stream().filter(group -> contains(group, requesterRef)).map(Config.Group::name).toList();
+    }
+
+    public Optional<String> groupOfChat(String chatRef) {
+        return byChat(chatRef).map(Config.Group::name);
+    }
+
+    public Set<String> projectsOfGroup(String name) {
+        return groups.stream().filter(group -> group.name().equals(name)).findFirst()
+                .map(group -> Set.copyOf(group.projects())).orElse(Set.of());
+    }
+
     public List<Config.Group> all() {
         return groups;
     }

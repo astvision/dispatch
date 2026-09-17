@@ -99,6 +99,7 @@ public final class Renderer {
             case STATUS -> status(payload);
             case HISTORY -> history(payload.path("tasks"));
             case TASK_TIMELINE -> timeline(payload);
+            case STATS -> stats(payload);
             case TASK_NOT_FOUND -> plain(format("task.notFound", taskId(payload)));
             case CANCEL_REFUSED -> plain(format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
             case NOT_ALLOWED -> plain(format("member.notAllowed", escape(payload.path("name").asText())));
@@ -340,6 +341,63 @@ public final class Renderer {
         }
         blocks.add("\n" + text("history.more"));
         return plain(joinWithin(blocks, "\n"));
+    }
+
+    private Rendered stats(JsonNode payload) {
+        String view = payload.path("view").asText();
+        String period = payload.path("period").asText();
+        String title = switch (view) {
+            case "me" -> text("stats.view.me");
+            case "people" -> text("stats.view.people");
+            default -> escape(view.substring(view.indexOf(':') + 1));
+        };
+        StringBuilder html = new StringBuilder(format("stats.header", title, text("stats.period." + period)));
+        JsonNode summary = payload.path("summary");
+        if (summary.path("tasks").asInt() == 0) {
+            html.append("\n\n").append(text("stats.empty"));
+        } else {
+            html.append("\n\n").append(format("stats.tasks", summary.path("tasks").asInt(), summary.path("completed").asInt(),
+                    summary.path("failed").asInt(), summary.path("rejected").asInt(), summary.path("cancelled").asInt(),
+                    summary.path("active").asInt()));
+            html.append("\n").append(format("stats.pullRequests", summary.path("pullRequests").asInt(), money(summary.path("costUsd")),
+                    money(summary.path("averageCostUsd"))));
+            if (summary.hasNonNull("medianMinutesToPr")) {
+                html.append("\n").append(format("stats.timeToPr", duration(Duration.ofMinutes(summary.path("medianMinutesToPr").asLong()))));
+            }
+            if (summary.hasNonNull("approvedWithoutCorrectionPercent")) {
+                html.append("\n").append(format("stats.firstTime", summary.path("approvedWithoutCorrectionPercent").asInt()));
+            }
+        }
+        List<String> blocks = new ArrayList<>(List.of(html.toString()));
+        for (JsonNode person : payload.path("people")) {
+            String separator = blocks.size() == 1 ? "\n" : "";
+            blocks.add(separator + format("stats.person", escape(person.path("name").asText()), person.path("tasks").asInt(),
+                    person.path("completed").asInt(), money(person.path("costUsd"))));
+        }
+
+        List<Button> views = new ArrayList<>();
+        if (payload.path("canViewMe").asBoolean()) {
+            views.add(statsButton(text("stats.view.me"), period, "me", view));
+        }
+        for (JsonNode group : payload.path("groups")) {
+            views.add(statsButton(group.asText(), period, "group:" + group.asText(), view));
+        }
+        views.add(statsButton(text("stats.view.people"), period, "people", view));
+        List<List<Button>> keyboard = new ArrayList<>();
+        for (int i = 0; i < views.size(); i += 3) {
+            keyboard.add(views.subList(i, Math.min(i + 3, views.size())));
+        }
+        List<Button> periods = new ArrayList<>();
+        for (String option : List.of("week", "month", "all")) {
+            String chosen = option.equals(period) ? "✓ " : "";
+            periods.add(new Button(chosen + text("stats.period." + option), "stats:" + option + ":" + view));
+        }
+        keyboard.add(periods);
+        return new Rendered(joinWithin(blocks, "\n"), keyboard, null);
+    }
+
+    private static Button statsButton(String label, String period, String view, String currentView) {
+        return new Button((view.equals(currentView) ? "✓ " : "") + label, "stats:" + period + ":" + view);
     }
 
     private Rendered timeline(JsonNode payload) {

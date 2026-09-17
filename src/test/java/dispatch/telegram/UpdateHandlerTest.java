@@ -414,6 +414,34 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void statsArePostedAndTheirButtonsRedrawTheSameMessage() throws Exception {
+        handler.handle(message(590, 90, 100, "Bold", 100L, "private", "/stats", null));
+        handler.handle(message(591, 91, 300, "Sara", MOBILE_GROUP, "supergroup", "/stats", null));
+
+        assertEquals("me", Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/90'").get("payload"))
+                .get("view").asText());
+        assertEquals("group:mobile", Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:" + MOBILE_GROUP + "/91")
+                .get("payload")).get("view").asText());
+
+        handler.handle(privateCallback(592, 100, "Bold", "stats:week:group:backend"));
+
+        telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2));
+        JsonNode edit = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(88, edit.get("message_id").asLong());
+        assertTrue(edit.get("reply_markup").toString().contains("✓ backend"), edit.toString());
+    }
+
+    @Test
+    void statsButtonForAGroupTheViewerIsNotInIsRefused() throws Exception {
+        handler.handle(privateCallback(593, 300, "Sara", "stats:all:group:backend"));
+
+        assertEquals(renderer.text("callback.unknown"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        Thread.sleep(100);
+        assertTrue(telegram.drain("editMessageText").isEmpty());
+    }
+
+    @Test
     void helpListsTheProjects() {
         handler.handle(message(530, 30, 999, "Sara", GROUP, "supergroup", "/help", null));
 

@@ -20,6 +20,7 @@ import dispatch.store.Kv;
 import dispatch.store.Outbox;
 import dispatch.store.Tx;
 import java.time.Clock;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
@@ -150,6 +151,8 @@ public final class UpdateHandler {
                         id -> tasks.cancel(tx, who, id, origin, chatRef),
                         () -> help(tx, visible, origin, chatRef, true));
             }
+            case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
+                    privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
             case "help", "start" -> help(tx, visible, origin, chatRef, privateChat);
             default -> {
                 // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
@@ -203,7 +206,12 @@ public final class UpdateHandler {
         JsonNode from = callback.path("from");
         JsonNode chat = callback.path("message").path("chat");
         boolean servedChat = groups.isGroupChat(Refs.chat(chat.path("id").asLong())) || isPrivateChatOf(chat, from);
-        String[] parts = callback.path("data").asText().split(":");
+        String data = callback.path("data").asText();
+        if (servedChat && from.has("id") && data.startsWith("stats:")) {
+            onStatsButton(tx, callback, data);
+            return;
+        }
+        String[] parts = data.split(":");
         if (servedChat && from.has("id") && parts.length == 4 && parts[0].equals("draft") && taskId(parts[1]).isPresent()) {
             Requester presser = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
             onDraftButton(tx, callback, presser, taskId(parts[1]).get(), parts[2], parts[3]);
@@ -282,6 +290,30 @@ public final class UpdateHandler {
         ObjectNode payload = tasks.draftPayload(tx, draftId).orElseThrow();
         Renderer.Rendered prompt = renderer.render(OutboxKind.DRAFT_PROMPT, Json.read(redactor.redact(payload.toString())));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, prompt.html(), prompt.keyboard())));
+    }
+
+    /** A view or period button under statistics; the same message is redrawn, for the groups its chat may see. */
+    private void onStatsButton(Tx tx, JsonNode callback, String data) {
+        String callbackId = callback.path("id").asText();
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        boolean privateChat = isPrivateChatOf(message.path("chat"), callback.path("from"));
+        String viewer = privateChat ? Refs.user(callback.path("from").path("id").asLong()) : null;
+        List<String> visibleGroups = privateChat
+                ? groups.groupsOfMember(viewer)
+                : groups.groupOfChat(Refs.chat(chatId)).map(List::of).orElse(List.of());
+        String[] parts = data.split(":", 3);
+        Optional<ObjectNode> payload = parts.length == 3 && !visibleGroups.isEmpty()
+                ? tasks.statsPayload(tx, viewer, visibleGroups, parts[2], parts[1])
+                : Optional.empty();
+        if (payload.isEmpty()) {
+            answer(tx, callbackId, "callback.unknown");
+            return;
+        }
+        answer(tx, callbackId, "callback.done");
+        long messageId = message.path("message_id").asLong();
+        Renderer.Rendered stats = renderer.render(OutboxKind.STATS, Json.read(redactor.redact(payload.get().toString())));
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, stats.html(), stats.keyboard())));
     }
 
     /** A priority button under a status report: change it, then redraw that report so it shows the new order. */

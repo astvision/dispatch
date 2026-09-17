@@ -115,6 +115,19 @@ public final class Runs {
         return tx.list("SELECT " + COLUMNS + " FROM run WHERE task_id = ? ORDER BY seq", Runs::map, taskId);
     }
 
+    /** A run's kind and reported cost, for statistics. */
+    public record Cost(long taskId, RunKind kind, BigDecimal costUsd) {
+    }
+
+    public static List<Cost> costsOf(Tx tx, List<Long> taskIds) {
+        if (taskIds.isEmpty()) {
+            return List.of();
+        }
+        return tx.list("SELECT task_id, kind, cost_usd FROM run WHERE task_id IN (" + Tx.placeholders(taskIds.size()) + ")",
+                row -> new Cost(row.longValue("task_id"), row.enumValue("kind", RunKind.class), row.decimal("cost_usd")),
+                taskIds.toArray());
+    }
+
     /** Total reported cost per task; a task none of whose runs reported a cost is absent. */
     public static Map<Long, BigDecimal> costs(Tx tx, List<Long> taskIds) {
         if (taskIds.isEmpty()) {
