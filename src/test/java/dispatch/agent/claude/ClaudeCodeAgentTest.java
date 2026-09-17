@@ -128,7 +128,7 @@ class ClaudeCodeAgentTest {
 
         assertEquals(AgentOutcome.FAILED, result.outcome());
         assertTrue(result.error().contains("permission mode 'default' instead of 'auto'"), result.error());
-        assertFalse(ProcessHandle.of(child).map(ProcessHandle::isAlive).orElse(false), "the stopped run's children must be gone");
+        assertTrue(FakeClaude.childEnds(child), "the stopped run's children must be gone");
     }
 
     @Test
@@ -173,7 +173,7 @@ class ClaudeCodeAgentTest {
         AgentResult result = CompletableFuture.supplyAsync(() -> awaitQuietly(handle)).get(10, TimeUnit.SECONDS);
 
         assertEquals(AgentOutcome.FAILED, result.outcome());
-        assertFalse(ProcessHandle.of(child).map(ProcessHandle::isAlive).orElse(false), "child sleep must be gone");
+        assertTrue(FakeClaude.childEnds(child), "child sleep must be gone");
     }
 
     @Test

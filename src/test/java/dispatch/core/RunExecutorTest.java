@@ -263,7 +263,7 @@ class RunExecutorTest {
 
         assertFailed(id, "TIMEOUT", "stopped after");
         long child = Long.parseLong(Files.readString(repos.stateDir.resolve("worktrees/" + id + "/fake-claude.child")).strip());
-        assertFalse(ProcessHandle.of(child).map(ProcessHandle::isAlive).orElse(false));
+        assertTrue(FakeClaude.childEnds(child), "the timed-out run's children must be gone");
     }
 
     @Test
