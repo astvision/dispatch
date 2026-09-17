@@ -5,6 +5,7 @@ import dispatch.cli.Cli;
 import dispatch.cli.CliException;
 import dispatch.cli.ConsoleTerminal;
 import dispatch.cli.Locations;
+import dispatch.cli.ProjectAddCommand;
 import dispatch.cli.RunCommand;
 import dispatch.config.ConfigException;
 import dispatch.telegram.BotApi;
@@ -33,6 +34,7 @@ public final class Main {
             case Cli.Help help -> System.out.print(Cli.usage(defaults));
             case Cli.Run run -> run(run.configFile());
             case Cli.Check check -> System.exit(new CheckCommand(new ConsoleTerminal(), BotApi::create).run(check.configFile(), System.getenv()));
+            case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(new ConsoleTerminal()).run(add, System.getenv()));
         }
     }
 

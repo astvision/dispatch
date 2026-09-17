@@ -101,6 +101,11 @@ public final class ConfigLoader {
         return path;
     }
 
+    /** True for http(s) URLs with user info, e.g. a token; such URLs never go into a config file. */
+    public static boolean hasCredentials(String url) {
+        return CREDENTIAL_URL.matcher(url).find();
+    }
+
     private static Config.Telegram validateTelegram(Config.Telegram telegram, List<Config.Project> projects, List<String> errors) {
         List<Config.Group> groups = telegram == null || telegram.groups() == null ? List.of() : telegram.groups();
         if (groups.isEmpty()) {

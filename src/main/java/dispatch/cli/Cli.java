@@ -11,19 +11,24 @@ import java.util.Set;
 /** The dispatch command line: what was asked for, parsed without running anything. */
 public final class Cli {
 
-    private static final Set<String> VALUE_OPTIONS = Set.of("config");
+    private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group");
     private static final Set<String> SWITCHES = Set.of("force");
 
     private Cli() {
     }
 
-    public sealed interface Invocation permits Run, Check, Help {
+    public sealed interface Invocation permits Run, Check, ProjectAdd, Help {
     }
 
     public record Run(Path configFile) implements Invocation {
     }
 
     public record Check(Path configFile) implements Invocation {
+    }
+
+    /** Options left out are null: they come from the clone, or the config's only group. */
+    public record ProjectAdd(Path configFile, Path folder, String name, String alias, String base, String model, String effort,
+                             String group) implements Invocation {
     }
 
     public record Help() implements Invocation {
@@ -36,6 +41,9 @@ public final class Cli {
                 commands:
                   run      start the bot (the default)
                   check    check the config, bot token, agent, projects and GitHub CLI
+                  project add FOLDER [--name NAME] [--alias ALIAS] [--base BRANCH] [--model MODEL]
+                           [--effort low|medium|high|xhigh|max] [--group GROUP]
+                           add a git clone on this machine as a project
                   help     show this help
 
                 FILE defaults to %s
@@ -62,6 +70,19 @@ public final class Cli {
             case "run" -> {
                 arguments.allow(0, Set.of("config"));
                 yield new Run(arguments.configFile(defaults));
+            }
+            case "project" -> {
+                if (arguments.positional().isEmpty() || !arguments.positional().getFirst().equals("add")) {
+                    String sub = arguments.positional().isEmpty() ? "" : " " + arguments.positional().getFirst();
+                    throw new CliException("unknown command 'project" + sub + "'");
+                }
+                if (arguments.positional().size() < 2) {
+                    throw new CliException("project add needs the folder of a git clone");
+                }
+                arguments.allow(2, Set.of("config", "name", "alias", "base", "model", "effort", "group"));
+                yield new ProjectAdd(arguments.configFile(defaults), Path.of(arguments.positional().get(1)), arguments.values().get("name"),
+                        arguments.values().get("alias"), arguments.values().get("base"), arguments.values().get("model"),
+                        arguments.values().get("effort"), arguments.values().get("group"));
             }
             case "check" -> {
                 arguments.allow(0, Set.of("config"));

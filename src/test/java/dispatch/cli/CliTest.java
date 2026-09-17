@@ -32,6 +32,17 @@ class CliTest {
     }
 
     @Test
+    void projectAddTakesTheCloneAndOptionalSettings() {
+        assertEquals(new Cli.ProjectAdd(DEFAULT_CONFIG, Path.of("work/alm"), "alm", "a", "develop", "opus", "high", "backend"),
+                parse("project", "add", "work/alm", "--name", "alm", "--alias", "a", "--base", "develop", "--model", "opus",
+                        "--effort", "high", "--group", "backend"));
+        assertEquals(new Cli.ProjectAdd(DEFAULT_CONFIG, Path.of("work/alm"), null, null, null, null, null, null),
+                parse("project", "add", "work/alm"));
+        assertTrue(error("project", "add").contains("project add needs the folder of a git clone"));
+        assertTrue(error("project", "remove", "alm").contains("unknown command 'project remove'"));
+    }
+
+    @Test
     void helpIsShownOnRequest() {
         assertEquals(new Cli.Help(), parse("--help"));
         assertEquals(new Cli.Help(), parse("help"));
