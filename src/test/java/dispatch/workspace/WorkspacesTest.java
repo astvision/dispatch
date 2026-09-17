@@ -103,6 +103,37 @@ class WorkspacesTest {
     }
 
     @Test
+    void stateDirectoriesAreCreatedPrivate() throws IOException {
+        Path fresh = dir.resolve("fresh-state");
+        Workspaces freshWorkspaces = new Workspaces(fresh, git);
+
+        Optional<String> warning = freshWorkspaces.createDirectories();
+
+        assertEquals(Optional.empty(), warning);
+        for (String sub : List.of("", "repos", "worktrees", "runs")) {
+            assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(fresh.resolve(sub))), sub);
+        }
+    }
+
+    @Test
+    void stateDirectoryOpenToOtherUsersIsReported() throws IOException {
+        Path open = Files.createDirectories(dir.resolve("open-state"));
+        Files.setPosixFilePermissions(open, PosixFilePermissions.fromString("rwxr-xr-x"));
+
+        Optional<String> warning = new Workspaces(open, git).createDirectories();
+
+        assertTrue(warning.isPresent() && warning.get().contains("rwxr-xr-x"), String.valueOf(warning));
+    }
+
+    @Test
+    void groupAccessAsSetBySystemdIsAccepted() throws IOException {
+        Path shared = Files.createDirectories(dir.resolve("group-state"));
+        Files.setPosixFilePermissions(shared, PosixFilePermissions.fromString("rwxr-x---"));
+
+        assertEquals(Optional.empty(), new Workspaces(shared, git).createDirectories());
+    }
+
+    @Test
     void existingWorktreeIsNeverReused() {
         workspaces.createWorktree(project(List.of()), 10);
 

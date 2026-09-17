@@ -105,6 +105,22 @@ class DatabaseTest {
     }
 
     @Test
+    void newDatabaseFileIsReadableByItsOwnerOnly() throws Exception {
+        Path file = dir.resolve("fresh.db");
+
+        try (Database fresh = Database.open(file)) {
+            fresh.migrate();
+            fresh.transaction(tx -> tx.update("INSERT INTO kv (key, value) VALUES ('k', 'v')"));
+
+            Path wal = dir.resolve("fresh.db-wal");
+            assertTrue(java.nio.file.Files.exists(wal), "WAL file expected while the database is open");
+            assertEquals("rw-------", java.nio.file.attribute.PosixFilePermissions.toString(java.nio.file.Files.getPosixFilePermissions(wal)));
+        }
+
+        assertEquals("rw-------", java.nio.file.attribute.PosixFilePermissions.toString(java.nio.file.Files.getPosixFilePermissions(file)));
+    }
+
+    @Test
     void insertReturnsGeneratedId() {
         long first = db.transactionReturning(tx -> tx.insert("INSERT INTO kv (key, value) VALUES ('a', '1')"));
         long second = db.transactionReturning(tx -> tx.insert("INSERT INTO kv (key, value) VALUES ('b', '2')"));

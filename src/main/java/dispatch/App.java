@@ -21,9 +21,6 @@ import dispatch.telegram.TelegramException;
 import dispatch.telegram.UpdateHandler;
 import dispatch.workspace.Git;
 import dispatch.workspace.Workspaces;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -64,14 +61,14 @@ public final class App {
      */
     public static App start(Config config, BotApi api, Map<String, String> environment, Clock clock, Consumer<Throwable> onFatal) {
         Path stateDir = config.stateDir();
-        createDirectories(stateDir.resolve("repos"), stateDir.resolve("worktrees"), stateDir.resolve("runs"));
+        Workspaces workspaces = new Workspaces(stateDir, new Git("git", config.secrets().ghToken(), Duration.ofMinutes(5)));
+        workspaces.createDirectories().ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
         Database db = Database.open(stateDir.resolve("dispatch.db"));
         db.migrate();
         String botUsername = api.getMe().path("username").asText();
 
         Signal schedulerSignal = new Signal();
         Signal outboxSignal = new Signal();
-        Workspaces workspaces = new Workspaces(stateDir, new Git("git", config.secrets().ghToken(), Duration.ofMinutes(5)));
         Projects projects = new Projects(config.projects(), workspaces::unavailableReason);
         ActiveRuns activeRuns = new ActiveRuns();
         RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake);
@@ -166,16 +163,6 @@ public final class App {
             api.setMyCommands(groupChatId, commands);
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "group", groupChatId, "error", e.getMessage());
-        }
-    }
-
-    private static void createDirectories(Path... dirs) {
-        try {
-            for (Path dir : dirs) {
-                Files.createDirectories(dir);
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException("cannot create state directories", e);
         }
     }
 }
