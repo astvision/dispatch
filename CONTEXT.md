@@ -5,7 +5,7 @@ Dispatch takes development tasks that members give it in a private chat, has an 
 ## Language
 
 **Group**:
-A team's Telegram group together with its members and projects. One bot can serve several groups. A group sees its own projects' tasks and never another group's.
+A team's Telegram group together with its members and projects. One bot can serve several groups. A group sees its own projects' tasks and never another group's. A developer's personal bot has a group without a chat: just them and their projects.
 _Avoid_: Team, tenant, organization, workspace
 
 **Member**:

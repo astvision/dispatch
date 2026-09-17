@@ -21,10 +21,11 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 - Task text and repository content can steer the agent (prompt injection). Planning is read-only, and code changes need a member's approval first (ADR 0006).
 - Splitting a message (✂️, ADR 0013) sends it to Haiku with no tools at all, not even read-only ones. The model can only answer with text, and each part is shown to the member before it becomes a draft.
 - Execution runs in auto mode: the agent edits files and runs builds and tests as the instance user, within what Claude's classifier allows (ADR 0009).
+- A personal instance (ADR 0014) runs as the developer, so its boundary is the developer's own OS account: the agent can read their SSH keys, other repositories and saved logins. Anyone who controls their Telegram account or bot token can make it run commands as them. `dispatch init` makes only the person confirmed at the terminal a member. Nothing about projects, paths or agents can be changed from Telegram.
 
 ## Secrets
 
-- **Where secrets live:** only in the environment file (`TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `GH_TOKEN`), mode 600, owned by the instance user.
+- **Where secrets live:** only in the environment file (`TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `GH_TOKEN`), mode 600, owned by the instance user. A personal instance keeps them in the secrets file beside its config, created owner-only (mode 600 on macOS and Linux, an ACL for the current user alone on Windows); `dispatch run` refuses it while others can read it. `dispatch init` reads the bot token without echoing it, and never prints it.
 - **Config file:** the YAML config never holds secrets. It rejects unknown keys and repository URLs with embedded credentials.
 - **What the agent gets:** the agent process never receives `TELEGRAM_BOT_TOKEN` or `GH_TOKEN`. Git receives the token through its environment, never on a command line. Processes running as the same OS user can still read each other's environment.
 - **Redaction:**
@@ -36,7 +37,7 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 ## State on disk
 
 The state directory holds the SQLite database, git worktrees and raw agent transcripts: under `runs/`, including everything the agent read, and under `splits/`, including every message a member asked to split.
-- Dispatch creates it owner-only, and startup warns if it is open to other users.
+- Dispatch creates it owner-only (an ACL for the current user alone on Windows), and startup warns if it is open to other users.
 - Protect, back up and delete it the same way as the source code it contains.
 
 ## If a secret leaks

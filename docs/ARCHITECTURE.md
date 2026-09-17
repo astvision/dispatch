@@ -24,6 +24,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Private details | Plan, corrections and full result go to the requester's private chat, with a one-line outcome in the group and a group fallback; only the requester decides on their plan | 0011 |
 | Groups, private tasks, priority | One bot serves several groups, each with members and projects; tasks are given privately with project and priority buttons; priority orders the queue | 0012 |
 | Splitting | Only on request (✂️): Haiku without tools proposes the parts of a message, and the member splits it or keeps it whole | 0013 |
+| Personal instances | A developer's own bot and instance on their own machine (macOS, Windows, Linux): projects at any `path`, groups without a chat, `effort` per project, set up with `dispatch init` | 0014 |
 
 Also decided without an ADR:
 - Only members of a configured group act, for their groups' projects, in their own private chat with the bot; groups get announcements and read-only reports.
@@ -34,6 +35,7 @@ Also decided without an ADR:
 - Telegram attachments are passed to the agent.
 - No `Channel` interface: the core API is channel-neutral.
 - Worktrees are removed by an idle-TTL sweep.
+- Every pull request is tested on Linux, macOS and Windows.
 
 ## Deployment
 
@@ -59,6 +61,18 @@ The systemd template `dispatch@.service` sets:
 
 The instance user has `claude` and `gh` installed, file access only to its team's repositories, and a fine-grained GitHub token scoped to them. Monthly spend is capped by a spend limit on the team's API key in the Anthropic Console.
 
+A personal instance (ADR 0014) runs in the developer's terminal with `dispatch run`, as the developer, using their own `claude` and `gh` logins:
+
+```
+                           macOS, Linux                          Windows
+config                     ~/.config/dispatch/dispatch.yaml      %APPDATA%\Dispatch\dispatch.yaml
+secrets (owner-only)       ~/.config/dispatch/dispatch.env       %APPDATA%\Dispatch\dispatch.env
+state                      ~/.local/state/dispatch/              %LOCALAPPDATA%\Dispatch\
+projects                   wherever each project's path points; Dispatch adds worktrees under state
+```
+
+`bin/dispatch` (sh) and `bin/dispatch.cmd` run `dispatch.jar` from their own folder.
+
 ## Components
 
 ```
@@ -80,6 +94,7 @@ The instance user has `claude` and `gh` installed, file access only to its team'
 |---|---|
 | `Main`, `App` | `Main` validates config and installs the shutdown hook. `App` wires everything explicitly: it migrates the DB, checks the bot token (`getMe`, which also says whether the bot has topics in private chats), runs `Recovery`, fails splits a previous process left running, registers the command menus (group, private chats), and starts the poller, scheduler, outbox and draft-expiry threads. A loop that dies unexpectedly is fatal. |
 | `config` | YAML + env loading into records. Startup fails naming the invalid field. |
+| `cli` | The `dispatch` command: `init` (guided personal setup), `project add` (adds a clone to the config without reformatting it), `check` (config, bot, agent, projects, gh), and `run`. Per-OS default locations; the secrets file beside the config is merged under the process environment. |
 | `store` | SQLite access and migrations (`PRAGMA user_version`); conditional updates. One connection behind a lock. |
 | `core` | `TaskService`: the channel-neutral commands `draft / split / create / approve / reject / correct / cancel / status / history / timeline / stats` (later `followUp / retry`). `Scheduler` picks runs; `RunExecutor` drives one run; `Splitter` runs splits beside them; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
 | `agent` | `Agent` interface and `ClaudeCodeAgent` (CLI subprocess + stream-json parser). Tests run the real adapter against a fake `claude` shell script that replays recorded output. `CodexAgent` comes later. |
@@ -293,7 +308,7 @@ Nothing retries silently. The only automatic retries are Telegram polling and ou
 
 The full threat model is in [SECURITY.md](../SECURITY.md).
 
-- **Secrets:** only in the 0600 environment file. The YAML rejects unknown keys and repository URLs with embedded credentials.
+- **Secrets:** only in the 0600 environment file, or in a personal instance's secrets file beside its config. That file is owner-only: mode 600 on macOS and Linux, an ACL for the current user alone on Windows. `dispatch run` refuses one that others can read. The YAML rejects unknown keys and repository URLs with embedded credentials.
 - **Redaction:** a `Redactor` masks the values of the secret variables and common credential formats. `Main` installs it for every log line and stack trace; `OutboxSender` applies it to payloads before rendering, so every Telegram message is covered.
 - **State on disk:** the database file (and its `-wal`/`-shm` files) is created `rw-------`, and `repos/`, `worktrees/`, `runs/` and `splits/` are created `rwx------`. Startup warns if the state directory is open to other users.
 - **Chat content in logs:** a Telegram update that fails to process is logged with its id and type only, never its content.
@@ -339,14 +354,16 @@ projects:
   - name: autoland-management
     alias: alm
     repo: https://github.com/acme/autoland-management.git
+    # path: /home/bold/work/alm          # an existing clone anywhere instead of repos/<name>; repo is then optional
     baseBranch: main
     agent: claude-code
     model: sonnet                        # needs auto mode for execution
+    effort: high                         # optional: low, medium, high, xhigh, max
     copyFiles: [.env]
     limits: { execute: { timeout: 90m, budgetUsd: 15 } }   # optional override
 ```
 
-Changing members or projects requires a restart, which interrupts active runs. Reloading config without a restart can come later.
+A group's `chatId` is optional: a personal bot's group has none, and its tasks stay in the requester's private chat (ADR 0014). Changing members or projects requires a restart, which interrupts active runs. Reloading config without a restart can come later.
 
 ## Milestones
 
@@ -357,7 +374,8 @@ Changing members or projects requires a restart, which interrupts active runs. R
 | **M3a** private details and reports (built) | Task details to the requester's private chat with group fallback and one-line group outcomes, requester-only decisions, private-chat commands and menu, `/status` with live agent activity (replaces `/tasks`), `/history` and `/history <id>` |
 | **M3b** groups, private tasks, priority (built) | Several groups per instance with members and projects, scoped reports, tasks given privately as drafts with project and priority buttons, priority-ordered queue with changes from `/status`, `/history` with who and when, `/stats` |
 | **M3c** topics and splitting (built) | A Telegram topic per task in the requester's private chat (when @BotFather has topics on), and splitting a message into tasks on request with ✂️ |
-| **M3d** interaction and ops | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
+| **M3d** personal instances (built) | `path` and `effort` per project, groups without a chat, owner-only state and secrets on every OS, `dispatch init / project add / check / run`, launchers, CI on Linux, macOS and Windows |
+| **M3e** interaction and ops | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
 | **M4** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
@@ -384,3 +402,5 @@ Tests throughout: unit tests for transitions and scheduler rules; end-to-end tes
 18. Buttons that change a message's content redraw it in place; the durable path (outbox) is kept for messages that report outcomes and for redraws caused by background work.
 19. Splitting always uses the `claude-code` agent, whatever the projects use: a message is split before its project is chosen.
 20. A part of a split message keeps the message's reference with `#<part>` appended, so references stay unique while the part's task still replies under the message that gave it.
+21. `dispatch project add` inserts lines where SnakeYAML found the existing nodes instead of re-serializing the file, so comments stay in place. The edited file must validate before it atomically replaces the config.
+22. `dispatch init` makes the first person who messages the bot its member only after they confirm the name at the terminal, since someone else may have found the bot first.
