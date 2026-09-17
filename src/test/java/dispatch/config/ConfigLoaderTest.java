@@ -224,12 +224,36 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void projectMayPointAtAnExistingCloneAnywhereInsteadOfARepoUrl() throws IOException {
+        Config config = ConfigLoader.load(write(VALID.replace(CRM_REPO, "    path: /home/bold/work/crm\n")), ENV);
+
+        Config.Project crm = config.projects().get(1);
+        assertEquals("/home/bold/work/crm", crm.path());
+        assertNull(crm.repo());
+        assertNull(config.projects().getFirst().path(), "without a path the clone stays under the state directory");
+    }
+
+    @Test
+    void projectNeedsARepoUrlOrAnAbsolutePath() throws IOException {
+        String yaml = VALID.replace(CRM_REPO, "    path: work/crm\n")
+                .replace("    repo: https://github.com/acme/autoland-management.git\n", "");
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(yaml), ENV));
+
+        assertTrue(error.getMessage().contains("projects[0].repo: required unless path is set"), error.getMessage());
+        assertTrue(error.getMessage().contains("projects[1].path: must be an absolute path to a git clone, got 'work/crm'"),
+                error.getMessage());
+    }
+
+    @Test
     void missingStateDirIsReported() throws IOException {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigLoader.load(write(VALID), Map.of("TELEGRAM_BOT_TOKEN", "123:abc")));
 
         assertTrue(error.getMessage().contains("stateDir"), error.getMessage());
     }
+
+    private static final String CRM_REPO = "    repo: https://github.com/acme/crm.git\n";
 
     private static final String TWO_PROJECTS_IN_BACKEND = """
                   projects:

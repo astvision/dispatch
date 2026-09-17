@@ -302,7 +302,7 @@ class SplitTest {
     }
 
     private static Config.Project project(String name) {
-        return new Config.Project(name, null, "https://github.com/acme/" + name + ".git", "main", "claude-code", null, List.of(), null);
+        return new Config.Project(name, null, "https://github.com/acme/" + name + ".git", null, "main", "claude-code", null, List.of(), null);
     }
 
     private Map<String, String> row(String sql, Object... params) {

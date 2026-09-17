@@ -325,7 +325,7 @@ class RunExecutorTest {
     }
 
     private long queue(String description) throws IOException {
-        Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), "main", "claude-code", null, copyFiles, null);
+        Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, copyFiles, null);
         Git git = new Git("git", null, Duration.ofSeconds(30));
         Workspaces workspaces = new Workspaces(repos.stateDir, git);
         Delivery delivery = new Delivery(git, new Gh(FakeGh.install(dir.resolve("gh-" + System.nanoTime())).toString(), null,

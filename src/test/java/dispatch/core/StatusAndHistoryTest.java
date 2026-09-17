@@ -56,9 +56,9 @@ class StatusAndHistoryTest {
         db = Database.open(dbFile);
         db.migrate();
         clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
-        Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", "master", "claude-code", null,
+        Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", null, "master", "claude-code", null,
                 List.of(), null);
-        Config.Project alm = new Config.Project("alm", null, "https://github.com/acme/alm.git", "main", "claude-code", null,
+        Config.Project alm = new Config.Project("alm", null, "https://github.com/acme/alm.git", null, "main", "claude-code", null,
                 List.of(), null);
         activeRuns = new ActiveRuns();
         Groups groups = new Groups(List.of(

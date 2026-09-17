@@ -94,10 +94,16 @@ public record Config(
     public record Delivery(String authorName, String authorEmail, String ghCommand) {
     }
 
+    /**
+     * @param repo the URL to clone from; only needed when there is no {@code path}
+     * @param path an existing clone anywhere on this machine, e.g. the developer's own (ADR 0014); null for
+     *             {@code <stateDir>/repos/<name>}
+     */
     public record Project(
             String name,
             String alias,
             String repo,
+            String path,
             String baseBranch,
             String agent,
             String model,

@@ -37,9 +37,10 @@ agents:
     command: /home/dispatch-backend/.local/bin/claude
 
 projects:
-  - name: autoland-management     # clone lives at <stateDir>/repos/autoland-management
+  - name: autoland-management     # clone lives at <stateDir>/repos/autoland-management, unless path is set
     alias: alm
     repo: https://github.com/acme/autoland-management.git
+    # path: /home/bold/work/autoland-management   # an existing clone anywhere, e.g. your own; repo is then optional
     baseBranch: main
     agent: claude-code
     # model: sonnet               # execution needs a model with auto mode (Sonnet, Opus); Haiku runs fail

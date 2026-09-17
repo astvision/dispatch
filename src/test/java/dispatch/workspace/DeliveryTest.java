@@ -38,7 +38,7 @@ class DeliveryTest {
         repos = GitFixture.create(dir, "alm");
         git = new Git("git", null, Duration.ofSeconds(30));
         gh = FakeGh.install(dir.resolve("bin"));
-        Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), "main", "claude-code", null, List.of(), null);
+        Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, List.of(), null);
         worktree = new Workspaces(repos.stateDir, git).createWorktree(alm, 42).path();
         start = delivery(null).head(worktree);
     }

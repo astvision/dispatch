@@ -59,9 +59,9 @@ class UpdateHandlerTest {
         dbFile = dir.resolve("dispatch.db");
         db = Database.open(dbFile);
         db.migrate();
-        Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", "main",
+        Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null, "main",
                 "claude-code", null, List.of(), null);
-        Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", "master",
+        Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", null, "master",
                 "claude-code", null, List.of(), null);
         Projects projects = new Projects(List.of(alm, life), project -> Optional.empty());
         Groups groups = new Groups(List.of(

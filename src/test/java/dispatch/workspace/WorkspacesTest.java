@@ -50,6 +50,30 @@ class WorkspacesTest {
     }
 
     @Test
+    void projectWithAPathWorksFromThatCloneWithoutTouchingItsCheckout() throws IOException {
+        Path mine = dir.resolve("work/alm");
+        GitFixture.sh(dir, "git", "clone", "--quiet", repos.origin.toString(), mine.toString());
+        Files.writeString(mine.resolve("README.md"), "my unfinished edit\n");
+        Config.Project project = new Config.Project("alm", null, null, mine.toString(), "main", "claude-code", null, List.of(), null);
+
+        assertEquals(Optional.empty(), workspaces.unavailableReason(project));
+        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project, 43);
+
+        assertEquals(stateDir.resolve("worktrees/43"), worktree.path());
+        assertEquals("v1\n", Files.readString(worktree.path().resolve("README.md")));
+        assertEquals("my unfinished edit\n", Files.readString(mine.resolve("README.md")), "the developer's checkout is untouched");
+        assertEquals("dispatch/43", GitFixture.sh(mine, "git", "branch", "--list", "dispatch/43", "--format=%(refname:short)"));
+    }
+
+    @Test
+    void missingCloneAtAPathIsReported() {
+        Path missing = dir.resolve("work/nothing");
+        Config.Project project = new Config.Project("alm", null, null, missing.toString(), "main", "claude-code", null, List.of(), null);
+
+        assertEquals(Optional.of("no git clone at " + missing), workspaces.unavailableReason(project));
+    }
+
+    @Test
     void ignoredFilesAreCopiedIntoTheWorktree() throws IOException {
         Path repo = stateDir.resolve("repos/alm");
         Files.writeString(repo.resolve(".env"), "DB_PASSWORD=local\n");
@@ -154,7 +178,7 @@ class WorkspacesTest {
 
     @Test
     void projectWithoutCloneIsUnavailable() {
-        Config.Project crm = new Config.Project("crm", null, "https://github.com/acme/crm.git", "main", "claude-code", null, List.of(), null);
+        Config.Project crm = new Config.Project("crm", null, "https://github.com/acme/crm.git", null, "main", "claude-code", null, List.of(), null);
 
         Optional<String> reason = workspaces.unavailableReason(crm);
 
@@ -186,7 +210,7 @@ class WorkspacesTest {
     }
 
     private Config.Project project(List<String> copyFiles) {
-        return new Config.Project("alm", null, repos.origin.toString(), "main", "claude-code", null, copyFiles, null);
+        return new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, copyFiles, null);
     }
 
 }

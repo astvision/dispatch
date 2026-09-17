@@ -232,8 +232,13 @@ public final class ConfigLoader {
             if (project.alias() == null || !project.alias().equalsIgnoreCase(project.name())) {
                 validateKey(at + ".alias", project.alias(), false, keys, errors);
             }
+            if (project.path() != null && !Path.of(project.path()).isAbsolute()) {
+                errors.add(at + ".path: must be an absolute path to a git clone, got '" + project.path() + "'");
+            }
             if (isBlank(project.repo())) {
-                errors.add(at + ".repo: required");
+                if (project.path() == null) {
+                    errors.add(at + ".repo: required unless path is set");
+                }
             } else if (CREDENTIAL_URL.matcher(project.repo()).find()) {
                 // The value itself is not echoed: it contains a credential.
                 errors.add(at + ".repo: must not contain credentials; use the plain URL and set GH_TOKEN in the environment file");
@@ -258,7 +263,7 @@ public final class ConfigLoader {
             if (project.limits() != null && project.limits().execute() != null) {
                 validateLimitValues(at + ".limits.execute", project.limits().execute(), errors);
             }
-            normalized.add(new Config.Project(project.name(), project.alias(), project.repo(), project.baseBranch(),
+            normalized.add(new Config.Project(project.name(), project.alias(), project.repo(), project.path(), project.baseBranch(),
                     project.agent(), project.model(), List.copyOf(copyFiles), project.limits()));
         }
         return List.copyOf(normalized);

@@ -62,8 +62,9 @@ public final class Workspaces {
         }
     }
 
+    /** The project's clone: its configured path, or {@code repos/<name>} under the state directory. */
     public Path repo(Config.Project project) {
-        return stateDir.resolve("repos").resolve(project.name());
+        return project.path() != null ? Path.of(project.path()) : stateDir.resolve("repos").resolve(project.name());
     }
 
     public Path worktree(long taskId) {
@@ -80,13 +81,15 @@ public final class Workspaces {
         return stateDir.resolve("runs").resolve(Long.toString(taskId)).resolve(Integer.toString(seq));
     }
 
-    /** Empty when tasks can run; M1 expects an admin to clone each project into repos/ first. */
+    /** Empty when tasks can run. The clone is made by hand, or is the developer's own (ADR 0014). */
     public Optional<String> unavailableReason(Config.Project project) {
         Path repo = repo(project);
-        if (!Files.exists(repo.resolve(".git"))) {
-            return Optional.of("no clone at " + repo + " (git clone " + project.repo() + " " + repo + ")");
+        if (Files.exists(repo.resolve(".git"))) {
+            return Optional.empty();
         }
-        return Optional.empty();
+        return Optional.of(project.repo() == null
+                ? "no git clone at " + repo
+                : "no clone at " + repo + " (git clone " + project.repo() + " " + repo + ")");
     }
 
     /** Fetches the base branch and adds worktrees/&lt;task&gt; on a new branch dispatch/&lt;task&gt; at origin/&lt;base&gt;. */

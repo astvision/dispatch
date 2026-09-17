@@ -64,11 +64,11 @@ class TaskLifecycleTest {
         db = Database.open(dbFile);
         db.migrate();
         clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
-        Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", "main",
+        Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null, "main",
                 "claude-code", null, List.of(), null);
-        Config.Project crm = new Config.Project("crm", null, "https://github.com/acme/crm.git", "develop",
+        Config.Project crm = new Config.Project("crm", null, "https://github.com/acme/crm.git", null, "develop",
                 "claude-code", null, List.of(), null);
-        Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", "master",
+        Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", null, "master",
                 "claude-code", null, List.of(), null);
         Projects projects = new Projects(List.of(alm, crm, life),
                 project -> project.name().equals("crm") ? Optional.of("repos/crm is not cloned") : Optional.empty());
