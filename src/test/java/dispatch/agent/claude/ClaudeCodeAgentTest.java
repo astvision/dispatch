@@ -72,6 +72,38 @@ class ClaudeCodeAgentTest {
     }
 
     @Test
+    void executeRunResumesInAutoModeWithoutCommitPushOrGhAndReturnsTheSummary() throws Exception {
+        RunRequest request = new RunRequest(RunKind.EXECUTE, workdir, "Implement the approved plan", SESSION, true, List.of(),
+                new BigDecimal("10"), "sonnet", dir.resolve("runs/1/2"));
+
+        AgentResult result = agent.start(request).await();
+
+        assertEquals(AgentOutcome.SUCCEEDED, result.outcome(), result.error());
+        assertTrue(result.summary().contains("AUTH_TIMEOUT_SECONDS"), result.summary());
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertEquals("auto", valueAfter(args, "--permission-mode"));
+        assertEquals("Read,Edit,Write,Bash", valueAfter(args, "--tools"));
+        int denied = args.indexOf("--disallowedTools");
+        assertEquals(List.of("Bash(git commit *)", "Bash(git push *)", "Bash(gh *)"), args.subList(denied + 1, denied + 4));
+        assertEquals(SESSION.toString(), valueAfter(args, "--resume"));
+        assertEquals("10", valueAfter(args, "--max-budget-usd"));
+        assertFalse(args.contains("--json-schema"), args.toString());
+    }
+
+    @Test
+    void agentStartedInTheWrongPermissionModeIsStoppedInsteadOfRunningOn() throws Exception {
+        RunHandle handle = agent.start(new RunRequest(RunKind.EXECUTE, workdir, "SCENARIO:wrong-mode", SESSION, true, List.of(),
+                new BigDecimal("10"), "haiku", dir.resolve("runs/1/2")));
+        long child = awaitChildPid();
+
+        AgentResult result = CompletableFuture.supplyAsync(() -> awaitQuietly(handle)).get(10, TimeUnit.SECONDS);
+
+        assertEquals(AgentOutcome.FAILED, result.outcome());
+        assertTrue(result.error().contains("permission mode 'default' instead of 'auto'"), result.error());
+        assertFalse(ProcessHandle.of(child).map(ProcessHandle::isAlive).orElse(false), "the stopped run's children must be gone");
+    }
+
+    @Test
     void laterRunsResumeTheSession() throws Exception {
         RunRequest request = new RunRequest(RunKind.PLAN, workdir, "Revise the plan", SESSION, true, List.of(),
                 new BigDecimal("2"), null, dir.resolve("runs/1/2"));

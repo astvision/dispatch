@@ -23,12 +23,13 @@ final class ClaudeRun implements RunHandle {
     private final Process process;
     private final Path stderrLog;
     private final Duration cancelGrace;
-    private final StreamParser parser = new StreamParser();
+    private final StreamParser parser;
     private final AtomicBoolean cancelRequested = new AtomicBoolean();
     private final Thread stdoutReader;
 
-    ClaudeRun(Process process, Path stdoutLog, Path stderrLog, Duration cancelGrace) {
+    ClaudeRun(Process process, String permissionMode, Path stdoutLog, Path stderrLog, Duration cancelGrace) {
         this.process = process;
+        this.parser = new StreamParser(permissionMode);
         this.stderrLog = stderrLog;
         this.cancelGrace = cancelGrace;
         this.stdoutReader = Thread.ofVirtual().name("agent-stdout-" + process.pid()).start(() -> copyStdout(stdoutLog));
@@ -59,8 +60,15 @@ final class ClaudeRun implements RunHandle {
         try (BufferedReader lines = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
              BufferedWriter log = Files.newBufferedWriter(stdoutLog, StandardCharsets.UTF_8)) {
             String line;
+            boolean stopping = false;
             while ((line = lines.readLine()) != null) {
                 parser.accept(line);
+                if (!stopping && parser.wrongPermissionMode()) {
+                    // Running on would only spend budget on a run whose result cannot be trusted.
+                    stopping = true;
+                    Log.warn("agent.wrong_permission_mode", "pid", process.pid());
+                    cancel();
+                }
                 log.write(line);
                 log.newLine();
                 log.flush();

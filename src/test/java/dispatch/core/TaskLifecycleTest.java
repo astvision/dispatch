@@ -246,7 +246,7 @@ class TaskLifecycleTest {
     void failedRunFailsTheTaskWithItsReason() {
         long id = create(BOLD, "alm", "Fix login timeout", "21");
         ClaimedRun run = claim();
-        AgentResult budget = new AgentResult(AgentOutcome.BUDGET_EXCEEDED, 1, "s", null, new BigDecimal("2.1"), 4, List.of(),
+        AgentResult budget = new AgentResult(AgentOutcome.BUDGET_EXCEEDED, 1, "s", null, null, new BigDecimal("2.1"), 4, List.of(),
                 "Reached maximum budget ($2)");
 
         transitions.failed(id, run.seq(), FailureReason.BUDGET, "Reached maximum budget ($2)", budget);
@@ -414,7 +414,8 @@ class TaskLifecycleTest {
     }
 
     private static AgentResult agentResult(List<String> denials) {
-        return new AgentResult(AgentOutcome.SUCCEEDED, 0, "session-1", PLAN.toJson(), new BigDecimal("0.168185"), 9, denials, null);
+        return new AgentResult(AgentOutcome.SUCCEEDED, 0, "session-1", PLAN.toJson(), null, new BigDecimal("0.168185"), 9, denials,
+                null);
     }
 
     private Map<String, String> row(String sql, Object... params) {

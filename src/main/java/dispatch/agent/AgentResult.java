@@ -8,6 +8,7 @@ import java.util.List;
  *
  * @param sessionId        agent conversation id, null if the agent never reported one
  * @param structuredOutput raw JSON matching the requested schema, null if none was produced
+ * @param summary          the agent's final message, null if it sent none
  * @param costUsd          reported spend, null if unknown
  * @param turns            reported conversation turns, null if unknown
  * @param denials          tool calls the agent was not allowed to make, as "Tool: input" summaries
@@ -18,6 +19,7 @@ public record AgentResult(
         int exitCode,
         String sessionId,
         String structuredOutput,
+        String summary,
         BigDecimal costUsd,
         Integer turns,
         List<String> denials,

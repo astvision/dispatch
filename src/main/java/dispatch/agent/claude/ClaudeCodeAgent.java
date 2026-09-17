@@ -6,6 +6,7 @@ import dispatch.agent.Agent;
 import dispatch.agent.AgentStartException;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
+import dispatch.domain.RunKind;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -44,7 +45,8 @@ public final class ClaudeCodeAgent implements Agent {
 
     @Override
     public RunHandle start(RunRequest request) {
-        ProcessBuilder builder = new ProcessBuilder(commandLine(request)).directory(request.workdir().toFile());
+        String permissionMode = permissionMode(request.kind());
+        ProcessBuilder builder = new ProcessBuilder(commandLine(request, permissionMode)).directory(request.workdir().toFile());
         builder.environment().clear();
         builder.environment().putAll(environment);
         WITHHELD_VARIABLES.forEach(builder.environment()::remove);
@@ -61,12 +63,21 @@ public final class ClaudeCodeAgent implements Agent {
         Log.info("agent.started", "agent", "claude-code", "pid", process.pid(), "kind", request.kind(),
                 "workdir", request.workdir(), "resume", request.resume());
         writePrompt(process, request.prompt());
-        return new ClaudeRun(process, stdoutLog, stderrLog, cancelGrace);
+        return new ClaudeRun(process, permissionMode, stdoutLog, stderrLog, cancelGrace);
     }
 
-    private List<String> commandLine(RunRequest request) {
+    private static String permissionMode(RunKind kind) {
+        return switch (kind) {
+            case PLAN -> "plan";
+            case EXECUTE -> "auto";
+            case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
+        };
+    }
+
+    private List<String> commandLine(RunRequest request, String permissionMode) {
         List<String> args = new ArrayList<>(List.of(command, "-p",
                 "--output-format", "stream-json", "--verbose",
+                "--permission-mode", permissionMode,
                 "--permission-prompts", "none",
                 "--setting-sources", "project,local",
                 "--strict-mcp-config",
@@ -84,8 +95,12 @@ public final class ClaudeCodeAgent implements Agent {
         }
         switch (request.kind()) {
             // Read-only investigation: no subagents or schedulers, just reading files and read-only shell commands.
-            case PLAN -> args.addAll(List.of("--permission-mode", "plan", "--tools", "Read,Bash", "--json-schema", PLAN_SCHEMA));
-            case EXECUTE, DELIVER -> throw new IllegalArgumentException(request.kind() + " runs are not supported until M2");
+            case PLAN -> args.addAll(List.of("--tools", "Read,Bash", "--json-schema", PLAN_SCHEMA));
+            // Delivery is Dispatch's job (ADR 0007); the deny rules are a guardrail, not a boundary (ADR 0009).
+            // --disallowedTools takes every following argument that is not a flag, so it stays last.
+            case EXECUTE -> args.addAll(List.of("--tools", "Read,Edit,Write,Bash",
+                    "--disallowedTools", "Bash(git commit *)", "Bash(git push *)", "Bash(gh *)"));
+            case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
         }
         return args;
     }

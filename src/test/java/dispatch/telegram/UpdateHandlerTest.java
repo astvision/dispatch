@@ -181,7 +181,7 @@ class UpdateHandlerTest {
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), List.of());
         transitions.planSucceeded(run.taskId(), run.seq(), plan,
-                new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", plan.toJson(), new BigDecimal("0.1"), 3, List.of(), null));
+                new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", plan.toJson(), null, new BigDecimal("0.1"), 3, List.of(), null));
         return run.taskId();
     }
 
