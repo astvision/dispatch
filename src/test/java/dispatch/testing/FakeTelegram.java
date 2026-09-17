@@ -43,6 +43,7 @@ public final class FakeTelegram implements AutoCloseable {
     private final HttpServer server;
     private final Map<String, BlockingQueue<Request>> requests = new ConcurrentHashMap<>();
     private final Map<String, Deque<String[]>> scripted = new ConcurrentHashMap<>();
+    private final Map<Long, String[]> refusedChats = new ConcurrentHashMap<>();
     private final BlockingQueue<JsonNode> updates = new LinkedBlockingQueue<>();
     private final AtomicLong nextMessageId = new AtomicLong(1000);
 
@@ -66,6 +67,11 @@ public final class FakeTelegram implements AutoCloseable {
     /** The next call to {@code method} gets this HTTP status and body instead of a success. */
     public void respond(String method, int status, String body) {
         scripted.computeIfAbsent(method, m -> new ConcurrentLinkedDeque<>()).add(new String[] {String.valueOf(status), body});
+    }
+
+    /** Every sendMessage to {@code chatId} gets this HTTP status and body, e.g. a user who never started the bot. */
+    public void refuseChat(long chatId, int status, String body) {
+        refusedChats.put(chatId, new String[] {String.valueOf(status), body});
     }
 
     public void pushUpdate(JsonNode update) {
@@ -97,6 +103,13 @@ public final class FakeTelegram implements AutoCloseable {
         byte[] body = exchange.getRequestBody().readAllBytes();
         queue(method).add(new Request(method, exchange.getRequestHeaders().getFirst("Content-Type"), body));
 
+        if (method.equals("sendMessage")) {
+            String[] refused = refusedChats.get(Json.read(new String(body, StandardCharsets.UTF_8)).path("chat_id").asLong());
+            if (refused != null) {
+                reply(exchange, Integer.parseInt(refused[0]), refused[1]);
+                return;
+            }
+        }
         String[] scriptedResponse = scripted.getOrDefault(method, new ConcurrentLinkedDeque<>()).poll();
         if (scriptedResponse != null) {
             reply(exchange, Integer.parseInt(scriptedResponse[0]), scriptedResponse[1]);

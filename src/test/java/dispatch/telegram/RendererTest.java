@@ -122,13 +122,39 @@ class RendererTest {
     }
 
     @Test
+    void groupHearsWhoAskedAndThatDetailsGoPrivately() {
+        String html = renderer.render(OutboxKind.TASK_QUEUED,
+                Json.object().put("taskId", 3).put("project", "life").put("requester", "Bold <dev>")).html();
+
+        assertTrue(html.contains("#3") && html.contains("life") && html.contains("Bold &lt;dev&gt;"), html);
+    }
+
+    @Test
+    void groupGetsOneLineOutcomes() {
+        String done = renderer.render(OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", 3).put("project", "life")
+                .put("prUrl", "https://github.com/acme/life/pull/4").put("filesChanged", 2)).html();
+        String nothing = renderer.render(OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", 3).put("project", "life")
+                .putNull("prUrl").put("filesChanged", 0)).html();
+        String failed = renderer.render(OutboxKind.TASK_FAILED_SHORT, Json.object().put("taskId", 3).put("reason", "TIMEOUT")).html();
+
+        assertTrue(done.contains("#3") && done.contains("https://github.com/acme/life/pull/4"), done);
+        assertTrue(nothing.contains(messages.getString("task.completedNoChanges")), nothing);
+        assertTrue(failed.contains("#3") && failed.contains(messages.getString("failure.TIMEOUT")), failed);
+        assertFalse(done.contains("\n\n"), "one short message: " + done);
+    }
+
+    @Test
     void refusedCorrectionSaysWhy() {
         String stale = renderer.render(OutboxKind.CORRECTION_REFUSED, Json.object().put("taskId", 42).put("reason", "stale")).html();
         String busy = renderer.render(OutboxKind.CORRECTION_REFUSED,
                 Json.object().put("taskId", 42).put("reason", "phase").put("phase", "EXECUTING")).html();
 
+        String notRequester = renderer.render(OutboxKind.CORRECTION_REFUSED,
+                Json.object().put("taskId", 42).put("reason", "requester").put("requester", "Bold")).html();
+
         assertEquals(new java.text.MessageFormat(messages.getString("task.correctionStale")).format(new Object[] {"42"}), stale);
         assertTrue(busy.contains(messages.getString("phase.EXECUTING")), busy);
+        assertTrue(notRequester.contains("#42") && notRequester.contains("Bold"), notRequester);
     }
 
     @Test
@@ -320,7 +346,10 @@ class RendererTest {
 
     private static ObjectNode samplePayload(OutboxKind kind) {
         return switch (kind) {
-            case TASK_QUEUED -> Json.object().put("taskId", 1).put("project", "autoland-management");
+            case TASK_QUEUED -> Json.object().put("taskId", 1).put("project", "autoland-management").put("requester", "Bold");
+            case TASK_COMPLETED_SHORT -> Json.object().put("taskId", 1).put("project", "life")
+                    .put("prUrl", "https://github.com/acme/alm/pull/7").put("filesChanged", 2);
+            case TASK_FAILED_SHORT -> Json.object().put("taskId", 1).put("reason", "DELIVERY");
             case PLAN_READY -> planPayload(List.of("Do it"), List.of());
             case TASK_FAILED -> Json.object().put("taskId", 1).put("reason", "AGENT").put("detail", "boom");
             case TASK_REJECTED, TASK_CANCELLED, EXECUTION_QUEUED, CORRECTION_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");

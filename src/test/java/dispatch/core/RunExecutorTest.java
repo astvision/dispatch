@@ -43,7 +43,6 @@ import org.junit.jupiter.api.io.TempDir;
 class RunExecutorTest {
 
     private static final Requester BOLD = new Requester("telegram:100", "Bold");
-    private static final Requester ALI = new Requester("telegram:200", "Ali");
     private static final String CHAT = "telegram:-100";
 
     @TempDir
@@ -128,7 +127,7 @@ class RunExecutorTest {
         assertEquals("dispatch #" + id + ": Fix the login timeout on staging", origin("log", "-1", "--format=%s", branch));
         String body = origin("log", "-1", "--format=%b", branch);
         assertTrue(body.contains("AUTH_TIMEOUT_SECONDS"), body);
-        assertTrue(body.endsWith("Requested-by: Bold\nApproved-by: Ali"), body);
+        assertTrue(body.endsWith("Requested-by: Bold\nApproved-by: Bold"), body);
         assertEquals("README.md", origin("diff", "--name-only", task.get("base_sha"), branch));
         assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_COMPLETED'").get("n"));
     }
@@ -205,7 +204,7 @@ class RunExecutorTest {
         long id = queue("Fix the login timeout");
         runNext();
         String worktree = row("SELECT worktree FROM task WHERE id = ?", id).get("worktree");
-        db.transaction(tx -> tasks.correct(tx, ALI, id, 1, "Also cover the mobile login", CHAT + "/200", CHAT));
+        db.transaction(tx -> tasks.correct(tx, BOLD, id, 1, "Also cover the mobile login", CHAT + "/200", CHAT));
 
         runNext();
 
@@ -368,7 +367,7 @@ class RunExecutorTest {
     }
 
     private void approve(long id) {
-        assertEquals(ApproveResult.APPROVED, db.transactionReturning(tx -> tasks.approve(tx, ALI, id, 1)));
+        assertEquals(ApproveResult.APPROVED, db.transactionReturning(tx -> tasks.approve(tx, BOLD, id, 1)));
     }
 
     private void assertFailed(long id, String reason, String detailFragment) {

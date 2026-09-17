@@ -3,6 +3,7 @@ package dispatch.store;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.domain.OutboxKind;
+import dispatch.domain.Task;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -59,6 +60,14 @@ public final class Outbox {
                                             next_attempt_at, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)""",
                 taskId, kind, chatRef, fallbackChatRef, fallbackReplyToRef, Json.write(payload), now, now);
+    }
+
+    /**
+     * A task message for its requester's private chat, falling back to a reply under the task in its group (ADR 0011).
+     * The requester reference addresses the private chat: for Telegram, a private chat's id is the user's id.
+     */
+    public static long enqueueForRequester(Tx tx, Task task, OutboxKind kind, JsonNode payload, Instant now) {
+        return enqueueWithFallback(tx, task.id(), kind, task.requester().ref(), task.chatRef(), task.originRef(), payload, now);
     }
 
     /** The pending message that has waited longest past its next attempt time. */

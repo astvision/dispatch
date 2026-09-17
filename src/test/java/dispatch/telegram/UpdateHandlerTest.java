@@ -196,7 +196,7 @@ class UpdateHandlerTest {
     void rejectButtonRejectsThePlanAndAnswersTheCallback() throws Exception {
         long taskId = taskAwaitingApproval();
 
-        handler.handle(callback(510, 200, "Ali", "reject:" + taskId + ":1"));
+        handler.handle(callback(510, 100, "Bold", "reject:" + taskId + ":1"));
 
         assertEquals("REJECTED", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
         JsonNode answer = telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json();
@@ -208,7 +208,7 @@ class UpdateHandlerTest {
     void buttonOfAnOlderPlanIsAnsweredAsStale() throws Exception {
         long taskId = taskAwaitingApproval();
 
-        handler.handle(callback(511, 200, "Ali", "reject:" + taskId + ":9"));
+        handler.handle(callback(511, 100, "Bold", "reject:" + taskId + ":9"));
 
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
         assertEquals(renderer.text("callback.stale"),
@@ -219,11 +219,22 @@ class UpdateHandlerTest {
     void approveButtonApprovesThePlanAndAnswersTheCallback() throws Exception {
         long taskId = taskAwaitingApproval(List.of());
 
-        handler.handle(callback(512, 200, "Ali", "approve:" + taskId + ":1"));
+        handler.handle(callback(512, 100, "Bold", "approve:" + taskId + ":1"));
 
         assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
-        assertEquals("Ali", row("SELECT requested_by_name FROM run WHERE task_id = ? AND seq = 2", taskId).get("requested_by_name"));
+        assertEquals("Bold", row("SELECT requested_by_name FROM run WHERE task_id = ? AND seq = 2", taskId).get("requested_by_name"));
         assertEquals(renderer.text("callback.approved"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+    }
+
+    @Test
+    void buttonPressedByAnotherMemberIsAnsweredThatOnlyTheRequesterDecides() throws Exception {
+        long taskId = taskAwaitingApproval(List.of());
+
+        handler.handle(callback(514, 200, "Ali", "approve:" + taskId + ":1"));
+
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        assertEquals(renderer.text("callback.notRequester"),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
@@ -231,7 +242,7 @@ class UpdateHandlerTest {
     void approveButtonOnAPlanWithOpenQuestionsSaysToAnswerThemFirst() throws Exception {
         long taskId = taskAwaitingApproval(List.of("Which environments?"));
 
-        handler.handle(callback(513, 200, "Ali", "approve:" + taskId + ":1"));
+        handler.handle(callback(513, 100, "Bold", "approve:" + taskId + ":1"));
 
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
         assertEquals(renderer.text("callback.openQuestions"),
@@ -243,7 +254,7 @@ class UpdateHandlerTest {
         long taskId = taskAwaitingApproval(List.of());
         planMessageSentAs(1000);
 
-        handler.handle(message(540, 41, 200, "Ali", GROUP, "supergroup", "Also cover the mobile login", botMessage(1000)));
+        handler.handle(message(540, 41, 100, "Bold", GROUP, "supergroup", "Also cover the mobile login", botMessage(1000)));
 
         assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
         Map<String, String> run = row("SELECT * FROM run WHERE task_id = ? AND seq = 2", taskId);
@@ -257,7 +268,7 @@ class UpdateHandlerTest {
         long taskId = taskAwaitingApproval(List.of());
         planMessageSentAs(1000);
 
-        handler.handle(message(541, 42, 200, "Ali", GROUP, "supergroup", "/api/login fails the same way", botMessage(1000)));
+        handler.handle(message(541, 42, 100, "Bold", GROUP, "supergroup", "/api/login fails the same way", botMessage(1000)));
 
         assertEquals("/api/login fails the same way", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction"));
     }

@@ -67,7 +67,7 @@ public final class RunTransitions {
             ObjectNode payload = Json.object().put("taskId", taskId).put("planSeq", seq).put("project", task.project());
             payload.set("plan", Json.read(plan.toJson()));
             putCostAndDuration(payload, run, result, now);
-            enqueue(tx, task, OutboxKind.PLAN_READY, payload, now);
+            enqueueForRequester(tx, task, OutboxKind.PLAN_READY, payload, now);
             logTransition(tx, taskId, seq, Phase.PLANNING, Phase.AWAITING_APPROVAL);
         });
     }
@@ -96,7 +96,9 @@ public final class RunTransitions {
                     .put("filesChanged", files.size()).put("summary", result.summary());
             result.denials().forEach(payload.putArray("denials")::add);
             putCostAndDuration(payload, run, result, now);
-            enqueue(tx, task, OutboxKind.TASK_COMPLETED, payload, now);
+            enqueueForRequester(tx, task, OutboxKind.TASK_COMPLETED, payload, now);
+            enqueue(tx, task, OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", taskId).put("project", task.project())
+                    .put("prUrl", prUrl).put("filesChanged", files.size()), now);
             logTransition(tx, taskId, seq, Phase.EXECUTING, Phase.COMPLETED);
         });
     }
@@ -116,8 +118,9 @@ public final class RunTransitions {
                 return;
             }
             Events.record(tx, taskId, seq, ACTOR, task.phase(), Phase.FAILED, reason + ": " + shortDetail, now);
-            enqueue(tx, task, OutboxKind.TASK_FAILED,
+            enqueueForRequester(tx, task, OutboxKind.TASK_FAILED,
                     Json.object().put("taskId", taskId).put("reason", reason.name()).put("detail", shortDetail), now);
+            enqueue(tx, task, OutboxKind.TASK_FAILED_SHORT, Json.object().put("taskId", taskId).put("reason", reason.name()), now);
             logTransition(tx, taskId, seq, task.phase(), Phase.FAILED);
         });
     }
@@ -153,6 +156,13 @@ public final class RunTransitions {
         payload.put("durationSeconds", run.startedAt() == null ? 0 : Duration.between(run.startedAt(), now).toSeconds());
     }
 
+    /** Details for the requester's private chat, falling back to the group (ADR 0011). */
+    private void enqueueForRequester(Tx tx, Task task, OutboxKind kind, ObjectNode payload, Instant now) {
+        Outbox.enqueueForRequester(tx, task, kind, payload, now);
+        tx.afterCommit(wakeOutbox);
+    }
+
+    /** A message for the group, under the task's own message. */
     private void enqueue(Tx tx, Task task, OutboxKind kind, ObjectNode payload, Instant now) {
         Outbox.enqueue(tx, task.id(), kind, task.chatRef(), task.originRef(), payload, now);
         tx.afterCommit(wakeOutbox);

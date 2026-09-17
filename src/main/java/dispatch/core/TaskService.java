@@ -103,15 +103,15 @@ public final class TaskService {
         Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, description, who), now);
         Events.record(tx, id, null, who.ref(), null, Phase.PLANNING, "created", now);
         enqueue(tx, id, OutboxKind.TASK_QUEUED, chatRef, originRef,
-                Json.object().put("taskId", id).put("project", project.name()), now);
+                Json.object().put("taskId", id).put("project", project.name()).put("requester", who.name()), now);
         tx.afterCommit(wakeScheduler);
         tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "requester", who.ref()));
         return CreateResult.CREATED;
     }
 
     /**
-     * Approves the plan with run number {@code planSeq} and queues its execution (ADR 0006). A plan with open questions
-     * cannot be approved: members answer them by replying, which is a correction.
+     * Approves the plan with run number {@code planSeq} and queues its execution (ADR 0006). Only the requester decides on
+     * their plan (ADR 0011). A plan with open questions cannot be approved: the answers come as replies, i.e. corrections.
      */
     public ApproveResult approve(Tx tx, Requester who, long taskId, int planSeq) {
         Instant now = clock.instant();
@@ -124,6 +124,10 @@ public final class TaskService {
             return ApproveResult.NOT_FOUND;
         }
         Task task = found.get();
+        if (!task.requester().ref().equals(who.ref())) {
+            tx.afterCommit(() -> Log.info("task.approve_not_requester", "task", taskId, "requester", who.ref()));
+            return ApproveResult.NOT_REQUESTER;
+        }
         if (task.phase() != Phase.AWAITING_APPROVAL) {
             return ApproveResult.WRONG_STATE;
         }
@@ -140,16 +144,17 @@ public final class TaskService {
         // The run carries the plan it implements, so what was approved stays on record.
         Runs.insert(tx, new Runs.NewRun(taskId, Runs.nextSeq(tx, taskId), RunKind.EXECUTE, task.planJson(), who), now);
         Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.EXECUTING, "approved plan " + planSeq, now);
-        enqueue(tx, taskId, OutboxKind.EXECUTION_QUEUED, task.chatRef(), task.originRef(),
+        Outbox.enqueueForRequester(tx, task, OutboxKind.EXECUTION_QUEUED,
                 Json.object().put("taskId", taskId).put("by", who.name()), now);
+        tx.afterCommit(wakeOutbox);
         tx.afterCommit(wakeScheduler);
         logTransition(tx, taskId, Phase.AWAITING_APPROVAL, Phase.EXECUTING, who.ref());
         return ApproveResult.APPROVED;
     }
 
     /**
-     * A member's reply to the plan with run number {@code planSeq}: the task is planned again in the same session, with
-     * the reply as the run's instruction. Refusals are answered under the reply.
+     * The requester's reply to the plan with run number {@code planSeq}: the task is planned again in the same session,
+     * with the reply as the run's instruction. Refusals, including replies from other members, are answered under the reply.
      *
      * @param originRef channel reference of the reply
      */
@@ -163,6 +168,11 @@ public final class TaskService {
             return CorrectResult.EMPTY;
         }
         Task task = Tasks.find(tx, taskId).orElseThrow(() -> new IllegalStateException("task " + taskId + " does not exist"));
+        if (!task.requester().ref().equals(who.ref())) {
+            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef, Json.object().put("taskId", taskId)
+                    .put("reason", "requester").put("requester", task.requester().name()), now);
+            return CorrectResult.REFUSED;
+        }
         if (task.phase() != Phase.AWAITING_APPROVAL) {
             enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef,
                     Json.object().put("taskId", taskId).put("reason", "phase").put("phase", task.phase().name()), now);
@@ -185,7 +195,7 @@ public final class TaskService {
         return CorrectResult.CORRECTED;
     }
 
-    /** Rejects the plan with run number {@code planSeq}; a button on an older plan is refused as stale. */
+    /** The requester rejects the plan with run number {@code planSeq}; a button on an older plan is refused as stale. */
     public RejectResult reject(Tx tx, Requester who, long taskId, int planSeq) {
         Instant now = clock.instant();
         if (!members.contains(who.ref())) {
@@ -197,6 +207,10 @@ public final class TaskService {
             return RejectResult.NOT_FOUND;
         }
         Task task = found.get();
+        if (!task.requester().ref().equals(who.ref())) {
+            tx.afterCommit(() -> Log.info("task.reject_not_requester", "task", taskId, "requester", who.ref()));
+            return RejectResult.NOT_REQUESTER;
+        }
         if (task.phase() != Phase.AWAITING_APPROVAL) {
             return RejectResult.WRONG_STATE;
         }
@@ -234,8 +248,12 @@ public final class TaskService {
         }
         Runs.cancelQueued(tx, taskId, now);
         Events.record(tx, taskId, null, who.ref(), task.phase(), Phase.CANCELLED, "cancelled", now);
-        enqueue(tx, taskId, OutboxKind.TASK_CANCELLED, task.chatRef(), task.originRef(),
-                Json.object().put("taskId", taskId).put("by", who.name()), now);
+        ObjectNode cancelled = Json.object().put("taskId", taskId).put("by", who.name());
+        enqueue(tx, taskId, OutboxKind.TASK_CANCELLED, task.chatRef(), task.originRef(), cancelled, now);
+        if (!chatRef.equals(task.chatRef())) {
+            // Sent from a private chat: answer there too, not only in the group.
+            enqueue(tx, taskId, OutboxKind.TASK_CANCELLED, chatRef, originRef, cancelled, now);
+        }
         tx.afterCommit(() -> activeRuns.stop(taskId, ActiveRuns.StopReason.CANCELLED));
         logTransition(tx, taskId, task.phase(), Phase.CANCELLED, who.ref());
         return CancelResult.CANCELLED;

@@ -70,14 +70,22 @@ public final class Renderer {
             return plan(payload, hint);
         }
         Rendered rendered = switch (kind) {
-            case TASK_QUEUED -> plain(format("task.queued", taskId(payload), escape(payload.path("project").asText())));
+            case TASK_QUEUED -> plain(format("task.queued", taskId(payload), escape(payload.path("project").asText()),
+                    escape(payload.path("requester").asText())));
             case PLAN_READY -> throw new IllegalStateException("rendered above");
             case EXECUTION_QUEUED -> plain(format("task.executionQueued", taskId(payload), escape(payload.path("by").asText())));
             case CORRECTION_QUEUED -> plain(format("task.correctionQueued", taskId(payload)));
-            case CORRECTION_REFUSED -> plain(payload.path("reason").asText().equals("stale")
-                    ? format("task.correctionStale", taskId(payload))
-                    : format("task.correctionRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case CORRECTION_REFUSED -> plain(switch (payload.path("reason").asText()) {
+                case "stale" -> format("task.correctionStale", taskId(payload));
+                case "requester" -> format("task.correctionNotRequester", taskId(payload), escape(payload.path("requester").asText()));
+                default -> format("task.correctionRefused", taskId(payload), text("phase." + payload.path("phase").asText()));
+            });
             case TASK_COMPLETED -> completed(payload);
+            case TASK_COMPLETED_SHORT -> plain(format("task.completed", taskId(payload), escape(payload.path("project").asText()))
+                    + "\n" + (payload.path("filesChanged").asInt() == 0
+                            ? text("task.completedNoChanges")
+                            : format("task.completedPr", escape(payload.path("prUrl").asText()))));
+            case TASK_FAILED_SHORT -> plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText()))));
             case TASK_FAILED -> plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText())))
                     + detail(payload.path("detail").asText("")));
             case TASK_REJECTED -> plain(format("task.rejected", taskId(payload), escape(payload.path("by").asText())));

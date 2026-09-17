@@ -186,6 +186,7 @@ public final class UpdateHandler {
                     case APPROVED -> "callback.approved";
                     case NOT_ALLOWED -> "callback.notAllowed";
                     case NOT_FOUND -> "callback.notFound";
+                    case NOT_REQUESTER -> "callback.notRequester";
                     case WRONG_STATE -> "callback.wrongState";
                     case STALE_PLAN -> "callback.stale";
                     case OPEN_QUESTIONS -> "callback.openQuestions";
@@ -194,6 +195,7 @@ public final class UpdateHandler {
                     case REJECTED -> "callback.rejected";
                     case NOT_ALLOWED -> "callback.notAllowed";
                     case NOT_FOUND -> "callback.notFound";
+                    case NOT_REQUESTER -> "callback.notRequester";
                     case WRONG_STATE -> "callback.wrongState";
                     case STALE_PLAN -> "callback.stale";
                 };

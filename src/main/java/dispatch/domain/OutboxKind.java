@@ -8,7 +8,10 @@ public enum OutboxKind {
     CORRECTION_QUEUED,
     CORRECTION_REFUSED,
     TASK_COMPLETED,
+    /** The group's one line about a completion whose details went to the requester (ADR 0011). */
+    TASK_COMPLETED_SHORT,
     TASK_FAILED,
+    TASK_FAILED_SHORT,
     TASK_REJECTED,
     TASK_CANCELLED,
     STATUS,
