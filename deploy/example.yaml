@@ -1,4 +1,4 @@
-# /etc/dispatch/<team>.yaml - configuration for one team's instance (M1 keys only).
+# /etc/dispatch/<team>.yaml - configuration for one team's instance.
 team: backend
 
 # stateDir defaults to $STATE_DIRECTORY, which systemd sets from StateDirectory=dispatch/<team>.
@@ -12,6 +12,11 @@ telegram:
     - id: 222333444
       name: Ali
 
+delivery:                         # Dispatch commits, pushes dispatch/<task> and opens a draft PR (ADR 0007)
+  authorName: Dispatch (backend)
+  authorEmail: dispatch-backend@users.noreply.github.com
+  # ghCommand: /usr/bin/gh        # default: gh on PATH
+
 scheduler:
   maxConcurrentRuns: 2
 
@@ -19,6 +24,9 @@ limits:
   plan:
     timeout: 15m                  # s, m or h
     budgetUsd: 2                  # --max-budget-usd per planning run (can overshoot slightly)
+  execute:
+    timeout: 60m
+    budgetUsd: 10
 
 agents:
   claude-code:
@@ -30,7 +38,8 @@ projects:
     repo: https://github.com/acme/autoland-management.git
     baseBranch: main
     agent: claude-code
-    # model: opus
-    # copyFiles: [.env]           # must be git-ignored; copied into worktrees for execution runs only (M2)
+    # model: sonnet               # execution needs a model with auto mode (Sonnet, Opus); Haiku runs fail
+    # copyFiles: [.env]           # must be git-ignored; copied into worktrees for execution runs only
     # limits:
     #   plan: { timeout: 20m, budgetUsd: 3 }
+    #   execute: { timeout: 90m, budgetUsd: 15 }

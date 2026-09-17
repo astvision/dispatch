@@ -36,17 +36,20 @@ class ConfigLoaderTest {
                 config.telegram().members());
         assertEquals(2, config.scheduler().maxConcurrentRuns());
         assertEquals("/usr/local/bin/claude", config.agents().get("claude-code").command());
+        assertEquals(new Config.Delivery("Dispatch (backend)", "dispatch-backend@users.noreply.github.com", "gh"), config.delivery());
         assertEquals(new Config.Secrets("123:abc", "github_pat_x"), config.secrets());
 
         Config.Project alm = config.projects().getFirst();
         assertEquals("alm", alm.alias());
         assertEquals(List.of(".env"), alm.copyFiles());
         assertEquals(new Config.RunLimits(Duration.ofMinutes(20), new BigDecimal("2")), config.planLimits(alm));
+        assertEquals(new Config.RunLimits(Duration.ofMinutes(60), new BigDecimal("15")), config.executeLimits(alm));
 
         Config.Project crm = config.projects().get(1);
         assertNull(crm.alias());
         assertEquals(List.of(), crm.copyFiles());
         assertEquals(new Config.RunLimits(Duration.ofMinutes(15), new BigDecimal("2")), config.planLimits(crm));
+        assertEquals(new Config.RunLimits(Duration.ofMinutes(60), new BigDecimal("10")), config.executeLimits(crm));
     }
 
     @Test
@@ -55,6 +58,43 @@ class ConfigLoaderTest {
 
         assertEquals("backend", config.team());
         assertEquals("alm", config.projects().getFirst().alias());
+        assertEquals("gh", config.delivery().ghCommand());
+    }
+
+    @Test
+    void aliasMayRepeatItsOwnProjectName() throws IOException {
+        Config config = ConfigLoader.load(write(VALID.replace("alias: alm", "alias: Autoland-Management")), ENV);
+
+        assertEquals("Autoland-Management", config.projects().getFirst().alias());
+    }
+
+    @Test
+    void ghCommandCanBeConfigured() throws IOException {
+        Config config = ConfigLoader.load(write(VALID.replace("  authorEmail: dispatch-backend@users.noreply.github.com",
+                "  authorEmail: dispatch-backend@users.noreply.github.com\n  ghCommand: /opt/gh/bin/gh")), ENV);
+
+        assertEquals("/opt/gh/bin/gh", config.delivery().ghCommand());
+    }
+
+    @Test
+    void executionLimitsAndDeliveryIdentityAreRequired() throws IOException {
+        String withoutThem = VALID
+                .replace("""
+                          execute:
+                            timeout: 60m
+                            budgetUsd: 10
+                        """, "")
+                .replace("""
+                        delivery:
+                          authorName: Dispatch (backend)
+                          authorEmail: dispatch-backend@users.noreply.github.com
+                        """, "");
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(withoutThem), ENV));
+
+        assertTrue(error.getMessage().contains("limits.execute: timeout and budgetUsd are required"), error.getMessage());
+        assertTrue(error.getMessage().contains("delivery.authorName"), error.getMessage());
+        assertTrue(error.getMessage().contains("delivery.authorEmail"), error.getMessage());
     }
 
     @Test
@@ -157,12 +197,18 @@ class ConfigLoaderTest {
                   name: Bold
                 - id: 222333444
                   name: Ali
+            delivery:
+              authorName: Dispatch (backend)
+              authorEmail: dispatch-backend@users.noreply.github.com
             scheduler:
               maxConcurrentRuns: 2
             limits:
               plan:
                 timeout: 15m
                 budgetUsd: 2
+              execute:
+                timeout: 60m
+                budgetUsd: 10
             agents:
               claude-code:
                 command: /usr/local/bin/claude
@@ -178,6 +224,8 @@ class ConfigLoaderTest {
                 limits:
                   plan:
                     timeout: 20m
+                  execute:
+                    budgetUsd: 15
               - name: crm
                 repo: https://github.com/acme/crm.git
                 baseBranch: develop

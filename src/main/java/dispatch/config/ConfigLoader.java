@@ -49,6 +49,7 @@ public final class ConfigLoader {
         Map<String, Config.Agent> agents = raw.agents() == null ? Map.of() : raw.agents();
         validateAgents(agents, errors);
         List<Config.Project> projects = validateProjects(raw.projects(), agents, errors);
+        Config.Delivery delivery = validateDelivery(raw.delivery(), errors);
 
         String token = env.get("TELEGRAM_BOT_TOKEN");
         if (isBlank(token)) {
@@ -60,7 +61,7 @@ public final class ConfigLoader {
             throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));
         }
         return new Config(raw.team(), stateDir, raw.telegram(), raw.scheduler(), raw.limits(), Map.copyOf(agents),
-                projects, new Config.Secrets(token, ghToken));
+                projects, delivery, new Config.Secrets(token, ghToken));
     }
 
     private static ConfigFile read(Path file) {
@@ -121,12 +122,30 @@ public final class ConfigLoader {
     }
 
     private static void validateInstanceLimits(Config.Limits limits, List<String> errors) {
-        Config.RunLimits plan = limits == null ? null : limits.plan();
-        if (plan == null || plan.timeout() == null || plan.budgetUsd() == null) {
-            errors.add("limits.plan: timeout and budgetUsd are required");
+        validateInstanceLimit("limits.plan", limits == null ? null : limits.plan(), errors);
+        validateInstanceLimit("limits.execute", limits == null ? null : limits.execute(), errors);
+    }
+
+    private static void validateInstanceLimit(String at, Config.RunLimits limits, List<String> errors) {
+        if (limits == null || limits.timeout() == null || limits.budgetUsd() == null) {
+            errors.add(at + ": timeout and budgetUsd are required");
             return;
         }
-        validateLimitValues("limits.plan", plan, errors);
+        validateLimitValues(at, limits, errors);
+    }
+
+    private static Config.Delivery validateDelivery(Config.Delivery delivery, List<String> errors) {
+        if (delivery == null || isBlank(delivery.authorName())) {
+            errors.add("delivery.authorName: required, the git author of delivery commits (e.g. Dispatch (backend))");
+        }
+        if (delivery == null || isBlank(delivery.authorEmail())) {
+            errors.add("delivery.authorEmail: required (e.g. dispatch-backend@users.noreply.github.com)");
+        }
+        if (delivery == null) {
+            return null;
+        }
+        String ghCommand = isBlank(delivery.ghCommand()) ? "gh" : delivery.ghCommand();
+        return new Config.Delivery(delivery.authorName(), delivery.authorEmail(), ghCommand);
     }
 
     private static void validateLimitValues(String at, Config.RunLimits limits, List<String> errors) {
@@ -163,7 +182,9 @@ public final class ConfigLoader {
             Config.Project project = projects.get(i);
             String at = "projects[" + i + "]";
             validateKey(at + ".name", project.name(), true, keys, errors);
-            validateKey(at + ".alias", project.alias(), false, keys, errors);
+            if (project.alias() == null || !project.alias().equalsIgnoreCase(project.name())) {
+                validateKey(at + ".alias", project.alias(), false, keys, errors);
+            }
             if (isBlank(project.repo())) {
                 errors.add(at + ".repo: required");
             } else if (CREDENTIAL_URL.matcher(project.repo()).find()) {
@@ -186,6 +207,9 @@ public final class ConfigLoader {
             }
             if (project.limits() != null && project.limits().plan() != null) {
                 validateLimitValues(at + ".limits.plan", project.limits().plan(), errors);
+            }
+            if (project.limits() != null && project.limits().execute() != null) {
+                validateLimitValues(at + ".limits.execute", project.limits().execute(), errors);
             }
             normalized.add(new Config.Project(project.name(), project.alias(), project.repo(), project.baseBranch(),
                     project.agent(), project.model(), List.copyOf(copyFiles), project.limits()));
@@ -241,6 +265,7 @@ public final class ConfigLoader {
             String team,
             String stateDir,
             Config.Telegram telegram,
+            Config.Delivery delivery,
             Config.Scheduler scheduler,
             Config.Limits limits,
             Map<String, Config.Agent> agents,

@@ -19,12 +19,20 @@ public record Config(
         Limits limits,
         Map<String, Agent> agents,
         List<Project> projects,
+        Delivery delivery,
         Secrets secrets) {
 
     /** Instance plan limits with the project's override applied field by field. */
     public RunLimits planLimits(Project project) {
-        RunLimits defaults = limits.plan();
-        RunLimits override = project.limits() == null ? null : project.limits().plan();
+        return merge(limits.plan(), project.limits() == null ? null : project.limits().plan());
+    }
+
+    /** Instance execution limits with the project's override applied field by field. */
+    public RunLimits executeLimits(Project project) {
+        return merge(limits.execute(), project.limits() == null ? null : project.limits().execute());
+    }
+
+    private static RunLimits merge(RunLimits defaults, RunLimits override) {
         if (override == null) {
             return defaults;
         }
@@ -42,7 +50,8 @@ public record Config(
     public record Scheduler(int maxConcurrentRuns) {
     }
 
-    public record Limits(RunLimits plan) {
+    /** Either may be null in a project override; the instance limits have both. */
+    public record Limits(RunLimits plan, RunLimits execute) {
     }
 
     /** Either field may be null in a project override; instance limits always have both. */
@@ -70,6 +79,15 @@ public record Config(
     }
 
     public record Agent(String command) {
+    }
+
+    /**
+     * How Dispatch delivers execution runs (ADR 0007).
+     *
+     * @param authorName git author and committer of delivery commits, e.g. "Dispatch (backend)"
+     * @param ghCommand  the GitHub CLI; "gh" when not configured
+     */
+    public record Delivery(String authorName, String authorEmail, String ghCommand) {
     }
 
     public record Project(

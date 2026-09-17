@@ -52,10 +52,12 @@ class AppTest {
         config = new Config("backend", repos.stateDir,
                 new Config.Telegram(GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali"))),
                 new Config.Scheduler(2),
-                new Config.Limits(new Config.RunLimits(Duration.ofSeconds(60), new BigDecimal("2"))),
+                new Config.Limits(new Config.RunLimits(Duration.ofSeconds(60), new BigDecimal("2")),
+                        new Config.RunLimits(Duration.ofSeconds(60), new BigDecimal("10"))),
                 Map.of("claude-code", new Config.Agent(claude.toString())),
                 List.of(new Config.Project("autoland-management", "alm", repos.origin.toString(), "main", "claude-code", null,
                         List.of(), null)),
+                new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", "gh"),
                 new Config.Secrets(FakeTelegram.TOKEN, null));
     }
 
