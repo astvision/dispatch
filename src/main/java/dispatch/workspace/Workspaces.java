@@ -1,17 +1,14 @@
 package dispatch.workspace;
 
+import dispatch.OwnerOnly;
 import dispatch.config.Config;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.FileAttribute;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -38,25 +35,12 @@ public final class Workspaces {
      * state directory itself is open to other users; group access, as systemd's StateDirectoryMode=0750 gives, is fine.
      */
     public Optional<String> createDirectories() {
-        FileAttribute<Set<PosixFilePermission>> ownerOnly = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"));
         try {
-            if (!Files.exists(stateDir)) {
-                Files.createDirectories(stateDir, ownerOnly);
-            }
             for (String sub : List.of("repos", "worktrees", "runs", "splits")) {
-                Path dir = stateDir.resolve(sub);
-                if (!Files.exists(dir)) {
-                    Files.createDirectory(dir, ownerOnly);
-                }
+                OwnerOnly.createDirectories(stateDir.resolve(sub));
             }
-            Set<PosixFilePermission> permissions = Files.getPosixFilePermissions(stateDir);
-            boolean openToOthers = permissions.contains(PosixFilePermission.OTHERS_READ)
-                    || permissions.contains(PosixFilePermission.OTHERS_WRITE)
-                    || permissions.contains(PosixFilePermission.OTHERS_EXECUTE);
-            return openToOthers
-                    ? Optional.of("state directory " + stateDir + " is accessible to other users ("
-                            + PosixFilePermissions.toString(permissions) + "); run: chmod o-rwx " + stateDir)
-                    : Optional.empty();
+            return OwnerOnly.othersAccess(stateDir).map(permissions -> "state directory " + stateDir
+                    + " is accessible to other users (" + permissions + "); run: chmod o-rwx " + stateDir);
         } catch (IOException e) {
             throw new WorkspaceException("cannot create state directories under " + stateDir + ": " + e.getMessage(), e);
         }

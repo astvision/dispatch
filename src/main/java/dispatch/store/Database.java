@@ -1,12 +1,12 @@
 package dispatch.store;
 
+import dispatch.OwnerOnly;
 import dispatch.Log;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -34,11 +34,14 @@ public final class Database implements AutoCloseable {
         this.connection = connection;
     }
 
-    /** Creates the file owner-only when missing; SQLite gives its -wal and -shm files the same permissions. */
+    /**
+     * Creates the file owner-only when missing. SQLite gives its -wal and -shm files the same POSIX permissions; on Windows
+     * they inherit the owner-only state directory's ACL.
+     */
     public static Database open(Path file) {
         try {
             if (!Files.exists(file)) {
-                Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+                OwnerOnly.createFile(file);
             }
             Connection connection = DriverManager.getConnection("jdbc:sqlite:" + file);
             try (Statement statement = connection.createStatement()) {

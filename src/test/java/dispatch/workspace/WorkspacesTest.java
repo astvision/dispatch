@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.io.TempDir;
 
 class WorkspacesTest {
@@ -127,6 +129,7 @@ class WorkspacesTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "POSIX permissions; OwnerOnlyTest covers Windows ACLs")
     void stateDirectoriesAreCreatedPrivate() throws IOException {
         Path fresh = dir.resolve("fresh-state");
         Workspaces freshWorkspaces = new Workspaces(fresh, git);
@@ -140,6 +143,7 @@ class WorkspacesTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "POSIX permissions")
     void stateDirectoryOpenToOtherUsersIsReported() throws IOException {
         Path open = Files.createDirectories(dir.resolve("open-state"));
         Files.setPosixFilePermissions(open, PosixFilePermissions.fromString("rwxr-xr-x"));

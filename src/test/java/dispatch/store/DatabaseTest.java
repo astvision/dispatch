@@ -17,6 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.io.TempDir;
 
 class DatabaseTest {
@@ -212,6 +214,7 @@ class DatabaseTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "POSIX permissions; OwnerOnlyTest covers Windows ACLs")
     void newDatabaseFileIsReadableByItsOwnerOnly() throws Exception {
         Path file = dir.resolve("fresh.db");
 
