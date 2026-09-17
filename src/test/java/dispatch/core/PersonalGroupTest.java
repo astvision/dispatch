@@ -113,7 +113,7 @@ class PersonalGroupTest {
     }
 
     private static AgentResult result() {
-        return new AgentResult(AgentOutcome.SUCCEEDED, 0, "session-1", PLAN.toJson(), null, new BigDecimal("0.1"), 5, List.of(), null);
+        return new AgentResult(AgentOutcome.SUCCEEDED, 0, "session-1", PLAN.toJson(), null, new BigDecimal("0.1"), 5, List.of(), null, null, null);
     }
 
     private Map<String, String> row(String sql, Object... params) {

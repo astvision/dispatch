@@ -201,7 +201,7 @@ class StatsTest {
     }
 
     private static AgentResult result(String costUsd) {
-        return new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", PLAN.toJson(), "Done.", new BigDecimal(costUsd), 3, List.of(), null);
+        return new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", PLAN.toJson(), "Done.", new BigDecimal(costUsd), 3, List.of(), null, null, null);
     }
 
     private static Config.Project project(String name) {

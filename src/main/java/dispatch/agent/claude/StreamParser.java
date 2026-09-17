@@ -11,7 +11,10 @@ import java.math.RoundingMode;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Reads Claude Code's print-mode stream-json output. The init event (session id, permission mode) and the final result
@@ -25,7 +28,9 @@ final class StreamParser {
     private static final int MAX_ACTION_LENGTH = 120;
 
     private final String expectedPermissionMode;
+    private final String requestedModel;
     private final Path workdir;
+    private final Set<String> models = new LinkedHashSet<>();
     private boolean initSeen;
     private String permissionMode;
     private String sessionId;
@@ -33,9 +38,13 @@ final class StreamParser {
     /** Written by the stdout reader, read by /status; replaced whole, so readers never see a torn value. */
     private volatile AgentActivity activity = new AgentActivity(0, null);
 
-    /** @param workdir file paths inside it are shown relative in the activity */
-    StreamParser(String expectedPermissionMode, Path workdir) {
+    /**
+     * @param requestedModel the run's --model, compared with the model that answers; null for Claude Code's default
+     * @param workdir        file paths inside it are shown relative in the activity
+     */
+    StreamParser(String expectedPermissionMode, String requestedModel, Path workdir) {
         this.expectedPermissionMode = expectedPermissionMode;
+        this.requestedModel = requestedModel;
         this.workdir = workdir;
     }
 
@@ -56,6 +65,10 @@ final class StreamParser {
             sessionId = event.path("session_id").asText(null);
             permissionMode = event.path("permissionMode").asText(null);
         } else if (type.equals("assistant")) {
+            // A subagent's messages name the tool call that started it; only the run's own model is reported.
+            if (!event.hasNonNull("parent_tool_use_id") && event.path("message").hasNonNull("model")) {
+                models.add(event.path("message").get("model").asText());
+            }
             for (JsonNode block : event.path("message").path("content")) {
                 if (block.path("type").asText().equals("tool_use")) {
                     activity = new AgentActivity(activity.steps() + 1, describe(block));
@@ -80,13 +93,18 @@ final class StreamParser {
     }
 
     AgentResult result(int exitCode, String stderrTail) {
+        String model = models.isEmpty() ? null : String.join(", ", models);
+        // Claude Code does not always use the model it was given: runs started with Haiku were answered by Sonnet 5.
+        String unexpectedModel = requestedModel != null && models.stream().anyMatch(answered -> !isRequested(requestedModel, answered))
+                ? requestedModel
+                : null;
         String wrongMode = wrongPermissionMode()
                 ? "Claude Code started in permission mode '" + permissionMode + "' instead of '" + expectedPermissionMode
                         + "' and was stopped; not every model supports every mode (Haiku has no auto mode)"
                 : null;
         if (result == null) {
             String error = wrongMode != null ? wrongMode : "agent exited with code " + exitCode + " without a result" + detail(stderrTail);
-            return new AgentResult(AgentOutcome.FAILED, exitCode, sessionId, null, null, null, null, List.of(), error);
+            return new AgentResult(AgentOutcome.FAILED, exitCode, sessionId, null, null, null, null, List.of(), error, model, unexpectedModel);
         }
         String session = result.hasNonNull("session_id") ? result.get("session_id").asText() : sessionId;
         BigDecimal cost = result.hasNonNull("total_cost_usd")
@@ -96,7 +114,8 @@ final class StreamParser {
         List<String> denials = denials(result.path("permission_denials"));
         if (wrongMode != null) {
             // Whatever it produced was produced under the wrong rules; keep only the accounting.
-            return new AgentResult(AgentOutcome.FAILED, exitCode, session, null, null, cost, turns, denials, wrongMode);
+            return new AgentResult(AgentOutcome.FAILED, exitCode, session, null, null, cost, turns, denials, wrongMode, model,
+                    unexpectedModel);
         }
         String structured = result.hasNonNull("structured_output") ? result.get("structured_output").toString() : null;
         String summary = result.hasNonNull("result") ? result.get("result").asText() : null;
@@ -114,7 +133,23 @@ final class StreamParser {
             outcome = AgentOutcome.FAILED;
             error = subtype + ": " + errors(result);
         }
-        return new AgentResult(outcome, exitCode, session, structured, summary, cost, turns, denials, error);
+        return new AgentResult(outcome, exitCode, session, structured, summary, cost, turns, denials, error, model, unexpectedModel);
+    }
+
+    /**
+     * Whether an answer came from the model asked for. An alias such as "sonnet" names a family, "sonnet[1m]" the same family
+     * with a longer context, and an id such as "claude-sonnet-5" one model. "opusplan" and "default" resolve per mode or per
+     * account, so there is nothing to compare them with.
+     */
+    static boolean isRequested(String requested, String answered) {
+        String wanted = requested.replaceFirst("\\[[^]]*]$", "");
+        if (wanted.equals("opusplan") || wanted.equals("default")) {
+            return true;
+        }
+        if (wanted.startsWith("claude-")) {
+            return answered.matches(Pattern.quote(wanted) + "(-\\d{8})?");
+        }
+        return answered.contains("claude-" + wanted + "-");
     }
 
     private static String errors(JsonNode result) {

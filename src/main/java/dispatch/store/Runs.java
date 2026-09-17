@@ -45,7 +45,8 @@ public final class Runs {
             BigDecimal costUsd,
             Integer turns,
             String output,
-            String denials) {
+            String denials,
+            String model) {
     }
 
     public static void insert(Tx tx, NewRun run, Instant now) {
@@ -169,10 +170,10 @@ public final class Runs {
     public static boolean finish(Tx tx, long taskId, int seq, Finish finish, Instant now) {
         return tx.update("""
                         UPDATE run SET status = ?, finished_at = ?, exit_code = ?, failure_reason = ?, error_detail = ?,
-                                       cost_usd = ?, turns = ?, output = ?, denials = ?
+                                       cost_usd = ?, turns = ?, output = ?, denials = ?, model = ?
                         WHERE task_id = ? AND seq = ? AND status = ?""",
                 finish.status(), now, finish.exitCode(), finish.failureReason(), finish.errorDetail(), finish.costUsd(),
-                finish.turns(), finish.output(), finish.denials(), taskId, seq, RunStatus.RUNNING) == 1;
+                finish.turns(), finish.output(), finish.denials(), finish.model(), taskId, seq, RunStatus.RUNNING) == 1;
     }
 
     public static int cancelQueued(Tx tx, long taskId, Instant now) {

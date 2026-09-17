@@ -172,7 +172,7 @@ class SplitTest {
     void failedSplitIsShownOnThePromptAndCanBeTriedAgain() {
         long draftId = splitting(BOLD, MESSAGE, "telegram:100/9");
         agent.result = new AgentResult(AgentOutcome.BUDGET_EXCEEDED, 1, null, null, null, new BigDecimal("0.26"), 4, List.of(),
-                "Reached maximum budget ($0.25)");
+                "Reached maximum budget ($0.25)", null, null);
 
         splitter.split(draftId);
 
@@ -186,10 +186,10 @@ class SplitTest {
     void answerThatIsNotAUsableTopicListFails() {
         String eleven = "[" + "\"topic\",".repeat(10) + "\"topic\"]";
         List<AgentResult> answers = List.of(
-                new AgentResult(AgentOutcome.SUCCEEDED, 0, null, null, "Here are the topics", null, null, List.of(), null),
-                new AgentResult(AgentOutcome.SUCCEEDED, 0, null, "{\"topics\":[\"fix login\",\"  \"]}", null, null, null, List.of(), null),
-                new AgentResult(AgentOutcome.SUCCEEDED, 0, null, "{\"topics\":" + eleven + "}", null, null, null, List.of(), null),
-                new AgentResult(AgentOutcome.SUCCEEDED, 0, null, "{\"topics\":[{\"title\":\"fix login\"}]}", null, null, null, List.of(), null));
+                new AgentResult(AgentOutcome.SUCCEEDED, 0, null, null, "Here are the topics", null, null, List.of(), null, null, null),
+                new AgentResult(AgentOutcome.SUCCEEDED, 0, null, "{\"topics\":[\"fix login\",\"  \"]}", null, null, null, List.of(), null, null, null),
+                new AgentResult(AgentOutcome.SUCCEEDED, 0, null, "{\"topics\":" + eleven + "}", null, null, null, List.of(), null, null, null),
+                new AgentResult(AgentOutcome.SUCCEEDED, 0, null, "{\"topics\":[{\"title\":\"fix login\"}]}", null, null, null, List.of(), null, null, null));
         for (int i = 0; i < answers.size(); i++) {
             long draftId = splitting(BOLD, MESSAGE, "telegram:100/1" + i);
             agent.result = answers.get(i);
@@ -299,7 +299,7 @@ class SplitTest {
             list.add(topic);
         }
         return new AgentResult(AgentOutcome.SUCCEEDED, 0, "split-session", Json.object().set("topics", list).toString(), null,
-                new BigDecimal("0.015"), 2, List.of(), null);
+                new BigDecimal("0.015"), 2, List.of(), null, null, null);
     }
 
     private static Config.Project project(String name) {
@@ -350,7 +350,7 @@ class SplitTest {
                 return result;
             }
             cancelled.await();
-            return new AgentResult(AgentOutcome.FAILED, 143, null, null, null, null, null, List.of(), "agent exited with code 143");
+            return new AgentResult(AgentOutcome.FAILED, 143, null, null, null, null, null, List.of(), "agent exited with code 143", null, null);
         }
 
         @Override

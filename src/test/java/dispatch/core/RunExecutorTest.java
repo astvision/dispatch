@@ -101,6 +101,10 @@ class RunExecutorTest {
         assertNotNull(run.get("pid"));
         assertNotNull(run.get("pid_start"));
         assertEquals("0.073173", run.get("cost_usd"));
+        assertEquals("claude-sonnet-5", run.get("model"));
+        JsonNode planReady = Json.read(row("SELECT payload FROM outbox WHERE kind = 'PLAN_READY'").get("payload"));
+        assertEquals("claude-sonnet-5", planReady.get("model").asText());
+        assertEquals("opus", planReady.get("requestedModel").asText(), "planning asked for Opus; the recorded run answered with Sonnet 5");
         assertTrue(Files.exists(repos.stateDir.resolve("runs/" + id + "/1.jsonl")));
         assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'PLAN_READY'").get("n"));
         assertTrue(activeRuns.awaitIdle(Duration.ZERO));
@@ -122,6 +126,10 @@ class RunExecutorTest {
         assertEquals("SUCCEEDED", run.get("status"));
         assertTrue(run.get("output").contains("AUTH_TIMEOUT_SECONDS"), run.get("output"));
         assertTrue(Files.exists(repos.stateDir.resolve("runs/" + id + "/2.jsonl")));
+        assertEquals("claude-sonnet-5", run.get("model"));
+        JsonNode completed = Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED'").get("payload"));
+        assertEquals("claude-sonnet-5", completed.get("model").asText());
+        assertFalse(completed.has("requestedModel"), "execution asked for no model");
 
         Path worktree = repos.stateDir.resolve("worktrees/" + id);
         String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));

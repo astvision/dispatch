@@ -13,6 +13,8 @@ import java.util.List;
  * @param turns            reported conversation turns, null if unknown
  * @param denials          tool calls the agent was not allowed to make, as "Tool: input" summaries
  * @param error            human-readable failure detail, null on success
+ * @param model            the model that answered, as the agent names it (several are joined with ", "); null if none did
+ * @param requestedModel   the model the run asked for, only when an answer came from another one; null otherwise
  */
 public record AgentResult(
         AgentOutcome outcome,
@@ -23,5 +25,7 @@ public record AgentResult(
         BigDecimal costUsd,
         Integer turns,
         List<String> denials,
-        String error) {
+        String error,
+        String model,
+        String requestedModel) {
 }

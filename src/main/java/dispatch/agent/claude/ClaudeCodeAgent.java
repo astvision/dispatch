@@ -67,7 +67,7 @@ public final class ClaudeCodeAgent implements Agent {
         Log.info("agent.started", "agent", "claude-code", "pid", process.pid(), "kind", request.kind(),
                 "workdir", request.workdir(), "resume", request.resume());
         // Before the prompt: until it has read the prompt, the agent cannot have exited, so its start time is still known.
-        ClaudeRun run = new ClaudeRun(process, permissionMode, request.workdir(), stdoutLog, stderrLog, cancelGrace);
+        ClaudeRun run = new ClaudeRun(process, permissionMode, request.model(), request.workdir(), stdoutLog, stderrLog, cancelGrace);
         writePrompt(process, request.prompt());
         return run;
     }

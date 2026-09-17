@@ -275,7 +275,7 @@ class StatusAndHistoryTest {
 
     private static AgentResult result(String costUsd) {
         return new AgentResult(AgentOutcome.SUCCEEDED, 0, "session-1", PLAN.toJson(), "Done.", new BigDecimal(costUsd), 4,
-                List.of(), null);
+                List.of(), null, null, null);
     }
 
     private Map<String, String> row(String sql, Object... params) {

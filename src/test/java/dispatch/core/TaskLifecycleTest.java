@@ -265,7 +265,7 @@ class TaskLifecycleTest {
         long id = create(BOLD, "alm", "Fix login timeout", "21");
         ClaimedRun run = claim();
         AgentResult budget = new AgentResult(AgentOutcome.BUDGET_EXCEEDED, 1, "s", null, null, new BigDecimal("2.1"), 4, List.of(),
-                "Reached maximum budget ($2)");
+                "Reached maximum budget ($2)", null, null);
 
         transitions.failed(id, run.seq(), FailureReason.BUDGET, "Reached maximum budget ($2)", budget);
 
@@ -693,12 +693,12 @@ class TaskLifecycleTest {
 
     private static AgentResult executionResult(List<String> denials) {
         return new AgentResult(AgentOutcome.SUCCEEDED, 0, "session-1", null, "Made the auth timeout configurable.",
-                new BigDecimal("0.42"), 12, denials, null);
+                new BigDecimal("0.42"), 12, denials, null, null, null);
     }
 
     private static AgentResult agentResult(List<String> denials) {
         return new AgentResult(AgentOutcome.SUCCEEDED, 0, "session-1", PLAN.toJson(), null, new BigDecimal("0.168185"), 9, denials,
-                null);
+                null, null, null);
     }
 
     private Map<String, String> row(String sql, Object... params) {

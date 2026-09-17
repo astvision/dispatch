@@ -103,6 +103,22 @@ class RendererTest {
     }
 
     @Test
+    void footersNameTheModelThatAnsweredAndWarnWhenItIsNotTheConfiguredOne() {
+        ObjectNode plan = planPayload(List.of("Add AuthClientTimeoutTest"), List.of()).put("model", "claude-sonnet-5").put("requestedModel", "haiku");
+        ObjectNode completed = completedPayload("https://github.com/acme/alm/pull/7", 2, List.of()).put("model", "claude-haiku-4-5-20251001");
+
+        String planHtml = renderer.render(OutboxKind.PLAN_READY, plan).html();
+        String completedHtml = renderer.render(OutboxKind.TASK_COMPLETED, completed).html();
+
+        assertTrue(planHtml.contains("sonnet-5 · Зардал $0.17"), planHtml);
+        assertTrue(planHtml.contains(java.text.MessageFormat.format(messages.getString("run.modelDiffers"), "haiku", "sonnet-5")), planHtml);
+        assertTrue(completedHtml.contains("haiku-4-5 · 2 файл"), "the date in a model id is left out: " + completedHtml);
+        assertFalse(completedHtml.contains("⚠️"), completedHtml);
+        assertFalse(renderer.render(OutboxKind.PLAN_READY, planPayload(List.of(), List.of())).html().contains(" · Зардал"),
+                "a plan from before models were recorded has the footer it had");
+    }
+
+    @Test
     void completedTaskWithoutChangesSaysNoPullRequestWasOpened() {
         String html = renderer.render(OutboxKind.TASK_COMPLETED, completedPayload(null, 0, List.of())).html();
 

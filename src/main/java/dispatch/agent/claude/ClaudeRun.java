@@ -30,9 +30,10 @@ final class ClaudeRun implements RunHandle {
     private final Thread stdoutReader;
     private final Instant processStart;
 
-    ClaudeRun(Process process, String permissionMode, Path workdir, Path stdoutLog, Path stderrLog, Duration cancelGrace) {
+    ClaudeRun(Process process, String permissionMode, String requestedModel, Path workdir, Path stdoutLog, Path stderrLog,
+              Duration cancelGrace) {
         this.process = process;
-        this.parser = new StreamParser(permissionMode, workdir);
+        this.parser = new StreamParser(permissionMode, requestedModel, workdir);
         this.stderrLog = stderrLog;
         this.cancelGrace = cancelGrace;
         // Read now: the OS stops reporting it once the process has exited.

@@ -70,7 +70,7 @@ public final class RunTransitions {
             Events.record(tx, taskId, seq, ACTOR, Phase.PLANNING, Phase.AWAITING_APPROVAL, "plan ready", now);
             ObjectNode payload = Json.object().put("taskId", taskId).put("planSeq", seq).put("project", task.project());
             payload.set("plan", Json.read(plan.toJson()));
-            putCostAndDuration(payload, run, result, now);
+            putRunDetails(payload, run, result, now);
             enqueueForRequester(tx, task, OutboxKind.PLAN_READY, payload, now);
             logTransition(tx, taskId, seq, Phase.PLANNING, Phase.AWAITING_APPROVAL);
         });
@@ -99,7 +99,7 @@ public final class RunTransitions {
             ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("prUrl", prUrl)
                     .put("filesChanged", files.size()).put("summary", result.summary());
             result.denials().forEach(payload.putArray("denials")::add);
-            putCostAndDuration(payload, run, result, now);
+            putRunDetails(payload, run, result, now);
             enqueueForRequester(tx, task, OutboxKind.TASK_COMPLETED, payload, now);
             enqueue(tx, task, OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", taskId).put("project", task.project())
                     .put("prUrl", prUrl).put("filesChanged", files.size()), now);
@@ -144,20 +144,29 @@ public final class RunTransitions {
                 result == null ? null : result.costUsd(),
                 result == null ? null : result.turns(),
                 output,
-                result == null ? null : Json.write(result.denials()));
+                result == null ? null : Json.write(result.denials()),
+                result == null ? null : result.model());
         if (!Runs.finish(tx, run.taskId(), run.seq(), finish, now)) {
             tx.afterCommit(() -> Log.warn("run.already_finished", "task", run.taskId(), "run", run.seq(),
                     "status", run.status(), "ignored", status));
             return false;
         }
         tx.afterCommit(() -> Log.info("run.finished", "task", run.taskId(), "run", run.seq(), "status", status,
-                "reason", reason, "cost_usd", finish.costUsd(), "turns", finish.turns()));
+                "reason", reason, "cost_usd", finish.costUsd(), "turns", finish.turns(), "model", finish.model()));
+        if (result != null && result.requestedModel() != null) {
+            tx.afterCommit(() -> Log.warn("agent.model_differs", "task", run.taskId(), "run", run.seq(),
+                    "requested", result.requestedModel(), "answered", result.model()));
+        }
         return true;
     }
 
-    private static void putCostAndDuration(ObjectNode payload, Run run, AgentResult result, Instant now) {
+    private static void putRunDetails(ObjectNode payload, Run run, AgentResult result, Instant now) {
         payload.put("costUsd", result.costUsd() == null ? null : result.costUsd().toPlainString());
         payload.put("durationSeconds", run.startedAt() == null ? 0 : Duration.between(run.startedAt(), now).toSeconds());
+        payload.put("model", result.model());
+        if (result.requestedModel() != null) {
+            payload.put("requestedModel", result.requestedModel());
+        }
     }
 
     /** Details for the requester's private chat, falling back to the group (ADR 0011). */

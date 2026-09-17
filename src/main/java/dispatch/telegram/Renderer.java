@@ -288,8 +288,8 @@ public final class Renderer {
         } else {
             html.append("\n<i>").append(text("plan.replyHint")).append("</i>\n");
         }
-        html.append("\n<i>").append(format("plan.footer", money(payload.path("costUsd")),
-                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>");
+        html.append("\n<i>").append(modelPrefix(payload)).append(format("plan.footer", money(payload.path("costUsd")),
+                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload));
         String withHint = hint == null ? "" : "\n\n" + hint;
 
         if (html.length() + withHint.length() <= MESSAGE_LIMIT) {
@@ -351,8 +351,8 @@ public final class Renderer {
                 html.append("\n• ").append(escapeWithin(denial.asText(), DENIAL_LIMIT));
             }
         }
-        html.append("\n\n<i>").append(format("task.completedFooter", filesChanged, money(payload.path("costUsd")),
-                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>");
+        html.append("\n\n<i>").append(modelPrefix(payload)).append(format("task.completedFooter", filesChanged, money(payload.path("costUsd")),
+                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload));
         return plain(html.toString());
     }
 
@@ -623,6 +623,26 @@ public final class Renderer {
 
     private static final java.util.Map<String, String> OUTCOME_ICONS =
             java.util.Map.of("COMPLETED", "✅", "FAILED", "❌", "REJECTED", "🚫", "CANCELLED", "🛑");
+
+    /** "sonnet-5 · " before a footer; nothing for a run recorded before models were. */
+    private static String modelPrefix(JsonNode payload) {
+        return payload.hasNonNull("model") ? escape(shortModels(payload.get("model").asText())) + " · " : "";
+    }
+
+    /** A line saying the run was answered by another model than its config asks for. */
+    private String modelWarning(JsonNode payload) {
+        if (!payload.hasNonNull("requestedModel") || !payload.hasNonNull("model")) {
+            return "";
+        }
+        return "\n" + format("run.modelDiffers", escape(payload.get("requestedModel").asText()), escape(shortModels(payload.get("model").asText())));
+    }
+
+    /** claude-haiku-4-5-20251001 becomes haiku-4-5: family and version are what a reader compares. */
+    private static String shortModels(String models) {
+        return java.util.Arrays.stream(models.split(", "))
+                .map(model -> model.replaceFirst("^claude-", "").replaceFirst("-\\d{8}$", ""))
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
 
     private static String taskId(JsonNode payload) {
         return String.valueOf(payload.path("taskId").asLong());

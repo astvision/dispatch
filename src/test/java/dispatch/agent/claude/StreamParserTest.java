@@ -64,7 +64,7 @@ class StreamParserTest {
     @Test
     void executionRunReportsItsStepsAndLatestActionWithPathsRelativeToTheWorktree() throws IOException {
         List<String> lines = fixture("execute-success.jsonl");
-        StreamParser parser = new StreamParser("auto", WORKTREE);
+        StreamParser parser = new StreamParser("auto", null, WORKTREE);
         assertEquals(new AgentActivity(0, null), parser.activity());
 
         lines.subList(0, 6).forEach(parser::accept);
@@ -162,8 +162,43 @@ class StreamParserTest {
         assertEquals(AgentOutcome.SUCCEEDED, result.outcome());
     }
 
+    @Test
+    void theModelThatAnsweredIsComparedWithTheOneAskedFor() throws IOException {
+        // Recorded with --model haiku: Claude Code started with Haiku, and every answer came from Sonnet 5.
+        List<String> lines = fixture("plan-success.jsonl");
+
+        AgentResult haiku = feed("plan", "haiku", lines).result(0, "");
+
+        assertEquals("claude-sonnet-5", haiku.model());
+        assertEquals("haiku", haiku.requestedModel(), "answered by another model than the one asked for");
+        assertNull(feed("plan", "sonnet", lines).result(0, "").requestedModel(), "an alias names a family");
+        assertNull(feed("plan", "sonnet[1m]", lines).result(0, "").requestedModel(), "the same family with a longer context");
+        assertNull(feed("plan", "claude-sonnet-5", lines).result(0, "").requestedModel());
+        assertEquals("claude-sonnet-4-5", feed("plan", "claude-sonnet-4-5", lines).result(0, "").requestedModel());
+        assertNull(feed("plan", null, lines).result(0, "").requestedModel(), "nothing asked for: Claude Code's default");
+    }
+
+    @Test
+    void everyModelThatAnsweredTheRunIsNamedButNotASubagents() {
+        List<String> lines = List.of(
+                "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s-1\",\"permissionMode\":\"auto\"}",
+                "{\"type\":\"assistant\",\"parent_tool_use_id\":null,\"message\":{\"model\":\"claude-opus-5\",\"content\":[]}}",
+                "{\"type\":\"assistant\",\"parent_tool_use_id\":\"toolu_1\",\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"content\":[]}}",
+                "{\"type\":\"assistant\",\"parent_tool_use_id\":null,\"message\":{\"model\":\"claude-sonnet-5\",\"content\":[]}}",
+                "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"s-1\",\"total_cost_usd\":0.01,\"num_turns\":2,\"permission_denials\":[]}");
+
+        AgentResult result = feed("auto", "opus", lines).result(0, "");
+
+        assertEquals("claude-opus-5, claude-sonnet-5", result.model());
+        assertEquals("opus", result.requestedModel(), "Sonnet 5 answered too");
+    }
+
     private static StreamParser feed(String expectedPermissionMode, List<String> lines) {
-        StreamParser parser = new StreamParser(expectedPermissionMode, WORKTREE);
+        return feed(expectedPermissionMode, null, lines);
+    }
+
+    private static StreamParser feed(String expectedPermissionMode, String requestedModel, List<String> lines) {
+        StreamParser parser = new StreamParser(expectedPermissionMode, requestedModel, WORKTREE);
         lines.forEach(parser::accept);
         return parser;
     }
