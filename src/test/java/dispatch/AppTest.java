@@ -104,8 +104,8 @@ class AppTest {
         JsonNode firstPlan = telegram.awaitRequest("sendMessage", WAIT).json();
         assertEquals("approve:1:1", firstPlan.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
 
-        // Sent messages get ids 1000, 1001, ... in order: the queued ack, then the plan.
-        telegram.pushUpdate(reply(2, 11, 200, "Ali", "Also cover the mobile login", 1001));
+        // A member can only reply once the plan exists; Dispatch knows its message id once Telegram has answered.
+        telegram.pushUpdate(reply(2, 11, 200, "Ali", "Also cover the mobile login", awaitSentMessageId("PLAN_READY")));
         assertTrue(awaitMessageContaining("✏️").contains("#1"));
         JsonNode revisedPlan = telegram.awaitRequest("sendMessage", WAIT).json();
         assertEquals("approve:1:2", revisedPlan.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText());
@@ -165,6 +165,19 @@ class AppTest {
                  "chat":{"id":%d,"title":"Team","type":"supergroup"},"date":1789640000,"text":%s,
                  "entities":[{"offset":0,"length":%d,"type":"bot_command"}]}}"""
                 .formatted(updateId, messageId, fromId, name, GROUP, Json.MAPPER.valueToTree(text), length));
+    }
+
+    private long awaitSentMessageId(String kind) throws InterruptedException {
+        Path db = repos.stateDir.resolve("dispatch.db");
+        Instant deadline = Instant.now().plus(WAIT);
+        while (Instant.now().isBefore(deadline)) {
+            String sentRef = SqlRows.single(db, "SELECT sent_ref FROM outbox WHERE kind = ? ORDER BY id LIMIT 1", kind).get("sent_ref");
+            if (sentRef != null) {
+                return Long.parseLong(sentRef.substring(sentRef.indexOf('/') + 1));
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("no sent " + kind + " message");
     }
 
     private static JsonNode callback(long updateId, long fromId, String name, String data) {

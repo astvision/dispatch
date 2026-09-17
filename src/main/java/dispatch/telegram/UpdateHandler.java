@@ -131,8 +131,11 @@ public final class UpdateHandler {
             return false;
         }
         long chatId = message.path("chat").path("id").asLong();
-        Optional<Outbox.Sent> sent = Outbox.findSent(tx, Refs.message(chatId, repliedTo.get("message_id").asLong()));
+        String repliedRef = Refs.message(chatId, repliedTo.get("message_id").asLong());
+        Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef);
         if (sent.isEmpty() || sent.get().kind() != OutboxKind.PLAN_READY) {
+            String kind = sent.map(found -> found.kind().name()).orElse("unknown");
+            tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind));
             return false;
         }
         int planSeq = Json.read(sent.get().payload()).path("planSeq").asInt();
