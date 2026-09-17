@@ -133,14 +133,25 @@ class RunExecutorTest {
 
     @Test
     void setupFailureFailsBeforeAnyAgentStarts() throws Exception {
-        Files.writeString(repos.repo("alm").resolve("notes.txt"), "not ignored\n");
-        copyFiles = List.of("notes.txt");
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
         long id = queue("Fix the login timeout");
 
         runNext();
 
-        assertFailed(id, "SETUP", "not ignored");
+        assertFailed(id, "SETUP", "git fetch");
         assertFalse(Files.exists(repos.stateDir.resolve("worktrees/" + id + "/fake-claude.args")));
+    }
+
+    @Test
+    void planningRunNeverSeesLocalSecretFiles() throws Exception {
+        Files.writeString(repos.repo("alm").resolve(".env"), "DB_PASSWORD=local-only\n");
+        copyFiles = List.of(".env");
+        long id = queue("Fix the login timeout");
+
+        runNext();
+
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertFalse(Files.exists(repos.stateDir.resolve("worktrees/" + id + "/.env")), ".env is copied only for execution runs");
     }
 
     @Test

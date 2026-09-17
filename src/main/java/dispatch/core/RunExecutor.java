@@ -87,9 +87,10 @@ public final class RunExecutor {
 
         Workspaces.PreparedWorktree worktree;
         try {
+            // No copyFiles here: planning needs no local secrets (.env), and whatever the agent can read may end up
+            // quoted in a plan posted to the group. They are copied only when an execution run starts.
             worktree = workspaces.createWorktree(project, taskId);
             transitions.recordWorktree(taskId, worktree.path(), worktree.baseSha());
-            workspaces.copyFiles(project, worktree.path());
         } catch (WorkspaceException e) {
             transitions.failed(taskId, seq, FailureReason.SETUP, e.getMessage(), null);
             return;
