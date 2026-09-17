@@ -202,6 +202,7 @@ class WorkspacesTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "the hanging git stand-in is a POSIX shell script")
     void hangingGitIsKilledAfterTheTimeout() throws IOException {
         Path slowGit = dir.resolve("slow-git");
         Files.writeString(slowGit, "#!/bin/sh\nsleep 30\n");

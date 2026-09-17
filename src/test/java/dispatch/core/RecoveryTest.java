@@ -14,6 +14,7 @@ import dispatch.domain.RunKind;
 import dispatch.store.Database;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
+import dispatch.testing.Sleeper;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import java.io.IOException;
@@ -59,7 +60,7 @@ class RecoveryTest {
     @Test
     void orphanedAgentIsKilledAndItsRunFailsAsInterrupted() throws IOException, InterruptedException {
         ClaimedRun run = runningTask("alm");
-        orphan = new ProcessBuilder("sleep", "300").start();
+        orphan = Sleeper.start(300);
         transitions.recordProcess(run.taskId(), run.seq(), orphan.toHandle());
 
         recovery.run();
@@ -74,7 +75,7 @@ class RecoveryTest {
     @Test
     void reusedPidOfAnUnrelatedProcessIsLeftAlone() throws IOException {
         ClaimedRun run = runningTask("alm");
-        orphan = new ProcessBuilder("sleep", "300").start();
+        orphan = Sleeper.start(300);
         Instant realStart = orphan.toHandle().info().startInstant().orElseThrow();
         db.transaction(tx -> Runs.recordProcess(tx, run.taskId(), run.seq(), orphan.pid(), realStart.minusSeconds(60)));
 

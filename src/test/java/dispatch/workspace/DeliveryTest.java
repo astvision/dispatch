@@ -16,9 +16,12 @@ import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Delivery against real git: a bare origin, a Dispatch clone with a task worktree, and the fake gh script. */
+@DisabledOnOs(value = OS.WINDOWS, disabledReason = "the fake claude and gh CLIs are POSIX shell scripts")
 class DeliveryTest {
 
     private static final Delivery.Commit COMMIT = new Delivery.Commit("dispatch #42: Fix the login timeout",

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -17,10 +18,13 @@ import org.junit.jupiter.api.io.TempDir;
 
 class ConfigLoaderTest {
 
+    /** "/" on Linux and macOS, "C:\\" on Windows: paths below it are absolute on every OS. */
+    private static final Path ROOT = FileSystems.getDefault().getRootDirectories().iterator().next();
+    private static final String STATE = ROOT.resolve("var/lib/dispatch/backend").toString();
     private static final Map<String, String> ENV = Map.of(
             "TELEGRAM_BOT_TOKEN", "123:abc",
             "GH_TOKEN", "github_pat_x",
-            "STATE_DIRECTORY", "/var/lib/dispatch/backend");
+            "STATE_DIRECTORY", STATE);
 
     @TempDir
     Path dir;
@@ -30,7 +34,7 @@ class ConfigLoaderTest {
         Config config = ConfigLoader.load(write(VALID), ENV);
 
         assertEquals("backend", config.team());
-        assertEquals(Path.of("/var/lib/dispatch/backend"), config.stateDir());
+        assertEquals(Path.of(STATE), config.stateDir());
         Config.Group backend = config.telegram().groups().getFirst();
         assertEquals("backend", backend.name());
         assertEquals(-1001234567890L, backend.chatId());
@@ -148,9 +152,10 @@ class ConfigLoaderTest {
 
     @Test
     void stateDirInFileWinsOverEnvironment() throws IOException {
-        Config config = ConfigLoader.load(write("stateDir: /srv/dispatch\n" + VALID), ENV);
+        String inFile = ROOT.resolve("srv/dispatch").toString();
+        Config config = ConfigLoader.load(write("stateDir: '" + inFile + "'\n" + VALID), ENV);
 
-        assertEquals(Path.of("/srv/dispatch"), config.stateDir());
+        assertEquals(Path.of(inFile), config.stateDir());
     }
 
     @Test
@@ -179,7 +184,7 @@ class ConfigLoaderTest {
                 .replace("agent: claude-code\n    model", "agent: codex\n    model");
 
         ConfigException error = assertThrows(ConfigException.class,
-                () -> ConfigLoader.load(write(broken), Map.of("STATE_DIRECTORY", "/var/lib/dispatch/backend")));
+                () -> ConfigLoader.load(write(broken), Map.of("STATE_DIRECTORY", STATE)));
 
         String message = error.getMessage();
         assertTrue(message.contains("TELEGRAM_BOT_TOKEN"), message);
@@ -225,10 +230,11 @@ class ConfigLoaderTest {
 
     @Test
     void projectMayPointAtAnExistingCloneAnywhereInsteadOfARepoUrl() throws IOException {
-        Config config = ConfigLoader.load(write(VALID.replace(CRM_REPO, "    path: /home/bold/work/crm\n")), ENV);
+        String crmClone = ROOT.resolve("home/bold/work/crm").toString();
+        Config config = ConfigLoader.load(write(VALID.replace(CRM_REPO, "    path: '" + crmClone + "'\n")), ENV);
 
         Config.Project crm = config.projects().get(1);
-        assertEquals("/home/bold/work/crm", crm.path());
+        assertEquals(crmClone, crm.path());
         assertNull(crm.repo());
         assertNull(config.projects().getFirst().path(), "without a path the clone stays under the state directory");
     }

@@ -38,9 +38,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Runs end to end: real SQLite, real git worktrees and origin, the fake claude script as the agent and fake gh. */
+@DisabledOnOs(value = OS.WINDOWS, disabledReason = "the fake claude and gh CLIs are POSIX shell scripts")
 class RunExecutorTest {
 
     private static final Requester BOLD = new Requester("telegram:100", "Bold");
