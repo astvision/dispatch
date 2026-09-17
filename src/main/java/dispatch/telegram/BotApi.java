@@ -131,7 +131,7 @@ public final class BotApi {
         try {
             response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         } catch (IOException e) {
-            throw new TelegramException(method + " failed: " + e.getClass().getSimpleName() + ": " + scrub(e.getMessage()), 0, null);
+            throw new TelegramException(method + " failed: " + e.getClass().getSimpleName() + ": " + scrub(e.getMessage(), baseUri), 0, null);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new TelegramException(method + " interrupted", 0, null);
@@ -152,12 +152,17 @@ public final class BotApi {
                 retryAfter.isNumber() ? retryAfter.asInt() : null);
     }
 
-    private String scrub(String message) {
+    /** Removes the bot token wherever it appears, not only inside the URL path. */
+    static String scrub(String message, URI baseUri) {
         if (message == null) {
             return "no detail";
         }
         String path = baseUri.getPath();
-        return path.length() > 1 ? message.replace(path, "/bot***/") : message;
+        if (!path.startsWith("/bot")) {
+            return message;
+        }
+        String token = path.substring("/bot".length(), path.endsWith("/") ? path.length() - 1 : path.length());
+        return token.isEmpty() ? message : message.replace(token, "***");
     }
 
     private static ObjectNode replyParameters(long messageId) {

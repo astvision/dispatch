@@ -66,10 +66,21 @@ public final class Poller implements Runnable {
         } catch (DatabaseException e) {
             throw e;
         } catch (RuntimeException e) {
-            Log.error("telegram.update_failed", e, "update_id", updateId, "update", update.toString());
+            // The update itself stays out of the log: it is team chat content.
+            Log.error("telegram.update_failed", e, "update_id", updateId, "type", updateType(update));
             handler.skip(updateId);
         }
         return updateId + 1;
+    }
+
+    private static String updateType(JsonNode update) {
+        for (java.util.Iterator<String> names = update.fieldNames(); names.hasNext(); ) {
+            String name = names.next();
+            if (!name.equals("update_id")) {
+                return name;
+            }
+        }
+        return "unknown";
     }
 
     private static boolean sleep(Duration duration) {

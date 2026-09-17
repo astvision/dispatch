@@ -2,6 +2,7 @@ package dispatch.telegram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
@@ -84,6 +85,32 @@ class PollerTest {
         assertEquals(42, telegram.awaitRequest("getUpdates", Duration.ofSeconds(5)).json().get("offset").asLong());
         assertEquals("1", SqlRows.single(dbFile, "SELECT count(*) AS n FROM task").get("n"));
         assertEquals("42", SqlRows.single(dbFile, "SELECT value FROM kv WHERE key = 'telegram.offset'").get("value"));
+    }
+
+    @Test
+    void updateThatFailsIsLoggedWithoutTheChatContent() throws Exception {
+        JsonNode malformed = Json.read("""
+                {"update_id":40,"message":{"message_id":1,"from":{"id":100,"is_bot":false,"first_name":"Bold"},
+                 "chat":{"id":%d,"type":"supergroup"},"date":1789640000,"text":"/t private chat words",
+                 "entities":[{"offset":0,"length":99,"type":"bot_command"}]}}""".formatted(GROUP));
+        telegram.pushUpdate(malformed);
+        java.io.PrintStream original = System.out;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            thread = Thread.ofVirtual().start(poller);
+            telegram.awaitRequest("getUpdates", Duration.ofSeconds(5));
+            assertEquals(41, telegram.awaitRequest("getUpdates", Duration.ofSeconds(5)).json().get("offset").asLong());
+        } finally {
+            poller.stop();
+            thread.interrupt();
+            thread.join(Duration.ofSeconds(5));
+            System.setOut(original);
+        }
+
+        String output = captured.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(output.contains("event=telegram.update_failed") && output.contains("update_id=40"), output);
+        assertFalse(output.contains("private chat words"), output);
     }
 
     @Test

@@ -89,6 +89,16 @@ class BotApiTest {
     }
 
     @Test
+    void errorDetailsNeverContainTheTokenInAnyForm() {
+        String token = "7412369850:" + "AAH" + "k".repeat(32);
+        URI base = URI.create("https://api.telegram.org/bot" + token + "/");
+
+        String scrubbed = BotApi.scrub("GET https://api.telegram.org/bot" + token + "/getUpdates failed; bad token " + token, base);
+
+        assertFalse(scrubbed.contains(token), scrubbed);
+    }
+
+    @Test
     void getUpdatesSendsOffsetAndOnlyTheUpdateTypesDispatchHandles() throws Exception {
         telegram.pushUpdate(Json.object().put("update_id", 17));
 
