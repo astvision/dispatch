@@ -7,10 +7,14 @@ import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 
-/** The real terminal. Secrets are read through the console with echo off, which works in macOS, Linux and Windows terminals. */
+/**
+ * The real terminal. In a terminal, everything is read through the console, so secrets can be read with echo off on macOS,
+ * Linux and Windows alike, and no buffered reader takes input the console needs. Piped input serves plain questions only.
+ */
 public final class ConsoleTerminal implements Terminal {
 
-    private final Console console = System.console();
+    /** Null unless attached to a terminal: since JDK 22, System.console() may also return one for redirected streams. */
+    private final Console console = System.console() != null && System.console().isTerminal() ? System.console() : null;
     private final BufferedReader input = new BufferedReader(new InputStreamReader(System.in, Charset.defaultCharset()));
 
     @Override
@@ -20,10 +24,16 @@ public final class ConsoleTerminal implements Terminal {
 
     @Override
     public String ask(String question, String defaultValue) {
-        System.out.print(question + (defaultValue == null ? ": " : " [" + defaultValue + "]: "));
-        System.out.flush();
+        String prompt = question + (defaultValue == null ? ": " : " [" + defaultValue + "]: ");
         try {
-            String answer = input.readLine();
+            String answer;
+            if (console != null) {
+                answer = console.readLine("%s", prompt);
+            } else {
+                System.out.print(prompt);
+                System.out.flush();
+                answer = input.readLine();
+            }
             if (answer == null) {
                 return null;
             }
@@ -38,7 +48,7 @@ public final class ConsoleTerminal implements Terminal {
         if (console == null) {
             throw new CliException("run this in a terminal: a secret is never read from a pipe or file, where it could be echoed or logged");
         }
-        char[] answer = console.readPassword(question + ": ");
+        char[] answer = console.readPassword("%s", question + ": ");
         return answer == null ? null : new String(answer).strip();
     }
 }
