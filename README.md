@@ -3,7 +3,7 @@
 Dispatch takes development tasks that members write to its Telegram bot and has Claude Code plan them in a git worktree. Once the requester approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance and bot can serve several groups, each with its own members and projects.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M3e.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Follow-ups and `/retry` come next.
+- Status: **M3g.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Reply to a result to follow up on it, `/retry` a failed step, and send screenshots or files with a task for the agent to read. `CodexAgent` comes next.
 
 ## Security
 
@@ -136,21 +136,25 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 | You | Dispatch |
 |---|---|
 | write the task as a message (or forward one) | Asks with buttons for the project (skipped if you have only one) and the priority 🔴 🟡 🟢, then queues the task |
+| send a photo or file with the task (as its caption) | The agent gets it to read. Files over 20 MB are skipped, and the prompt says so |
 | `/task alm Fix the login timeout` | The same, with the project already named |
 | **✂️ Салгах** on that prompt | Haiku lists the separate tasks in your message (about $0.015, a few seconds). **✂️ N даалгавар болгох** gives each its own prompt; **Нэг даалгавар** keeps the message as one task |
 | **Approve** on the plan | The agent implements it; Dispatch commits, pushes `dispatch/N` and sends you the draft PR link and summary |
 | reply to the plan, or write in the task's topic | A correction: the agent revises the plan in the same session |
 | **Reject** on the plan | Closes the task |
+| reply to the result, or write in a finished task's topic | A follow-up: the agent continues in the same session, and one more commit goes to the same pull request |
+| `/retry N` | Repeats task N's failed step: a failed plan is planned again, a failed execution continues, a failed delivery is only delivered again |
 | `/status` | What is running (with the agent's latest action), queued and awaiting approval in your groups, with buttons to change your tasks' priority |
 | `/history`, `/history N` | The last 10 finished tasks with who gave them and when; task N's timeline |
 | `/stats` | Your numbers, each group's and per person, for 7 days, this month or all time |
 | `/cancel N` | Cancels task N |
+| `/projects` | Your projects with their base branch, and why any cannot take tasks now |
 
 Each plan and result ends with the model that answered, the cost and the duration. A ⚠️ line appears when the model isn't the one the config asks for.
 
-**In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot` and `/stats@bot` there cover that group's projects. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
+**In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot`, `/stats@bot` and `/projects@bot` there cover that group's projects. Replying to an outcome line there is a follow-up too. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
 
-Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject or reprioritize their task; any member of the project's group can cancel it. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
+Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject or reprioritize their task; any member of the project's group can cancel, retry or follow up on it. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
 
 ## Run from a checkout
 
@@ -169,13 +173,15 @@ Locally, `claude` uses your own login. Your plugins and MCP servers are not load
 
   ```sql
   SELECT id, phase, project, title, pr_url, failure_reason FROM task ORDER BY id DESC LIMIT 20;
-  SELECT task_id, seq, kind, status, cost_usd, turns, error_detail FROM run ORDER BY task_id DESC LIMIT 20;
+  SELECT task_id, seq, kind, cause, status, cost_usd, turns, error_detail FROM run ORDER BY task_id DESC LIMIT 20;
   SELECT id, kind, status, attempts, last_error FROM outbox WHERE status <> 'SENT';
   SELECT * FROM task_event WHERE task_id = 42 ORDER BY id;
   ```
 - **Config check:** `dispatch check --config <file>` names each problem and what to do about it.
 - **Raw agent output:** `/var/lib/dispatch/backend/runs/<task>/<run>.jsonl` and `.stderr`; splits under `splits/<draft>-<epoch millis>.jsonl`. Grep the log for `event=split.` to see what each split cost.
 - **Restarts:** stopping or restarting interrupts active runs. They fail as `INTERRUPTED` and the group is told.
-- **Worktrees:** they accumulate under `worktrees/` until the M3 sweep. Remove finished ones with `git -C repos/<project> worktree remove --force worktrees/<id>`; a task whose worktree is gone can no longer be corrected or executed.
-- **Delivery:** commits are made without hooks or signing, as `delivery.authorName`. A failed push or PR creation fails the task as `DELIVERY`; the commit stays in the worktree.
+- **Worktrees:** every hour, worktrees of tasks idle for `worktrees.idleDays` (default 7) are removed: a completed or failed task's only when it is clean and pushed (otherwise `event=sweeper.kept`), a rejected or cancelled task's anyway. The `dispatch/<id>` branch stays, and a later follow-up or retry recreates the worktree from it.
+- **Clones:** a project with a `repo` and no clone is cloned into `repos/<name>` when Dispatch starts; until then `/projects` shows it as cloning, and a failed clone as the git error (`event=project.clone_failed`).
+- **Attachments:** downloaded into `attachments/<task>/`, outside the worktree, so they are never delivered.
+- **Delivery:** commits are made without hooks or signing, as `delivery.authorName`. A failed push or PR creation fails the task as `DELIVERY`; the work stays in the worktree and `/retry` delivers it without the agent.
 - **Bot texts:** `src/main/resources/messages_mn.properties`.
