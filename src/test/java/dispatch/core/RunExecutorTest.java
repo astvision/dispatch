@@ -489,6 +489,20 @@ class RunExecutorTest {
     }
 
     @Test
+    void sweepNeverTouchesATaskThatIsActiveAgain() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        db.transaction(tx -> tasks.followUp(tx, BOLD, id, "Also log the timeout value", CHAT + "/400", CHAT));
+        db.transaction(tx -> tx.update("UPDATE task SET updated_at = '2026-09-17T10:00:00.000Z' WHERE id = ?", id));
+
+        assertEquals(0, sweeper.sweep());
+
+        assertTrue(Files.isDirectory(repos.stateDir.resolve("worktrees/" + id)));
+    }
+
+    @Test
     void sweepKeepsAFailedTasksWorktreeWhileItHoldsUnpushedWork() throws Exception {
         long id = queue("Fix the login timeout");
         runNext();

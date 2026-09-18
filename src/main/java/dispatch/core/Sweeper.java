@@ -95,6 +95,12 @@ public final class Sweeper implements Runnable {
                     "pushed", state.pushed(), "worktree", task.worktree());
             return false;
         }
+        // A follow-up or retry since the pass began may have a run starting in this worktree right now.
+        // ponytail: re-read just before removing leaves a window of milliseconds; a per-task lock shared with RunExecutor closes it.
+        if (db.transactionReturning(tx -> Tasks.find(tx, task.id())).map(current -> current.phase().isActive()).orElse(true)) {
+            Log.info("sweeper.skipped_active", "task", task.id());
+            return false;
+        }
         if (!state.uncommitted().isEmpty()) {
             Log.warn("sweeper.discarding", "task", task.id(), "phase", task.phase(), "paths", String.join(", ", state.uncommitted()));
         }
