@@ -428,6 +428,46 @@ class RunExecutorTest {
     }
 
     @Test
+    void followUpContinuesTheBuildingSessionAndAddsACommitToTheSamePullRequest() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        String baseSha = row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha");
+
+        assertEquals(FollowUpResult.QUEUED, db.transactionReturning(tx ->
+                tasks.followUp(tx, ALI, id, "Also log the timeout value", CHAT + "/400", CHAT)));
+        runNext();
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("COMPLETED", task.get("phase"));
+        assertEquals(FakeGh.PR_URL, task.get("pr_url"));
+        Map<String, String> followUp = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", id);
+        assertEquals("FOLLOW_UP", followUp.get("cause"));
+        assertEquals("SUCCEEDED", followUp.get("status"));
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        assertEquals(task.get("build_session_id"), valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--resume"));
+        String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
+        assertTrue(prompt.contains("Ali replied") && prompt.contains("Also log the timeout value"), prompt);
+        assertEquals("2", origin("rev-list", "--count", baseSha + "..refs/heads/dispatch/" + id), "one commit per run, on the same branch");
+        String ghCalls = Files.readString(worktree.resolve("fake-gh.args"));
+        assertEquals(1, ghCalls.split("pr\ncreate", -1).length - 1, "the pull request is opened once: " + ghCalls);
+    }
+
+    @Test
+    void followUpNeedsATaskThatReachedExecution() throws Exception {
+        long id = queue("SCENARIO:fail");
+        runNext();
+        assertFailed(id, "AGENT", "fatal");
+
+        assertEquals(FollowUpResult.REFUSED, db.transactionReturning(tx -> tasks.followUp(tx, BOLD, id, "and this", CHAT + "/400", CHAT)));
+
+        assertEquals("FAILED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("notExecuted", Json.read(row("SELECT payload FROM outbox WHERE kind = 'FOLLOW_UP_REFUSED'").get("payload"))
+                .get("reason").asText());
+    }
+
+    @Test
     void onlyAFailedTaskCanBeRetried() throws Exception {
         long id = queue("Fix the login timeout");
         runNext();

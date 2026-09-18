@@ -631,6 +631,44 @@ public final class TaskService {
         return RetryResult.RETRIED;
     }
 
+    /**
+     * A member's reply to a finished task's result: it runs at once in the task's building session and branch, without a
+     * new plan, because the reply is itself the instruction (ADR 0006). Only a task that got as far as execution can be
+     * followed up; one that is still active is refused, as its current run would not see the reply.
+     *
+     * @param originRef channel reference of the reply, which the answer goes under
+     */
+    public FollowUpResult followUp(Tx tx, Requester who, long taskId, String text, String originRef, String chatRef) {
+        Instant now = clock.instant();
+        if (!groups.isMember(who.ref())) {
+            notAllowed(tx, who, originRef, chatRef, now);
+            return FollowUpResult.NOT_ALLOWED;
+        }
+        Optional<Task> found = visibleTask(tx, who, taskId);
+        if (found.isEmpty()) {
+            enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
+            return FollowUpResult.NOT_FOUND;
+        }
+        if (text == null || text.isBlank()) {
+            return FollowUpResult.EMPTY;
+        }
+        Task task = found.get();
+        boolean finished = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED;
+        boolean executed = Runs.agentStartedBefore(tx, taskId, RunKind.EXECUTE, Integer.MAX_VALUE);
+        if (!finished || !executed || !Tasks.changePhase(tx, taskId, task.phase(), Phase.EXECUTING, now)) {
+            enqueue(tx, taskId, OutboxKind.FOLLOW_UP_REFUSED, chatRef, originRef, Json.object().put("taskId", taskId)
+                    .put("reason", finished && !executed ? "notExecuted" : "phase").put("phase", task.phase().name()), now);
+            return FollowUpResult.REFUSED;
+        }
+        int seq = Runs.nextSeq(tx, taskId);
+        Runs.insert(tx, new Runs.NewRun(taskId, seq, RunKind.EXECUTE, RunCause.FOLLOW_UP, text.strip(), who), now);
+        Events.record(tx, taskId, seq, who.ref(), task.phase(), Phase.EXECUTING, "follow-up", now);
+        enqueue(tx, taskId, OutboxKind.FOLLOW_UP_QUEUED, chatRef, originRef, Json.object().put("taskId", taskId).put("by", who.name()), now);
+        tx.afterCommit(wakeScheduler);
+        logTransition(tx, taskId, task.phase(), Phase.EXECUTING, who.ref());
+        return FollowUpResult.QUEUED;
+    }
+
     /** The member's own task, or one of their groups' tasks; empty for anything else, so its existence does not leak. */
     private Optional<Task> visibleTask(Tx tx, Requester who, long taskId) {
         return Tasks.find(tx, taskId).filter(task ->
@@ -714,8 +752,9 @@ public final class TaskService {
         ArrayNode runs = payload.putArray("runs");
         BigDecimal total = null;
         for (Run run : Runs.forTask(tx, taskId)) {
-            // Only a correction's instruction is worth showing: the first plan's is the task, an execution's is the plan.
-            String instruction = run.cause() == RunCause.CORRECTION ? truncate(run.instruction(), INSTRUCTION_LENGTH) : null;
+            // A reply's text is worth showing; the first plan's instruction is the task, an execution's the plan.
+            boolean reply = run.cause() == RunCause.CORRECTION || run.cause() == RunCause.FOLLOW_UP;
+            String instruction = reply ? truncate(run.instruction(), INSTRUCTION_LENGTH) : null;
             runs.addObject().put("seq", run.seq()).put("kind", run.kind().name()).put("cause", name(run.cause()))
                     .put("status", run.status().name())
                     .put("requestedBy", run.requestedByName()).put("instruction", instruction).put("queuedAt", text(run.queuedAt()))

@@ -16,6 +16,7 @@ import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
 import dispatch.core.TaskService;
 import dispatch.domain.OutboxKind;
+import dispatch.domain.Phase;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Task;
@@ -34,12 +35,15 @@ import java.util.Set;
  * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). The configured groups and
  * members' private chats with the bot are served (ADR 0011, 0012); other groups are left, other private chats ignored. A
  * group sees only its own projects, a member those of all their groups. Besides commands and buttons, a reply to a plan
- * message is a correction.
+ * message is a correction and a reply to a task's result is a follow-up.
  */
 public final class UpdateHandler {
 
     static final String OFFSET_KEY = "telegram.offset";
     private static final Set<String> JOINED_STATUSES = Set.of("member", "administrator");
+    /** Messages about a task's outcome; a reply to one is a follow-up (ADR 0006). */
+    private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
+            OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
     private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "retry", "help", "start");
 
     private final Database db;
@@ -141,12 +145,18 @@ public final class UpdateHandler {
                 ? tasks.taskOfTopic(tx, who.ref(), Long.toString(thread))
                 : Optional.empty();
         if (topicTask.isPresent() && parsed.map(command -> !COMMANDS.contains(command.name())).orElse(true)) {
-            // Inside a task's own topic, anything that is not a command is about that task.
-            tasks.correctLatest(tx, who, topicTask.get().id(), text(message), origin, chatRef);
+            // Inside a task's own topic, anything that is not a command is about that task: a follow-up once it has finished,
+            // otherwise a correction of its plan, which is refused with the reason when no plan is waiting.
+            Task task = topicTask.get();
+            if (task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED) {
+                tasks.followUp(tx, who, task.id(), text(message), origin, chatRef);
+            } else {
+                tasks.correctLatest(tx, who, task.id(), text(message), origin, chatRef);
+            }
             return;
         }
         if (parsed.isEmpty()) {
-            if (!correction(tx, message, who, origin, chatRef) && privateChat) {
+            if (!replyToTask(tx, message, who, origin, chatRef) && privateChat) {
                 // Anything else a member writes privately is a task to give (ADR 0012).
                 tasks.draft(tx, who, null, text(message), origin);
             }
@@ -192,7 +202,7 @@ public final class UpdateHandler {
             default -> {
                 // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
                 // it replies to a plan, otherwise a task when written privately.
-                if (correction(tx, message, who, origin, chatRef)) {
+                if (replyToTask(tx, message, who, origin, chatRef)) {
                     return;
                 }
                 if (privateChat) {
@@ -217,8 +227,11 @@ public final class UpdateHandler {
         enqueue(tx, OutboxKind.PRIVATE_ONLY, chatRef, origin, Json.object().put("bot", botUsername));
     }
 
-    /** Treats a reply to one of the bot's plan messages as a correction of that plan; false for any other message. */
-    private boolean correction(Tx tx, JsonNode message, Requester who, String origin, String chatRef) {
+    /**
+     * A reply to one of the bot's plan messages corrects that plan, and one to a task's result is a follow-up; false for any
+     * other message.
+     */
+    private boolean replyToTask(Tx tx, JsonNode message, Requester who, String origin, String chatRef) {
         JsonNode repliedTo = message.path("reply_to_message");
         if (!repliedTo.has("message_id")) {
             return false;
@@ -226,6 +239,10 @@ public final class UpdateHandler {
         long chatId = message.path("chat").path("id").asLong();
         String repliedRef = Refs.message(chatId, repliedTo.get("message_id").asLong(), null);
         Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef);
+        if (sent.isPresent() && RESULTS.contains(sent.get().kind())) {
+            tasks.followUp(tx, who, sent.get().taskId(), text(message), origin, chatRef);
+            return true;
+        }
         if (sent.isEmpty() || sent.get().kind() != OutboxKind.PLAN_READY) {
             String kind = sent.map(found -> found.kind().name()).orElse("unknown");
             tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind));

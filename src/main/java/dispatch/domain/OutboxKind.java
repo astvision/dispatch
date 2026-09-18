@@ -29,6 +29,9 @@ public enum OutboxKind {
     /** /retry queued the failed step again. */
     RETRY_QUEUED,
     RETRY_REFUSED,
+    /** A reply to a finished task's result runs as a follow-up (ADR 0006). */
+    FOLLOW_UP_QUEUED,
+    FOLLOW_UP_REFUSED,
     NOT_ALLOWED,
     UNKNOWN_PROJECT,
     PROJECT_UNAVAILABLE,

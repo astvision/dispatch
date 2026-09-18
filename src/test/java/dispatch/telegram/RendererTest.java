@@ -611,6 +611,8 @@ class RendererTest {
             case CANCEL_REFUSED -> Json.object().put("taskId", 1).put("phase", "REJECTED");
             case RETRY_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali").put("kind", "DELIVER");
             case RETRY_REFUSED -> Json.object().put("taskId", 1).put("phase", "COMPLETED");
+            case FOLLOW_UP_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");
+            case FOLLOW_UP_REFUSED -> Json.object().put("taskId", 1).put("reason", "notExecuted").put("phase", "FAILED");
             case NOT_ALLOWED -> Json.object().put("name", "Sara");
             case UNKNOWN_PROJECT -> {
                 ObjectNode payload = Json.object().put("given", "billing");

@@ -421,6 +421,31 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void replyToATasksResultIsAFollowUpAndInItsTopicToo() {
+        long taskId = taskAwaitingApproval(List.of());
+        db.transaction(tx -> tasks.approve(tx, new dispatch.domain.Requester("telegram:100", "Bold"), taskId, 1));
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        db.transaction(tx -> tx.update("UPDATE run SET pid = 1 WHERE task_id = ? AND seq = ?", run.taskId(), run.seq()));
+        transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", null, 3, List.of(),
+                null, null, null), List.of("README.md"), "https://github.com/acme/alm/pull/1");
+        long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/1100", clock.instant()));
+
+        handler.handle(message(545, 45, 200, "Ali", GROUP, "supergroup", "Also log the value", botMessage(1100)));
+
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        Map<String, String> followUp = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", taskId);
+        assertEquals("FOLLOW_UP", followUp.get("cause"));
+        assertEquals("Also log the value", followUp.get("instruction"));
+        assertEquals("telegram:" + GROUP + "/45", row("SELECT reply_to_ref FROM outbox WHERE kind = 'FOLLOW_UP_QUEUED'").get("reply_to_ref"));
+
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '55', phase = 'COMPLETED' WHERE id = ?", taskId));
+        handler.handle(topicMessage(546, 105, 100, "Bold", 55, "and the tablet too"));
+
+        assertEquals("and the tablet too", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 4", taskId).get("instruction"));
+    }
+
+    @Test
     void replyThatMerelyStartsLikeACommandIsStillACorrection() {
         long taskId = taskAwaitingApproval(List.of());
         planMessageSentAs(1000);

@@ -114,6 +114,19 @@ final class Prompts {
                 """.formatted(task.id(), failure(task), instruction) + EXECUTE_RULES;
     }
 
+    /** A follow-up continues the building session, which already has the task, the plan and what was done. */
+    static String followUp(Task task, Run run) {
+        return """
+                %s replied to your result for task #%d with a follow-up. Make these changes too, on top of what you \
+                already did; the work so far is in this repository.
+
+                <follow-up>
+                %s
+                </follow-up>
+
+                """.formatted(run.requestedByName(), task.id(), run.instruction()) + EXECUTE_RULES;
+    }
+
     private static String failure(Task task) {
         if (task.failureReason() == null) {
             return "unknown reason";

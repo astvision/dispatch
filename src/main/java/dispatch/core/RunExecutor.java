@@ -161,6 +161,7 @@ public final class RunExecutor {
         }
         return switch (run.cause()) {
             case RETRY -> Prompts.retry(task, run.instruction());
+            case FOLLOW_UP -> Prompts.followUp(task, run);
             default -> Prompts.execute(task, task.planJson());
         };
     }

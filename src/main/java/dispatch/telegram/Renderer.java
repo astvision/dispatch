@@ -98,7 +98,7 @@ public final class Renderer {
                             : format("task.completedPr", escape(payload.path("prUrl").asText()))));
             case TASK_FAILED_SHORT -> plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText()))));
             case TASK_FAILED -> plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText())))
-                    + detail(payload.path("detail").asText("")));
+                    + detail(payload.path("detail").asText("")) + "\n\n" + format("task.retryHint", taskId(payload)));
             case TASK_REJECTED -> plain(format("task.rejected", taskId(payload), escape(payload.path("by").asText())));
             case TASK_CANCELLED -> plain(format("task.cancelled", taskId(payload), escape(payload.path("by").asText())));
             case STATUS -> status(payload);
@@ -110,6 +110,10 @@ public final class Renderer {
             case RETRY_QUEUED -> plain(format("task.retryQueued", taskId(payload), escape(payload.path("by").asText()),
                     text("kind." + payload.path("kind").asText())));
             case RETRY_REFUSED -> plain(format("task.retryRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case FOLLOW_UP_QUEUED -> plain(format("task.followUpQueued", taskId(payload), escape(payload.path("by").asText())));
+            case FOLLOW_UP_REFUSED -> plain(payload.path("reason").asText().equals("notExecuted")
+                    ? format("task.followUpNotExecuted", taskId(payload))
+                    : format("task.followUpRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
             case NOT_ALLOWED -> plain(format("member.notAllowed", escape(payload.path("name").asText())));
             case UNKNOWN_PROJECT -> plain(format("project.unknown", escape(payload.path("given").asText()),
                     projectList(payload.path("projects"))));
@@ -356,6 +360,7 @@ public final class Renderer {
         }
         html.append("\n\n<i>").append(modelPrefix(payload)).append(format("task.completedFooter", filesChanged, money(payload.path("costUsd")),
                 duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload));
+        html.append("\n").append(text("task.followUpHint"));
         return plain(html.toString());
     }
 
@@ -507,8 +512,16 @@ public final class Renderer {
 
     private String runHeadline(JsonNode run) {
         String requestedBy = escape(run.path("requestedBy").asText("—"));
-        if (run.path("cause").asText().equals("RETRY")) {
-            return format("timeline.retry", requestedBy, text("kind." + run.path("kind").asText()));
+        switch (run.path("cause").asText()) {
+            case "RETRY" -> {
+                return format("timeline.retry", requestedBy, text("kind." + run.path("kind").asText()));
+            }
+            case "FOLLOW_UP" -> {
+                return format("timeline.followUp", requestedBy, escapeWithin(run.path("instruction").asText(), INSTRUCTION_LIMIT));
+            }
+            default -> {
+                // The first plan, a correction or the approved execution: told apart by kind below.
+            }
         }
         return switch (run.path("kind").asText()) {
             case "PLAN" -> run.hasNonNull("instruction")
