@@ -15,6 +15,7 @@ import dispatch.core.Membership;
 import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
 import dispatch.core.TaskService;
+import dispatch.domain.Attachment;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Priority;
@@ -25,6 +26,7 @@ import dispatch.store.Kv;
 import dispatch.store.Outbox;
 import dispatch.store.Tx;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -158,7 +160,7 @@ public final class UpdateHandler {
         if (parsed.isEmpty()) {
             if (!replyToTask(tx, message, who, origin, chatRef) && privateChat) {
                 // Anything else a member writes privately is a task to give (ADR 0012).
-                tasks.draft(tx, who, null, text(message), origin);
+                tasks.draft(tx, who, null, text(message), origin, attachments(message));
             }
             return;
         }
@@ -172,7 +174,7 @@ public final class UpdateHandler {
                     privateOnly(tx, chatRef, origin);
                     return;
                 }
-                giveTask(tx, who, command.args(), message.path("reply_to_message"), origin);
+                giveTask(tx, who, command.args(), message, origin);
             }
             case "status" -> tasks.status(tx, visible, privateChat ? who.ref() : null, origin, chatRef);
             case "history" -> taskId(command.args()).ifPresentOrElse(
@@ -207,7 +209,7 @@ public final class UpdateHandler {
                     return;
                 }
                 if (privateChat) {
-                    tasks.draft(tx, who, null, text(message), origin);
+                    tasks.draft(tx, who, null, text(message), origin, attachments(message));
                 } else {
                     tx.afterCommit(() -> Log.info("telegram.command_ignored", "command", command.name()));
                 }
@@ -216,12 +218,14 @@ public final class UpdateHandler {
     }
 
     /** /task [project] [text]: the first word names the project only if it is one of the member's; a replied message is the text. */
-    private void giveTask(Tx tx, Requester who, String args, JsonNode repliedTo, String origin) {
+    private void giveTask(Tx tx, Requester who, String args, JsonNode message, String origin) {
+        JsonNode repliedTo = message.path("reply_to_message");
         String[] firstAndRest = args.split("\\s+", 2);
         Set<String> mine = groups.projectsOfMember(who.ref());
         Optional<Config.Project> named = projects.find(firstAndRest[0]).filter(project -> mine.contains(project.name()));
         String own = named.isPresent() ? (firstAndRest.length > 1 ? firstAndRest[1].strip() : "") : args;
-        tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), withRepliedMessage(own, repliedTo), origin);
+        tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), withRepliedMessage(own, repliedTo), origin,
+                attachments(repliedTo, message));
     }
 
     private void privateOnly(Tx tx, String chatRef, String origin) {
@@ -513,6 +517,36 @@ public final class UpdateHandler {
             return text;
         }
         return text.isBlank() ? replied : replied + "\n\n" + text;
+    }
+
+    /** The photos (each at its largest size) and documents of {@code messages}, numbered in order. */
+    static List<Attachment> attachments(JsonNode... messages) {
+        List<Attachment> found = new ArrayList<>();
+        for (JsonNode message : messages) {
+            JsonNode largest = null;
+            for (JsonNode size : message.path("photo")) {
+                if (largest == null || area(size) > area(largest)) {
+                    largest = size;
+                }
+            }
+            if (largest != null && largest.has("file_id")) {
+                found.add(new Attachment(largest.get("file_id").asText(), Attachment.safeName(found.size() + 1, "photo.jpg"), bytes(largest)));
+            }
+            JsonNode document = message.path("document");
+            if (document.has("file_id")) {
+                found.add(new Attachment(document.get("file_id").asText(),
+                        Attachment.safeName(found.size() + 1, document.path("file_name").asText("file")), bytes(document)));
+            }
+        }
+        return found;
+    }
+
+    private static long area(JsonNode photoSize) {
+        return photoSize.path("width").asLong() * photoSize.path("height").asLong();
+    }
+
+    private static Long bytes(JsonNode file) {
+        return file.has("file_size") ? file.get("file_size").asLong() : null;
     }
 
     /** A message's text, or the caption of a photo or document. */

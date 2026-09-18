@@ -172,9 +172,12 @@ public final class Renderer {
             case "FAILED" -> "\n\n" + text("draft.splitFailed");
             default -> "";
         };
+        List<String> skipped = new ArrayList<>();
+        payload.path("skippedFiles").forEach(file -> skipped.add(escape(file.asText())));
+        String tooLarge = skipped.isEmpty() ? "" : "\n\n" + format("draft.filesTooLarge", String.join(", ", skipped));
         String html = header + "\n" + title + "\n\n"
                 + (project == null ? text("draft.chooseProject") : format("draft.project", project)) + "\n" + text("draft.choosePriority")
-                + note;
+                + note + tooLarge;
         List<List<Button>> keyboard = new ArrayList<>();
         JsonNode projects = payload.path("projects");
         if (projects.size() > 1) {

@@ -8,6 +8,8 @@ import dispatch.agent.AgentStartException;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.config.Config;
+import dispatch.OwnerOnly;
+import dispatch.domain.Attachment;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
 import dispatch.domain.InvalidPlanException;
@@ -16,14 +18,17 @@ import dispatch.domain.Run;
 import dispatch.domain.RunCause;
 import dispatch.domain.RunKind;
 import dispatch.domain.Task;
+import dispatch.store.Attachments;
 import dispatch.store.Database;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import dispatch.workspace.Delivery;
 import dispatch.workspace.WorkspaceException;
 import dispatch.workspace.Workspaces;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,12 +53,17 @@ public final class RunExecutor {
     private final Function<Config.Project, Config.RunLimits> planLimits;
     private final Function<Config.Project, Config.RunLimits> executeLimits;
     private final Redactor redactor;
+    private final AttachmentSource attachmentSource;
     private final Runnable wakeScheduler;
 
-    /** @param redactor masks secrets in the agent's summary before it becomes a commit message and pull request */
+    /**
+     * @param redactor         masks secrets in the agent's summary before it becomes a commit message and pull request
+     * @param attachmentSource downloads the files sent with a task
+     */
     public RunExecutor(Database db, Projects projects, Workspaces workspaces, Delivery delivery, Map<String, Agent> agents,
                        RunTransitions transitions, ActiveRuns activeRuns, Function<Config.Project, Config.RunLimits> planLimits,
-                       Function<Config.Project, Config.RunLimits> executeLimits, Redactor redactor, Runnable wakeScheduler) {
+                       Function<Config.Project, Config.RunLimits> executeLimits, Redactor redactor, AttachmentSource attachmentSource,
+                       Runnable wakeScheduler) {
         this.db = db;
         this.projects = projects;
         this.workspaces = workspaces;
@@ -64,6 +74,7 @@ public final class RunExecutor {
         this.planLimits = planLimits;
         this.executeLimits = executeLimits;
         this.redactor = redactor;
+        this.attachmentSource = attachmentSource;
         this.wakeScheduler = wakeScheduler;
     }
 
@@ -97,10 +108,15 @@ public final class RunExecutor {
             return;
         }
 
+        Optional<TaskFiles> files = attachments(task, active);
+        if (files.isEmpty()) {
+            return;
+        }
         // A task that already has a plan is being corrected: this run's instruction is the member's reply.
-        String prompt = task.planJson() == null ? Prompts.plan(task) : Prompts.correction(task, run);
+        String prompt = (task.planJson() == null ? Prompts.plan(task) : Prompts.correction(task, run)) + files.get().note();
         Config.RunLimits limits = planLimits.apply(project.get());
-        RunRequest request = new RunRequest(RunKind.PLAN, worktree.get(), prompt, task.sessionId(), agentStartedBefore(active, RunKind.PLAN), List.of(),
+        RunRequest request = new RunRequest(RunKind.PLAN, worktree.get(), prompt, task.sessionId(), agentStartedBefore(active, RunKind.PLAN),
+                files.get().dirs(),
                 limits.budgetUsd(), project.get().planModel(), project.get().planEffort(), workspaces.runLogBase(task.id(), active.seq()));
         Optional<AgentResult> result = runAgent(active, project.get(), request, limits.timeout());
         if (result.isEmpty() || endedWithoutSuccess(active, result.get(), limits.timeout())) {
@@ -118,6 +134,10 @@ public final class RunExecutor {
         }
         Optional<Path> worktree = existingWorktree(task, project.get(), active);
         if (worktree.isEmpty()) {
+            return;
+        }
+        Optional<TaskFiles> files = attachments(task, active);
+        if (files.isEmpty()) {
             return;
         }
         String startSha;
@@ -141,8 +161,8 @@ public final class RunExecutor {
         }
         boolean resume = agentStartedBefore(active, RunKind.EXECUTE);
         Config.RunLimits limits = executeLimits.apply(project.get());
-        RunRequest request = new RunRequest(RunKind.EXECUTE, worktree.get(), executePrompt(task, run, resume),
-                buildSession, resume, List.of(), limits.budgetUsd(), project.get().executeModel(), project.get().executeEffort(),
+        RunRequest request = new RunRequest(RunKind.EXECUTE, worktree.get(), executePrompt(task, run, resume) + files.get().note(),
+                buildSession, resume, files.get().dirs(), limits.budgetUsd(), project.get().executeModel(), project.get().executeEffort(),
                 workspaces.runLogBase(task.id(), active.seq()));
         Optional<AgentResult> result = runAgent(active, project.get(), request, limits.timeout());
         if (result.isEmpty() || endedWithoutSuccess(active, result.get(), limits.timeout())) {
@@ -218,6 +238,40 @@ public final class RunExecutor {
 
     private boolean agentStartedBefore(ActiveRuns.ActiveRun active, RunKind kind) {
         return db.transactionReturning(tx -> Runs.agentStartedBefore(tx, active.taskId(), kind, active.seq()));
+    }
+
+    /** A task's downloaded files: the directories the agent may read, and what its prompt says about them. */
+    private record TaskFiles(List<Path> dirs, String note) {
+
+        static final TaskFiles NONE = new TaskFiles(List.of(), "");
+    }
+
+    /**
+     * Downloads the task's files that are not there yet; empty when that failed and the run's failure is recorded. Each file
+     * lands under a temporary name first, so one cut short is fetched again by the next run.
+     */
+    private Optional<TaskFiles> attachments(Task task, ActiveRuns.ActiveRun active) {
+        List<Attachment> files = db.transactionReturning(tx -> Attachments.forTask(tx, task.id()));
+        if (files.isEmpty()) {
+            return Optional.of(TaskFiles.NONE);
+        }
+        Path dir = workspaces.attachmentsDir(task.id());
+        for (Attachment file : files) {
+            Path target = dir.resolve(file.name());
+            if (file.tooLarge() || Files.exists(target)) {
+                continue;
+            }
+            try {
+                OwnerOnly.createDirectories(dir);
+                Path partial = dir.resolve(file.name() + ".part");
+                attachmentSource.download(file.fileRef(), partial);
+                Files.move(partial, target, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException | RuntimeException e) {
+                transitions.failed(task.id(), active.seq(), FailureReason.SETUP, "cannot download " + file.name() + ": " + e.getMessage(), null);
+                return Optional.empty();
+            }
+        }
+        return Optional.of(new TaskFiles(List.of(dir), Prompts.attachments(dir, files)));
     }
 
     /** No copyFiles here: planning needs no local secrets, and whatever the agent reads may be quoted in the group. */

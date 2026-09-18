@@ -103,7 +103,7 @@ public final class App {
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(config.agents().get("claude-code").command(), environment, Duration.ofSeconds(10)));
         RunExecutor executor = new RunExecutor(db, projects, workspaces, delivery, agents, transitions, activeRuns,
-                config::planLimits, config::executeLimits, redactor, schedulerSignal::wake);
+                config::planLimits, config::executeLimits, redactor, api::downloadFile, schedulerSignal::wake);
         // Splitting happens before a project is chosen, so it cannot use the project's agent (ADR 0013).
         splitter[0] = new Splitter(db, tasks, agents.get("claude-code"), workspaces.splitsDir(), clock, Duration.ofMinutes(1));
 

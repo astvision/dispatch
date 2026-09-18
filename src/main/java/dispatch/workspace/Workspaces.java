@@ -52,7 +52,7 @@ public final class Workspaces {
      */
     public Optional<String> createDirectories() {
         try {
-            for (String sub : List.of("repos", "worktrees", "runs", "splits")) {
+            for (String sub : List.of("repos", "worktrees", "runs", "splits", "attachments")) {
                 OwnerOnly.createDirectories(stateDir.resolve(sub));
             }
             return OwnerOnly.othersAccess(stateDir).map(permissions -> "state directory " + stateDir
@@ -75,6 +75,11 @@ public final class Workspaces {
     /** Where splits run (ADR 0013): an empty directory of their own, which also keeps their logs. */
     public Path splitsDir() {
         return stateDir.resolve("splits");
+    }
+
+    /** A task's downloaded attachments: outside its worktree, so a delivery never commits them. */
+    public Path attachmentsDir(long taskId) {
+        return stateDir.resolve("attachments").resolve(Long.toString(taskId));
     }
 
     public Path runLogBase(long taskId, int seq) {

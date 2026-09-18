@@ -45,6 +45,7 @@ public final class FakeTelegram implements AutoCloseable {
     private final Map<String, Deque<String[]>> scripted = new ConcurrentHashMap<>();
     private final Map<Long, String[]> refusedChats = new ConcurrentHashMap<>();
     private final BlockingQueue<JsonNode> updates = new LinkedBlockingQueue<>();
+    private final Map<String, byte[]> files = new ConcurrentHashMap<>();
     private final AtomicLong nextMessageId = new AtomicLong(1000);
     private final AtomicLong nextThreadId = new AtomicLong(500);
     private volatile boolean topicsEnabled;
@@ -104,8 +105,22 @@ public final class FakeTelegram implements AutoCloseable {
         server.stop(0);
     }
 
+    /** Serves {@code content} as the file {@code fileId}, through getFile and the file download path. */
+    public void addFile(String fileId, byte[] content) {
+        files.put(fileId, content);
+    }
+
     private void handle(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
+        if (path.startsWith("/file/bot" + TOKEN + "/files/")) {
+            byte[] content = files.get(path.substring(path.lastIndexOf('/') + 1));
+            exchange.sendResponseHeaders(content == null ? 404 : 200, content == null ? -1 : content.length);
+            if (content != null) {
+                exchange.getResponseBody().write(content);
+            }
+            exchange.close();
+            return;
+        }
         String method = path.substring(path.lastIndexOf('/') + 1);
         byte[] body = exchange.getRequestBody().readAllBytes();
         queue(method).add(new Request(method, exchange.getRequestHeaders().getFirst("Content-Type"), body));
@@ -126,6 +141,10 @@ public final class FakeTelegram implements AutoCloseable {
             case "getMe" -> "{\"id\":1,\"is_bot\":true,\"username\":\"" + BOT_USERNAME + "\",\"has_topics_enabled\":" + topicsEnabled + "}";
             case "createForumTopic" -> "{\"message_thread_id\":" + nextThreadId.getAndIncrement() + ",\"name\":\"t\",\"icon_color\":16766590}";
             case "getUpdates" -> pendingUpdates();
+            case "getFile" -> {
+                String fileId = Json.read(new String(body, StandardCharsets.UTF_8)).path("file_id").asText();
+                yield "{\"file_id\":\"" + fileId + "\",\"file_path\":\"files/" + fileId + "\"}";
+            }
             case "sendMessage", "sendDocument" -> "{\"message_id\":" + nextMessageId.getAndIncrement() + "}";
             default -> "true";
         };

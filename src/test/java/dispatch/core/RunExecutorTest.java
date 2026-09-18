@@ -521,6 +521,43 @@ class RunExecutorTest {
     }
 
     @Test
+    void attachmentsAreDownloadedOutsideTheWorktreeAndGivenToTheAgent() throws Exception {
+        sentFiles.put("photo-id", new byte[] {1, 2, 3});
+        long id = queue("Fix the login timeout, see the screenshot");
+        attach(id, "photo-id", "1-photo.jpg", 3L);
+        attach(id, "dump-id", "2-dump.zip", 30L * 1024 * 1024);
+
+        runNext();
+
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        Path attachments = repos.stateDir.resolve("attachments/" + id);
+        assertEquals(3, Files.size(attachments.resolve("1-photo.jpg")));
+        assertFalse(Files.exists(attachments.resolve("2-dump.zip")), "over 20 MB: never downloaded");
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        assertEquals(attachments.toString(), valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--add-dir"));
+        String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
+        assertTrue(prompt.contains("1-photo.jpg") && prompt.contains("Not available, over 20 MB: 2-dump.zip"), prompt);
+
+        sentFiles.clear();
+        approve(id);
+        runNext();
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"), "downloaded once, then reused");
+        assertEquals("README.md", origin("diff", "--name-only", row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha"),
+                "refs/heads/dispatch/" + id), "attachments are never delivered");
+    }
+
+    @Test
+    void attachmentThatCannotBeDownloadedFailsTheRunBeforeItsAgent() throws Exception {
+        long id = queue("Fix the login timeout, see the screenshot");
+        attach(id, "gone-id", "1-photo.jpg", 3L);
+
+        runNext();
+
+        assertFailed(id, "SETUP", "cannot download 1-photo.jpg: file gone-id is gone");
+        assertFalse(Files.exists(repos.stateDir.resolve("worktrees/" + id + "/fake-claude.args")));
+    }
+
+    @Test
     void onlyAFailedTaskCanBeRetried() throws Exception {
         long id = queue("Fix the login timeout");
         runNext();
@@ -550,6 +587,17 @@ class RunExecutorTest {
         executorUnderTest = new RunExecutor(db, projects, workspaces, delivery, Map.of("claude-code", agent()), transitions,
                 activeRuns, project -> new Config.RunLimits(planTimeout, new BigDecimal("2")),
                 project -> new Config.RunLimits(Duration.ofSeconds(30), new BigDecimal("10")), Redactor.patternsOnly(),
+                (fileRef, target) -> {
+                    byte[] content = sentFiles.get(fileRef);
+                    if (content == null) {
+                        throw new IllegalStateException("file " + fileRef + " is gone");
+                    }
+                    try {
+                        Files.write(target, content);
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                },
                 schedulerWakes::incrementAndGet);
         db.transaction(tx -> tasks.create(tx, BOLD, "alm", description, Priority.NORMAL, BOLD.ref() + "/" + System.nanoTime()));
         return Long.parseLong(row("SELECT max(id) AS id FROM task").get("id"));
@@ -557,6 +605,7 @@ class RunExecutorTest {
 
     private RunExecutor executorUnderTest;
     private Sweeper sweeper;
+    private final Map<String, byte[]> sentFiles = new java.util.HashMap<>();
 
     private ClaudeCodeAgent agent() {
         try {
@@ -578,6 +627,11 @@ class RunExecutorTest {
 
     private ClaimedRun claim() {
         return db.transactionReturning(tx -> Runs.claimNext(tx, 5, Instant.parse("2026-09-17T10:00:00Z"))).orElseThrow();
+    }
+
+    private void attach(long taskId, String fileRef, String name, Long size) {
+        db.transaction(tx -> tx.insert("INSERT INTO attachment (task_id, file_ref, name, size) VALUES (?, ?, ?, ?)", taskId, fileRef,
+                name, size));
     }
 
     private void approve(long id) {

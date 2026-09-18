@@ -1,7 +1,10 @@
 package dispatch.core;
 
+import dispatch.domain.Attachment;
 import dispatch.domain.Run;
 import dispatch.domain.Task;
+import java.nio.file.Path;
+import java.util.List;
 
 /** What agents are told. Dispatch frames the task; the repository's own CLAUDE.md still applies on top. */
 final class Prompts {
@@ -125,6 +128,21 @@ final class Prompts {
                 </follow-up>
 
                 """.formatted(run.requestedByName(), task.id(), run.instruction()) + EXECUTE_RULES;
+    }
+
+    /** Where the agent finds the task's files, and which ones it will not find. */
+    static String attachments(Path dir, List<Attachment> files) {
+        List<String> available = files.stream().filter(file -> !file.tooLarge()).map(Attachment::name).toList();
+        List<String> skipped = files.stream().filter(Attachment::tooLarge).map(Attachment::name).toList();
+        StringBuilder note = new StringBuilder("\nFiles sent with the task");
+        if (!available.isEmpty()) {
+            note.append(" are in ").append(dir).append(" (read them there): ").append(String.join(", ", available)).append('.');
+        }
+        if (!skipped.isEmpty()) {
+            note.append(available.isEmpty() ? ": " : " Not available, over 20 MB: ").append(String.join(", ", skipped))
+                    .append(available.isEmpty() ? " (not available, over 20 MB)." : ".");
+        }
+        return note.append('\n').toString();
     }
 
     private static String failure(Task task) {

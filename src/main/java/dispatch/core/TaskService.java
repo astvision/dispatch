@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.config.Config;
+import dispatch.domain.Attachment;
 import dispatch.domain.Draft;
 import dispatch.domain.DraftStatus;
 import dispatch.domain.FailureReason;
@@ -19,6 +20,7 @@ import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
 import dispatch.domain.SplitState;
 import dispatch.domain.Task;
+import dispatch.store.Attachments;
 import dispatch.store.Drafts;
 import dispatch.store.Events;
 import dispatch.store.Outbox;
@@ -90,6 +92,11 @@ public final class TaskService {
      * @param originRef  the message in the member's private chat
      */
     public DraftResult draft(Tx tx, Requester who, String projectKey, String text, String originRef) {
+        return draft(tx, who, projectKey, text, originRef, List.of());
+    }
+
+    /** @param attachments files sent with the message, which the task's agent gets to read */
+    public DraftResult draft(Tx tx, Requester who, String projectKey, String text, String originRef, List<Attachment> attachments) {
         Instant now = clock.instant();
         String chatRef = who.ref();
         if (Drafts.existsWithOrigin(tx, originRef)) {
@@ -113,8 +120,10 @@ public final class TaskService {
         String named = projectKey == null ? null : projects.find(projectKey).map(Config.Project::name).orElse(null);
         String project = preselected(offered, named);
         long id = Drafts.insert(tx, new Drafts.NewDraft(who, chatRef, originRef, description, project, null, null), now);
+        Attachments.addToDraft(tx, id, attachments);
         enqueue(tx, null, OutboxKind.DRAFT_PROMPT, chatRef, originRef, draftPayload(tx, id).orElseThrow(), now);
-        tx.afterCommit(() -> Log.info("draft.created", "draft", id, "requester", who.ref(), "project", project));
+        tx.afterCommit(() -> Log.info("draft.created", "draft", id, "requester", who.ref(), "project", project,
+                "attachments", attachments.size()));
         return DraftResult.DRAFTED;
     }
 
@@ -150,6 +159,7 @@ public final class TaskService {
         }
         long taskId = insertTask(tx, who, project.get(), draft.description(), priority, draft.originRef(), now);
         Drafts.created(tx, draftId, taskId, now);
+        Attachments.giveToTask(tx, draftId, taskId);
         return DraftChoice.CREATED;
     }
 
@@ -168,6 +178,8 @@ public final class TaskService {
             payload.put("priority", draft.taskId() == null ? null
                     : Tasks.find(tx, draft.taskId()).map(task -> task.priority().name()).orElse(null));
             payload.put("split", draft.splitState() == null ? null : draft.splitState().name());
+            ArrayNode skipped = payload.putArray("skippedFiles");
+            Attachments.forDraft(tx, draftId).stream().filter(Attachment::tooLarge).forEach(file -> skipped.add(file.name()));
             payload.put("splittable", draft.status() == DraftStatus.OPEN && draft.parentId() == null
                     && (draft.splitState() == null || draft.splitState() == SplitState.FAILED));
             ArrayNode topics = payload.putArray("topics");
@@ -255,6 +267,7 @@ public final class TaskService {
             String originRef = whole.originRef() + "#" + part;
             long id = Drafts.insert(tx, new Drafts.NewDraft(who, whole.chatRef(), originRef, whole.topics().get(part - 1), project,
                     draftId, part), now);
+            Attachments.copyToDraft(tx, draftId, id);
             enqueue(tx, null, OutboxKind.DRAFT_PROMPT, whole.chatRef(), originRef, draftPayload(tx, id).orElseThrow(), now);
         }
         tx.afterCommit(() -> Log.info("split.accepted", "draft", draftId, "parts", whole.topics().size()));

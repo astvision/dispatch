@@ -36,6 +36,18 @@ class BotApiTest {
     }
 
     @Test
+    void downloadFileFetchesThePathGetFileNames(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        telegram.addFile("abc", "screenshot bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        api.downloadFile("abc", dir.resolve("1-photo.jpg"));
+
+        assertEquals("screenshot bytes", java.nio.file.Files.readString(dir.resolve("1-photo.jpg")));
+        assertEquals("abc", telegram.awaitRequest("getFile", Duration.ofSeconds(1)).json().get("file_id").asText());
+        TelegramException missing = assertThrows(TelegramException.class, () -> api.downloadFile("nope", dir.resolve("2-file")));
+        assertFalse(missing.getMessage().contains(FakeTelegram.TOKEN), missing.getMessage());
+    }
+
+    @Test
     void malformedTokenIsRefusedWithoutRepeatingIt() {
         // A stray space from a hand-edited secrets file; URI.create would put the whole token into its message.
         String malformed = "123456789" + ":AAH-fake token-for-tests";

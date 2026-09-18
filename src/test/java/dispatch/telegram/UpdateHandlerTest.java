@@ -99,6 +99,34 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void photosAndDocumentsGoWithTheDraftToItsTaskUnderSafeNames() throws Exception {
+        JsonNode update = message(509, 19, 100, "Bold", 100L, "private", "", null);
+        com.fasterxml.jackson.databind.node.ObjectNode sent = (com.fasterxml.jackson.databind.node.ObjectNode) update.get("message");
+        sent.remove("text");
+        sent.put("caption", "Login fails, see the screenshot");
+        sent.putArray("photo").add(Json.read("{\"file_id\":\"small\",\"width\":90,\"height\":60,\"file_size\":900}"))
+                .add(Json.read("{\"file_id\":\"large\",\"width\":1280,\"height\":853,\"file_size\":90000}"));
+        handler.handle(update);
+        JsonNode withDocument = message(510, 20, 100, "Bold", 100L, "private", "", null);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) withDocument.get("message")).remove("text");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) withDocument.get("message")).put("caption", "And the log")
+                .set("document", Json.read("{\"file_id\":\"doc\",\"file_name\":\"../../.ssh/id_rsa\",\"file_size\":25000000}"));
+        handler.handle(withDocument);
+
+        Map<String, String> photo = row("SELECT * FROM attachment WHERE draft_id = 1");
+        assertEquals("large", photo.get("file_ref"), "the largest size");
+        assertEquals("1-photo.jpg", photo.get("name"));
+        assertEquals("1-_.._.ssh_id_rsa", row("SELECT name FROM attachment WHERE draft_id = 2").get("name"), "never a path out of its directory");
+        JsonNode prompt = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/20'").get("payload"));
+        assertEquals("1-_.._.ssh_id_rsa", prompt.get("skippedFiles").get(0).asText(), "over 20 MB, and the prompt says so");
+
+        handler.handle(privateCallback(511, 100, "Bold", "draft:1:p:autoland-management"));
+        handler.handle(privateCallback(512, 100, "Bold", "draft:1:prio:NORMAL"));
+
+        assertEquals(row("SELECT id FROM task").get("id"), row("SELECT task_id FROM attachment WHERE draft_id = 1").get("task_id"));
+    }
+
+    @Test
     void privateTaskCommandNamesTheProjectAndTakesTheRepliedMessageAsText() {
         String forwarded = """
                 {"message_id":9,"from":{"id":100,"is_bot":false,"first_name":"Bold"},"chat":{"id":100,"type":"private"},
