@@ -1,5 +1,6 @@
 package dispatch.workspace;
 
+import dispatch.Log;
 import dispatch.OwnerOnly;
 import dispatch.config.Config;
 import java.io.IOException;
@@ -37,6 +38,8 @@ public final class Workspaces {
     private final Path stateDir;
     private final Git git;
     private final Map<String, ReentrantLock> repoLocks = new ConcurrentHashMap<>();
+    /** Why a project whose clone Dispatch is making cannot take tasks yet: cloning, or the clone failed. */
+    private final Map<String, String> cloning = new ConcurrentHashMap<>();
 
     public Workspaces(Path stateDir, Git git) {
         this.stateDir = stateDir;
@@ -78,15 +81,44 @@ public final class Workspaces {
         return stateDir.resolve("runs").resolve(Long.toString(taskId)).resolve(Integer.toString(seq));
     }
 
-    /** Empty when tasks can run. The clone is made by hand, or is the developer's own (ADR 0014). */
+    /** Empty when tasks can run. The clone is Dispatch's own ({@link #cloneMissing}), or the developer's (ADR 0014). */
     public Optional<String> unavailableReason(Config.Project project) {
         Path repo = repo(project);
         if (Files.exists(repo.resolve(".git"))) {
             return Optional.empty();
         }
+        String status = cloning.get(project.name());
+        if (status != null) {
+            return Optional.of(status);
+        }
         return Optional.of(project.repo() == null
                 ? "no git clone at " + repo
                 : "no clone at " + repo + " (git clone " + project.repo() + " " + repo + ")");
+    }
+
+    /** Whether Dispatch makes this project's clone: it has a repo URL, no path of the developer's own, and no clone yet. */
+    public boolean needsClone(Config.Project project) {
+        return project.repo() != null && project.path() == null && !Files.exists(repo(project).resolve(".git"));
+    }
+
+    /**
+     * Clones the project into {@code repos/<name>}; the project cannot take tasks until it is done. Blocks, so callers run it
+     * in the background. A failure leaves the project unavailable with git's error as the reason, until the next start.
+     *
+     * @param slowGit git with a timeout long enough for the repository's size
+     */
+    public void cloneMissing(Config.Project project, Git slowGit) {
+        Path repo = repo(project);
+        cloning.put(project.name(), "cloning " + project.repo() + " into " + repo);
+        Log.info("project.cloning", "project", project.name(), "repo", project.repo());
+        try {
+            slowGit.run(repo.getParent(), "clone", "--quiet", project.repo(), repo.toString());
+            cloning.remove(project.name());
+            Log.info("project.cloned", "project", project.name(), "repo", repo);
+        } catch (WorkspaceException e) {
+            cloning.put(project.name(), "cloning " + project.repo() + " failed: " + e.getMessage());
+            Log.error("project.clone_failed", null, "project", project.name(), "error", e.getMessage());
+        }
     }
 
     /** Fetches the base branch and adds worktrees/&lt;task&gt; on a new branch dispatch/&lt;task&gt; at origin/&lt;base&gt;. */

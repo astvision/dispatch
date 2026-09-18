@@ -621,6 +621,12 @@ class RendererTest {
             }
             case PROJECT_UNAVAILABLE -> Json.object().put("project", "crm").put("reason", "no clone");
             case TASK_USAGE -> Json.object();
+            case PROJECTS -> {
+                ObjectNode payload = Json.object();
+                payload.putArray("projects").addObject().put("name", "crm").putNull("alias").put("baseBranch", "main")
+                        .put("unavailable", "cloning https://github.com/acme/crm.git");
+                yield payload;
+            }
             case HELP -> {
                 ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot");
                 payload.putArray("projects").addObject().put("name", "crm").putNull("alias");

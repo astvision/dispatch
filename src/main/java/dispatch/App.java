@@ -109,8 +109,16 @@ public final class App {
 
         new Recovery(db, transitions, Duration.ofSeconds(10)).run();
         db.transaction(tasks::failInterruptedSplits);
-        projects.all().forEach(project -> projects.unavailableReason(project).ifPresent(reason ->
-                Log.error("project.unavailable", null, "project", project.name(), "reason", reason)));
+        Git slowGit = git.withTimeout(Duration.ofMinutes(30));
+        for (Config.Project project : projects.all()) {
+            if (workspaces.needsClone(project)) {
+                // Tasks for it are refused with "cloning ..." until the clone is there.
+                Thread.ofVirtual().name("clone-" + project.name()).start(() -> workspaces.cloneMissing(project, slowGit));
+            } else {
+                projects.unavailableReason(project).ifPresent(reason ->
+                        Log.error("project.unavailable", null, "project", project.name(), "reason", reason));
+            }
+        }
 
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
         registerCommandMenus(api, renderer, groups);
@@ -199,13 +207,13 @@ public final class App {
             }
             try {
                 // Groups only read: tasks are given and cancelled privately (ADR 0012).
-                api.setMyCommands(group.chatId(), commands(renderer, "status", "history", "stats", "help"));
+                api.setMyCommands(group.chatId(), commands(renderer, "status", "history", "stats", "projects", "help"));
             } catch (TelegramException e) {
                 Log.warn("telegram.command_menu_failed", "group", group.name(), "chat_id", group.chatId(), "error", e.getMessage());
             }
         }
         try {
-            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "stats", "cancel", "retry", "help"));
+            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "stats", "cancel", "retry", "projects", "help"));
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "scope", "all_private_chats", "error", e.getMessage());
         }

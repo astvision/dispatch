@@ -124,6 +124,7 @@ public final class Renderer {
             case NO_PROJECTS -> plain(text("noProjects"));
             case HELP -> plain(format(payload.path("privateChat").asBoolean() ? "help.private" : "help",
                     projectList(payload.path("projects")), escape(payload.path("bot").asText())));
+            case PROJECTS -> projects(payload.path("projects"));
             case JOIN_REQUEST -> joinRequest(payload);
             case JOIN_REQUESTED -> plain(text("join.requested"));
             case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
@@ -576,6 +577,22 @@ public final class Renderer {
             html.append(next);
         }
         return html.toString();
+    }
+
+    private Rendered projects(JsonNode projects) {
+        if (projects.isEmpty()) {
+            return plain(text("projects.empty"));
+        }
+        List<String> blocks = new ArrayList<>(List.of(text("projects.header")));
+        for (JsonNode project : projects) {
+            String alias = project.hasNonNull("alias") ? " (" + escape(project.get("alias").asText()) + ")" : "";
+            String line = format("projects.line", escape(project.path("name").asText()), alias, escape(project.path("baseBranch").asText()));
+            if (project.hasNonNull("unavailable")) {
+                line += "\n   " + format("projects.unavailable", escapeWithin(project.get("unavailable").asText(), DETAIL_LIMIT));
+            }
+            blocks.add(line);
+        }
+        return plain(joinWithin(blocks, "\n"));
     }
 
     private String time(String instant) {

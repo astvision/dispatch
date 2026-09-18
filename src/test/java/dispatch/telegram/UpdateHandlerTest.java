@@ -620,6 +620,18 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void projectsListsWhatTheChatCanUse() {
+        handler.handle(message(531, 31, 999, "Sara", GROUP, "supergroup", "/projects", null));
+        handler.handle(message(532, 32, 100, "Bold", 100L, "private", "/projects", null));
+
+        JsonNode group = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/31").get("payload"));
+        assertEquals(1, group.get("projects").size(), "a group sees only its own projects");
+        assertEquals("main", group.get("projects").get(0).get("baseBranch").asText());
+        JsonNode mine = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/32'").get("payload"));
+        assertEquals(2, mine.get("projects").size(), "a member sees the projects of all their groups");
+    }
+
+    @Test
     void helpListsTheProjects() {
         handler.handle(message(530, 30, 999, "Sara", GROUP, "supergroup", "/help", null));
 

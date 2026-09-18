@@ -44,7 +44,7 @@ public final class UpdateHandler {
     /** Messages about a task's outcome; a reply to one is a follow-up (ADR 0006). */
     private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
-    private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "retry", "help", "start");
+    private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "retry", "projects", "help", "start");
 
     private final Database db;
     private final TaskService tasks;
@@ -198,6 +198,7 @@ public final class UpdateHandler {
             }
             case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
+            case "projects" -> projectList(tx, visible, origin, chatRef);
             case "help", "start" -> help(tx, visible, origin, chatRef, privateChat);
             default -> {
                 // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
@@ -484,6 +485,16 @@ public final class UpdateHandler {
         projects.all().stream().filter(project -> visible.contains(project.name()))
                 .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
         enqueue(tx, OutboxKind.HELP, chatRef, origin, payload);
+    }
+
+    /** The chat's projects in config order, each with its base branch and, if it cannot take tasks now, why not. */
+    private void projectList(Tx tx, Set<String> visible, String origin, String chatRef) {
+        ObjectNode payload = Json.object();
+        ArrayNode listed = payload.putArray("projects");
+        projects.all().stream().filter(project -> visible.contains(project.name()))
+                .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias())
+                        .put("baseBranch", project.baseBranch()).put("unavailable", projects.unavailableReason(project).orElse(null)));
+        enqueue(tx, OutboxKind.PROJECTS, chatRef, origin, payload);
     }
 
     private void enqueue(Tx tx, OutboxKind kind, String chatRef, String origin, ObjectNode payload) {

@@ -39,6 +39,8 @@ public enum OutboxKind {
     PRIVATE_ONLY,
     NO_PROJECTS,
     HELP,
+    /** The projects a chat can give tasks for, and why any of them cannot take one now. */
+    PROJECTS,
     /** To an admin: someone asks to use the bot, with a button per group (ADR 0015). */
     JOIN_REQUEST,
     /** To the person asking: their request was sent to the admins. */

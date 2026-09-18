@@ -80,6 +80,11 @@ public final class CheckCommand {
     }
 
     private void checkProject(Config.Project project, Workspaces workspaces) {
+        if (workspaces.needsClone(project)) {
+            warn("project " + project.name() + ": not cloned yet; Dispatch clones " + project.repo() + " into "
+                    + workspaces.repo(project) + " when it starts");
+            return;
+        }
         Optional<String> unavailable = workspaces.unavailableReason(project);
         if (unavailable.isPresent()) {
             fail("project " + project.name() + ": " + unavailable.get());
