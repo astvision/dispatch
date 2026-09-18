@@ -92,7 +92,7 @@ public final class RunExecutor {
         if (project.isEmpty() || stoppedBeforeAgent(active)) {
             return;
         }
-        Optional<Path> worktree = task.worktree() == null ? createWorktree(task, project.get(), active) : existingWorktree(task, active);
+        Optional<Path> worktree = task.worktree() == null ? createWorktree(task, project.get(), active) : existingWorktree(task, project.get(), active);
         if (worktree.isEmpty() || stoppedBeforeAgent(active)) {
             return;
         }
@@ -116,7 +116,7 @@ public final class RunExecutor {
         if (project.isEmpty() || stoppedBeforeAgent(active)) {
             return;
         }
-        Optional<Path> worktree = existingWorktree(task, active);
+        Optional<Path> worktree = existingWorktree(task, project.get(), active);
         if (worktree.isEmpty()) {
             return;
         }
@@ -182,10 +182,11 @@ public final class RunExecutor {
     private void deliverAgain(ActiveRuns.ActiveRun active) {
         Task task = task(active.taskId());
         Run run = run(active);
-        if (project(task, active).isEmpty() || stoppedBeforeAgent(active)) {
+        Optional<Config.Project> project = project(task, active);
+        if (project.isEmpty() || stoppedBeforeAgent(active)) {
             return;
         }
-        Optional<Path> worktree = existingWorktree(task, active);
+        Optional<Path> worktree = existingWorktree(task, project.get(), active);
         if (worktree.isEmpty()) {
             return;
         }
@@ -231,13 +232,24 @@ public final class RunExecutor {
         }
     }
 
-    /** Later runs continue in the worktree the first planning run created. */
-    private Optional<Path> existingWorktree(Task task, ActiveRuns.ActiveRun active) {
+    /** Later runs continue in the worktree the first planning run created; one the idle sweep removed is added back. */
+    private Optional<Path> existingWorktree(Task task, Config.Project project, ActiveRuns.ActiveRun active) {
         if (task.worktree() != null && Files.isDirectory(task.worktree())) {
             return Optional.of(task.worktree());
         }
-        transitions.failed(task.id(), active.seq(), FailureReason.SETUP, "worktree " + task.worktree() + " is missing", null);
-        return Optional.empty();
+        if (task.worktree() == null) {
+            transitions.failed(task.id(), active.seq(), FailureReason.SETUP, "the task has no worktree", null);
+            return Optional.empty();
+        }
+        try {
+            Path recreated = workspaces.recreateWorktree(project, task.id());
+            Log.info("worktree.recreated", "task", task.id(), "worktree", recreated);
+            return Optional.of(recreated);
+        } catch (WorkspaceException e) {
+            transitions.failed(task.id(), active.seq(), FailureReason.SETUP, "worktree " + task.worktree() + " is missing and could not be "
+                    + "recreated: " + e.getMessage(), null);
+            return Optional.empty();
+        }
     }
 
     private Optional<Config.Project> project(Task task, ActiveRuns.ActiveRun active) {

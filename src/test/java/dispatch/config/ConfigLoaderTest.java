@@ -168,6 +168,18 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void worktreesStayForAWeekUnlessConfiguredOtherwise() throws IOException {
+        assertEquals(7, ConfigLoader.load(write(VALID), ENV).worktrees().idleDays());
+        String custom = VALID.replace("scheduler:\n", "worktrees:\n  idleDays: 3\nscheduler:\n");
+        assertEquals(3, ConfigLoader.load(write(custom), ENV).worktrees().idleDays());
+
+        ConfigException error = assertThrows(ConfigException.class,
+                () -> ConfigLoader.load(write(VALID.replace("scheduler:\n", "worktrees:\n  idleDays: 0\nscheduler:\n")), ENV));
+
+        assertTrue(error.getMessage().contains("worktrees.idleDays"), error.getMessage());
+    }
+
+    @Test
     void invalidDurationIsReported() throws IOException {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigLoader.load(write(VALID.replace("timeout: 15m", "timeout: 15x")), ENV));

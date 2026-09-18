@@ -6,6 +6,7 @@ import dispatch.config.Config;
 import dispatch.config.MemberWriter;
 import dispatch.core.ActiveRuns;
 import dispatch.core.DraftExpiry;
+import dispatch.core.Sweeper;
 import dispatch.core.Groups;
 import dispatch.core.Membership;
 import dispatch.core.Projects;
@@ -45,6 +46,7 @@ public final class App {
     private final Scheduler scheduler;
     private final OutboxSender sender;
     private final DraftExpiry draftExpiry;
+    private final Sweeper sweeper;
     private final Splitter splitter;
     private final ActiveRuns activeRuns;
     private final Consumer<Throwable> onFatal;
@@ -53,14 +55,16 @@ public final class App {
     private Thread schedulerThread;
     private Thread senderThread;
     private Thread draftExpiryThread;
+    private Thread sweeperThread;
 
-    private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, Splitter splitter,
+    private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, Sweeper sweeper, Splitter splitter,
                 ActiveRuns activeRuns, Consumer<Throwable> onFatal) {
         this.db = db;
         this.poller = poller;
         this.scheduler = scheduler;
         this.sender = sender;
         this.draftExpiry = draftExpiry;
+        this.sweeper = sweeper;
         this.splitter = splitter;
         this.activeRuns = activeRuns;
         this.onFatal = onFatal;
@@ -121,7 +125,8 @@ public final class App {
                         .start(app[0].guarded(() -> executor.execute(run))),
                 Duration.ofSeconds(5));
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
-        app[0] = new App(db, poller, scheduler, sender, draftExpiry, splitter[0], activeRuns, onFatal);
+        Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1));
+        app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], activeRuns, onFatal);
         app[0].startThreads();
         Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "task_topics", taskTopics, "groups", groups.all().size(),
                 "projects", config.projects().size(), "state_dir", stateDir);
@@ -142,6 +147,7 @@ public final class App {
         poller.stop();
         pollerThread.interrupt();
         scheduler.stop();
+        sweeper.stop();
         splitter.stop();
         try {
             schedulerThread.join(Duration.ofSeconds(10));
@@ -151,6 +157,7 @@ public final class App {
             }
             draftExpiry.stop();
             draftExpiryThread.join(Duration.ofSeconds(10));
+            sweeperThread.join(Duration.ofSeconds(10));
             sender.stop();
             senderThread.join(Duration.ofSeconds(10));
             pollerThread.join(Duration.ofSeconds(10));
@@ -166,6 +173,7 @@ public final class App {
         schedulerThread = Thread.ofVirtual().name("scheduler").start(guarded(scheduler));
         senderThread = Thread.ofVirtual().name("outbox-sender").start(guarded(sender));
         draftExpiryThread = Thread.ofVirtual().name("draft-expiry").start(guarded(draftExpiry));
+        sweeperThread = Thread.ofVirtual().name("sweeper").start(guarded(sweeper));
     }
 
     /** A loop that dies unexpectedly would leave the instance half-working; report it as fatal instead. */

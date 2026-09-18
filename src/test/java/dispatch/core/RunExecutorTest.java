@@ -468,6 +468,59 @@ class RunExecutorTest {
     }
 
     @Test
+    void sweepRemovesAnIdleDeliveredWorktreeAndAFollowUpRecreatesIt() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+
+        assertEquals(1, sweeper.sweep());
+
+        assertFalse(Files.exists(worktree));
+        assertEquals("dispatch/" + id, GitFixture.sh(repos.repo("alm"), "git", "branch", "--list", "dispatch/" + id,
+                "--format=%(refname:short)"), "the branch stays for a later run");
+        db.transaction(tx -> tasks.followUp(tx, BOLD, id, "Also log the timeout value", CHAT + "/400", CHAT));
+        runNext();
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertTrue(Files.isDirectory(worktree));
+        String baseSha = row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha");
+        assertEquals("2", origin("rev-list", "--count", baseSha + "..refs/heads/dispatch/" + id));
+    }
+
+    @Test
+    void sweepKeepsAFailedTasksWorktreeWhileItHoldsUnpushedWork() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
+        runNext();
+        assertFailed(id, "DELIVERY", "git push");
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", repos.origin.toString());
+
+        assertEquals(0, sweeper.sweep());
+
+        assertTrue(Files.isDirectory(repos.stateDir.resolve("worktrees/" + id)), "its commit never reached origin");
+    }
+
+    @Test
+    void sweepDiscardsARejectedTasksWorktreeEvenWithChangesButNeverARecentOne() throws Exception {
+        long rejected = queue("Fix the login timeout");
+        runNext();
+        db.transaction(tx -> tasks.reject(tx, BOLD, rejected, 1));
+        Files.writeString(repos.stateDir.resolve("worktrees/" + rejected + "/scratch.txt"), "notes");
+        long recent = queue("Rename the report");
+        runNext();
+        db.transaction(tx -> tasks.reject(tx, BOLD, recent, 1));
+        db.transaction(tx -> tx.update("UPDATE task SET updated_at = '2026-09-24T10:00:00.000Z' WHERE id = ?", recent));
+
+        assertEquals(1, sweeper.sweep());
+
+        assertFalse(Files.exists(repos.stateDir.resolve("worktrees/" + rejected)));
+        assertTrue(Files.isDirectory(repos.stateDir.resolve("worktrees/" + recent)), "idle for a day only");
+    }
+
+    @Test
     void onlyAFailedTaskCanBeRetried() throws Exception {
         long id = queue("Fix the login timeout");
         runNext();
@@ -487,6 +540,8 @@ class RunExecutorTest {
         Delivery delivery = new Delivery(git, new Gh(FakeGh.install(dir.resolve("gh-" + System.nanoTime())).toString(), null,
                 Duration.ofSeconds(30)), "Dispatch (backend)", "dispatch-backend@example.com");
         Projects projects = new Projects(List.of(alm), workspaces::unavailableReason);
+        sweeper = new Sweeper(db, projects, workspaces, java.time.Clock.fixed(Instant.parse("2026-09-25T10:00:00Z"), java.time.ZoneOffset.UTC),
+                Duration.ofDays(7), Duration.ofHours(1));
         TestClock clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Groups groups = new Groups(List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm"))));
@@ -501,6 +556,7 @@ class RunExecutorTest {
     }
 
     private RunExecutor executorUnderTest;
+    private Sweeper sweeper;
 
     private ClaudeCodeAgent agent() {
         try {

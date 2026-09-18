@@ -108,6 +108,13 @@ public final class Tasks {
                 + Tx.placeholders(projects.size()) + ") ORDER BY completed_at DESC, id DESC LIMIT ?", Tasks::map, params.toArray());
     }
 
+    /** Finished tasks with a worktree, unchanged since before {@code idleSince}, oldest first. */
+    public static List<Task> finishedIdleWithWorktree(Tx tx, Instant idleSince) {
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase IN (?, ?, ?, ?) AND worktree IS NOT NULL AND updated_at < ?"
+                        + " ORDER BY updated_at, id", Tasks::map,
+                Phase.COMPLETED, Phase.FAILED, Phase.REJECTED, Phase.CANCELLED, idleSince);
+    }
+
     /** Moves {@code from} to {@code to}; entering a finished phase stamps completed_at. */
     public static boolean changePhase(Tx tx, long id, Phase from, Phase to, Instant now) {
         Instant completedAt = to.isActive() ? null : now;

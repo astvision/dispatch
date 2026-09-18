@@ -49,6 +49,10 @@ public final class ConfigLoader {
         if (raw.scheduler() == null || raw.scheduler().maxConcurrentRuns() < 1) {
             errors.add("scheduler.maxConcurrentRuns: required, at least 1");
         }
+        Config.Worktrees worktrees = raw.worktrees() == null ? Config.Worktrees.DEFAULT : raw.worktrees();
+        if (worktrees.idleDays() < 1) {
+            errors.add("worktrees.idleDays: at least 1");
+        }
         validateInstanceLimits(raw.limits(), errors);
         Map<String, Config.Agent> agents = raw.agents() == null ? Map.of() : raw.agents();
         validateAgents(agents, errors);
@@ -65,7 +69,7 @@ public final class ConfigLoader {
         if (!errors.isEmpty()) {
             throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));
         }
-        return new Config(raw.team(), stateDir, telegram, raw.scheduler(), raw.limits(), Map.copyOf(agents),
+        return new Config(raw.team(), stateDir, telegram, raw.scheduler(), worktrees, raw.limits(), Map.copyOf(agents),
                 projects, delivery, new Config.Secrets(token, ghToken));
     }
 
@@ -360,6 +364,7 @@ public final class ConfigLoader {
             Config.Telegram telegram,
             Config.Delivery delivery,
             Config.Scheduler scheduler,
+            Config.Worktrees worktrees,
             Config.Limits limits,
             Map<String, Config.Agent> agents,
             List<Config.Project> projects) {

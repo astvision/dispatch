@@ -21,6 +21,19 @@ public final class Workspaces {
     public record PreparedWorktree(Path path, String baseSha) {
     }
 
+    /**
+     * What removing a task's worktree would lose.
+     *
+     * @param uncommitted changed and untracked paths, as git status lists them; git-ignored files (copyFiles) are not
+     * @param pushed      every commit on the task's branch is on origin, or there is none
+     */
+    public record WorktreeState(List<String> uncommitted, boolean pushed) {
+
+        public boolean disposable() {
+            return uncommitted.isEmpty() && pushed;
+        }
+    }
+
     private final Path stateDir;
     private final Git git;
     private final Map<String, ReentrantLock> repoLocks = new ConcurrentHashMap<>();
@@ -92,6 +105,54 @@ public final class Workspaces {
             git.run(repo, "worktree", "add", "--quiet", "-b", "dispatch/" + taskId, worktree.toString(),
                     "origin/" + project.baseBranch());
             return new PreparedWorktree(worktree, git.run(worktree, "rev-parse", "HEAD"));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Adds a removed worktree back on the task's branch, so a later run (a retry, a follow-up) continues where the task
+     * stopped. The sweep only removes worktrees whose commits are pushed; a branch that is gone from the clone is fetched.
+     */
+    public Path recreateWorktree(Config.Project project, long taskId) {
+        Path repo = repo(project);
+        Path worktree = worktree(taskId);
+        String branch = "dispatch/" + taskId;
+        ReentrantLock lock = repoLocks.computeIfAbsent(project.name(), name -> new ReentrantLock());
+        lock.lock();
+        try {
+            git.run(repo, "worktree", "prune");
+            if (git.execute(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch).exitCode() != 0) {
+                git.run(repo, "fetch", "origin", "refs/heads/" + branch + ":refs/heads/" + branch);
+            }
+            git.run(repo, "worktree", "add", "--quiet", worktree.toString(), branch);
+            return worktree;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** @param baseSha where the task's branch started: a branch still there has nothing to push */
+    public WorktreeState state(Path worktree, long taskId, String baseSha) {
+        List<String> uncommitted = git.run(worktree, "status", "--porcelain").lines().filter(line -> !line.isBlank()).toList();
+        String head = git.run(worktree, "rev-parse", "HEAD");
+        if (head.equals(baseSha)) {
+            return new WorktreeState(uncommitted, true);
+        }
+        String listed = git.run(worktree, "ls-remote", "origin", "refs/heads/dispatch/" + taskId);
+        String pushed = listed.isEmpty() ? null : listed.split("\\s+")[0];
+        // Someone may have pushed on top of Dispatch's commits, e.g. from the pull request page.
+        boolean onOrigin = head.equals(pushed)
+                || (pushed != null && git.execute(worktree, "merge-base", "--is-ancestor", head, pushed).exitCode() == 0);
+        return new WorktreeState(uncommitted, onOrigin);
+    }
+
+    /** Removes the task's worktree, changes and all; its branch stays in the clone for {@link #recreateWorktree}. */
+    public void removeWorktree(Config.Project project, long taskId) {
+        ReentrantLock lock = repoLocks.computeIfAbsent(project.name(), name -> new ReentrantLock());
+        lock.lock();
+        try {
+            git.run(repo(project), "worktree", "remove", "--force", worktree(taskId).toString());
         } finally {
             lock.unlock();
         }

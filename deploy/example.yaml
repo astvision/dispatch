@@ -25,6 +25,9 @@ delivery:                         # Dispatch commits, pushes dispatch/<task> and
 scheduler:
   maxConcurrentRuns: 2
 
+# worktrees:
+#   idleDays: 7                   # a finished task's worktree is removed after this many idle days; a follow-up recreates it
+
 limits:
   plan:
     timeout: 15m                  # s, m or h
