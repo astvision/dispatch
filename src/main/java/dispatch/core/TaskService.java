@@ -7,12 +7,14 @@ import dispatch.Log;
 import dispatch.config.Config;
 import dispatch.domain.Draft;
 import dispatch.domain.DraftStatus;
+import dispatch.domain.FailureReason;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Run;
+import dispatch.domain.RunCause;
 import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
 import dispatch.domain.SplitState;
@@ -335,7 +337,7 @@ public final class TaskService {
         // Without a group chat the task belongs to the requester's private chat, where nothing needs announcing (ADR 0014).
         long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, groupChat.orElse(who.ref()),
                 UUID.randomUUID(), project.baseBranch(), priority), Phase.PLANNING, now);
-        Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, description, who), now);
+        Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, RunCause.TASK, description, who), now);
         Events.record(tx, id, null, who.ref(), null, Phase.PLANNING, "created", now);
         if (taskTopics) {
             enqueue(tx, id, OutboxKind.TOPIC_CREATE, who.ref(), null, Json.object().put("taskId", id), now);
@@ -416,7 +418,7 @@ public final class TaskService {
             return ApproveResult.WRONG_STATE;
         }
         // The run carries the plan it implements, so what was approved stays on record.
-        Runs.insert(tx, new Runs.NewRun(taskId, Runs.nextSeq(tx, taskId), RunKind.EXECUTE, task.planJson(), who), now);
+        Runs.insert(tx, new Runs.NewRun(taskId, Runs.nextSeq(tx, taskId), RunKind.EXECUTE, RunCause.APPROVAL, task.planJson(), who), now);
         Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.EXECUTING, "approved plan " + planSeq, now);
         Outbox.enqueueForRequester(tx, task, OutboxKind.EXECUTION_QUEUED,
                 Json.object().put("taskId", taskId).put("by", who.name()), now);
@@ -460,7 +462,7 @@ public final class TaskService {
             return CorrectResult.REFUSED;
         }
         int seq = Runs.nextSeq(tx, taskId);
-        Runs.insert(tx, new Runs.NewRun(taskId, seq, RunKind.PLAN, text.strip(), who), now);
+        Runs.insert(tx, new Runs.NewRun(taskId, seq, RunKind.PLAN, RunCause.CORRECTION, text.strip(), who), now);
         Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.PLANNING, "correction", now);
         enqueue(tx, taskId, OutboxKind.CORRECTION_QUEUED, chatRef, originRef,
                 Json.object().put("taskId", taskId).put("by", who.name()), now);
@@ -552,8 +554,7 @@ public final class TaskService {
             notAllowed(tx, who, originRef, chatRef, now);
             return CancelResult.NOT_ALLOWED;
         }
-        Optional<Task> found = Tasks.find(tx, taskId).filter(task ->
-                task.requester().ref().equals(who.ref()) || groups.isMemberOfProjectGroup(who.ref(), task.project()));
+        Optional<Task> found = visibleTask(tx, who, taskId);
         if (found.isEmpty()) {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
             return CancelResult.NOT_FOUND;
@@ -575,6 +576,65 @@ public final class TaskService {
         tx.afterCommit(() -> activeRuns.stop(taskId, ActiveRuns.StopReason.CANCELLED));
         logTransition(tx, taskId, task.phase(), Phase.CANCELLED, who.ref());
         return CancelResult.CANCELLED;
+    }
+
+    /**
+     * Repeats just the failed step of a failed task (ADR 0008): a failed plan is planned again, a failed execution continues
+     * its building session, and a failed delivery is delivered again without the agent. Any member of the task's group may
+     * retry it, like cancelling; another group's task is answered as not found.
+     */
+    public RetryResult retry(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
+        Instant now = clock.instant();
+        if (!groups.isMember(who.ref())) {
+            notAllowed(tx, who, originRef, chatRef, now);
+            return RetryResult.NOT_ALLOWED;
+        }
+        Optional<Task> found = visibleTask(tx, who, taskId);
+        if (found.isEmpty()) {
+            enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
+            return RetryResult.NOT_FOUND;
+        }
+        Task task = found.get();
+        Optional<Run> failed = Runs.latest(tx, taskId).filter(run -> run.status() == RunStatus.FAILED);
+        if (task.phase() != Phase.FAILED || failed.isEmpty()) {
+            enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef,
+                    Json.object().put("taskId", taskId).put("phase", task.phase().name()), now);
+            return RetryResult.REFUSED;
+        }
+        Run step = failed.get();
+        RunKind kind;
+        String instruction;
+        if (step.kind() == RunKind.PLAN) {
+            kind = RunKind.PLAN;
+            instruction = step.instruction();
+        } else if (step.kind() == RunKind.DELIVER || step.failureReason() == FailureReason.DELIVERY) {
+            // The agent's work is done and waits in the worktree; only its summary is needed, as the commit message.
+            kind = RunKind.DELIVER;
+            instruction = step.kind() == RunKind.DELIVER ? step.instruction() : Runs.output(tx, taskId, step.seq()).orElse("");
+        } else {
+            kind = RunKind.EXECUTE;
+            instruction = step.instruction();
+        }
+        Phase to = kind == RunKind.PLAN ? Phase.PLANNING : Phase.EXECUTING;
+        if (!Tasks.changePhase(tx, taskId, Phase.FAILED, to, now)) {
+            enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef,
+                    Json.object().put("taskId", taskId).put("phase", task.phase().name()), now);
+            return RetryResult.REFUSED;
+        }
+        int seq = Runs.nextSeq(tx, taskId);
+        Runs.insert(tx, new Runs.NewRun(taskId, seq, kind, RunCause.RETRY, instruction, who), now);
+        Events.record(tx, taskId, seq, who.ref(), Phase.FAILED, to, "retry of run " + step.seq(), now);
+        enqueue(tx, taskId, OutboxKind.RETRY_QUEUED, chatRef, originRef,
+                Json.object().put("taskId", taskId).put("by", who.name()).put("kind", kind.name()), now);
+        tx.afterCommit(wakeScheduler);
+        logTransition(tx, taskId, Phase.FAILED, to, who.ref());
+        return RetryResult.RETRIED;
+    }
+
+    /** The member's own task, or one of their groups' tasks; empty for anything else, so its existence does not leak. */
+    private Optional<Task> visibleTask(Tx tx, Requester who, long taskId) {
+        return Tasks.find(tx, taskId).filter(task ->
+                task.requester().ref().equals(who.ref()) || groups.isMemberOfProjectGroup(who.ref(), task.project()));
     }
 
     /**
@@ -655,8 +715,9 @@ public final class TaskService {
         BigDecimal total = null;
         for (Run run : Runs.forTask(tx, taskId)) {
             // Only a correction's instruction is worth showing: the first plan's is the task, an execution's is the plan.
-            String instruction = run.kind() == RunKind.PLAN && run.seq() > 1 ? truncate(run.instruction(), INSTRUCTION_LENGTH) : null;
-            runs.addObject().put("seq", run.seq()).put("kind", run.kind().name()).put("status", run.status().name())
+            String instruction = run.cause() == RunCause.CORRECTION ? truncate(run.instruction(), INSTRUCTION_LENGTH) : null;
+            runs.addObject().put("seq", run.seq()).put("kind", run.kind().name()).put("cause", name(run.cause()))
+                    .put("status", run.status().name())
                     .put("requestedBy", run.requestedByName()).put("instruction", instruction).put("queuedAt", text(run.queuedAt()))
                     .put("startedAt", text(run.startedAt())).put("finishedAt", text(run.finishedAt()))
                     .put("costUsd", run.costUsd() == null ? null : run.costUsd().toPlainString())

@@ -311,6 +311,20 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void retryIsTakenPrivatelyAndPointedThereFromAGroup() {
+        long id = task("Fix it");
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.failed(run.taskId(), run.seq(), dispatch.domain.FailureReason.TIMEOUT, "stopped after 30m", null);
+
+        handler.handle(message(566, 66, 100, "Bold", GROUP, "supergroup", "/retry " + id, null));
+        handler.handle(message(567, 67, 100, "Bold", 100L, "private", "/retry " + id, null));
+
+        assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/66").get("kind"));
+        assertEquals("RETRY_QUEUED", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:100/67'").get("kind"));
+        assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+    }
+
+    @Test
     void planButtonsWorkInTheRequestersPrivateChat() throws Exception {
         long taskId = taskAwaitingApproval(List.of());
 

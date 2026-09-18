@@ -197,7 +197,7 @@ public final class App {
             }
         }
         try {
-            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "stats", "cancel", "help"));
+            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "stats", "cancel", "retry", "help"));
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "scope", "all_private_chats", "error", e.getMessage());
         }

@@ -155,13 +155,36 @@ class DatabaseTest {
         }
     }
 
+    @Test
+    void version11RunsGetTheCauseTheirKindAndNumberImply() throws Exception {
+        String task = """
+                INSERT INTO task (id, project, title, description, phase, requester_ref, requester_name, origin_ref, chat_ref,
+                                  session_id, base_branch, created_at, updated_at)
+                VALUES (1, 'alm', 't', 't', 'COMPLETED', 'telegram:1', 'Bold', 'telegram:1/5', 'telegram:-1',
+                        '63d36fba-124d-4737-8020-d37d4998abca', 'main', '2026-09-17T10:00:00.000Z', '2026-09-17T10:00:00.000Z')""";
+        String run = """
+                INSERT INTO run (task_id, seq, kind, status, instruction, requested_by, queued_at)
+                VALUES (1, %d, '%s', 'SUCCEEDED', 't', 'telegram:1', '2026-09-17T10:00:00.000Z')""";
+        Path file = databaseAtVersion(11, task, run.formatted(1, "PLAN"), run.formatted(2, "PLAN"), run.formatted(3, "EXECUTE"));
+
+        try (Database upgraded = Database.open(file)) {
+            upgraded.migrate();
+
+            List<dispatch.domain.RunCause> causes = upgraded.transactionReturning(tx -> Runs.forTask(tx, 1)).stream()
+                    .map(dispatch.domain.Run::cause).toList();
+            assertEquals(List.of(dispatch.domain.RunCause.TASK, dispatch.domain.RunCause.CORRECTION,
+                    dispatch.domain.RunCause.APPROVAL), causes);
+        }
+    }
+
     /** A state file as an older Dispatch left it: the first {@code version} migrations applied, then {@code inserts}. */
     private Path databaseAtVersion(int version, String... inserts) throws Exception {
         Path file = dir.resolve("v" + version + ".db");
         try (java.sql.Connection connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file);
              java.sql.Statement statement = connection.createStatement()) {
             String[] scripts = {"/db/001-init.sql", "/db/002-execution.sql", "/db/003-private-messages.sql", "/db/004-priority.sql",
-                    "/db/005-drafts.sql", "/db/006-topics.sql", "/db/007-outbox-edits.sql"};
+                    "/db/005-drafts.sql", "/db/006-topics.sql", "/db/007-outbox-edits.sql", "/db/008-split-drafts.sql",
+                    "/db/009-join-requests.sql", "/db/010-build-session.sql", "/db/011-run-model.sql"};
             for (int i = 0; i < version; i++) {
                 try (java.io.InputStream script = getClass().getResourceAsStream(scripts[i])) {
                     String sqlText = new String(script.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);

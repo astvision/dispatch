@@ -40,7 +40,7 @@ public final class UpdateHandler {
 
     static final String OFFSET_KEY = "telegram.offset";
     private static final Set<String> JOINED_STATUSES = Set.of("member", "administrator");
-    private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "help", "start");
+    private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "retry", "help", "start");
 
     private final Database db;
     private final TaskService tasks;
@@ -175,6 +175,15 @@ public final class UpdateHandler {
                 }
                 taskId(command.args()).ifPresentOrElse(
                         id -> tasks.cancel(tx, who, id, origin, chatRef),
+                        () -> help(tx, visible, origin, chatRef, true));
+            }
+            case "retry" -> {
+                if (!privateChat) {
+                    privateOnly(tx, chatRef, origin);
+                    return;
+                }
+                taskId(command.args()).ifPresentOrElse(
+                        id -> tasks.retry(tx, who, id, origin, chatRef),
                         () -> help(tx, visible, origin, chatRef, true));
             }
             case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,

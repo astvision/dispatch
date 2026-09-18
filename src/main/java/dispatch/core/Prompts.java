@@ -26,6 +26,18 @@ final class Prompts {
             commands unchanged.
             """;
 
+    private static final String EXECUTE_RULES = """
+            Rules:
+            - Do not commit, push, create branches or open pull requests; Dispatch delivers your changes.
+            - Keep the change focused on the approved plan.
+            - Run the relevant tests if they are quick to run.
+            - Finish with a short plain-text summary (no Markdown) of what you changed and the test results.
+
+            Language: write the summary in the natural language used inside <task> (a task written in Mongolian gets a \
+            Mongolian summary, a task written in English gets an English summary). Keep code identifiers, file paths \
+            and commands unchanged.
+            """;
+
     private Prompts() {
     }
 
@@ -81,16 +93,33 @@ final class Prompts {
                 %s
                 </plan>
 
-                Rules:
-                - Do not commit, push, create branches or open pull requests; Dispatch delivers your changes.
-                - Keep the change focused on the approved plan.
-                - Run the relevant tests if they are quick to run.
-                - Finish with a short plain-text summary (no Markdown) of what you changed and the test results.
+                """.formatted(task.id(), task.requester().name(), task.description(), planJson) + EXECUTE_RULES;
+    }
 
-                Language: write the summary in the natural language used inside <task> (a task written in Mongolian gets a \
-                Mongolian summary, a task written in English gets an English summary). Keep code identifiers, file paths \
-                and commands unchanged.
-                """.formatted(task.id(), task.requester().name(), task.description(), planJson);
+    /**
+     * A retried execution continues its session, which already has the task and the plan; it needs to know that it was cut
+     * short, and why, so it checks what it already changed instead of starting over.
+     *
+     * @param instruction what the failed run was asked to do: the approved plan, or a follow-up
+     */
+    static String retry(Task task, String instruction) {
+        return """
+                Your previous run on task #%d stopped before it finished: %s. A team member asked you to try again. Your \
+                changes so far are still in this repository: check them, then finish the work below.
+
+                <instruction>
+                %s
+                </instruction>
+
+                """.formatted(task.id(), failure(task), instruction) + EXECUTE_RULES;
+    }
+
+    private static String failure(Task task) {
+        if (task.failureReason() == null) {
+            return "unknown reason";
+        }
+        String detail = task.failureDetail() == null || task.failureDetail().isBlank() ? "" : " (" + task.failureDetail().strip() + ")";
+        return task.failureReason().name() + detail;
     }
 
     /**

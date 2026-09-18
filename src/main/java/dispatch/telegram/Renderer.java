@@ -107,6 +107,9 @@ public final class Renderer {
             case STATS -> stats(payload);
             case TASK_NOT_FOUND -> plain(format("task.notFound", taskId(payload)));
             case CANCEL_REFUSED -> plain(format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case RETRY_QUEUED -> plain(format("task.retryQueued", taskId(payload), escape(payload.path("by").asText()),
+                    text("kind." + payload.path("kind").asText())));
+            case RETRY_REFUSED -> plain(format("task.retryRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
             case NOT_ALLOWED -> plain(format("member.notAllowed", escape(payload.path("name").asText())));
             case UNKNOWN_PROJECT -> plain(format("project.unknown", escape(payload.path("given").asText()),
                     projectList(payload.path("projects"))));
@@ -504,6 +507,9 @@ public final class Renderer {
 
     private String runHeadline(JsonNode run) {
         String requestedBy = escape(run.path("requestedBy").asText("—"));
+        if (run.path("cause").asText().equals("RETRY")) {
+            return format("timeline.retry", requestedBy, text("kind." + run.path("kind").asText()));
+        }
         return switch (run.path("kind").asText()) {
             case "PLAN" -> run.hasNonNull("instruction")
                     ? format("timeline.correction", requestedBy, escapeWithin(run.path("instruction").asText(), INSTRUCTION_LIMIT))

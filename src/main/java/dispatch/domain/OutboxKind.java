@@ -26,6 +26,9 @@ public enum OutboxKind {
     STATS,
     TASK_NOT_FOUND,
     CANCEL_REFUSED,
+    /** /retry queued the failed step again. */
+    RETRY_QUEUED,
+    RETRY_REFUSED,
     NOT_ALLOWED,
     UNKNOWN_PROJECT,
     PROJECT_UNAVAILABLE,

@@ -48,6 +48,7 @@ import org.junit.jupiter.api.io.TempDir;
 class RunExecutorTest {
 
     private static final Requester BOLD = new Requester("telegram:100", "Bold");
+    private static final Requester ALI = new Requester("telegram:200", "Ali");
     private static final String CHAT = "telegram:-100";
 
     @TempDir
@@ -347,6 +348,95 @@ class RunExecutorTest {
 
         assertFailed(id, "INTERRUPTED", "Dispatch stopped");
         assertFalse(Files.exists(repos.stateDir.resolve("worktrees/" + id)));
+    }
+
+    @Test
+    void retryOfAFailedExecutionContinuesTheBuildingSessionAndSaysWhyTheLastRunStopped() throws Exception {
+        long id = queue("SCENARIO:exec-fail-once Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        assertFailed(id, "AGENT", "fatal: model overloaded");
+
+        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, ALI, id, CHAT + "/300", CHAT)));
+        runNext();
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("COMPLETED", task.get("phase"));
+        assertEquals(FakeGh.PR_URL, task.get("pr_url"));
+        assertNull(task.get("failure_reason"), "the failure is over once the retry delivered");
+        Map<String, String> retry = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", id);
+        assertEquals("EXECUTE", retry.get("kind"));
+        assertEquals("RETRY", retry.get("cause"));
+        assertEquals("Ali", retry.get("requested_by_name"));
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        List<String> args = Files.readAllLines(worktree.resolve("fake-claude.args"));
+        assertEquals(task.get("build_session_id"), valueAfter(args, "--resume"));
+        String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
+        assertTrue(prompt.contains("stopped before it finished: AGENT (") && prompt.contains("fatal: model overloaded")
+                && prompt.contains("The user reports that login"), prompt);
+        String body = origin("log", "-1", "--format=%b", "refs/heads/dispatch/" + id);
+        assertTrue(body.endsWith("Requested-by: Bold\nApproved-by: Bold"), "the approver stays the one who approved: " + body);
+    }
+
+    @Test
+    void retryAfterADeliveryFailureDeliversTheSameWorkAgainWithoutTheAgent() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
+        runNext();
+        assertFailed(id, "DELIVERY", "git push");
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", repos.origin.toString());
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        Files.delete(worktree.resolve("fake-claude.prompt"));
+
+        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
+        runNext();
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("COMPLETED", task.get("phase"));
+        assertEquals(FakeGh.PR_URL, task.get("pr_url"));
+        Map<String, String> deliver = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", id);
+        assertEquals("DELIVER", deliver.get("kind"));
+        assertEquals("SUCCEEDED", deliver.get("status"));
+        assertNull(deliver.get("cost_usd"));
+        assertFalse(Files.exists(worktree.resolve("fake-claude.prompt")), "a delivery retry never starts the agent");
+        String branch = "refs/heads/dispatch/" + id;
+        assertEquals("1", origin("rev-list", "--count", task.get("base_sha") + ".." + branch), "the commit made before the push failed is not delivered twice");
+        assertTrue(origin("log", "-1", "--format=%b", branch).contains("AUTH_TIMEOUT_SECONDS"), "the agent's summary is the commit body");
+        JsonNode completed = Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED'").get("payload"));
+        assertEquals(1, completed.get("filesChanged").asInt());
+    }
+
+    @Test
+    void retryOfAPlanThatFailedBeforeItsAgentStartedStartsThePlanningSession() throws Exception {
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
+        long id = queue("Fix the login timeout");
+        runNext();
+        assertFailed(id, "SETUP", "git fetch");
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", repos.origin.toString());
+
+        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
+        runNext();
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("AWAITING_APPROVAL", task.get("phase"));
+        List<String> args = Files.readAllLines(repos.stateDir.resolve("worktrees/" + id + "/fake-claude.args"));
+        assertEquals(task.get("session_id"), valueAfter(args, "--session-id"), "no earlier run started the session to resume");
+        assertFalse(args.contains("--resume"), args.toString());
+    }
+
+    @Test
+    void onlyAFailedTaskCanBeRetried() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+
+        assertEquals(RetryResult.REFUSED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
+
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("AWAITING_APPROVAL", Json.read(row("SELECT payload FROM outbox WHERE kind = 'RETRY_REFUSED'").get("payload"))
+                .get("phase").asText());
     }
 
     private long queue(String description) throws IOException {

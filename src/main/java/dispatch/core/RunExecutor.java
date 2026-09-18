@@ -13,6 +13,7 @@ import dispatch.domain.FailureReason;
 import dispatch.domain.InvalidPlanException;
 import dispatch.domain.Plan;
 import dispatch.domain.Run;
+import dispatch.domain.RunCause;
 import dispatch.domain.RunKind;
 import dispatch.domain.Task;
 import dispatch.store.Database;
@@ -72,8 +73,8 @@ public final class RunExecutor {
             switch (claimed.kind()) {
                 case PLAN -> plan(active);
                 case EXECUTE -> implement(active);
-                case DELIVER -> transitions.failed(claimed.taskId(), claimed.seq(), FailureReason.INTERNAL,
-                        "DELIVER runs are not supported yet", null);
+                case DELIVER -> deliverAgain(active);
+                case SPLIT -> throw new IllegalStateException("a split is never a task's run");
             }
         } catch (RuntimeException e) {
             Log.error("run.crashed", e, "task", claimed.taskId(), "run", claimed.seq());
@@ -99,7 +100,7 @@ public final class RunExecutor {
         // A task that already has a plan is being corrected: this run's instruction is the member's reply.
         String prompt = task.planJson() == null ? Prompts.plan(task) : Prompts.correction(task, run);
         Config.RunLimits limits = planLimits.apply(project.get());
-        RunRequest request = new RunRequest(RunKind.PLAN, worktree.get(), prompt, task.sessionId(), active.seq() > 1, List.of(),
+        RunRequest request = new RunRequest(RunKind.PLAN, worktree.get(), prompt, task.sessionId(), agentStartedBefore(active, RunKind.PLAN), List.of(),
                 limits.budgetUsd(), project.get().planModel(), project.get().planEffort(), workspaces.runLogBase(task.id(), active.seq()));
         Optional<AgentResult> result = runAgent(active, project.get(), request, limits.timeout());
         if (result.isEmpty() || endedWithoutSuccess(active, result.get(), limits.timeout())) {
@@ -134,13 +135,13 @@ public final class RunExecutor {
 
         // The first execution run starts the building session from the approved plan; later ones continue it (ADR 0017).
         UUID buildSession = task.buildSessionId();
-        boolean resume = buildSession != null;
-        if (!resume) {
+        if (buildSession == null) {
             buildSession = UUID.randomUUID();
             transitions.recordBuildSession(task.id(), buildSession);
         }
+        boolean resume = agentStartedBefore(active, RunKind.EXECUTE);
         Config.RunLimits limits = executeLimits.apply(project.get());
-        RunRequest request = new RunRequest(RunKind.EXECUTE, worktree.get(), Prompts.execute(task, run.instruction()),
+        RunRequest request = new RunRequest(RunKind.EXECUTE, worktree.get(), executePrompt(task, run, resume),
                 buildSession, resume, List.of(), limits.budgetUsd(), project.get().executeModel(), project.get().executeEffort(),
                 workspaces.runLogBase(task.id(), active.seq()));
         Optional<AgentResult> result = runAgent(active, project.get(), request, limits.timeout());
@@ -150,13 +151,22 @@ public final class RunExecutor {
         deliver(task, run, worktree.get(), startSha, result.get());
     }
 
-    private void deliver(Task task, Run run, Path worktree, String startSha, AgentResult result) {
-        String summary = result.summary() == null ? "" : redactor.redact(result.summary()).strip();
-        List<String> trailers = new ArrayList<>(List.of("Requested-by: " + task.requester().name()));
-        if (run.requestedByName() != null) {
-            trailers.add("Approved-by: " + run.requestedByName());
+    /**
+     * A session that never ran (the first execution, or one whose earlier runs all failed before their agent started) gets
+     * the approved plan; a resumed one is told only what this run adds.
+     */
+    private static String executePrompt(Task task, Run run, boolean resume) {
+        if (!resume) {
+            return Prompts.execute(task, task.planJson());
         }
-        Delivery.Commit commit = new Delivery.Commit("dispatch #" + task.id() + ": " + task.title(), summary, trailers);
+        return switch (run.cause()) {
+            case RETRY -> Prompts.retry(task, run.instruction());
+            default -> Prompts.execute(task, task.planJson());
+        };
+    }
+
+    private void deliver(Task task, Run run, Path worktree, String startSha, AgentResult result) {
+        Delivery.Commit commit = commit(task, result.summary());
         Delivery.Result delivered;
         try {
             delivered = delivery.deliver(worktree, task.id(), task.baseBranch(), startSha, commit, task.prUrl());
@@ -165,6 +175,47 @@ public final class RunExecutor {
             return;
         }
         transitions.completed(task.id(), run.seq(), result, delivered.files(), delivered.prUrl());
+    }
+
+    /** Delivers a failed delivery's work again, without the agent: the run's instruction is that run's summary. */
+    private void deliverAgain(ActiveRuns.ActiveRun active) {
+        Task task = task(active.taskId());
+        Run run = run(active);
+        if (project(task, active).isEmpty() || stoppedBeforeAgent(active)) {
+            return;
+        }
+        Optional<Path> worktree = existingWorktree(task, active);
+        if (worktree.isEmpty()) {
+            return;
+        }
+        Delivery.Result delivered;
+        try {
+            delivered = delivery.redeliver(worktree.get(), task.id(), task.baseBranch(), task.baseSha(), commit(task, run.instruction()),
+                    task.prUrl());
+        } catch (WorkspaceException e) {
+            transitions.failed(task.id(), run.seq(), FailureReason.DELIVERY, e.getMessage(), null);
+            return;
+        }
+        transitions.completed(task.id(), run.seq(), null, run.instruction(), delivered.files(), delivered.prUrl());
+    }
+
+    /** The task's delivery commit: its title, the agent's summary with secrets masked, and who asked and approved. */
+    private Delivery.Commit commit(Task task, String summary) {
+        String body = summary == null ? "" : redactor.redact(summary).strip();
+        List<String> trailers = new ArrayList<>(List.of("Requested-by: " + task.requester().name()));
+        approver(task.id()).ifPresent(approver -> trailers.add("Approved-by: " + approver));
+        return new Delivery.Commit("dispatch #" + task.id() + ": " + task.title(), body, trailers);
+    }
+
+    /** Whoever approved the task's plan; later runs (retries, follow-ups) do not change that. */
+    private Optional<String> approver(long taskId) {
+        return db.transactionReturning(tx -> Runs.forTask(tx, taskId)).stream()
+                .filter(run -> run.cause() == RunCause.APPROVAL && run.requestedByName() != null)
+                .map(Run::requestedByName).findFirst();
+    }
+
+    private boolean agentStartedBefore(ActiveRuns.ActiveRun active, RunKind kind) {
+        return db.transactionReturning(tx -> Runs.agentStartedBefore(tx, active.taskId(), kind, active.seq()));
     }
 
     /** No copyFiles here: planning needs no local secrets, and whatever the agent reads may be quoted in the group. */
