@@ -62,6 +62,7 @@ jobs:
           java -jar target/dispatch-*[0-9].jar ui --no-browser --port 7879 --config "$RUNNER_TEMP/none.yaml" > "$RUNNER_TEMP/ui.log" 2>&1 &
           pid=$!
           for _ in $(seq 1 60); do grep -q 'http://127.0.0.1:7879/?t=' "$RUNNER_TEMP/ui.log" && break; sleep 1; done
+          grep -q 'http://127.0.0.1:7879/?t=' "$RUNNER_TEMP/ui.log" || { cat "$RUNNER_TEMP/ui.log"; exit 1; }
           link=$(grep -o 'http://127.0.0.1:7879/?t=[A-Za-z0-9_-]*' "$RUNNER_TEMP/ui.log")
           curl -fsS -c "$RUNNER_TEMP/cookies" -o /dev/null "$link"
           curl -fsS -b "$RUNNER_TEMP/cookies" http://127.0.0.1:7879/api/overview | tee "$RUNNER_TEMP/overview.json"
