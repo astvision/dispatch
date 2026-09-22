@@ -170,6 +170,11 @@ public final class SetupApi {
             }
             Config.Member found = Setup.member(update.get());
             synchronized (this) {
+                // The token may have changed while this call was polling; a person found by the OLD bot must never
+                // become a candidate for the new one.
+                if (updates != source) {
+                    return new Candidate(null);
+                }
                 candidate = found;
             }
             greet(source, found.id());
@@ -207,6 +212,10 @@ public final class SetupApi {
             }
             JsonNode found = Setup.group(update.get());
             synchronized (this) {
+                // Same guard as nextPerson: a group found by the OLD bot must never become the new one's group.
+                if (updates != source) {
+                    return new GroupFound(null);
+                }
                 chat = new Setup.Chat(found.path("id").asLong(), found.path("title").asText("group"));
                 return new GroupFound(new Group(chat.id(), chat.title()));
             }
@@ -226,28 +235,36 @@ public final class SetupApi {
                 probe.defaultBranch());
     }
 
-    private synchronized Written write(JsonNode body) {
-        if (Files.exists(configFile)) {
-            throw new CliException(configFile + " already exists; nothing was written");
+    private Written write(JsonNode body) {
+        // Setup.Updates is not thread-safe (one wait at a time); acknowledge() below must never run alongside an
+        // in-flight nextPerson/nextGroup poll on the same instance, or two concurrent getUpdates make Telegram
+        // answer 409. Taking "reading" first, in the same order as the read paths, avoids a lock-order inversion;
+        // it just means write waits for an abandoned long poll to end (at most one poll).
+        synchronized (reading) {
+            synchronized (this) {
+                if (Files.exists(configFile)) {
+                    throw new CliException(configFile + " already exists; nothing was written");
+                }
+                if (bot == null) {
+                    throw new CliException("check the bot token first");
+                }
+                if (members.isEmpty()) {
+                    throw new CliException("confirm who you are first");
+                }
+                List<ProjectAddCommand.Project> projects = projects(body.path("projects"));
+                String name = Setup.teamName(team ? text(body, "teamName") : members.getFirst().name().split("\\s+")[0]);
+                Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), team ? chat : null, text(body, "claude"),
+                        projects, text(body, "authorName"), text(body, "authorEmail"));
+                Setup.write(configFile, Setup.render(answers, locations.stateDir()), bot.token());
+                try {
+                    updates.acknowledge();
+                } catch (TelegramException e) {
+                    System.err.println("dispatch ui: could not mark setup's messages as read (" + e.getMessage()
+                            + "); the bot may answer them once it runs");
+                }
+                return new Written(configFile.toString(), SecretsFile.beside(configFile).toString());
+            }
         }
-        if (bot == null) {
-            throw new CliException("check the bot token first");
-        }
-        if (members.isEmpty()) {
-            throw new CliException("confirm who you are first");
-        }
-        List<ProjectAddCommand.Project> projects = projects(body.path("projects"));
-        String name = Setup.teamName(team ? text(body, "teamName") : members.getFirst().name().split("\\s+")[0]);
-        Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), team ? chat : null, text(body, "claude"),
-                projects, text(body, "authorName"), text(body, "authorEmail"));
-        Setup.write(configFile, Setup.render(answers, locations.stateDir()), bot.token());
-        try {
-            updates.acknowledge();
-        } catch (TelegramException e) {
-            System.err.println("dispatch ui: could not mark setup's messages as read (" + e.getMessage()
-                    + "); the bot may answer them once it runs");
-        }
-        return new Written(configFile.toString(), SecretsFile.beside(configFile).toString());
     }
 
     private OverviewApi.ServiceView installService() {

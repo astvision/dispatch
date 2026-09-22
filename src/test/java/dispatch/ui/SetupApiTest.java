@@ -1,8 +1,8 @@
 package dispatch.ui;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -24,6 +24,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -69,10 +73,11 @@ class SetupApiTest {
         JsonNode afterYes = call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
         JsonNode claude = call("/api/setup/claude", "{\"command\":\"" + json(JAVA) + "\"}");
         JsonNode project = call("/api/setup/project", "{\"folder\":\"" + json(repos.repo("alm").toString()) + "\"}");
-        JsonNode written = call("/api/setup/write", """
+        String writeBody = """
                 {"claude":"%s","authorName":"Dispatch (Bold)","authorEmail":"bold@example.com",
                  "projects":[{"folder":"%s","name":"alm","baseBranch":"main","model":"opus","effort":"high"}]}"""
-                .formatted(json(JAVA), json(repos.repo("alm").toString())));
+                .formatted(json(JAVA), json(repos.repo("alm").toString()));
+        JsonNode written = call("/api/setup/write", writeBody);
 
         assertEquals(FakeTelegram.BOT_USERNAME, bot.path("username").asText());
         assertEquals(100, found.path("candidate").path("id").asLong());
@@ -88,7 +93,11 @@ class SetupApiTest {
         assertEquals(List.of(new Config.Member(100, "Bold")), loaded.telegram().groups().getFirst().members());
         assertEquals("opus", loaded.projects().getFirst().model());
         assertEquals("high", loaded.projects().getFirst().effort());
-        assertThrows(CliException.class, () -> call("/api/setup/write", "{}"), "a second write never replaces the config");
+        byte[] before = Files.readAllBytes(config);
+        CliException rewrite = assertThrows(CliException.class, () -> call("/api/setup/write", writeBody),
+                "a second write, even with the same valid answers, never replaces the config");
+        assertTrue(rewrite.getMessage().contains("already exists"), rewrite.getMessage());
+        assertArrayEquals(before, Files.readAllBytes(config), "the config file's bytes are unchanged");
     }
 
     @Test
@@ -133,6 +142,61 @@ class SetupApiTest {
     }
 
     @Test
+    void aTokenChangeDuringALongPollNeverLeaksTheOldBotsCandidateOrGroup() throws Exception {
+        SetupApi longPoll = new SetupApi(config, new Locations(config, dir.resolve("state")),
+                token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)), service,
+                Files.writeString(dir.resolve("dispatch-longpoll.jar"), "stand-in"), Map.of(), Duration.ofSeconds(2));
+        call(longPoll, "/api/setup/team", "{\"team\":true}");
+        call(longPoll, "/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<JsonNode> stalePerson = executor.submit(() -> call(longPoll, "/api/setup/people/next", "{}"));
+            Future<JsonNode> staleGroup = executor.submit(() -> call(longPoll, "/api/setup/group/next", "{}"));
+            Thread.sleep(300); // let both long polls start reading with the old Setup.Updates instance
+            call(longPoll, "/api/setup/token", "{\"token\":\"" + TOKEN + "\"}"); // swaps bot/updates mid-poll
+            telegram.pushUpdate(start(1, 100, "Bold")); // only the OLD Updates instance is still polling for this
+
+            JsonNode stalePersonResult = stalePerson.get(5, TimeUnit.SECONDS);
+            JsonNode staleGroupResult = staleGroup.get(5, TimeUnit.SECONDS);
+
+            assertTrue(stalePersonResult.path("candidate").isNull(), stalePersonResult.toString());
+            assertTrue(staleGroupResult.path("group").isNull(), staleGroupResult.toString());
+            JsonNode state = call(longPoll, "/api/setup/state", "{}");
+            assertTrue(state.path("candidate").isNull(), state.toString());
+            assertTrue(state.path("group").isNull(), state.toString());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void writeWaitsForAnInFlightLongPollRatherThanRacingItsUpdates() throws Exception {
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+        String writeBody = "{\"claude\":\"" + json(JAVA) + "\",\"authorName\":\"a\",\"authorEmail\":\"a@example.com\","
+                + "\"projects\":[{\"folder\":\"" + json(repos.repo("alm").toString()) + "\",\"name\":\"alm\",\"baseBranch\":\"main\"}]}";
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            // No update is pushed: this polls for the whole 1s poll duration set up in setUp().
+            Future<JsonNode> emptyPoll = executor.submit(() -> call("/api/setup/people/next", "{}"));
+            Thread.sleep(200); // let the poll start and take the "reading" lock
+            long started = System.nanoTime();
+            JsonNode written = call("/api/setup/write", writeBody);
+            long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
+
+            assertTrue(elapsedMillis >= 700, "write must wait for the in-flight poll's \"reading\" lock, not race its "
+                    + "non-thread-safe Setup.Updates; took only " + elapsedMillis + "ms");
+            assertEquals(config.toString(), written.path("configFile").asText());
+            assertTrue(emptyPoll.get(5, TimeUnit.SECONDS).path("candidate").isNull());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void writingChecksWhatThePageSent() throws Exception {
         call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
         telegram.pushUpdate(start(1, 100, "Bold"));
@@ -166,7 +230,11 @@ class SetupApiTest {
     }
 
     private JsonNode call(String path, String body) throws Exception {
-        Object answer = setup.routes().get(path).apply(Json.MAPPER.readTree(body));
+        return call(setup, path, body);
+    }
+
+    private static JsonNode call(SetupApi api, String path, String body) throws Exception {
+        Object answer = api.routes().get(path).apply(Json.MAPPER.readTree(body));
         return Json.MAPPER.readTree(Json.write(answer));
     }
 
