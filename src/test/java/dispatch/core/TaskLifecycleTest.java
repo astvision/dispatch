@@ -687,6 +687,19 @@ class TaskLifecycleTest {
         assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
     }
 
+    @Test
+    void anAdminWhoIsNotAMemberOfAnyGroupCanStillCancel() {
+        Groups withAdmin = new Groups(new Config.Telegram(List.of(400L), List.of(
+                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
+                        List.of("autoland-management", "crm")))));
+        tasks = new TaskService(withAdmin, projects, activeRuns, clock, schedulerWakes::incrementAndGet, outboxWakes::incrementAndGet);
+        long id = create(BOLD, "alm", "Fix login timeout", "93");
+        Requester admin = new Requester("telegram:400", "Admin");
+
+        assertEquals(CancelResult.CANCELLED, db.transactionReturning(tx -> tasks.cancel(tx, admin, id, "telegram:400/1", "telegram:400")));
+        assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+    }
+
     /** Sent to the requester's private chat under the message that gave the task, falling back to the group. */
     private static void assertPrivateWithGroupFallback(Map<String, String> message, String taskMessage) {
         assertEquals(taskMessage.substring(0, taskMessage.indexOf('/')), message.get("chat_ref"));

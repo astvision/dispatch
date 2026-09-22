@@ -563,7 +563,7 @@ public final class TaskService {
      */
     public CancelResult cancel(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
-        if (!groups.isMember(who.ref())) {
+        if (!groups.isMember(who.ref()) && !groups.isAdmin(who.ref())) {
             notAllowed(tx, who, originRef, chatRef, now);
             return CancelResult.NOT_ALLOWED;
         }
@@ -670,13 +670,13 @@ public final class TaskService {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
             return FollowUpResult.NOT_FOUND;
         }
-        if (text == null || text.isBlank()) {
-            return FollowUpResult.EMPTY;
-        }
         Task task = found.get();
         if (!isRequester(task, who)) {
             enqueue(tx, taskId, OutboxKind.FOLLOW_UP_REFUSED, chatRef, originRef, notRequester(task), now);
             return FollowUpResult.REFUSED;
+        }
+        if (text == null || text.isBlank()) {
+            return FollowUpResult.EMPTY;
         }
         boolean finished = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED;
         boolean executed = Runs.agentStartedBefore(tx, taskId, RunKind.EXECUTE, Integer.MAX_VALUE);
