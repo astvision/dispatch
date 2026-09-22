@@ -1,0 +1,45 @@
+# On a v* tag: builds the jar with the web UI and publishes it, its checksum and the launchers as a GitHub Release,
+# which install.sh and install.ps1 download (ADR 0018).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: The tag matches the version in pom.xml
+        run: |
+          version=$(./mvnw -q help:evaluate -Dexpression=project.version -DforceStdout)
+          [ "${GITHUB_REF_NAME#v}" = "$version" ] || { echo "tag $GITHUB_REF_NAME but pom.xml says $version"; exit 1; }
+      - name: Build the web UI
+        working-directory: ui
+        run: npm ci && npm test && npm run build
+      - name: Build and test the jar
+        run: ./mvnw --batch-mode -Pui verify
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir release
+          cp target/dispatch-*[0-9].jar release/dispatch.jar
+          cp bin/dispatch bin/dispatch.cmd release/
+          (cd release && sha256sum dispatch.jar > dispatch.jar.sha256)
+          gh release create "$GITHUB_REF_NAME" --generate-notes release/dispatch.jar release/dispatch.jar.sha256 release/dispatch release/dispatch.cmd
