@@ -93,6 +93,14 @@ final class WindowsTaskService implements Service {
         Service.required(commands, List.of("schtasks", "/End", "/TN", TASK));
     }
 
+    /** The default restart's stop() fails (and stops there) when the task is not currently running; restart must still
+     * reach /Run in that case, so its own stop step ignores /End's failure. */
+    @Override
+    public void restart() {
+        commands.run(List.of("schtasks", "/End", "/TN", TASK));
+        start();
+    }
+
     @Override
     public Status status() {
         Git.Result query = commands.run(List.of("schtasks", "/Query", "/TN", TASK, "/FO", "LIST"));

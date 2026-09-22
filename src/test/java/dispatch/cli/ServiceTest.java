@@ -122,9 +122,33 @@ class ServiceTest {
         Service.forOs("Windows 11", dir, commands, "ACME\\bold").restart();
 
         assertEquals(List.of("systemctl --user restart dispatch.service"), linux, "systemd restarts it in one step");
-        assertEquals(List.of("id -u", "launchctl bootout gui/501/io.dispatch.agent", "id -u",
-                "launchctl bootstrap gui/501 " + dir.resolve("Library/LaunchAgents/io.dispatch.agent.plist")), mac);
+        assertEquals(List.of("id -u", "launchctl kickstart -k gui/501/io.dispatch.agent"), mac,
+                "kickstart -k restarts a loaded agent without an unload/reload gap");
         assertEquals(List.of("schtasks /End /TN Dispatch", "schtasks /Run /TN Dispatch"), commands.run);
+    }
+
+    @Test
+    void macRestartFallsBackToBootstrapWhenTheAgentIsNotLoaded() {
+        commands.answer("id -u", 0, "501\n");
+        commands.answer("launchctl kickstart", 1, "No such process\n");
+        Service service = Service.forOs("Mac OS X", dir, commands, "bold");
+
+        service.restart();
+
+        assertEquals(List.of("id -u", "launchctl kickstart -k gui/501/io.dispatch.agent", "id -u",
+                "launchctl bootstrap gui/501 " + dir.resolve("Library/LaunchAgents/io.dispatch.agent.plist")), commands.run,
+                "kickstart fails when the agent isn't loaded; restart falls back to bootstrapping it");
+    }
+
+    @Test
+    void windowsRestartStillStartsItWhenStoppingAnAlreadyStoppedTaskFails() {
+        commands.answer("schtasks /End", 1, "ERROR: The service has not been started.\n");
+        Service service = Service.forOs("Windows 11", dir, commands, "ACME\\bold");
+
+        service.restart();
+
+        assertEquals(List.of("schtasks /End /TN Dispatch", "schtasks /Run /TN Dispatch"), commands.run,
+                "a not-running task still fails /End; restart must still reach /Run");
     }
 
     private static Service.Spec spec(Path home) {
