@@ -11,23 +11,38 @@ import dispatch.Log;
 import dispatch.config.Config;
 import dispatch.core.Groups;
 import dispatch.store.Workers;
+import dispatch.telegram.TelegramNames;
 import dispatch.ui.ApiException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Where members' computers reach this machine: a second HTTP server on 127.0.0.1:&lt;workers.port&gt;, behind the owner's
  * tunnel or reverse proxy. It shares nothing with {@code dispatch ui} but the jar and {@link ApiException} — no cookies,
  * no pages, no session: every request but pairing carries a worker key, which names the member whose jobs that worker
  * may take.
+ *
+ * <p>{@code config} is the snapshot this instance was started with, exactly as every other component in the process
+ * holds it (there is no config hot-reload anywhere in Dispatch today, only {@link Groups}, whose membership changes
+ * in-process as people join). {@code /api/worker/projects} answers from that snapshot, so a config file edited on disk
+ * is not visible here until the process restarts, which rebuilds this server too. Deliberate until W-4 gives config a
+ * live-reload story.
  */
 public final class WorkerApi implements AutoCloseable {
 
@@ -39,6 +54,12 @@ public final class WorkerApi implements AutoCloseable {
     public static final String PROJECTS = "/api/worker/projects";
 
     private static final int MAX_BODY = 64 * 1024;
+    /** Matches {@code WorkerKeys}' own cap, so a name this route accepts is never rejected again once cleaned there. */
+    private static final int MAX_NAME_LENGTH = 40;
+    /** How long a request may take to deliver its body before this thread gives up on it. */
+    private static final Duration DEFAULT_BODY_READ_TIMEOUT = Duration.ofSeconds(10);
+    /** A small, bounded drain of an oversized body: enough for the client to see the 413, not a megabyte. */
+    private static final int DRAIN_BYTES = 8 * 1024;
     private static final String WRONG_KEY =
             "this worker key is not valid any more: run dispatch worker pair again with a new code from /worker";
 
@@ -47,20 +68,29 @@ public final class WorkerApi implements AutoCloseable {
     private final Groups groups;
     private final WorkerKeys keys;
     private final Set<String> hosts;
+    private final Duration bodyReadTimeout;
+    private final ExecutorService bodyReads;
 
-    private WorkerApi(HttpServer server, Config config, Groups groups, WorkerKeys keys) {
+    private WorkerApi(HttpServer server, Config config, Groups groups, WorkerKeys keys, Duration bodyReadTimeout) {
         this.server = server;
         this.config = config;
         this.groups = groups;
         this.keys = keys;
         this.hosts = allowedHosts(config.workers(), server.getAddress().getPort());
+        this.bodyReadTimeout = bodyReadTimeout;
+        this.bodyReads = Executors.newVirtualThreadPerTaskExecutor();
     }
 
     /** @param config must have a {@code workers} block; {@code port} 0 takes any free port, as tests do */
     public static WorkerApi start(Config config, Groups groups, WorkerKeys keys) throws IOException {
+        return start(config, groups, keys, DEFAULT_BODY_READ_TIMEOUT);
+    }
+
+    /** @param bodyReadTimeout overrides {@link #DEFAULT_BODY_READ_TIMEOUT}; a real wall-clock bound, for tests. */
+    static WorkerApi start(Config config, Groups groups, WorkerKeys keys, Duration bodyReadTimeout) throws IOException {
         HttpServer http = HttpServer.create(
                 new InetSocketAddress(InetAddress.getByName("127.0.0.1"), config.workers().port()), 0);
-        WorkerApi api = new WorkerApi(http, config, groups, keys);
+        WorkerApi api = new WorkerApi(http, config, groups, keys, bodyReadTimeout);
         http.createContext("/", api::handle);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         http.start();
@@ -75,20 +105,24 @@ public final class WorkerApi implements AutoCloseable {
     @Override
     public void close() {
         server.stop(0);
+        bodyReads.shutdownNow();
     }
 
     /**
      * A reverse proxy passes the name members use; a worker on the same machine uses the loopback address. Anything else
-     * is a request that was not meant for this server.
+     * is a request that was not meant for this server. Matched case-insensitively, since {@code Host} is: only the host
+     * (with its port, if any) of {@code workers.publicUrl} is added — never the bare host on top of it, which would widen
+     * the allow-list past what the config actually names.
      */
     private static Set<String> allowedHosts(Config.Workers workers, int port) {
         Set<String> hosts = new HashSet<>(Set.of("127.0.0.1:" + port, "localhost:" + port));
         URI url = URI.create(workers.publicUrl());
         if (url.getHost() != null) {
             hosts.add(url.getPort() < 0 ? url.getHost() : url.getHost() + ":" + url.getPort());
-            hosts.add(url.getHost());
         }
-        return Set.copyOf(hosts);
+        Set<String> lowercased = new HashSet<>();
+        hosts.forEach(host -> lowercased.add(host.toLowerCase(Locale.ROOT)));
+        return Set.copyOf(lowercased);
     }
 
     private void handle(HttpExchange exchange) throws IOException {
@@ -148,8 +182,10 @@ public final class WorkerApi implements AutoCloseable {
 
     private ObjectNode pair(JsonNode body) {
         String code = body.path("code").asText("");
-        String name = body.path("name").asText("").strip();
-        if (name.isEmpty() || name.length() > 40) {
+        // Cleaned once, here, at the boundary: WorkerKeys.pair cleans again internally (idempotent) and never sees a
+        // name that could still make it throw IllegalArgumentException out of this unauthenticated route.
+        String name = TelegramNames.clean(body.path("name").asText(""));
+        if (name.isEmpty() || name.length() > MAX_NAME_LENGTH) {
             throw new ApiException(400, "invalid", "name: required, at most 40 characters");
         }
         WorkerKeys.NewKey paired = keys.pair(code, name)
@@ -178,20 +214,57 @@ public final class WorkerApi implements AutoCloseable {
 
     private static String hostOf(HttpExchange exchange) {
         String host = exchange.getRequestHeaders().getFirst("Host");
-        return host == null ? "" : host.strip();
+        return host == null ? "" : host.strip().toLowerCase(Locale.ROOT);
     }
 
-    private static JsonNode body(HttpExchange exchange) throws IOException {
-        byte[] raw = exchange.getRequestBody().readNBytes(MAX_BODY + 1);
+    private JsonNode body(HttpExchange exchange) throws IOException {
+        InputStream in = exchange.getRequestBody();
+        byte[] raw = readBounded(in, MAX_BODY + 1);
         if (raw.length > MAX_BODY) {
-            // Drain what is left (up to 1 MiB) so the JDK client sees the 413 instead of a reset connection.
-            exchange.getRequestBody().readNBytes(1024 * 1024 - raw.length);
+            // Best-effort, itself bounded by the same deadline: enough for the client to see the 413 instead of a
+            // reset connection, without this thread waiting on bytes a stalled or hostile client never sends.
+            try {
+                readBounded(in, DRAIN_BYTES);
+            } catch (ApiException | IOException ignored) {
+                // the 413 below is what matters; a failed drain just means the connection closes instead of reusing.
+            }
             throw new ApiException(413, "too_large", "the request is larger than " + MAX_BODY / 1024 + " KiB");
         }
         try {
             return raw.length == 0 ? Json.object() : Json.MAPPER.readTree(raw);
         } catch (JsonProcessingException e) {
             throw new ApiException(400, "invalid", "the request is not JSON");
+        }
+    }
+
+    /**
+     * Reads up to {@code maxBytes} of {@code in}, bounded by {@link #bodyReadTimeout} of real wall-clock time — not the
+     * unbounded wait {@code InputStream.read} itself offers, which would let a client that sends headers and then
+     * nothing hold this request's thread forever. The read runs on its own virtual thread so this one can wait on it
+     * with a deadline.
+     *
+     * <p>Timing out interrupts that thread: the JDK's own request stream is backed by the connection's channel, and
+     * interrupting a thread blocked on it closes the channel as required by {@link java.nio.channels.Channel}'s
+     * contract — there is no supported way to abort only the read half. That closes the whole connection, not just
+     * this read, so a stalled client is refused by having its connection dropped rather than by a graceful JSON body;
+     * either way this thread is freed at the deadline instead of held forever.
+     */
+    private byte[] readBounded(InputStream in, int maxBytes) throws IOException {
+        Future<byte[]> read = bodyReads.submit(() -> in.readNBytes(maxBytes));
+        try {
+            return read.get(bodyReadTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            read.cancel(true);
+            throw new ApiException(400, "invalid",
+                    "the request body did not arrive within " + bodyReadTimeout.toSeconds() + "s");
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof IOException io) {
+                throw io;
+            }
+            throw new IllegalStateException("reading the request body failed", e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ApiException(503, "stopping", "Dispatch is stopping");
         }
     }
 

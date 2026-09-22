@@ -2,6 +2,7 @@ package dispatch.worker;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -15,8 +16,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -26,10 +29,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** Who may talk to the worker endpoints at all: the key check, the Host check, pairing and the setup route. */
 class WorkerApiTest {
@@ -164,17 +170,142 @@ class WorkerApiTest {
     }
 
     @Test
-    void aGetAndAnOversizedBodyAreRefusedWithoutTouchingTheKey() throws Exception {
-        String key = pair(BOLD, "ann-laptop");
-
-        HttpResponse<String> get = http.send(HttpRequest.newBuilder(uri(WorkerApi.PROJECTS))
-                .header("Authorization", "Bearer " + key).GET().build(), HttpResponse.BodyHandlers.ofString());
-        HttpResponse<String> huge = post(WorkerApi.PROJECTS, key, "{\"x\":\"" + "y".repeat(70_000) + "\"}");
-        HttpResponse<String> unknown = post("/api/worker/nope", key, "{}");
+    void aGetAndAnOversizedBodyAreRefusedWithoutTouchingTheKeyAtAll() throws Exception {
+        // No key on any of these: each is refused for a reason that has nothing to do with who is asking.
+        HttpResponse<String> get =
+                http.send(HttpRequest.newBuilder(uri(WorkerApi.PROJECTS)).GET().build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> huge = post(WorkerApi.PROJECTS, null, "{\"x\":\"" + "y".repeat(70_000) + "\"}");
+        HttpResponse<String> unknown = post("/api/worker/nope", null, "{}");
 
         assertEquals(405, get.statusCode());
+        assertEquals("method", Json.read(get.body()).get("error").asText());
         assertEquals(413, huge.statusCode());
+        assertEquals("too_large", Json.read(huge.body()).get("error").asText());
         assertEquals(404, unknown.statusCode());
+        assertEquals("not_found", Json.read(unknown.body()).get("error").asText());
+    }
+
+    @Test
+    void malformedJsonIsRefused() throws Exception {
+        String key = pair(BOLD, "ann-laptop");
+
+        HttpResponse<String> answer = post(WorkerApi.PROJECTS, key, "{not json");
+
+        assertEquals(400, answer.statusCode());
+        assertEquals("invalid", Json.read(answer.body()).get("error").asText());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {WorkerApi.NEXT, WorkerApi.PROGRESS, WorkerApi.ATTACHMENT, WorkerApi.RESULT})
+    void everyProtocolRouteRefusesWithoutAKeyEvenBeforeItExists(String path) throws Exception {
+        // Task 7 wires these routes' bodies; this only pins that the key check in front of them stays in place.
+        HttpResponse<String> answer = post(path, null, "{}");
+
+        assertEquals(401, answer.statusCode());
+        assertEquals("unauthorized", Json.read(answer.body()).get("error").asText());
+    }
+
+    @Test
+    void aControlCharacterOnlyNameIsRefusedAsInvalidNotA500() throws Exception {
+        String code = keys.newCode(BOLD);
+
+        Captured captured = capturingStdout(() ->
+                post(WorkerApi.PAIR, null, "{\"code\":\"" + code + "\",\"name\":\"\\u0000\\u0001\\u0002\"}"));
+
+        assertEquals(400, captured.answer().statusCode());
+        assertEquals("invalid", Json.read(captured.answer().body()).get("error").asText());
+        assertFalse(captured.log().contains("IllegalArgumentException"), captured.log());
+        assertFalse(captured.log().contains("level=ERROR"), captured.log());
+    }
+
+    @Test
+    void anOverlongNameIsRefusedAsInvalidNotA500() throws Exception {
+        String code = keys.newCode(BOLD);
+
+        Captured captured = capturingStdout(() ->
+                post(WorkerApi.PAIR, null, "{\"code\":\"" + code + "\",\"name\":\"" + "a".repeat(41) + "\"}"));
+
+        assertEquals(400, captured.answer().statusCode());
+        assertEquals("invalid", Json.read(captured.answer().body()).get("error").asText());
+        assertFalse(captured.log().contains("level=ERROR"), captured.log());
+    }
+
+    @Test
+    void aStalledBodyEndsAsARefusalNotAHeldThread() throws Exception {
+        // The JDK's request stream is backed by the connection's own channel: freeing a thread blocked reading it
+        // closes that channel (java.nio.channels.Channel's own contract for an interrupted blocking operation), so a
+        // stalled client is refused by losing its connection outright, not by a graceful JSON body. Either way, the
+        // client sees this end quickly instead of the read hanging until its own socket timeout.
+        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, Duration.ofMillis(300))) {
+            String head = "POST " + WorkerApi.PROJECTS + " HTTP/1.1\r\n"
+                    + "Host: 127.0.0.1:" + impatient.port() + "\r\n"
+                    + "Authorization: Bearer whatever\r\n"
+                    + "Content-Type: application/json\r\n"
+                    + "Content-Length: 1000\r\n"
+                    + "Connection: close\r\n\r\n";
+            long elapsedMs;
+            try (Socket socket = new Socket("127.0.0.1", impatient.port())) {
+                socket.setSoTimeout(5000);
+                socket.getOutputStream().write(head.getBytes(StandardCharsets.US_ASCII));
+                socket.getOutputStream().flush();
+                // Content-Length promises 1000 bytes of body; none of them ever arrive.
+                long start = System.nanoTime();
+                socket.getInputStream().readAllBytes();
+                elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            }
+            assertTrue(elapsedMs < 5000,
+                    "held the request thread for " + elapsedMs + "ms instead of refusing at the read deadline");
+        }
+    }
+
+    @Test
+    void hostMatchingIsCaseInsensitive() throws Exception {
+        String key = pair(BOLD, "ann-laptop");
+
+        Raw answer = rawPost(WorkerApi.PROJECTS, "LOCALHOST:" + api.port(), key, "{}");
+
+        assertEquals(200, answer.status());
+    }
+
+    @Test
+    void publicUrlWithAnExplicitPortDoesNotAlsoAllowTheBareHost() throws Exception {
+        String key = pair(BOLD, "ann-laptop");
+        try (WorkerApi withPort = WorkerApi.start(config("https://team.example.com:8443"), groups(), keys)) {
+            Raw bareHost = rawPost(withPort.port(), WorkerApi.PROJECTS, "team.example.com", key, "{}");
+            Raw hostWithPort = rawPost(withPort.port(), WorkerApi.PROJECTS, "team.example.com:8443", key, "{}");
+
+            assertEquals(403, bareHost.status(), "the constraint only names the host with its port, if any");
+            assertEquals(200, hostWithPort.status());
+        }
+    }
+
+    @Test
+    void itListensOnLoopbackOnly() throws Exception {
+        InetAddress local;
+        try {
+            local = InetAddress.getLocalHost();
+        } catch (UnknownHostException e) {
+            return; // no resolvable hostname in this sandbox; nothing to prove exclusion against
+        }
+        if (local.isLoopbackAddress()) {
+            return; // no routable address here either
+        }
+        assertThrows(IOException.class, () -> new Socket(local, api.port()).close(),
+                "must not accept connections on a non-loopback address");
+    }
+
+    private record Captured(HttpResponse<String> answer, String log) {
+    }
+
+    private Captured capturingStdout(Callable<HttpResponse<String>> action) throws Exception {
+        PrintStream out = System.out;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(logged, true, StandardCharsets.UTF_8));
+            return new Captured(action.call(), logged.toString(StandardCharsets.UTF_8));
+        } finally {
+            System.setOut(out);
+        }
     }
 
     private String pair(Requester member, String name) throws Exception {
@@ -202,6 +333,10 @@ class WorkerApiTest {
     }
 
     private Raw rawPost(String path, String host, String key, String body) throws IOException {
+        return rawPost(api.port(), path, host, key, body);
+    }
+
+    private Raw rawPost(int port, String path, String host, String key, String body) throws IOException {
         byte[] payload = body.getBytes(StandardCharsets.UTF_8);
         String head = "POST " + path + " HTTP/1.1\r\n"
                 + "Host: " + host + "\r\n"
@@ -209,7 +344,9 @@ class WorkerApiTest {
                 + "Content-Type: application/json\r\n"
                 + "Content-Length: " + payload.length + "\r\n"
                 + "Connection: close\r\n\r\n";
-        try (Socket socket = new Socket("127.0.0.1", api.port())) {
+        try (Socket socket = new Socket("127.0.0.1", port)) {
+            // A regression in the server's read/close handling must fail this test, not hang the build.
+            socket.setSoTimeout(5000);
             OutputStream out = socket.getOutputStream();
             out.write(head.getBytes(StandardCharsets.US_ASCII));
             out.write(payload);
@@ -221,6 +358,10 @@ class WorkerApiTest {
     }
 
     private Config config() {
+        return config("http://127.0.0.1:0");
+    }
+
+    private Config config(String publicUrl) {
         return new Config("backend", dir, new Config.Telegram(List.of(), List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))),
                 new Config.Scheduler(2), Config.Worktrees.DEFAULT,
@@ -230,7 +371,7 @@ class WorkerApiTest {
                 List.of(new Config.Project("alm", null, "git@github.com:acme/alm.git", null, "main", "claude-code", "opus",
                         "high", List.of(), null, null, null)),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", "gh"),
-                new Config.Workers("http://127.0.0.1:0", 0), new Config.Secrets("token", null));
+                new Config.Workers(publicUrl, 0), new Config.Secrets("token", null));
     }
 
     private Groups groups() {
