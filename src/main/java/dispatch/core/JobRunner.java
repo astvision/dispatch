@@ -23,9 +23,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The machine work of one run, in this process: the worktree, the task's files, the agent under its timeout, and (from
- * the next task) the delivery. It reads no store and no config — everything arrives in the {@link Job} and leaves in the
- * {@link JobResult} — so W-3 can put HTTP between it and the {@link Coordinator}.
+ * The machine work of one run, in this process: the worktree, the task's files, the agent under its timeout, and its
+ * delivery. It reads no store and no config — everything arrives in the {@link Job} and leaves in the {@link JobResult}
+ * — so W-3 can put HTTP between it and the {@link Coordinator}.
  */
 public final class JobRunner implements Worker {
 
@@ -53,7 +53,7 @@ public final class JobRunner implements Worker {
         return switch (job.kind()) {
             case PLAN -> plan(job, events, control);
             case EXECUTE -> implement(job, events, control);
-            case DELIVER -> throw new UnsupportedOperationException("delivery runs are added in the next task");
+            case DELIVER -> deliverAgain(job, control);
             case SPLIT -> throw new IllegalStateException("a split is never a task's run");
         };
     }
@@ -82,19 +82,62 @@ public final class JobRunner implements Worker {
         }
         Path worktree;
         TaskFiles files;
+        String startSha;
         try {
             worktree = existingWorktree(job);
             files = attachments(job);
             // Local-only files (e.g. .env) the build and tests need; never part of planning runs.
             workspaces.copyFiles(config(job.project()), worktree);
+            startSha = delivery.head(worktree);
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
         if (control.stopReason() != null) {
             return stopped(job, control.stopReason(), null);
         }
-        // The next task delivers what the agent changed from here.
-        return runAgent(job, events, control, request(job, worktree, files));
+        JobResult result = runAgent(job, events, control, request(job, worktree, files));
+        if (result.outcome() != JobResult.Outcome.SUCCEEDED) {
+            return result;
+        }
+        return deliver(job, worktree, startSha, result.agent());
+    }
+
+    private JobResult deliver(Job job, Path worktree, String startSha, AgentResult result) {
+        Delivery.Result delivered;
+        try {
+            delivered = delivery.deliver(worktree, job.taskId(), job.baseBranch(), startSha, commit(job, result.summary()),
+                    job.prUrl());
+        } catch (WorkspaceException e) {
+            return JobResult.failed(FailureReason.DELIVERY, e.getMessage(), result);
+        }
+        return JobResult.delivered(result, delivered.files(), delivered.prUrl());
+    }
+
+    /** Delivers a failed delivery's work again, without the agent: the commit body is that run's summary. */
+    private JobResult deliverAgain(Job job, ActiveRuns.ActiveRun control) {
+        if (control.stopReason() != null) {
+            return stopped(job, control.stopReason(), null);
+        }
+        Path worktree;
+        try {
+            worktree = existingWorktree(job);
+        } catch (WorkspaceException e) {
+            return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
+        }
+        Delivery.Result delivered;
+        try {
+            delivered = delivery.redeliver(worktree, job.taskId(), job.baseBranch(), job.baseSha(),
+                    commit(job, job.deliverySummary()), job.prUrl());
+        } catch (WorkspaceException e) {
+            return JobResult.failed(FailureReason.DELIVERY, e.getMessage(), null);
+        }
+        return JobResult.delivered(null, delivered.files(), delivered.prUrl());
+    }
+
+    /** The task's delivery commit: the job's subject and trailers, and the summary with secrets masked as its body. */
+    private Delivery.Commit commit(Job job, String summary) {
+        String body = summary == null ? "" : redactor.redact(summary).strip();
+        return new Delivery.Commit(job.commitSubject(), body, job.commitTrailers());
     }
 
     private RunRequest request(Job job, Path worktree, TaskFiles files) {

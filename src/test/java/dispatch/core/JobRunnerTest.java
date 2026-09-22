@@ -161,6 +161,65 @@ class JobRunnerTest {
         assertEquals("stopped after 700ms", result.failureDetail());
     }
 
+    @Test
+    void anExecuteJobDeliversTheAgentsChangesWithTheJobsSubjectAndTrailers() throws Exception {
+        runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
+
+        JobResult result = runner.run(job(RunKind.EXECUTE, 2, "Implement the approved plan", events.worktree, events.baseSha, null),
+                new Recorder(), new ActiveRuns().register(TASK, 2));
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome());
+        assertEquals(List.of("README.md"), result.files());
+        assertEquals(FakeGh.PR_URL, result.prUrl());
+        String branch = "refs/heads/dispatch/" + TASK;
+        assertEquals("dispatch #7: Fix the login timeout", origin("log", "-1", "--format=%s", branch));
+        String body = origin("log", "-1", "--format=%b", branch);
+        assertTrue(body.contains("AUTH_TIMEOUT_SECONDS"), body);
+        assertTrue(body.endsWith("Requested-by: Bold\nApproved-by: Bold"), body);
+    }
+
+    @Test
+    void aDeliveryJobCommitsTheFailedRunsSummaryWithoutStartingAnAgent() throws Exception {
+        runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
+        Path worktree = Path.of(events.worktree);
+        Files.writeString(worktree.resolve("README.md"), "v2\n");
+        Files.delete(worktree.resolve("fake-claude.prompt"));
+
+        Job job = new Job(TASK, 3, RunKind.DELIVER, project(List.of()), "main", events.baseSha, events.worktree, null, null,
+                false, null, null, null, 0L, null, List.of(), "dispatch #7: Fix the login timeout",
+                List.of("Requested-by: Bold", "Approved-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30");
+        JobResult result = runner.run(job, new Recorder(), new ActiveRuns().register(TASK, 3));
+
+        assertEquals(List.of("README.md"), result.files());
+        assertEquals(FakeGh.PR_URL, result.prUrl());
+        assertNull(result.agent(), "a delivery run has no agent result");
+        assertFalse(Files.exists(worktree.resolve("fake-claude.prompt")), "a delivery run never starts the agent");
+        assertEquals("Raised AUTH_TIMEOUT_SECONDS to 30",
+                origin("log", "-1", "--format=%b", "refs/heads/dispatch/" + TASK).lines().findFirst().orElseThrow());
+    }
+
+    @Test
+    void aPushThatFailsComesBackAsDeliveryAndKeepsTheAgentsResult() throws Exception {
+        runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
+
+        JobResult result = runner.run(job(RunKind.EXECUTE, 2, "Implement the approved plan", events.worktree, events.baseSha, null),
+                new Recorder(), new ActiveRuns().register(TASK, 2));
+
+        assertEquals(FailureReason.DELIVERY, result.failureReason());
+        assertTrue(result.failureDetail().contains("git push"), result.failureDetail());
+        assertTrue(result.agent().summary().contains("AUTH_TIMEOUT_SECONDS"), "the summary is kept, so a retry delivers it");
+    }
+
+    private String origin(String... args) {
+        String[] command = new String[args.length + 3];
+        command[0] = "git";
+        command[1] = "--git-dir";
+        command[2] = repos.origin.toString();
+        System.arraycopy(args, 0, command, 3, args.length);
+        return GitFixture.sh(dir, command);
+    }
+
     private Job job(RunKind kind, int seq, String prompt, String worktree, String baseSha, List<String> copyFiles) {
         return new Job(TASK, seq, kind, project(copyFiles == null ? List.of() : copyFiles), "main", baseSha, worktree, null,
                 SESSION, false, prompt, null, null, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(),
