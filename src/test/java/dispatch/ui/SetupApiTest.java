@@ -164,6 +164,46 @@ class SetupApiTest {
     }
 
     @Test
+    void switchingToPersonalOnceThereAreSeveralMembersIsRefused() throws Exception {
+        call("/api/setup/team", "{\"team\":true}");
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        confirmTwoTeamMembers();
+
+        CliException refused = assertThrows(CliException.class, () -> call("/api/setup/team", "{\"team\":false}"));
+
+        assertTrue(refused.getMessage().contains("a personal bot has one member: you"), refused.getMessage());
+        assertTrue(call("/api/setup/state", "{}").path("team").asBoolean(), "team stays true so the page still shows the team step");
+    }
+
+    @Test
+    void writeRefusesAPersonalConfigWithSeveralMembersEvenIfTeamIsSomehowFalse() throws Exception {
+        call("/api/setup/team", "{\"team\":true}");
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        confirmTwoTeamMembers();
+        // team() itself now refuses the team -> personal switch above; write() guards independently, in case that
+        // invariant is ever bypassed elsewhere, so the field is forced directly to prove write()'s own check fires.
+        java.lang.reflect.Field teamField = SetupApi.class.getDeclaredField("team");
+        teamField.setAccessible(true);
+        teamField.setBoolean(setup, false);
+        String writeBody = "{\"claude\":\"" + json(JAVA) + "\",\"authorName\":\"a\",\"authorEmail\":\"a@example.com\","
+                + "\"projects\":[{\"folder\":\"" + json(repos.repo("alm").toString()) + "\",\"name\":\"alm\",\"baseBranch\":\"main\"}]}";
+
+        CliException refused = assertThrows(CliException.class, () -> call("/api/setup/write", writeBody));
+
+        assertTrue(refused.getMessage().contains("a personal bot has one member: you"), refused.getMessage());
+        assertFalse(Files.exists(config));
+    }
+
+    private void confirmTwoTeamMembers() throws Exception {
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+        telegram.pushUpdate(start(2, 200, "Ali"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":200,\"accept\":true}");
+    }
+
+    @Test
     void nobodyWritingAnswersNullAndAnotherReaderIsAConflict() throws Exception {
         call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
 

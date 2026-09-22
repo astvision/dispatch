@@ -37,6 +37,8 @@ public final class SetupApi {
     static final Duration POLL = Duration.ofSeconds(25);
     private static final Set<String> MODELS = Set.of("sonnet", "opus", "fable");
     private static final Set<String> EFFORTS = Set.of("low", "medium", "high", "xhigh", "max");
+    private static final String PERSONAL_BOT_ONE_MEMBER =
+            "a personal bot has one member: you; go back and choose My team, or start setup again";
 
     public record Person(long id, String name) {
     }
@@ -133,7 +135,13 @@ public final class SetupApi {
     }
 
     private synchronized State team(JsonNode body) {
-        team = requiredBoolean(body, "team");
+        boolean requested = requiredBoolean(body, "team");
+        if (!requested && members.size() > 1) {
+            // Teammates already joined; a personal bot has one member, so this switch would silently drop them
+            // at Write. Refuse here, at the Who step, instead of only when Write finally renders the config.
+            throw new CliException(PERSONAL_BOT_ONE_MEMBER);
+        }
+        team = requested;
         return state();
     }
 
@@ -267,6 +275,11 @@ public final class SetupApi {
                 }
                 if (members.isEmpty()) {
                     throw new CliException("confirm who you are first");
+                }
+                if (!team && members.size() > 1) {
+                    // Defense in depth alongside team()'s own guard: a personal config must never silently carry
+                    // teammates added while this was a team setup.
+                    throw new CliException(PERSONAL_BOT_ONE_MEMBER);
                 }
                 List<ProjectAddCommand.Project> projects = projects(body.path("projects"));
                 String name = Setup.teamName(team ? text(body, "teamName") : members.getFirst().name().split("\\s+")[0]);
