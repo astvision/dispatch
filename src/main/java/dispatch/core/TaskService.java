@@ -413,7 +413,7 @@ public final class TaskService {
             return ApproveResult.NOT_FOUND;
         }
         Task task = found.get();
-        if (!task.requester().ref().equals(who.ref())) {
+        if (!isRequester(task, who)) {
             tx.afterCommit(() -> Log.info("task.approve_not_requester", "task", taskId, "requester", who.ref()));
             return ApproveResult.NOT_REQUESTER;
         }
@@ -457,9 +457,8 @@ public final class TaskService {
             return CorrectResult.EMPTY;
         }
         Task task = Tasks.find(tx, taskId).orElseThrow(() -> new IllegalStateException("task " + taskId + " does not exist"));
-        if (!task.requester().ref().equals(who.ref())) {
-            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef, Json.object().put("taskId", taskId)
-                    .put("reason", "requester").put("requester", task.requester().name()), now);
+        if (!isRequester(task, who)) {
+            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef, notRequester(task), now);
             return CorrectResult.REFUSED;
         }
         if (task.phase() != Phase.AWAITING_APPROVAL) {
@@ -506,7 +505,7 @@ public final class TaskService {
             return RejectResult.NOT_FOUND;
         }
         Task task = found.get();
-        if (!task.requester().ref().equals(who.ref())) {
+        if (!isRequester(task, who)) {
             tx.afterCommit(() -> Log.info("task.reject_not_requester", "task", taskId, "requester", who.ref()));
             return RejectResult.NOT_REQUESTER;
         }
@@ -538,7 +537,7 @@ public final class TaskService {
             return PriorityResult.NOT_FOUND;
         }
         Task task = found.get();
-        if (!task.requester().ref().equals(who.ref())) {
+        if (!isRequester(task, who)) {
             return PriorityResult.NOT_REQUESTER;
         }
         if (!task.phase().isActive()) {
@@ -558,8 +557,9 @@ public final class TaskService {
     }
 
     /**
-     * Cancels an active task of the member's groups, or one they requested; a running agent is stopped after commit and its
-     * run ends as CANCELLED. Another group's task is answered as not found, so its existence does not leak.
+     * Cancels the member's own task; an admin may cancel any task, even outside their own groups. A running agent is
+     * stopped after commit and its run ends as CANCELLED. Another group's task is answered as not found, so its existence
+     * does not leak, unless the caller is an admin.
      */
     public CancelResult cancel(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
@@ -567,12 +567,16 @@ public final class TaskService {
             notAllowed(tx, who, originRef, chatRef, now);
             return CancelResult.NOT_ALLOWED;
         }
-        Optional<Task> found = visibleTask(tx, who, taskId);
+        Optional<Task> found = groups.isAdmin(who.ref()) ? Tasks.find(tx, taskId) : visibleTask(tx, who, taskId);
         if (found.isEmpty()) {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
             return CancelResult.NOT_FOUND;
         }
         Task task = found.get();
+        if (!isRequester(task, who) && !groups.isAdmin(who.ref())) {
+            enqueue(tx, taskId, OutboxKind.CANCEL_REFUSED, chatRef, originRef, notRequester(task), now);
+            return CancelResult.REFUSED;
+        }
         if (!task.phase().isActive() || !Tasks.changePhase(tx, taskId, task.phase(), Phase.CANCELLED, now)) {
             enqueue(tx, taskId, OutboxKind.CANCEL_REFUSED, chatRef, originRef,
                     Json.object().put("taskId", taskId).put("phase", task.phase().name()), now);
@@ -593,8 +597,8 @@ public final class TaskService {
 
     /**
      * Repeats just the failed step of a failed task (ADR 0008): a failed plan is planned again, a failed execution continues
-     * its building session, and a failed delivery is delivered again without the agent. Any member of the task's group may
-     * retry it, like cancelling; another group's task is answered as not found.
+     * its building session, and a failed delivery is delivered again without the agent. Only the requester may retry it;
+     * another group's task is answered as not found.
      */
     public RetryResult retry(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
@@ -608,6 +612,10 @@ public final class TaskService {
             return RetryResult.NOT_FOUND;
         }
         Task task = found.get();
+        if (!isRequester(task, who)) {
+            enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef, notRequester(task), now);
+            return RetryResult.REFUSED;
+        }
         Optional<Run> failed = Runs.latest(tx, taskId).filter(run -> run.status() == RunStatus.FAILED);
         if (task.phase() != Phase.FAILED || failed.isEmpty()) {
             enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef,
@@ -645,9 +653,9 @@ public final class TaskService {
     }
 
     /**
-     * A member's reply to a finished task's result: it runs at once in the task's building session and branch, without a
-     * new plan, because the reply is itself the instruction (ADR 0006). Only a task that got as far as execution can be
-     * followed up; one that is still active is refused, as its current run would not see the reply.
+     * The requester's reply to a finished task's result: it runs at once in the task's building session and branch,
+     * without a new plan, because the reply is itself the instruction (ADR 0006). Only a task that got as far as
+     * execution can be followed up; one that is still active is refused, as its current run would not see the reply.
      *
      * @param originRef channel reference of the reply, which the answer goes under
      */
@@ -666,6 +674,10 @@ public final class TaskService {
             return FollowUpResult.EMPTY;
         }
         Task task = found.get();
+        if (!isRequester(task, who)) {
+            enqueue(tx, taskId, OutboxKind.FOLLOW_UP_REFUSED, chatRef, originRef, notRequester(task), now);
+            return FollowUpResult.REFUSED;
+        }
         boolean finished = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED;
         boolean executed = Runs.agentStartedBefore(tx, taskId, RunKind.EXECUTE, Integer.MAX_VALUE);
         if (!finished || !executed || !Tasks.changePhase(tx, taskId, task.phase(), Phase.EXECUTING, now)) {
@@ -686,6 +698,15 @@ public final class TaskService {
     private Optional<Task> visibleTask(Tx tx, Requester who, long taskId) {
         return Tasks.find(tx, taskId).filter(task ->
                 task.requester().ref().equals(who.ref()) || groups.isMemberOfProjectGroup(who.ref(), task.project()));
+    }
+
+    private static boolean isRequester(Task task, Requester who) {
+        return task.requester().ref().equals(who.ref());
+    }
+
+    /** Why a member may see a task but not act on it: it is someone else's (ADR 0020). */
+    private static ObjectNode notRequester(Task task) {
+        return Json.object().put("taskId", task.id()).put("reason", "requester").put("requester", task.requester().name());
     }
 
     /**

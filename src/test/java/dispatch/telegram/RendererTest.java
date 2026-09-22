@@ -293,6 +293,20 @@ class RendererTest {
     }
 
     @Test
+    void cancelRetryAndFollowUpRefuseNonRequestersToo() {
+        String cancel = renderer.render(OutboxKind.CANCEL_REFUSED,
+                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
+        String retry = renderer.render(OutboxKind.RETRY_REFUSED,
+                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
+        String followUp = renderer.render(OutboxKind.FOLLOW_UP_REFUSED,
+                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
+
+        assertTrue(cancel.contains("#7") && cancel.contains("Bold"), cancel);
+        assertTrue(retry.contains("#7") && retry.contains("Bold"), retry);
+        assertTrue(followUp.contains("#7") && followUp.contains("Bold"), followUp);
+    }
+
+    @Test
     void statusShowsRunningWorkWithTheAgentsLatestActionThenQueuedAndAwaiting() {
         String html = renderer.render(OutboxKind.STATUS, statusPayload()).html();
 

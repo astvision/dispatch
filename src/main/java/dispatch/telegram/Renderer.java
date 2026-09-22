@@ -106,14 +106,20 @@ public final class Renderer {
             case TASK_TIMELINE -> timeline(payload);
             case STATS -> stats(payload);
             case TASK_NOT_FOUND -> plain(format("task.notFound", taskId(payload)));
-            case CANCEL_REFUSED -> plain(format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case CANCEL_REFUSED -> plain(payload.path("reason").asText().equals("requester")
+                    ? format("task.cancelNotRequester", taskId(payload), escape(payload.path("requester").asText()))
+                    : format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
             case RETRY_QUEUED -> plain(format("task.retryQueued", taskId(payload), escape(payload.path("by").asText()),
                     text("kind." + payload.path("kind").asText())));
-            case RETRY_REFUSED -> plain(format("task.retryRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case RETRY_REFUSED -> plain(payload.path("reason").asText().equals("requester")
+                    ? format("task.retryNotRequester", taskId(payload), escape(payload.path("requester").asText()))
+                    : format("task.retryRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
             case FOLLOW_UP_QUEUED -> plain(format("task.followUpQueued", taskId(payload), escape(payload.path("by").asText())));
-            case FOLLOW_UP_REFUSED -> plain(payload.path("reason").asText().equals("notExecuted")
-                    ? format("task.followUpNotExecuted", taskId(payload))
-                    : format("task.followUpRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case FOLLOW_UP_REFUSED -> plain(switch (payload.path("reason").asText()) {
+                case "notExecuted" -> format("task.followUpNotExecuted", taskId(payload));
+                case "requester" -> format("task.followUpNotRequester", taskId(payload), escape(payload.path("requester").asText()));
+                default -> format("task.followUpRefused", taskId(payload), text("phase." + payload.path("phase").asText()));
+            });
             case NOT_ALLOWED -> plain(format("member.notAllowed", escape(payload.path("name").asText())));
             case UNKNOWN_PROJECT -> plain(format("project.unknown", escape(payload.path("given").asText()),
                     projectList(payload.path("projects"))));

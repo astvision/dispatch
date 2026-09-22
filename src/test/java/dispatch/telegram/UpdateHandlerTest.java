@@ -459,7 +459,7 @@ class UpdateHandlerTest {
         long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));
         db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/1100", clock.instant()));
 
-        handler.handle(message(545, 45, 200, "Ali", GROUP, "supergroup", "Also log the value", botMessage(1100)));
+        handler.handle(message(545, 45, 100, "Bold", GROUP, "supergroup", "Also log the value", botMessage(1100)));
 
         assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
         Map<String, String> followUp = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", taskId);
