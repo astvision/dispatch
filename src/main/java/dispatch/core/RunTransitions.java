@@ -1,5 +1,6 @@
 package dispatch.core;
 
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
@@ -76,18 +77,25 @@ public final class RunTransitions {
         });
     }
 
-    /**
-     * An execution run whose changes were delivered.
-     *
-     * @param files paths the delivery commit changed; empty when the run changed nothing
-     * @param prUrl the task's pull request, null when nothing has been delivered
-     */
+    /** An execution run whose changes were delivered, with the agent's own summary. */
     public void completed(long taskId, int seq, AgentResult result, List<String> files, String prUrl) {
+        completed(taskId, seq, result, result.summary(), files, prUrl);
+    }
+
+    /**
+     * An execution or delivery run whose changes were delivered.
+     *
+     * @param result  null for a delivery run, which has no agent
+     * @param summary what the agent said it did
+     * @param files   paths the delivery commit changed; empty when the run changed nothing
+     * @param prUrl   the task's pull request, null when nothing has been delivered
+     */
+    public void completed(long taskId, int seq, AgentResult result, String summary, List<String> files, String prUrl) {
         db.transaction(tx -> {
             Instant now = clock.instant();
             Task task = task(tx, taskId);
             Run run = run(tx, taskId, seq);
-            if (!finishRun(tx, run, RunStatus.SUCCEEDED, null, null, result, result.summary(), now)) {
+            if (!finishRun(tx, run, RunStatus.SUCCEEDED, null, null, result, summary, now)) {
                 return;
             }
             if (!Tasks.completed(tx, taskId, prUrl, now)) {
@@ -97,8 +105,11 @@ public final class RunTransitions {
             Events.record(tx, taskId, seq, ACTOR, Phase.EXECUTING, Phase.COMPLETED,
                     files.isEmpty() ? "no changes" : "delivered " + files.size() + " changed files", now);
             ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("prUrl", prUrl)
-                    .put("filesChanged", files.size()).put("summary", result.summary());
-            result.denials().forEach(payload.putArray("denials")::add);
+                    .put("filesChanged", files.size()).put("summary", summary);
+            ArrayNode denials = payload.putArray("denials");
+            if (result != null) {
+                result.denials().forEach(denials::add);
+            }
             putRunDetails(payload, run, result, now);
             enqueueForRequester(tx, task, OutboxKind.TASK_COMPLETED, payload, now);
             enqueue(tx, task, OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", taskId).put("project", task.project())
@@ -114,7 +125,9 @@ public final class RunTransitions {
             Instant now = clock.instant();
             Task task = task(tx, taskId);
             Run run = run(tx, taskId, seq);
-            if (!finishRun(tx, run, RunStatus.FAILED, reason, shortDetail, result, null, now)) {
+            // The summary is kept: after a delivery failure, a retry delivers the same work with it (ADR 0008).
+            String output = result == null ? null : result.summary();
+            if (!finishRun(tx, run, RunStatus.FAILED, reason, shortDetail, result, output, now)) {
                 return;
             }
             if (!Tasks.failed(tx, taskId, reason, shortDetail, now)) {
@@ -160,9 +173,14 @@ public final class RunTransitions {
         return true;
     }
 
+    /** @param result null for a run without an agent */
     private static void putRunDetails(ObjectNode payload, Run run, AgentResult result, Instant now) {
-        payload.put("costUsd", result.costUsd() == null ? null : result.costUsd().toPlainString());
         payload.put("durationSeconds", run.startedAt() == null ? 0 : Duration.between(run.startedAt(), now).toSeconds());
+        if (result == null) {
+            payload.putNull("costUsd").putNull("model");
+            return;
+        }
+        payload.put("costUsd", result.costUsd() == null ? null : result.costUsd().toPlainString());
         payload.put("model", result.model());
         if (result.requestedModel() != null) {
             payload.put("requestedModel", result.requestedModel());

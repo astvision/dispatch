@@ -34,6 +34,11 @@ public final class Git {
         this.timeout = timeout;
     }
 
+    /** The same git for a slower command, such as cloning a large repository. */
+    public Git withTimeout(Duration slowTimeout) {
+        return new Git(command, ghToken, slowTimeout);
+    }
+
     public record Result(int exitCode, String stdout, String stderr) {
     }
 

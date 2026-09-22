@@ -193,6 +193,39 @@ class WorkspacesTest {
     }
 
     @Test
+    void missingCloneIsMadeFromTheRepoAndTheProjectBecomesAvailable() {
+        Config.Project crm = new Config.Project("crm", null, repos.origin.toString(), null, "main", "claude-code", null, null, List.of(),
+                null, null, null);
+        assertTrue(workspaces.needsClone(crm));
+
+        workspaces.cloneMissing(crm, git);
+
+        assertEquals(Optional.empty(), workspaces.unavailableReason(crm));
+        assertFalse(workspaces.needsClone(crm));
+        assertTrue(Files.isDirectory(workspaces.createWorktree(crm, 42).path()), "tasks run in the new clone");
+    }
+
+    @Test
+    void failedCloneKeepsTheProjectUnavailableWithGitsError() {
+        Config.Project crm = new Config.Project("crm", null, dir.resolve("missing.git").toString(), null, "main", "claude-code", null, null,
+                List.of(), null, null, null);
+
+        workspaces.cloneMissing(crm, git);
+
+        String reason = workspaces.unavailableReason(crm).orElseThrow();
+        assertTrue(reason.startsWith("cloning " + dir.resolve("missing.git") + " failed"), reason);
+        assertTrue(reason.contains("does not exist") || reason.contains("not appear to be a git repository"), reason);
+    }
+
+    @Test
+    void developersOwnPathIsNeverCloned() {
+        Config.Project mine = new Config.Project("alm", null, repos.origin.toString(), dir.resolve("work/alm").toString(), "main",
+                "claude-code", null, null, List.of(), null, null, null);
+
+        assertFalse(workspaces.needsClone(mine));
+    }
+
+    @Test
     void tokenReachesGitThroughTheEnvironmentNotTheCommandLine() {
         Git withToken = new Git("git", "github_pat_SECRET", Duration.ofSeconds(30));
 

@@ -108,6 +108,13 @@ public final class Tasks {
                 + Tx.placeholders(projects.size()) + ") ORDER BY completed_at DESC, id DESC LIMIT ?", Tasks::map, params.toArray());
     }
 
+    /** Finished tasks with a worktree, unchanged since before {@code idleSince}, oldest first. */
+    public static List<Task> finishedIdleWithWorktree(Tx tx, Instant idleSince) {
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase IN (?, ?, ?, ?) AND worktree IS NOT NULL AND updated_at < ?"
+                        + " ORDER BY updated_at, id", Tasks::map,
+                Phase.COMPLETED, Phase.FAILED, Phase.REJECTED, Phase.CANCELLED, idleSince);
+    }
+
     /** Moves {@code from} to {@code to}; entering a finished phase stamps completed_at. */
     public static boolean changePhase(Tx tx, long id, Phase from, Phase to, Instant now) {
         Instant completedAt = to.isActive() ? null : now;
@@ -125,15 +132,20 @@ public final class Tasks {
 
     public static boolean planned(Tx tx, long id, String planJson, Instant now) {
         return tx.update("""
-                        UPDATE task SET phase = ?, plan_json = ?, updated_at = ?
+                        UPDATE task SET phase = ?, plan_json = ?, failure_reason = NULL, failure_detail = NULL, updated_at = ?
                         WHERE id = ? AND phase = ?""",
                 Phase.AWAITING_APPROVAL, planJson, now, id, Phase.PLANNING) == 1;
     }
 
-    /** @param prUrl null keeps the task's existing pull request, if any */
+    /**
+     * A retried or followed-up task that failed before no longer carries that failure.
+     *
+     * @param prUrl null keeps the task's existing pull request, if any
+     */
     public static boolean completed(Tx tx, long id, String prUrl, Instant now) {
         return tx.update("""
-                        UPDATE task SET phase = ?, pr_url = COALESCE(?, pr_url), completed_at = ?, updated_at = ?
+                        UPDATE task SET phase = ?, pr_url = COALESCE(?, pr_url), failure_reason = NULL, failure_detail = NULL,
+                                        completed_at = ?, updated_at = ?
                         WHERE id = ? AND phase = ?""",
                 Phase.COMPLETED, prUrl, now, now, id, Phase.EXECUTING) == 1;
     }

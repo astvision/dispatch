@@ -76,6 +76,25 @@ class CheckCommandTest {
     }
 
     @Test
+    void projectDispatchWillCloneIsOnlyAWarning() throws IOException {
+        writeConfig(repos.repo("alm"), JAVA);
+        Files.writeString(config, Files.readString(config).replace("    path: '" + quoted(repos.repo("alm")) + "'\n",
+                "    repo: '" + quoted(repos.origin) + "'\n"));
+        try (java.util.stream.Stream<Path> files = Files.walk(repos.repo("alm"))) {
+            files.sorted(java.util.Comparator.reverseOrder()).map(Path::toFile).forEach(file -> {
+                file.setWritable(true);
+                file.delete();
+            });
+        }
+
+        check();
+
+        String output = terminal.output();
+        assertTrue(output.contains("WARN project alm: not cloned yet; Dispatch clones " + repos.origin), output);
+        assertFalse(output.contains("FAIL project alm"), output);
+    }
+
+    @Test
     void malformedTokenIsReportedWithoutShowingIt() throws IOException {
         writeConfig(repos.repo("alm"), JAVA);
         String malformed = "123456789" + ":AAH fake-token-with-a-space";

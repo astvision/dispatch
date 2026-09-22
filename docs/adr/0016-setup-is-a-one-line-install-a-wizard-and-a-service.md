@@ -18,3 +18,4 @@ We rejected three alternatives:
 
 - Java 25 or later is still needed on the machine, and JLine adds about 0.7 MB to the jar.
 - The service runs as the user who installed it, the same boundary as ADR 0014. On Linux it runs only while that user is logged in, unless `loginctl enable-linger` is on; `dispatch service status` says which.
+- ADR 0018 later changed `install.sh` and `install.ps1` to download a release jar instead of always building from source.

@@ -123,6 +123,8 @@ class SplitTest {
     @Test
     void splittingGivesEachPartItsOwnDraftAndPromptUnderTheOriginalMessage() {
         long draftId = draft(BOLD, MESSAGE, "telegram:100/7");
+        db.transaction(tx -> dispatch.store.Attachments.addToDraft(tx, draftId,
+                List.of(new dispatch.domain.Attachment("photo-id", "1-photo.jpg", 900L))));
         db.transaction(tx -> tasks.chooseProject(tx, BOLD, draftId, "crm"));
         proposed(draftId, "staging: fix login timeout", "staging: add make help");
 
@@ -149,6 +151,8 @@ class SplitTest {
         Map<String, String> task = row("SELECT * FROM task");
         assertEquals("telegram:100/7#2", task.get("origin_ref"));
         assertEquals("staging: add make help", task.get("description"));
+        assertEquals("1-photo.jpg", row("SELECT name FROM attachment WHERE task_id = ?", task.get("id")).get("name"),
+                "each part keeps the message's files");
         assertEquals(DraftChoice.ALREADY_SPLIT, db.transactionReturning(tx -> tasks.acceptSplit(tx, BOLD, draftId)));
         assertEquals(DraftChoice.ALREADY_SPLIT, db.transactionReturning(tx -> tasks.choosePriority(tx, BOLD, draftId, Priority.LOW)));
         assertEquals("2", row("SELECT count(*) AS n FROM draft WHERE parent_id = ?", draftId).get("n"));

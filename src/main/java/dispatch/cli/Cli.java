@@ -11,14 +11,15 @@ import java.util.Set;
 /** The dispatch command line: what was asked for, parsed without running anything. */
 public final class Cli {
 
-    private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group", "log-file");
+    private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group", "log-file",
+            "port");
     private static final List<String> SERVICE_ACTIONS = List.of("install", "start", "stop", "status", "uninstall");
-    private static final Set<String> SWITCHES = Set.of("force");
+    private static final Set<String> SWITCHES = Set.of("force", "no-browser");
 
     private Cli() {
     }
 
-    public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Help {
+    public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Ui, Help {
     }
 
     /** @param logFile where output goes instead of the terminal, as a background service runs it; null for the terminal */
@@ -30,6 +31,10 @@ public final class Cli {
     }
 
     public record Check(Path configFile) implements Invocation {
+    }
+
+    /** @param openBrowser false with --no-browser, e.g. over SSH where the link is opened on another computer */
+    public record Ui(Path configFile, int port, boolean openBrowser) implements Invocation {
     }
 
     /** @param force replaces an existing config and secrets file */
@@ -57,6 +62,8 @@ public final class Cli {
                   project add FOLDER [--name NAME] [--alias ALIAS] [--base BRANCH] [--model MODEL]
                            [--effort low|medium|high|xhigh|max] [--group GROUP]
                            add a git clone on this machine as a project
+                  ui [--port 7878] [--no-browser]
+                           manage Dispatch in your browser; on a server: ssh -L 7878:localhost:7878 SERVER
                   help     show this help
 
                 FILE defaults to %s
@@ -113,8 +120,25 @@ public final class Cli {
                 arguments.allow(0, Set.of("config"));
                 yield new Check(arguments.configFile(defaults));
             }
+            case "ui" -> {
+                arguments.allow(0, Set.of("config", "port", "no-browser"));
+                yield new Ui(arguments.configFile(defaults), port(arguments.values().getOrDefault("port", "7878")),
+                        !arguments.switches().contains("no-browser"));
+            }
             default -> throw new CliException("unknown command '" + command + "'");
         };
+    }
+
+    private static int port(String value) {
+        try {
+            int port = Integer.parseInt(value);
+            if (port >= 1 && port <= 65535) {
+                return port;
+            }
+        } catch (NumberFormatException e) {
+            // falls through to the message below
+        }
+        throw new CliException("--port needs a number from 1 to 65535, not " + value);
     }
 
     /** A command's positional arguments, --name value options and --switches. */

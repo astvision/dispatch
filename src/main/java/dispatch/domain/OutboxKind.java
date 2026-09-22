@@ -26,6 +26,12 @@ public enum OutboxKind {
     STATS,
     TASK_NOT_FOUND,
     CANCEL_REFUSED,
+    /** /retry queued the failed step again. */
+    RETRY_QUEUED,
+    RETRY_REFUSED,
+    /** A reply to a finished task's result runs as a follow-up (ADR 0006). */
+    FOLLOW_UP_QUEUED,
+    FOLLOW_UP_REFUSED,
     NOT_ALLOWED,
     UNKNOWN_PROJECT,
     PROJECT_UNAVAILABLE,
@@ -33,6 +39,8 @@ public enum OutboxKind {
     PRIVATE_ONLY,
     NO_PROJECTS,
     HELP,
+    /** The projects a chat can give tasks for, and why any of them cannot take one now. */
+    PROJECTS,
     /** To an admin: someone asks to use the bot, with a button per group (ADR 0015). */
     JOIN_REQUEST,
     /** To the person asking: their request was sent to the admins. */

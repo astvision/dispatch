@@ -3,7 +3,7 @@
 Dispatch takes development tasks that members write to its Telegram bot and has Claude Code plan them in a git worktree. Once the requester approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance and bot can serve several groups, each with its own members and projects.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M3e.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Follow-ups and `/retry` come next.
+- Status: **M3g.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Reply to a result to follow up on it, `/retry` a failed step, and send screenshots or files with a task for the agent to read. `CodexAgent` comes next.
 
 ## Security
 
@@ -20,13 +20,21 @@ Requires JDK 25+ and git. The Maven wrapper downloads Maven itself.
 ./mvnw verify                       # tests, then target/dispatch-0.1.0.jar
 ```
 
+With the web UI (needs Node):
+
+```sh
+(cd ui && npm ci && npm run build) && ./mvnw -Pui verify
+```
+
 ## Get started (macOS, Windows, Linux)
 
 Dispatch runs on your own machine, with a bot for just you or one your team shares (ADR 0014–0016). It runs as you: the agent can read what you can, and whoever controls the bot's admin accounts or its token can make it act as you.
 
 **You need** Java 25 or later, git, Claude Code (run `claude` once to log in), and the GitHub CLI logged in with `gh auth login` for pull requests.
 
-**1. Install** with one command. It builds Dispatch and puts `dispatch` on your PATH:
+**1. Install** with one command. It downloads the latest release and puts `dispatch` on your PATH, and builds Dispatch
+from source instead when run from a checkout, when `DISPATCH_FROM_SOURCE=1` is set, when `DISPATCH_REF` names a branch
+rather than `main` or a `v*` tag, or when the download fails:
 
 ```sh
 # macOS, Linux
@@ -43,12 +51,15 @@ gh api -H "Accept: application/vnd.github.raw" repos/astvision/dispatch/contents
 ```
 
 **2. Set up** with `dispatch init`. Create a bot with @BotFather (`/newbot`) first. The wizard uses the arrow keys and asks, step by step:
+
 1. **Who will use this bot:** just you, or your team.
 2. **The bot token:** typed masked, then checked with Telegram.
-3. **People:** you open the bot, press Start and confirm your name. For a team, teammates press Start while it waits, and when you add the bot to your team group it finds that group for its announcements.
+3. **People:** you open the bot, press Start and confirm your name. For a team, teammates press Start while it waits, and when you add the bot to your team group it finds that group for its announcements. The bot answers each Start in Telegram. If nothing arrives, the wizard says what to check. For example, Telegram may not deliver your messages while the bot is connected under Settings > Chat Automation.
 4. **Claude Code:** found on your PATH, or given.
 5. **Projects:** the folders of your git clones, each with the branch tasks start from and, from a list, the model and effort.
 6. **Commits:** the author of Dispatch's commits.
+
+Or run `dispatch ui` and set it up in your browser: the same steps, with a QR code for the bot, buttons to confirm people, and a folder browser for your clones. On a server, open the page through `ssh -L` (see [Manage it in the browser](#manage-it-in-the-browser)).
 
 It shows a summary and writes nothing until you confirm. Then it offers to keep Dispatch running in the background, also after a restart.
 
@@ -64,6 +75,7 @@ dispatch check                                   # config, bot token, claude, pr
 dispatch service status                          # also: start, stop, install, uninstall
 dispatch project add ~/work/crm --effort high    # add another clone, then: dispatch service stop && dispatch service start
 dispatch run                                     # run in this terminal instead of the background
+dispatch ui                                      # the overview in your browser
 ```
 
 The service is a systemd user service on Linux, a launchd agent on macOS and a Task Scheduler task on Windows. It starts at login and restarts after a failure. On Linux, it keeps running after you log out only once lingering is on; `dispatch service status` says so.
@@ -84,6 +96,22 @@ Every planning and execution run reads the project's `CLAUDE.md` (or `.claude/CL
 - conventions a change must follow, and what not to touch
 
 `dispatch check` names the projects that have none.
+
+### Manage it in the browser
+
+`dispatch ui` shows Dispatch's version and files, whether the background service runs, and everything `dispatch check`
+finds, with what to do about it. It prints a link and opens it in your browser; the link works once, and Ctrl+C stops the
+page. Without a config, the page sets Dispatch up, step by step, as `dispatch init` does. Changing projects, people and settings in the browser comes next.
+
+On a server, from your own computer:
+
+```sh
+ssh -L 7878:localhost:7878 you@server    # then, on the server:
+dispatch ui --no-browser                 # and open the link it prints on your computer
+```
+
+The tunnel's local and remote ports must match (as above): the page only accepts requests for its own port. The page
+listens only on the machine it runs on. Anyone with its link can act as you, like a shell: see SECURITY.md.
 
 ## Set up a team instance with systemd (Linux server)
 
@@ -136,21 +164,25 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 | You | Dispatch |
 |---|---|
 | write the task as a message (or forward one) | Asks with buttons for the project (skipped if you have only one) and the priority 🔴 🟡 🟢, then queues the task |
+| send a photo or file with the task (as its caption) | The agent gets it to read. Files over 20 MB are skipped, and the prompt says so |
 | `/task alm Fix the login timeout` | The same, with the project already named |
 | **✂️ Салгах** on that prompt | Haiku lists the separate tasks in your message (about $0.015, a few seconds). **✂️ N даалгавар болгох** gives each its own prompt; **Нэг даалгавар** keeps the message as one task |
 | **Approve** on the plan | The agent implements it; Dispatch commits, pushes `dispatch/N` and sends you the draft PR link and summary |
 | reply to the plan, or write in the task's topic | A correction: the agent revises the plan in the same session |
 | **Reject** on the plan | Closes the task |
+| reply to the result, or write in a finished task's topic | A follow-up: the agent continues in the same session, and one more commit goes to the same pull request |
+| `/retry N` | Repeats task N's failed step: a failed plan is planned again, a failed execution continues, a failed delivery is only delivered again |
 | `/status` | What is running (with the agent's latest action), queued and awaiting approval in your groups, with buttons to change your tasks' priority |
 | `/history`, `/history N` | The last 10 finished tasks with who gave them and when; task N's timeline |
 | `/stats` | Your numbers, each group's and per person, for 7 days, this month or all time |
 | `/cancel N` | Cancels task N |
+| `/projects` | Your projects with their base branch, and why any cannot take tasks now |
 
 Each plan and result ends with the model that answered, the cost and the duration. A ⚠️ line appears when the model isn't the one the config asks for.
 
-**In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot` and `/stats@bot` there cover that group's projects. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
+**In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot`, `/stats@bot` and `/projects@bot` there cover that group's projects. Replying to an outcome line there is a follow-up too. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
 
-Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject or reprioritize their task; any member of the project's group can cancel it. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
+Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject or reprioritize their task; any member of the project's group can cancel, retry or follow up on it. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
 
 ## Run from a checkout
 
@@ -169,13 +201,15 @@ Locally, `claude` uses your own login. Your plugins and MCP servers are not load
 
   ```sql
   SELECT id, phase, project, title, pr_url, failure_reason FROM task ORDER BY id DESC LIMIT 20;
-  SELECT task_id, seq, kind, status, cost_usd, turns, error_detail FROM run ORDER BY task_id DESC LIMIT 20;
+  SELECT task_id, seq, kind, cause, status, cost_usd, turns, error_detail FROM run ORDER BY task_id DESC LIMIT 20;
   SELECT id, kind, status, attempts, last_error FROM outbox WHERE status <> 'SENT';
   SELECT * FROM task_event WHERE task_id = 42 ORDER BY id;
   ```
 - **Config check:** `dispatch check --config <file>` names each problem and what to do about it.
 - **Raw agent output:** `/var/lib/dispatch/backend/runs/<task>/<run>.jsonl` and `.stderr`; splits under `splits/<draft>-<epoch millis>.jsonl`. Grep the log for `event=split.` to see what each split cost.
 - **Restarts:** stopping or restarting interrupts active runs. They fail as `INTERRUPTED` and the group is told.
-- **Worktrees:** they accumulate under `worktrees/` until the M3 sweep. Remove finished ones with `git -C repos/<project> worktree remove --force worktrees/<id>`; a task whose worktree is gone can no longer be corrected or executed.
-- **Delivery:** commits are made without hooks or signing, as `delivery.authorName`. A failed push or PR creation fails the task as `DELIVERY`; the commit stays in the worktree.
+- **Worktrees:** every hour, worktrees of tasks idle for `worktrees.idleDays` (default 7) are removed: a completed or failed task's only when it is clean and pushed (otherwise `event=sweeper.kept`), a rejected or cancelled task's anyway. The `dispatch/<id>` branch stays, and a later follow-up or retry recreates the worktree from it.
+- **Clones:** a project with a `repo` and no clone is cloned into `repos/<name>` when Dispatch starts; until then `/projects` shows it as cloning, and a failed clone as the git error (`event=project.clone_failed`).
+- **Attachments:** downloaded into `attachments/<task>/`, outside the worktree, so they are never delivered.
+- **Delivery:** commits are made without hooks or signing, as `delivery.authorName`. A failed push or PR creation fails the task as `DELIVERY`; the work stays in the worktree and `/retry` delivers it without the agent.
 - **Bot texts:** `src/main/resources/messages_mn.properties`.

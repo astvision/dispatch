@@ -2,7 +2,7 @@
 # Stands in for the claude CLI in tests: records how it was called, then behaves as the prompt asks.
 # SCENARIO:<name> applies to any run. Otherwise a split replays the recorded three topics (one-topic: a single topic), a
 # planning run replays the recorded plan, and an execution run (auto mode) edits README.md and replays the recorded
-# execution unless an exec scenario (exec-fail, nochange, leaky-summary) says otherwise; those names never match the
+# execution unless an exec scenario (exec-fail, exec-fail-once, nochange, leaky-summary) says otherwise; those names never match the
 # general scenarios, so such a task still gets its plan first.
 printf '%s\n' "$@" > fake-claude.args
 env > fake-claude.env
@@ -64,6 +64,16 @@ case "$prompt" in
       exit 0
     fi
     case "$prompt" in
+      *SCENARIO:exec-fail-once*)
+        # Fails the building session's first run only, so a retry that resumes it succeeds.
+        case " $* " in
+          *" --resume "*) ;;
+          *)
+            echo "fatal: model overloaded" >&2
+            exit 1
+            ;;
+        esac
+        ;;
       *SCENARIO:exec-fail*)
         echo "fatal: model overloaded" >&2
         exit 1

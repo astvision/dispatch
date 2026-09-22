@@ -116,7 +116,7 @@ class RecoveryTest {
         return db.transactionReturning(tx -> {
             long id = Tasks.insert(tx, new Tasks.NewTask(project, "t", "t", new Requester("telegram:1", "Bold"),
                     "telegram:-1/" + UUID.randomUUID(), "telegram:-1", UUID.randomUUID(), "main", Priority.NORMAL), Phase.PLANNING, clock.instant());
-            Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, "t", new Requester("telegram:1", "Bold")), clock.instant());
+            Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, dispatch.domain.RunCause.TASK, "t", new Requester("telegram:1", "Bold")), clock.instant());
             return id;
         });
     }

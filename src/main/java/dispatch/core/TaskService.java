@@ -5,18 +5,22 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.config.Config;
+import dispatch.domain.Attachment;
 import dispatch.domain.Draft;
 import dispatch.domain.DraftStatus;
+import dispatch.domain.FailureReason;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Run;
+import dispatch.domain.RunCause;
 import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
 import dispatch.domain.SplitState;
 import dispatch.domain.Task;
+import dispatch.store.Attachments;
 import dispatch.store.Drafts;
 import dispatch.store.Events;
 import dispatch.store.Outbox;
@@ -88,6 +92,11 @@ public final class TaskService {
      * @param originRef  the message in the member's private chat
      */
     public DraftResult draft(Tx tx, Requester who, String projectKey, String text, String originRef) {
+        return draft(tx, who, projectKey, text, originRef, List.of());
+    }
+
+    /** @param attachments files sent with the message, which the task's agent gets to read */
+    public DraftResult draft(Tx tx, Requester who, String projectKey, String text, String originRef, List<Attachment> attachments) {
         Instant now = clock.instant();
         String chatRef = who.ref();
         if (Drafts.existsWithOrigin(tx, originRef)) {
@@ -111,8 +120,10 @@ public final class TaskService {
         String named = projectKey == null ? null : projects.find(projectKey).map(Config.Project::name).orElse(null);
         String project = preselected(offered, named);
         long id = Drafts.insert(tx, new Drafts.NewDraft(who, chatRef, originRef, description, project, null, null), now);
+        Attachments.addToDraft(tx, id, attachments);
         enqueue(tx, null, OutboxKind.DRAFT_PROMPT, chatRef, originRef, draftPayload(tx, id).orElseThrow(), now);
-        tx.afterCommit(() -> Log.info("draft.created", "draft", id, "requester", who.ref(), "project", project));
+        tx.afterCommit(() -> Log.info("draft.created", "draft", id, "requester", who.ref(), "project", project,
+                "attachments", attachments.size()));
         return DraftResult.DRAFTED;
     }
 
@@ -148,6 +159,7 @@ public final class TaskService {
         }
         long taskId = insertTask(tx, who, project.get(), draft.description(), priority, draft.originRef(), now);
         Drafts.created(tx, draftId, taskId, now);
+        Attachments.giveToTask(tx, draftId, taskId);
         return DraftChoice.CREATED;
     }
 
@@ -166,6 +178,8 @@ public final class TaskService {
             payload.put("priority", draft.taskId() == null ? null
                     : Tasks.find(tx, draft.taskId()).map(task -> task.priority().name()).orElse(null));
             payload.put("split", draft.splitState() == null ? null : draft.splitState().name());
+            ArrayNode skipped = payload.putArray("skippedFiles");
+            Attachments.forDraft(tx, draftId).stream().filter(Attachment::tooLarge).forEach(file -> skipped.add(file.name()));
             payload.put("splittable", draft.status() == DraftStatus.OPEN && draft.parentId() == null
                     && (draft.splitState() == null || draft.splitState() == SplitState.FAILED));
             ArrayNode topics = payload.putArray("topics");
@@ -253,6 +267,7 @@ public final class TaskService {
             String originRef = whole.originRef() + "#" + part;
             long id = Drafts.insert(tx, new Drafts.NewDraft(who, whole.chatRef(), originRef, whole.topics().get(part - 1), project,
                     draftId, part), now);
+            Attachments.copyToDraft(tx, draftId, id);
             enqueue(tx, null, OutboxKind.DRAFT_PROMPT, whole.chatRef(), originRef, draftPayload(tx, id).orElseThrow(), now);
         }
         tx.afterCommit(() -> Log.info("split.accepted", "draft", draftId, "parts", whole.topics().size()));
@@ -335,7 +350,7 @@ public final class TaskService {
         // Without a group chat the task belongs to the requester's private chat, where nothing needs announcing (ADR 0014).
         long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, groupChat.orElse(who.ref()),
                 UUID.randomUUID(), project.baseBranch(), priority), Phase.PLANNING, now);
-        Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, description, who), now);
+        Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, RunCause.TASK, description, who), now);
         Events.record(tx, id, null, who.ref(), null, Phase.PLANNING, "created", now);
         if (taskTopics) {
             enqueue(tx, id, OutboxKind.TOPIC_CREATE, who.ref(), null, Json.object().put("taskId", id), now);
@@ -416,7 +431,7 @@ public final class TaskService {
             return ApproveResult.WRONG_STATE;
         }
         // The run carries the plan it implements, so what was approved stays on record.
-        Runs.insert(tx, new Runs.NewRun(taskId, Runs.nextSeq(tx, taskId), RunKind.EXECUTE, task.planJson(), who), now);
+        Runs.insert(tx, new Runs.NewRun(taskId, Runs.nextSeq(tx, taskId), RunKind.EXECUTE, RunCause.APPROVAL, task.planJson(), who), now);
         Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.EXECUTING, "approved plan " + planSeq, now);
         Outbox.enqueueForRequester(tx, task, OutboxKind.EXECUTION_QUEUED,
                 Json.object().put("taskId", taskId).put("by", who.name()), now);
@@ -460,7 +475,7 @@ public final class TaskService {
             return CorrectResult.REFUSED;
         }
         int seq = Runs.nextSeq(tx, taskId);
-        Runs.insert(tx, new Runs.NewRun(taskId, seq, RunKind.PLAN, text.strip(), who), now);
+        Runs.insert(tx, new Runs.NewRun(taskId, seq, RunKind.PLAN, RunCause.CORRECTION, text.strip(), who), now);
         Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.PLANNING, "correction", now);
         enqueue(tx, taskId, OutboxKind.CORRECTION_QUEUED, chatRef, originRef,
                 Json.object().put("taskId", taskId).put("by", who.name()), now);
@@ -552,8 +567,7 @@ public final class TaskService {
             notAllowed(tx, who, originRef, chatRef, now);
             return CancelResult.NOT_ALLOWED;
         }
-        Optional<Task> found = Tasks.find(tx, taskId).filter(task ->
-                task.requester().ref().equals(who.ref()) || groups.isMemberOfProjectGroup(who.ref(), task.project()));
+        Optional<Task> found = visibleTask(tx, who, taskId);
         if (found.isEmpty()) {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
             return CancelResult.NOT_FOUND;
@@ -575,6 +589,103 @@ public final class TaskService {
         tx.afterCommit(() -> activeRuns.stop(taskId, ActiveRuns.StopReason.CANCELLED));
         logTransition(tx, taskId, task.phase(), Phase.CANCELLED, who.ref());
         return CancelResult.CANCELLED;
+    }
+
+    /**
+     * Repeats just the failed step of a failed task (ADR 0008): a failed plan is planned again, a failed execution continues
+     * its building session, and a failed delivery is delivered again without the agent. Any member of the task's group may
+     * retry it, like cancelling; another group's task is answered as not found.
+     */
+    public RetryResult retry(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
+        Instant now = clock.instant();
+        if (!groups.isMember(who.ref())) {
+            notAllowed(tx, who, originRef, chatRef, now);
+            return RetryResult.NOT_ALLOWED;
+        }
+        Optional<Task> found = visibleTask(tx, who, taskId);
+        if (found.isEmpty()) {
+            enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
+            return RetryResult.NOT_FOUND;
+        }
+        Task task = found.get();
+        Optional<Run> failed = Runs.latest(tx, taskId).filter(run -> run.status() == RunStatus.FAILED);
+        if (task.phase() != Phase.FAILED || failed.isEmpty()) {
+            enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef,
+                    Json.object().put("taskId", taskId).put("phase", task.phase().name()), now);
+            return RetryResult.REFUSED;
+        }
+        Run step = failed.get();
+        RunKind kind;
+        String instruction;
+        if (step.kind() == RunKind.PLAN) {
+            kind = RunKind.PLAN;
+            instruction = step.instruction();
+        } else if (step.kind() == RunKind.DELIVER || step.failureReason() == FailureReason.DELIVERY) {
+            // The agent's work is done and waits in the worktree; only its summary is needed, as the commit message.
+            kind = RunKind.DELIVER;
+            instruction = step.kind() == RunKind.DELIVER ? step.instruction() : Runs.output(tx, taskId, step.seq()).orElse("");
+        } else {
+            kind = RunKind.EXECUTE;
+            instruction = step.instruction();
+        }
+        Phase to = kind == RunKind.PLAN ? Phase.PLANNING : Phase.EXECUTING;
+        if (!Tasks.changePhase(tx, taskId, Phase.FAILED, to, now)) {
+            enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef,
+                    Json.object().put("taskId", taskId).put("phase", task.phase().name()), now);
+            return RetryResult.REFUSED;
+        }
+        int seq = Runs.nextSeq(tx, taskId);
+        Runs.insert(tx, new Runs.NewRun(taskId, seq, kind, RunCause.RETRY, instruction, who), now);
+        Events.record(tx, taskId, seq, who.ref(), Phase.FAILED, to, "retry of run " + step.seq(), now);
+        enqueue(tx, taskId, OutboxKind.RETRY_QUEUED, chatRef, originRef,
+                Json.object().put("taskId", taskId).put("by", who.name()).put("kind", kind.name()), now);
+        tx.afterCommit(wakeScheduler);
+        logTransition(tx, taskId, Phase.FAILED, to, who.ref());
+        return RetryResult.RETRIED;
+    }
+
+    /**
+     * A member's reply to a finished task's result: it runs at once in the task's building session and branch, without a
+     * new plan, because the reply is itself the instruction (ADR 0006). Only a task that got as far as execution can be
+     * followed up; one that is still active is refused, as its current run would not see the reply.
+     *
+     * @param originRef channel reference of the reply, which the answer goes under
+     */
+    public FollowUpResult followUp(Tx tx, Requester who, long taskId, String text, String originRef, String chatRef) {
+        Instant now = clock.instant();
+        if (!groups.isMember(who.ref())) {
+            notAllowed(tx, who, originRef, chatRef, now);
+            return FollowUpResult.NOT_ALLOWED;
+        }
+        Optional<Task> found = visibleTask(tx, who, taskId);
+        if (found.isEmpty()) {
+            enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
+            return FollowUpResult.NOT_FOUND;
+        }
+        if (text == null || text.isBlank()) {
+            return FollowUpResult.EMPTY;
+        }
+        Task task = found.get();
+        boolean finished = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED;
+        boolean executed = Runs.agentStartedBefore(tx, taskId, RunKind.EXECUTE, Integer.MAX_VALUE);
+        if (!finished || !executed || !Tasks.changePhase(tx, taskId, task.phase(), Phase.EXECUTING, now)) {
+            enqueue(tx, taskId, OutboxKind.FOLLOW_UP_REFUSED, chatRef, originRef, Json.object().put("taskId", taskId)
+                    .put("reason", finished && !executed ? "notExecuted" : "phase").put("phase", task.phase().name()), now);
+            return FollowUpResult.REFUSED;
+        }
+        int seq = Runs.nextSeq(tx, taskId);
+        Runs.insert(tx, new Runs.NewRun(taskId, seq, RunKind.EXECUTE, RunCause.FOLLOW_UP, text.strip(), who), now);
+        Events.record(tx, taskId, seq, who.ref(), task.phase(), Phase.EXECUTING, "follow-up", now);
+        enqueue(tx, taskId, OutboxKind.FOLLOW_UP_QUEUED, chatRef, originRef, Json.object().put("taskId", taskId).put("by", who.name()), now);
+        tx.afterCommit(wakeScheduler);
+        logTransition(tx, taskId, task.phase(), Phase.EXECUTING, who.ref());
+        return FollowUpResult.QUEUED;
+    }
+
+    /** The member's own task, or one of their groups' tasks; empty for anything else, so its existence does not leak. */
+    private Optional<Task> visibleTask(Tx tx, Requester who, long taskId) {
+        return Tasks.find(tx, taskId).filter(task ->
+                task.requester().ref().equals(who.ref()) || groups.isMemberOfProjectGroup(who.ref(), task.project()));
     }
 
     /**
@@ -654,9 +765,11 @@ public final class TaskService {
         ArrayNode runs = payload.putArray("runs");
         BigDecimal total = null;
         for (Run run : Runs.forTask(tx, taskId)) {
-            // Only a correction's instruction is worth showing: the first plan's is the task, an execution's is the plan.
-            String instruction = run.kind() == RunKind.PLAN && run.seq() > 1 ? truncate(run.instruction(), INSTRUCTION_LENGTH) : null;
-            runs.addObject().put("seq", run.seq()).put("kind", run.kind().name()).put("status", run.status().name())
+            // A reply's text is worth showing; the first plan's instruction is the task, an execution's the plan.
+            boolean reply = run.cause() == RunCause.CORRECTION || run.cause() == RunCause.FOLLOW_UP;
+            String instruction = reply ? truncate(run.instruction(), INSTRUCTION_LENGTH) : null;
+            runs.addObject().put("seq", run.seq()).put("kind", run.kind().name()).put("cause", name(run.cause()))
+                    .put("status", run.status().name())
                     .put("requestedBy", run.requestedByName()).put("instruction", instruction).put("queuedAt", text(run.queuedAt()))
                     .put("startedAt", text(run.startedAt())).put("finishedAt", text(run.finishedAt()))
                     .put("costUsd", run.costUsd() == null ? null : run.costUsd().toPlainString())

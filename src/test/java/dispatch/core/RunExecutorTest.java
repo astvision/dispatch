@@ -48,6 +48,7 @@ import org.junit.jupiter.api.io.TempDir;
 class RunExecutorTest {
 
     private static final Requester BOLD = new Requester("telegram:100", "Bold");
+    private static final Requester ALI = new Requester("telegram:200", "Ali");
     private static final String CHAT = "telegram:-100";
 
     @TempDir
@@ -349,6 +350,239 @@ class RunExecutorTest {
         assertFalse(Files.exists(repos.stateDir.resolve("worktrees/" + id)));
     }
 
+    @Test
+    void retryOfAFailedExecutionContinuesTheBuildingSessionAndSaysWhyTheLastRunStopped() throws Exception {
+        long id = queue("SCENARIO:exec-fail-once Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        assertFailed(id, "AGENT", "fatal: model overloaded");
+
+        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, ALI, id, CHAT + "/300", CHAT)));
+        runNext();
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("COMPLETED", task.get("phase"));
+        assertEquals(FakeGh.PR_URL, task.get("pr_url"));
+        assertNull(task.get("failure_reason"), "the failure is over once the retry delivered");
+        Map<String, String> retry = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", id);
+        assertEquals("EXECUTE", retry.get("kind"));
+        assertEquals("RETRY", retry.get("cause"));
+        assertEquals("Ali", retry.get("requested_by_name"));
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        List<String> args = Files.readAllLines(worktree.resolve("fake-claude.args"));
+        assertEquals(task.get("build_session_id"), valueAfter(args, "--resume"));
+        String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
+        assertTrue(prompt.contains("stopped before it finished: AGENT (") && prompt.contains("fatal: model overloaded")
+                && prompt.contains("The user reports that login"), prompt);
+        String body = origin("log", "-1", "--format=%b", "refs/heads/dispatch/" + id);
+        assertTrue(body.endsWith("Requested-by: Bold\nApproved-by: Bold"), "the approver stays the one who approved: " + body);
+    }
+
+    @Test
+    void retryAfterADeliveryFailureDeliversTheSameWorkAgainWithoutTheAgent() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
+        runNext();
+        assertFailed(id, "DELIVERY", "git push");
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", repos.origin.toString());
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        Files.delete(worktree.resolve("fake-claude.prompt"));
+
+        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
+        runNext();
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("COMPLETED", task.get("phase"));
+        assertEquals(FakeGh.PR_URL, task.get("pr_url"));
+        Map<String, String> deliver = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", id);
+        assertEquals("DELIVER", deliver.get("kind"));
+        assertEquals("SUCCEEDED", deliver.get("status"));
+        assertNull(deliver.get("cost_usd"));
+        assertFalse(Files.exists(worktree.resolve("fake-claude.prompt")), "a delivery retry never starts the agent");
+        String branch = "refs/heads/dispatch/" + id;
+        assertEquals("1", origin("rev-list", "--count", task.get("base_sha") + ".." + branch), "the commit made before the push failed is not delivered twice");
+        assertTrue(origin("log", "-1", "--format=%b", branch).contains("AUTH_TIMEOUT_SECONDS"), "the agent's summary is the commit body");
+        JsonNode completed = Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED'").get("payload"));
+        assertEquals(1, completed.get("filesChanged").asInt());
+    }
+
+    @Test
+    void retryOfAPlanThatFailedBeforeItsAgentStartedStartsThePlanningSession() throws Exception {
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
+        long id = queue("Fix the login timeout");
+        runNext();
+        assertFailed(id, "SETUP", "git fetch");
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", repos.origin.toString());
+
+        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
+        runNext();
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("AWAITING_APPROVAL", task.get("phase"));
+        List<String> args = Files.readAllLines(repos.stateDir.resolve("worktrees/" + id + "/fake-claude.args"));
+        assertEquals(task.get("session_id"), valueAfter(args, "--session-id"), "no earlier run started the session to resume");
+        assertFalse(args.contains("--resume"), args.toString());
+    }
+
+    @Test
+    void followUpContinuesTheBuildingSessionAndAddsACommitToTheSamePullRequest() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        String baseSha = row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha");
+
+        assertEquals(FollowUpResult.QUEUED, db.transactionReturning(tx ->
+                tasks.followUp(tx, ALI, id, "Also log the timeout value", CHAT + "/400", CHAT)));
+        runNext();
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("COMPLETED", task.get("phase"));
+        assertEquals(FakeGh.PR_URL, task.get("pr_url"));
+        Map<String, String> followUp = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", id);
+        assertEquals("FOLLOW_UP", followUp.get("cause"));
+        assertEquals("SUCCEEDED", followUp.get("status"));
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        assertEquals(task.get("build_session_id"), valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--resume"));
+        String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
+        assertTrue(prompt.contains("Ali replied") && prompt.contains("Also log the timeout value"), prompt);
+        assertEquals("2", origin("rev-list", "--count", baseSha + "..refs/heads/dispatch/" + id), "one commit per run, on the same branch");
+        String ghCalls = Files.readString(worktree.resolve("fake-gh.args"));
+        assertEquals(1, ghCalls.split("pr\ncreate", -1).length - 1, "the pull request is opened once: " + ghCalls);
+    }
+
+    @Test
+    void followUpNeedsATaskThatReachedExecution() throws Exception {
+        long id = queue("SCENARIO:fail");
+        runNext();
+        assertFailed(id, "AGENT", "fatal");
+
+        assertEquals(FollowUpResult.REFUSED, db.transactionReturning(tx -> tasks.followUp(tx, BOLD, id, "and this", CHAT + "/400", CHAT)));
+
+        assertEquals("FAILED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("notExecuted", Json.read(row("SELECT payload FROM outbox WHERE kind = 'FOLLOW_UP_REFUSED'").get("payload"))
+                .get("reason").asText());
+    }
+
+    @Test
+    void sweepRemovesAnIdleDeliveredWorktreeAndAFollowUpRecreatesIt() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+
+        assertEquals(1, sweeper.sweep());
+
+        assertFalse(Files.exists(worktree));
+        assertEquals("dispatch/" + id, GitFixture.sh(repos.repo("alm"), "git", "branch", "--list", "dispatch/" + id,
+                "--format=%(refname:short)"), "the branch stays for a later run");
+        db.transaction(tx -> tasks.followUp(tx, BOLD, id, "Also log the timeout value", CHAT + "/400", CHAT));
+        runNext();
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertTrue(Files.isDirectory(worktree));
+        String baseSha = row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha");
+        assertEquals("2", origin("rev-list", "--count", baseSha + "..refs/heads/dispatch/" + id));
+    }
+
+    @Test
+    void sweepNeverTouchesATaskThatIsActiveAgain() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        db.transaction(tx -> tasks.followUp(tx, BOLD, id, "Also log the timeout value", CHAT + "/400", CHAT));
+        db.transaction(tx -> tx.update("UPDATE task SET updated_at = '2026-09-17T10:00:00.000Z' WHERE id = ?", id));
+
+        assertEquals(0, sweeper.sweep());
+
+        assertTrue(Files.isDirectory(repos.stateDir.resolve("worktrees/" + id)));
+    }
+
+    @Test
+    void sweepKeepsAFailedTasksWorktreeWhileItHoldsUnpushedWork() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
+        runNext();
+        assertFailed(id, "DELIVERY", "git push");
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", repos.origin.toString());
+
+        assertEquals(0, sweeper.sweep());
+
+        assertTrue(Files.isDirectory(repos.stateDir.resolve("worktrees/" + id)), "its commit never reached origin");
+    }
+
+    @Test
+    void sweepDiscardsARejectedTasksWorktreeEvenWithChangesButNeverARecentOne() throws Exception {
+        long rejected = queue("Fix the login timeout");
+        runNext();
+        db.transaction(tx -> tasks.reject(tx, BOLD, rejected, 1));
+        Files.writeString(repos.stateDir.resolve("worktrees/" + rejected + "/scratch.txt"), "notes");
+        long recent = queue("Rename the report");
+        runNext();
+        db.transaction(tx -> tasks.reject(tx, BOLD, recent, 1));
+        db.transaction(tx -> tx.update("UPDATE task SET updated_at = '2026-09-24T10:00:00.000Z' WHERE id = ?", recent));
+
+        assertEquals(1, sweeper.sweep());
+
+        assertFalse(Files.exists(repos.stateDir.resolve("worktrees/" + rejected)));
+        assertTrue(Files.isDirectory(repos.stateDir.resolve("worktrees/" + recent)), "idle for a day only");
+    }
+
+    @Test
+    void attachmentsAreDownloadedOutsideTheWorktreeAndGivenToTheAgent() throws Exception {
+        sentFiles.put("photo-id", new byte[] {1, 2, 3});
+        long id = queue("Fix the login timeout, see the screenshot");
+        attach(id, "photo-id", "1-photo.jpg", 3L);
+        attach(id, "dump-id", "2-dump.zip", 30L * 1024 * 1024);
+
+        runNext();
+
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        Path attachments = repos.stateDir.resolve("attachments/" + id);
+        assertEquals(3, Files.size(attachments.resolve("1-photo.jpg")));
+        assertFalse(Files.exists(attachments.resolve("2-dump.zip")), "over 20 MB: never downloaded");
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        assertEquals(attachments.toString(), valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--add-dir"));
+        String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
+        assertTrue(prompt.contains("1-photo.jpg") && prompt.contains("Not available, over 20 MB: 2-dump.zip"), prompt);
+
+        sentFiles.clear();
+        approve(id);
+        runNext();
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"), "downloaded once, then reused");
+        assertEquals("README.md", origin("diff", "--name-only", row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha"),
+                "refs/heads/dispatch/" + id), "attachments are never delivered");
+    }
+
+    @Test
+    void attachmentThatCannotBeDownloadedFailsTheRunBeforeItsAgent() throws Exception {
+        long id = queue("Fix the login timeout, see the screenshot");
+        attach(id, "gone-id", "1-photo.jpg", 3L);
+
+        runNext();
+
+        assertFailed(id, "SETUP", "cannot download 1-photo.jpg: file gone-id is gone");
+        assertFalse(Files.exists(repos.stateDir.resolve("worktrees/" + id + "/fake-claude.args")));
+    }
+
+    @Test
+    void onlyAFailedTaskCanBeRetried() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+
+        assertEquals(RetryResult.REFUSED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
+
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("AWAITING_APPROVAL", Json.read(row("SELECT payload FROM outbox WHERE kind = 'RETRY_REFUSED'").get("payload"))
+                .get("phase").asText());
+    }
+
     private long queue(String description) throws IOException {
         Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, "high", copyFiles, null,
                 new Config.PhaseSettings("opus", null), new Config.PhaseSettings(null, "low"));
@@ -357,6 +591,8 @@ class RunExecutorTest {
         Delivery delivery = new Delivery(git, new Gh(FakeGh.install(dir.resolve("gh-" + System.nanoTime())).toString(), null,
                 Duration.ofSeconds(30)), "Dispatch (backend)", "dispatch-backend@example.com");
         Projects projects = new Projects(List.of(alm), workspaces::unavailableReason);
+        sweeper = new Sweeper(db, projects, workspaces, java.time.Clock.fixed(Instant.parse("2026-09-25T10:00:00Z"), java.time.ZoneOffset.UTC),
+                Duration.ofDays(7), Duration.ofHours(1));
         TestClock clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Groups groups = new Groups(List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm"))));
@@ -365,12 +601,25 @@ class RunExecutorTest {
         executorUnderTest = new RunExecutor(db, projects, workspaces, delivery, Map.of("claude-code", agent()), transitions,
                 activeRuns, project -> new Config.RunLimits(planTimeout, new BigDecimal("2")),
                 project -> new Config.RunLimits(Duration.ofSeconds(30), new BigDecimal("10")), Redactor.patternsOnly(),
+                (fileRef, target) -> {
+                    byte[] content = sentFiles.get(fileRef);
+                    if (content == null) {
+                        throw new IllegalStateException("file " + fileRef + " is gone");
+                    }
+                    try {
+                        Files.write(target, content);
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                },
                 schedulerWakes::incrementAndGet);
         db.transaction(tx -> tasks.create(tx, BOLD, "alm", description, Priority.NORMAL, BOLD.ref() + "/" + System.nanoTime()));
         return Long.parseLong(row("SELECT max(id) AS id FROM task").get("id"));
     }
 
     private RunExecutor executorUnderTest;
+    private Sweeper sweeper;
+    private final Map<String, byte[]> sentFiles = new java.util.HashMap<>();
 
     private ClaudeCodeAgent agent() {
         try {
@@ -392,6 +641,11 @@ class RunExecutorTest {
 
     private ClaimedRun claim() {
         return db.transactionReturning(tx -> Runs.claimNext(tx, 5, Instant.parse("2026-09-17T10:00:00Z"))).orElseThrow();
+    }
+
+    private void attach(long taskId, String fileRef, String name, Long size) {
+        db.transaction(tx -> tx.insert("INSERT INTO attachment (task_id, file_ref, name, size) VALUES (?, ?, ?, ?)", taskId, fileRef,
+                name, size));
     }
 
     private void approve(long id) {

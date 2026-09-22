@@ -16,6 +16,7 @@ public record Config(
         Path stateDir,
         Telegram telegram,
         Scheduler scheduler,
+        Worktrees worktrees,
         Limits limits,
         Map<String, Agent> agents,
         List<Project> projects,
@@ -57,6 +58,12 @@ public record Config(
     }
 
     public record Scheduler(int maxConcurrentRuns) {
+    }
+
+    /** @param idleDays a finished task's worktree is removed after this many days without activity */
+    public record Worktrees(int idleDays) {
+
+        public static final Worktrees DEFAULT = new Worktrees(7);
     }
 
     /** Either may be null in a project override; the instance limits have both. */

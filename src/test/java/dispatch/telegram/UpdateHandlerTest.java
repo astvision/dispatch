@@ -99,6 +99,34 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void photosAndDocumentsGoWithTheDraftToItsTaskUnderSafeNames() throws Exception {
+        JsonNode update = message(509, 19, 100, "Bold", 100L, "private", "", null);
+        com.fasterxml.jackson.databind.node.ObjectNode sent = (com.fasterxml.jackson.databind.node.ObjectNode) update.get("message");
+        sent.remove("text");
+        sent.put("caption", "Login fails, see the screenshot");
+        sent.putArray("photo").add(Json.read("{\"file_id\":\"small\",\"width\":90,\"height\":60,\"file_size\":900}"))
+                .add(Json.read("{\"file_id\":\"large\",\"width\":1280,\"height\":853,\"file_size\":90000}"));
+        handler.handle(update);
+        JsonNode withDocument = message(510, 20, 100, "Bold", 100L, "private", "", null);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) withDocument.get("message")).remove("text");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) withDocument.get("message")).put("caption", "And the log")
+                .set("document", Json.read("{\"file_id\":\"doc\",\"file_name\":\"../../.ssh/id_rsa\",\"file_size\":25000000}"));
+        handler.handle(withDocument);
+
+        Map<String, String> photo = row("SELECT * FROM attachment WHERE draft_id = 1");
+        assertEquals("large", photo.get("file_ref"), "the largest size");
+        assertEquals("1-photo.jpg", photo.get("name"));
+        assertEquals("1-_.._.ssh_id_rsa", row("SELECT name FROM attachment WHERE draft_id = 2").get("name"), "never a path out of its directory");
+        JsonNode prompt = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/20'").get("payload"));
+        assertEquals("1-_.._.ssh_id_rsa", prompt.get("skippedFiles").get(0).asText(), "over 20 MB, and the prompt says so");
+
+        handler.handle(privateCallback(511, 100, "Bold", "draft:1:p:autoland-management"));
+        handler.handle(privateCallback(512, 100, "Bold", "draft:1:prio:NORMAL"));
+
+        assertEquals(row("SELECT id FROM task").get("id"), row("SELECT task_id FROM attachment WHERE draft_id = 1").get("task_id"));
+    }
+
+    @Test
     void privateTaskCommandNamesTheProjectAndTakesTheRepliedMessageAsText() {
         String forwarded = """
                 {"message_id":9,"from":{"id":100,"is_bot":false,"first_name":"Bold"},"chat":{"id":100,"type":"private"},
@@ -311,6 +339,20 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void retryIsTakenPrivatelyAndPointedThereFromAGroup() {
+        long id = task("Fix it");
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.failed(run.taskId(), run.seq(), dispatch.domain.FailureReason.TIMEOUT, "stopped after 30m", null);
+
+        handler.handle(message(566, 66, 100, "Bold", GROUP, "supergroup", "/retry " + id, null));
+        handler.handle(message(567, 67, 100, "Bold", 100L, "private", "/retry " + id, null));
+
+        assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/66").get("kind"));
+        assertEquals("RETRY_QUEUED", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:100/67'").get("kind"));
+        assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+    }
+
+    @Test
     void planButtonsWorkInTheRequestersPrivateChat() throws Exception {
         long taskId = taskAwaitingApproval(List.of());
 
@@ -404,6 +446,31 @@ class UpdateHandlerTest {
         assertEquals("PLAN", run.get("kind"));
         assertEquals("Also cover the mobile login", run.get("instruction"));
         assertEquals("telegram:" + GROUP + "/41", row("SELECT reply_to_ref FROM outbox WHERE kind = 'CORRECTION_QUEUED'").get("reply_to_ref"));
+    }
+
+    @Test
+    void replyToATasksResultIsAFollowUpAndInItsTopicToo() {
+        long taskId = taskAwaitingApproval(List.of());
+        db.transaction(tx -> tasks.approve(tx, new dispatch.domain.Requester("telegram:100", "Bold"), taskId, 1));
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        db.transaction(tx -> tx.update("UPDATE run SET pid = 1 WHERE task_id = ? AND seq = ?", run.taskId(), run.seq()));
+        transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", null, 3, List.of(),
+                null, null, null), List.of("README.md"), "https://github.com/acme/alm/pull/1");
+        long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/1100", clock.instant()));
+
+        handler.handle(message(545, 45, 200, "Ali", GROUP, "supergroup", "Also log the value", botMessage(1100)));
+
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        Map<String, String> followUp = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", taskId);
+        assertEquals("FOLLOW_UP", followUp.get("cause"));
+        assertEquals("Also log the value", followUp.get("instruction"));
+        assertEquals("telegram:" + GROUP + "/45", row("SELECT reply_to_ref FROM outbox WHERE kind = 'FOLLOW_UP_QUEUED'").get("reply_to_ref"));
+
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '55', phase = 'COMPLETED' WHERE id = ?", taskId));
+        handler.handle(topicMessage(546, 105, 100, "Bold", 55, "and the tablet too"));
+
+        assertEquals("and the tablet too", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 4", taskId).get("instruction"));
     }
 
     @Test
@@ -578,6 +645,18 @@ class UpdateHandlerTest {
 
         assertEquals("telegram:100/103@55", row("SELECT reply_to_ref FROM outbox WHERE kind = 'STATUS'").get("reply_to_ref"));
         assertEquals("telegram:100/104@77", row("SELECT origin_ref FROM draft").get("origin_ref"), "a topic of no task is like General");
+    }
+
+    @Test
+    void projectsListsWhatTheChatCanUse() {
+        handler.handle(message(531, 31, 999, "Sara", GROUP, "supergroup", "/projects", null));
+        handler.handle(message(532, 32, 100, "Bold", 100L, "private", "/projects", null));
+
+        JsonNode group = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/31").get("payload"));
+        assertEquals(1, group.get("projects").size(), "a group sees only its own projects");
+        assertEquals("main", group.get("projects").get(0).get("baseBranch").asText());
+        JsonNode mine = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/32'").get("payload"));
+        assertEquals(2, mine.get("projects").size(), "a member sees the projects of all their groups");
     }
 
     @Test

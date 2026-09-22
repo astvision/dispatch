@@ -563,6 +563,18 @@ class RendererTest {
         return payload;
     }
 
+    @Test
+    void timelineShowsARetryWithWhoAskedAndWhichStepRanAgain() {
+        ObjectNode payload = timelinePayload();
+        payload.withArray("runs").addObject().put("seq", 4).put("kind", "DELIVER").put("cause", "RETRY").put("status", "SUCCEEDED")
+                .put("requestedBy", "Ali").putNull("instruction").put("queuedAt", "2026-09-17T10:09:00Z")
+                .put("startedAt", "2026-09-17T10:09:00Z").put("finishedAt", "2026-09-17T10:09:05Z").putNull("costUsd").putNull("failureReason");
+
+        String html = renderer.render(OutboxKind.TASK_TIMELINE, payload).html();
+
+        assertTrue(html.contains("🔁 Дахин оролдлого (Ali): хүргэлт"), html);
+    }
+
     private static ObjectNode completedPayload(String prUrl, int filesChanged, List<String> denials) {
         ObjectNode payload = Json.object().put("taskId", 42).put("project", "autoland-management").put("prUrl", prUrl)
                 .put("filesChanged", filesChanged).put("summary", "Made the timeout <configurable>.")
@@ -597,6 +609,10 @@ class RendererTest {
             case TASK_TIMELINE -> timelinePayload();
             case TASK_NOT_FOUND -> Json.object().put("taskId", 99);
             case CANCEL_REFUSED -> Json.object().put("taskId", 1).put("phase", "REJECTED");
+            case RETRY_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali").put("kind", "DELIVER");
+            case RETRY_REFUSED -> Json.object().put("taskId", 1).put("phase", "COMPLETED");
+            case FOLLOW_UP_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");
+            case FOLLOW_UP_REFUSED -> Json.object().put("taskId", 1).put("reason", "notExecuted").put("phase", "FAILED");
             case NOT_ALLOWED -> Json.object().put("name", "Sara");
             case UNKNOWN_PROJECT -> {
                 ObjectNode payload = Json.object().put("given", "billing");
@@ -605,6 +621,12 @@ class RendererTest {
             }
             case PROJECT_UNAVAILABLE -> Json.object().put("project", "crm").put("reason", "no clone");
             case TASK_USAGE -> Json.object();
+            case PROJECTS -> {
+                ObjectNode payload = Json.object();
+                payload.putArray("projects").addObject().put("name", "crm").putNull("alias").put("baseBranch", "main")
+                        .put("unavailable", "cloning https://github.com/acme/crm.git");
+                yield payload;
+            }
             case HELP -> {
                 ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot");
                 payload.putArray("projects").addObject().put("name", "crm").putNull("alias");

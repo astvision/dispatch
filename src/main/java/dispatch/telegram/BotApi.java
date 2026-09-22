@@ -12,6 +12,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -160,6 +162,31 @@ public final class BotApi {
 
     public void answerCallbackQuery(String callbackQueryId, String text) {
         call("answerCallbackQuery", Json.object().put("callback_query_id", callbackQueryId).put("text", text), requestTimeout);
+    }
+
+    /** Downloads a file someone sent, e.g. a task's screenshot; Telegram serves files up to 20 MB. */
+    public void downloadFile(String fileId, Path target) {
+        String filePath = call("getFile", Json.object().put("file_id", fileId), requestTimeout).path("file_path").asText("");
+        if (filePath.isEmpty()) {
+            throw new TelegramException("getFile returned no file_path", 0, null);
+        }
+        // Files live beside the methods: /file/bot<token>/<path> instead of /bot<token>/<method>.
+        HttpRequest request = HttpRequest.newBuilder(baseUri.resolve("/file" + baseUri.getPath() + filePath))
+                .timeout(Duration.ofMinutes(2)).GET().build();
+        HttpResponse<Path> response;
+        try {
+            // Truncated: a retry writes over what an interrupted download left.
+            response = http.send(request, HttpResponse.BodyHandlers.ofFile(target, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                    StandardOpenOption.TRUNCATE_EXISTING));
+        } catch (IOException e) {
+            throw new TelegramException("file download failed: " + e.getClass().getSimpleName() + ": " + scrub(e.getMessage(), baseUri), 0, null);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TelegramException("file download interrupted", 0, null);
+        }
+        if (response.statusCode() != 200) {
+            throw new TelegramException("file download failed: HTTP " + response.statusCode(), response.statusCode(), null);
+        }
     }
 
     public void leaveChat(long chatId) {

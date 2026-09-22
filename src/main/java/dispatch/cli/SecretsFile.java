@@ -19,7 +19,7 @@ public final class SecretsFile {
     private SecretsFile() {
     }
 
-    static Path beside(Path configFile) {
+    public static Path beside(Path configFile) {
         String name = configFile.getFileName().toString().replaceFirst("\\.ya?ml$", "");
         return configFile.resolveSibling(name + ".env");
     }

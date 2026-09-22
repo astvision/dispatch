@@ -77,7 +77,7 @@ public final class ProjectAddCommand {
     }
 
     /** What a new project's block says; everything the person typed is quoted where YAML would read it differently. */
-    record Project(String name, String alias, Path folder, String originUrl, String baseBranch, String agent, String model, String effort) {
+    public record Project(String name, String alias, Path folder, String originUrl, String baseBranch, String agent, String model, String effort) {
     }
 
     static List<String> projectLines(Project project) {

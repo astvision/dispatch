@@ -1,10 +1,12 @@
 package dispatch.cli;
 
 import dispatch.workspace.Git;
+import dispatch.workspace.WorkspaceException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -55,6 +57,23 @@ public interface Service {
             return new LaunchdService(home, commands);
         }
         return new SystemdService(home, commands, user);
+    }
+
+    /** The service for this OS and user, as `dispatch service` and the web UI manage it. */
+    static Service forThisMachine() {
+        Path home = Path.of(System.getProperty("user.home"));
+        String os = System.getProperty("os.name");
+        String user = os.startsWith("Windows") && System.getenv("USERDOMAIN") != null
+                ? System.getenv("USERDOMAIN") + "\\" + System.getProperty("user.name")
+                : System.getProperty("user.name");
+        Commands commands = commandLine -> {
+            try {
+                return Git.runProcess(commandLine, home, null, Duration.ofSeconds(60), String.join(" ", commandLine));
+            } catch (WorkspaceException e) {
+                return new Git.Result(127, "", e.getMessage());
+            }
+        };
+        return forOs(os, home, commands, user);
     }
 
     /** Runs a service tool; a failure becomes a {@link CliException} with the tool's own words. */

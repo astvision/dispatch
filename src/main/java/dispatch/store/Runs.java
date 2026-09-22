@@ -5,6 +5,7 @@ import dispatch.domain.FailureReason;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Run;
+import dispatch.domain.RunCause;
 import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
 import java.math.BigDecimal;
@@ -22,13 +23,13 @@ import java.util.Set;
 public final class Runs {
 
     private static final String COLUMNS = """
-            task_id, seq, kind, status, instruction, requested_by, requested_by_name, pid, pid_start, queued_at, started_at,
+            task_id, seq, kind, cause, status, instruction, requested_by, requested_by_name, pid, pid_start, queued_at, started_at,
             finished_at, cost_usd, turns, failure_reason""";
 
     private Runs() {
     }
 
-    public record NewRun(long taskId, int seq, RunKind kind, String instruction, Requester requestedBy) {
+    public record NewRun(long taskId, int seq, RunKind kind, RunCause cause, String instruction, Requester requestedBy) {
     }
 
     /** A queued or running run, with the task details /status shows. */
@@ -51,9 +52,9 @@ public final class Runs {
 
     public static void insert(Tx tx, NewRun run, Instant now) {
         tx.update("""
-                        INSERT INTO run (task_id, seq, kind, status, instruction, requested_by, requested_by_name, queued_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                run.taskId(), run.seq(), run.kind(), RunStatus.QUEUED, run.instruction(), run.requestedBy().ref(),
+                        INSERT INTO run (task_id, seq, kind, cause, status, instruction, requested_by, requested_by_name, queued_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                run.taskId(), run.seq(), run.kind(), run.cause(), RunStatus.QUEUED, run.instruction(), run.requestedBy().ref(),
                 run.requestedBy().name(), now);
     }
 
@@ -149,6 +150,25 @@ public final class Runs {
         return tx.list("SELECT " + COLUMNS + " FROM run WHERE status = ? ORDER BY task_id, seq", Runs::map, status);
     }
 
+    /** The task's most recent run. */
+    public static Optional<Run> latest(Tx tx, long taskId) {
+        return tx.one("SELECT " + COLUMNS + " FROM run WHERE task_id = ? ORDER BY seq DESC LIMIT 1", Runs::map, taskId);
+    }
+
+    /** What a run left behind: a plan's JSON, or an execution's summary (also kept when its delivery failed). */
+    public static Optional<String> output(Tx tx, long taskId, int seq) {
+        return tx.one("SELECT output FROM run WHERE task_id = ? AND seq = ?", row -> row.string("output"), taskId, seq);
+    }
+
+    /**
+     * Whether a run of {@code kind} before {@code seq} got as far as starting its agent, and so started the phase's agent
+     * session: a run that failed during setup never did, and resuming its session would fail.
+     */
+    public static boolean agentStartedBefore(Tx tx, long taskId, RunKind kind, int seq) {
+        return tx.one("SELECT 1 AS found FROM run WHERE task_id = ? AND kind = ? AND seq < ? AND pid IS NOT NULL LIMIT 1",
+                row -> true, taskId, kind, seq).isPresent();
+    }
+
     public static int nextSeq(Tx tx, long taskId) {
         return tx.one("SELECT coalesce(max(seq), 0) + 1 AS seq FROM run WHERE task_id = ?", row -> row.intValue("seq"), taskId)
                 .orElseThrow();
@@ -186,6 +206,7 @@ public final class Runs {
                 row.longValue("task_id"),
                 row.intValue("seq"),
                 row.enumValue("kind", RunKind.class),
+                row.enumValue("cause", RunCause.class),
                 row.enumValue("status", RunStatus.class),
                 row.string("instruction"),
                 row.string("requested_by"),

@@ -64,6 +64,22 @@ class CliTest {
     }
 
     @Test
+    void uiDefaultsToPort7878AndOpensTheBrowser() {
+        assertEquals(new Cli.Ui(DEFAULT_CONFIG, 7878, true), parse("ui"));
+    }
+
+    @Test
+    void uiTakesAPortAndCanLeaveTheBrowserClosed() {
+        assertEquals(new Cli.Ui(Path.of("x.yaml"), 9000, false), parse("ui", "--port", "9000", "--no-browser", "--config", "x.yaml"));
+    }
+
+    @Test
+    void uiRefusesAPortThatIsNotOne() {
+        CliException e = assertThrows(CliException.class, () -> parse("ui", "--port", "70000"));
+        assertTrue(e.getMessage().contains("--port"), e.getMessage());
+    }
+
+    @Test
     void mistakesAreExplained() {
         assertTrue(error("frobnicate").contains("unknown command 'frobnicate'"));
         assertTrue(error("run", "--force").contains("run does not take --force"));

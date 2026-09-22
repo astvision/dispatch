@@ -1,7 +1,10 @@
 package dispatch.core;
 
+import dispatch.domain.Attachment;
 import dispatch.domain.Run;
 import dispatch.domain.Task;
+import java.nio.file.Path;
+import java.util.List;
 
 /** What agents are told. Dispatch frames the task; the repository's own CLAUDE.md still applies on top. */
 final class Prompts {
@@ -24,6 +27,18 @@ final class Prompts {
             Language: write all text in the natural language used inside <task> (a task written in Mongolian gets a \
             Mongolian plan, a task written in English gets an English plan). Keep code identifiers, file paths and \
             commands unchanged.
+            """;
+
+    private static final String EXECUTE_RULES = """
+            Rules:
+            - Do not commit, push, create branches or open pull requests; Dispatch delivers your changes.
+            - Keep the change focused on the approved plan.
+            - Run the relevant tests if they are quick to run.
+            - Finish with a short plain-text summary (no Markdown) of what you changed and the test results.
+
+            Language: write the summary in the natural language used inside <task> (a task written in Mongolian gets a \
+            Mongolian summary, a task written in English gets an English summary). Keep code identifiers, file paths \
+            and commands unchanged.
             """;
 
     private Prompts() {
@@ -81,16 +96,61 @@ final class Prompts {
                 %s
                 </plan>
 
-                Rules:
-                - Do not commit, push, create branches or open pull requests; Dispatch delivers your changes.
-                - Keep the change focused on the approved plan.
-                - Run the relevant tests if they are quick to run.
-                - Finish with a short plain-text summary (no Markdown) of what you changed and the test results.
+                """.formatted(task.id(), task.requester().name(), task.description(), planJson) + EXECUTE_RULES;
+    }
 
-                Language: write the summary in the natural language used inside <task> (a task written in Mongolian gets a \
-                Mongolian summary, a task written in English gets an English summary). Keep code identifiers, file paths \
-                and commands unchanged.
-                """.formatted(task.id(), task.requester().name(), task.description(), planJson);
+    /**
+     * A retried execution continues its session, which already has the task and the plan; it needs to know that it was cut
+     * short, and why, so it checks what it already changed instead of starting over.
+     *
+     * @param instruction what the failed run was asked to do: the approved plan, or a follow-up
+     */
+    static String retry(Task task, String instruction) {
+        return """
+                Your previous run on task #%d stopped before it finished: %s. A team member asked you to try again. Your \
+                changes so far are still in this repository: check them, then finish the work below.
+
+                <instruction>
+                %s
+                </instruction>
+
+                """.formatted(task.id(), failure(task), instruction) + EXECUTE_RULES;
+    }
+
+    /** A follow-up continues the building session, which already has the task, the plan and what was done. */
+    static String followUp(Task task, Run run) {
+        return """
+                %s replied to your result for task #%d with a follow-up. Make these changes too, on top of what you \
+                already did; the work so far is in this repository.
+
+                <follow-up>
+                %s
+                </follow-up>
+
+                """.formatted(run.requestedByName(), task.id(), run.instruction()) + EXECUTE_RULES;
+    }
+
+    /** Where the agent finds the task's files, and which ones it will not find. */
+    static String attachments(Path dir, List<Attachment> files) {
+        List<String> available = files.stream().filter(file -> !file.tooLarge()).map(Attachment::name).toList();
+        List<String> skipped = files.stream().filter(Attachment::tooLarge).map(Attachment::name).toList();
+        StringBuilder note = new StringBuilder("\nFiles sent with the task");
+        if (!available.isEmpty()) {
+            note.append(" are in ").append(dir).append(" (read them there): ").append(String.join(", ", available)).append('.');
+        }
+        if (!skipped.isEmpty()) {
+            note.append(available.isEmpty() ? ": " : " Not available, over 20 MB: ").append(String.join(", ", skipped))
+                    .append(available.isEmpty() ? " (not available, over 20 MB)." : ".");
+        }
+        return note.append('\n').toString();
+    }
+
+    private static String failure(Task task) {
+        if (task.failureReason() == null) {
+            return "unknown reason";
+        }
+        String detail = task.failureDetail() == null || task.failureDetail().isBlank() ? "" : " (" + task.failureDetail().strip() + ")";
+        return task.failureReason().name() + detail;
     }
 
     /**

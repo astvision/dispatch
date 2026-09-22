@@ -15,7 +15,9 @@ import dispatch.core.Membership;
 import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
 import dispatch.core.TaskService;
+import dispatch.domain.Attachment;
 import dispatch.domain.OutboxKind;
+import dispatch.domain.Phase;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Task;
@@ -24,6 +26,7 @@ import dispatch.store.Kv;
 import dispatch.store.Outbox;
 import dispatch.store.Tx;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -34,13 +37,16 @@ import java.util.Set;
  * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). The configured groups and
  * members' private chats with the bot are served (ADR 0011, 0012); other groups are left, other private chats ignored. A
  * group sees only its own projects, a member those of all their groups. Besides commands and buttons, a reply to a plan
- * message is a correction.
+ * message is a correction and a reply to a task's result is a follow-up.
  */
 public final class UpdateHandler {
 
     static final String OFFSET_KEY = "telegram.offset";
     private static final Set<String> JOINED_STATUSES = Set.of("member", "administrator");
-    private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "help", "start");
+    /** Messages about a task's outcome; a reply to one is a follow-up (ADR 0006). */
+    private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
+            OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
+    private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "retry", "projects", "help", "start");
 
     private final Database db;
     private final TaskService tasks;
@@ -141,14 +147,20 @@ public final class UpdateHandler {
                 ? tasks.taskOfTopic(tx, who.ref(), Long.toString(thread))
                 : Optional.empty();
         if (topicTask.isPresent() && parsed.map(command -> !COMMANDS.contains(command.name())).orElse(true)) {
-            // Inside a task's own topic, anything that is not a command is about that task.
-            tasks.correctLatest(tx, who, topicTask.get().id(), text(message), origin, chatRef);
+            // Inside a task's own topic, anything that is not a command is about that task: a follow-up once it has finished,
+            // otherwise a correction of its plan, which is refused with the reason when no plan is waiting.
+            Task task = topicTask.get();
+            if (task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED) {
+                tasks.followUp(tx, who, task.id(), text(message), origin, chatRef);
+            } else {
+                tasks.correctLatest(tx, who, task.id(), text(message), origin, chatRef);
+            }
             return;
         }
         if (parsed.isEmpty()) {
-            if (!correction(tx, message, who, origin, chatRef) && privateChat) {
+            if (!replyToTask(tx, message, who, origin, chatRef) && privateChat) {
                 // Anything else a member writes privately is a task to give (ADR 0012).
-                tasks.draft(tx, who, null, text(message), origin);
+                tasks.draft(tx, who, null, text(message), origin, attachments(message));
             }
             return;
         }
@@ -162,7 +174,7 @@ public final class UpdateHandler {
                     privateOnly(tx, chatRef, origin);
                     return;
                 }
-                giveTask(tx, who, command.args(), message.path("reply_to_message"), origin);
+                giveTask(tx, who, command.args(), message, origin);
             }
             case "status" -> tasks.status(tx, visible, privateChat ? who.ref() : null, origin, chatRef);
             case "history" -> taskId(command.args()).ifPresentOrElse(
@@ -177,17 +189,27 @@ public final class UpdateHandler {
                         id -> tasks.cancel(tx, who, id, origin, chatRef),
                         () -> help(tx, visible, origin, chatRef, true));
             }
+            case "retry" -> {
+                if (!privateChat) {
+                    privateOnly(tx, chatRef, origin);
+                    return;
+                }
+                taskId(command.args()).ifPresentOrElse(
+                        id -> tasks.retry(tx, who, id, origin, chatRef),
+                        () -> help(tx, visible, origin, chatRef, true));
+            }
             case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
+            case "projects" -> projectList(tx, visible, origin, chatRef);
             case "help", "start" -> help(tx, visible, origin, chatRef, privateChat);
             default -> {
                 // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
                 // it replies to a plan, otherwise a task when written privately.
-                if (correction(tx, message, who, origin, chatRef)) {
+                if (replyToTask(tx, message, who, origin, chatRef)) {
                     return;
                 }
                 if (privateChat) {
-                    tasks.draft(tx, who, null, text(message), origin);
+                    tasks.draft(tx, who, null, text(message), origin, attachments(message));
                 } else {
                     tx.afterCommit(() -> Log.info("telegram.command_ignored", "command", command.name()));
                 }
@@ -196,20 +218,25 @@ public final class UpdateHandler {
     }
 
     /** /task [project] [text]: the first word names the project only if it is one of the member's; a replied message is the text. */
-    private void giveTask(Tx tx, Requester who, String args, JsonNode repliedTo, String origin) {
+    private void giveTask(Tx tx, Requester who, String args, JsonNode message, String origin) {
+        JsonNode repliedTo = message.path("reply_to_message");
         String[] firstAndRest = args.split("\\s+", 2);
         Set<String> mine = groups.projectsOfMember(who.ref());
         Optional<Config.Project> named = projects.find(firstAndRest[0]).filter(project -> mine.contains(project.name()));
         String own = named.isPresent() ? (firstAndRest.length > 1 ? firstAndRest[1].strip() : "") : args;
-        tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), withRepliedMessage(own, repliedTo), origin);
+        tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), withRepliedMessage(own, repliedTo), origin,
+                attachments(repliedTo, message));
     }
 
     private void privateOnly(Tx tx, String chatRef, String origin) {
         enqueue(tx, OutboxKind.PRIVATE_ONLY, chatRef, origin, Json.object().put("bot", botUsername));
     }
 
-    /** Treats a reply to one of the bot's plan messages as a correction of that plan; false for any other message. */
-    private boolean correction(Tx tx, JsonNode message, Requester who, String origin, String chatRef) {
+    /**
+     * A reply to one of the bot's plan messages corrects that plan, and one to a task's result is a follow-up; false for any
+     * other message.
+     */
+    private boolean replyToTask(Tx tx, JsonNode message, Requester who, String origin, String chatRef) {
         JsonNode repliedTo = message.path("reply_to_message");
         if (!repliedTo.has("message_id")) {
             return false;
@@ -217,6 +244,10 @@ public final class UpdateHandler {
         long chatId = message.path("chat").path("id").asLong();
         String repliedRef = Refs.message(chatId, repliedTo.get("message_id").asLong(), null);
         Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef);
+        if (sent.isPresent() && RESULTS.contains(sent.get().kind())) {
+            tasks.followUp(tx, who, sent.get().taskId(), text(message), origin, chatRef);
+            return true;
+        }
         if (sent.isEmpty() || sent.get().kind() != OutboxKind.PLAN_READY) {
             String kind = sent.map(found -> found.kind().name()).orElse("unknown");
             tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind));
@@ -460,6 +491,16 @@ public final class UpdateHandler {
         enqueue(tx, OutboxKind.HELP, chatRef, origin, payload);
     }
 
+    /** The chat's projects in config order, each with its base branch and, if it cannot take tasks now, why not. */
+    private void projectList(Tx tx, Set<String> visible, String origin, String chatRef) {
+        ObjectNode payload = Json.object();
+        ArrayNode listed = payload.putArray("projects");
+        projects.all().stream().filter(project -> visible.contains(project.name()))
+                .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias())
+                        .put("baseBranch", project.baseBranch()).put("unavailable", projects.unavailableReason(project).orElse(null)));
+        enqueue(tx, OutboxKind.PROJECTS, chatRef, origin, payload);
+    }
+
     private void enqueue(Tx tx, OutboxKind kind, String chatRef, String origin, ObjectNode payload) {
         Outbox.enqueue(tx, null, kind, chatRef, origin, payload, clock.instant());
         tx.afterCommit(wakeOutbox);
@@ -476,6 +517,36 @@ public final class UpdateHandler {
             return text;
         }
         return text.isBlank() ? replied : replied + "\n\n" + text;
+    }
+
+    /** The photos (each at its largest size) and documents of {@code messages}, numbered in order. */
+    static List<Attachment> attachments(JsonNode... messages) {
+        List<Attachment> found = new ArrayList<>();
+        for (JsonNode message : messages) {
+            JsonNode largest = null;
+            for (JsonNode size : message.path("photo")) {
+                if (largest == null || area(size) > area(largest)) {
+                    largest = size;
+                }
+            }
+            if (largest != null && largest.has("file_id")) {
+                found.add(new Attachment(largest.get("file_id").asText(), Attachment.safeName(found.size() + 1, "photo.jpg"), bytes(largest)));
+            }
+            JsonNode document = message.path("document");
+            if (document.has("file_id")) {
+                found.add(new Attachment(document.get("file_id").asText(),
+                        Attachment.safeName(found.size() + 1, document.path("file_name").asText("file")), bytes(document)));
+            }
+        }
+        return found;
+    }
+
+    private static long area(JsonNode photoSize) {
+        return photoSize.path("width").asLong() * photoSize.path("height").asLong();
+    }
+
+    private static Long bytes(JsonNode file) {
+        return file.has("file_size") ? file.get("file_size").asLong() : null;
     }
 
     /** A message's text, or the caption of a photo or document. */

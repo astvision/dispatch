@@ -7,11 +7,14 @@ import dispatch.cli.JLineTerminal;
 import dispatch.cli.InitCommand;
 import dispatch.cli.Locations;
 import dispatch.cli.ProjectAddCommand;
+import dispatch.cli.Service;
 import dispatch.cli.ServiceCommand;
 import dispatch.cli.RunCommand;
 import dispatch.config.ConfigException;
 import dispatch.config.MemberWriter;
 import dispatch.telegram.BotApi;
+import dispatch.ui.UiCommand;
+import dispatch.ui.UiServer;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -20,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
 
 public final class Main {
 
@@ -53,7 +57,21 @@ public final class Main {
             }
             case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create).run(check.configFile(), System.getenv()));
             case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(JLineTerminal.system()).run(add, System.getenv()));
+            case Cli.Ui ui -> ui(ui, defaults);
         }
+    }
+
+    private static void ui(Cli.Ui options, Locations defaults) throws InterruptedException {
+        UiServer server;
+        try {
+            server = new UiCommand(System.out, BotApi::create, defaults, Service.forThisMachine(), "/ui").start(options, System.getenv());
+        } catch (CliException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+            return;
+        }
+        Runtime.getRuntime().addShutdownHook(new Thread(server::close, "dispatch-ui-shutdown"));
+        new CountDownLatch(1).await(); // until Ctrl+C
     }
 
     private static void run(Path configFile, Path logFile) throws InterruptedException {

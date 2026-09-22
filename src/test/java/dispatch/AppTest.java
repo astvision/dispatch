@@ -59,7 +59,7 @@ class AppTest {
         config = new Config("backend", repos.stateDir,
                 new Config.Telegram(List.of(), List.of(new Config.Group("backend", GROUP,
                         List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("autoland-management")))),
-                new Config.Scheduler(2),
+                new Config.Scheduler(2), Config.Worktrees.DEFAULT,
                 new Config.Limits(new Config.RunLimits(Duration.ofSeconds(60), new BigDecimal("2")),
                         new Config.RunLimits(Duration.ofSeconds(60), new BigDecimal("10"))),
                 Map.of("claude-code", new Config.Agent(claude.toString())),
@@ -202,7 +202,7 @@ class AppTest {
         GitFixture.sh(dir, "git", "clone", "--quiet", repos.origin.toString(), mine.toString());
         config = new Config("bold", repos.stateDir,
                 new Config.Telegram(List.of(), List.of(new Config.Group("bold", null, List.of(new Config.Member(100, "Bold")), List.of("alm")))),
-                config.scheduler(), config.limits(), config.agents(),
+                config.scheduler(), config.worktrees(), config.limits(), config.agents(),
                 List.of(new Config.Project("alm", null, null, mine.toString(), "main", "claude-code", null, "high", List.of(), null, null, null)),
                 config.delivery(), config.secrets());
         app = start();
@@ -230,7 +230,7 @@ class AppTest {
         List<Config.Member> members = new CopyOnWriteArrayList<>(List.of(new Config.Member(100, "Bold")));
         config = new Config("backend", repos.stateDir, new Config.Telegram(List.of(100L),
                 List.of(new Config.Group("backend", GROUP, List.copyOf(members), List.of("autoland-management")))),
-                config.scheduler(), config.limits(), config.agents(), config.projects(), config.delivery(), config.secrets());
+                config.scheduler(), config.worktrees(), config.limits(), config.agents(), config.projects(), config.delivery(), config.secrets());
         app = start((group, member) -> {
             members.add(member);
             return new Config.Telegram(List.of(100L), List.of(new Config.Group("backend", GROUP, List.copyOf(members), List.of("autoland-management"))));
