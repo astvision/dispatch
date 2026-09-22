@@ -53,7 +53,7 @@ public final class SecretsFile {
     }
 
     /** Values of KEY=VALUE lines, unquoted; blank values are left out. A malformed line is reported without its content. */
-    static Map<String, String> read(Path file) throws IOException {
+    public static Map<String, String> read(Path file) throws IOException {
         Map<String, String> values = new LinkedHashMap<>();
         List<String> lines = Files.readAllLines(file);
         for (int i = 0; i < lines.size(); i++) {
@@ -74,7 +74,7 @@ public final class SecretsFile {
     }
 
     /** Replaces the file with one that only its owner can read, created so before a secret is written. */
-    static void write(Path file, Map<String, String> values) throws IOException {
+    public static void write(Path file, Map<String, String> values) throws IOException {
         Files.deleteIfExists(file);
         OwnerOnly.createFile(file);
         StringBuilder text = new StringBuilder("# Dispatch secrets, readable only by you. Never commit or share this file.\n");

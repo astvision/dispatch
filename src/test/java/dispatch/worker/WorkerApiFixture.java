@@ -1,6 +1,9 @@
 package dispatch.worker;
 
 import dispatch.Json;
+import dispatch.Redactor;
+import dispatch.agent.Agent;
+import dispatch.agent.claude.ClaudeCodeAgent;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
 import dispatch.core.AttachmentSource;
@@ -10,8 +13,16 @@ import dispatch.core.JobEvents;
 import dispatch.core.JobResult;
 import dispatch.domain.Phase;
 import dispatch.domain.Requester;
+import dispatch.domain.RunKind;
 import dispatch.store.Database;
+import dispatch.testing.FakeClaude;
+import dispatch.testing.FakeGh;
+import dispatch.testing.GitFixture;
 import dispatch.testing.TestClock;
+import dispatch.workspace.Delivery;
+import dispatch.workspace.Gh;
+import dispatch.workspace.Git;
+import dispatch.workspace.Workspaces;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
@@ -26,12 +37,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,6 +79,12 @@ abstract class WorkerApiFixture {
     final TestClock clock = new TestClock(Instant.parse("2026-09-23T10:00:00Z"));
     /** What {@link RemoteWorkers#run} returned for the job {@link #offer} started, once a worker has reported it. */
     final AtomicReference<JobResult> reported = new AtomicReference<>();
+    /** What the default {@link #offer}'s {@link JobEvents} learned: {@link WorkerLoopTest} checks what reached this machine. */
+    final AtomicReference<String> recordedWorktree = new AtomicReference<>();
+    final AtomicBoolean agentStartedWithoutAPid = new AtomicBoolean();
+    /** A real origin, seed clone and Dispatch-owned "alm" clone; {@link WorkerLoopTest} points a worker's own clone at it. */
+    GitFixture repos;
+    private final List<WorkerLoop> loops = new ArrayList<>();
 
     @BeforeEach
     void setUpFixture() throws Exception {
@@ -73,6 +92,7 @@ abstract class WorkerApiFixture {
         db = Database.open(dir.resolve("dispatch.db"));
         db.migrate();
         insertTaskSeven();
+        repos = GitFixture.create(dir, "alm");
         activeRuns = new ActiveRuns();
         keys = new WorkerKeys(db, clock);
         remote = new RemoteWorkers(db, clock, () -> { }, Duration.ofMillis(50), Duration.ofMillis(2));
@@ -81,6 +101,8 @@ abstract class WorkerApiFixture {
 
     @AfterEach
     void tearDownFixture() {
+        // A loop left running would keep polling this test's (about to close) server and leak its virtual threads.
+        loops.forEach(WorkerLoop::stop);
         api.close();
         db.close();
     }
@@ -125,7 +147,7 @@ abstract class WorkerApiFixture {
      * this returns, and {@link #reported} is filled once some worker's {@code /api/worker/result} completes it.
      */
     void offer(Job job) {
-        offer(job, NOOP_EVENTS);
+        offer(job, recordingEvents());
     }
 
     void offer(Job job, JobEvents events) {
@@ -134,15 +156,94 @@ abstract class WorkerApiFixture {
         awaitOffer();
     }
 
-    private static final JobEvents NOOP_EVENTS = new JobEvents() {
-        @Override
-        public void worktreeCreated(String worktree, String baseSha) {
-        }
+    /** What the team machine learns while the job runs, into {@link #recordedWorktree} and {@link #agentStartedWithoutAPid}. */
+    private JobEvents recordingEvents() {
+        return new JobEvents() {
+            @Override
+            public void worktreeCreated(String worktree, String baseSha) {
+                recordedWorktree.set(worktree);
+            }
 
-        @Override
-        public void agentStarted(Long pid, Instant processStart) {
+            @Override
+            public void agentStarted(Long pid, Instant processStart) {
+                agentStartedWithoutAPid.set(pid == null);
+            }
+        };
+    }
+
+    /** Task 7's planning run, as the Coordinator would offer it: no worktree yet, so the worker makes one in its own clone. */
+    Job planJob() {
+        return planJob("Plan this: fix the login timeout");
+    }
+
+    Job planJob(String prompt) {
+        return new Job(TASK_ID, 1, RunKind.PLAN,
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),
+                "main", null, null, null, UUID.fromString("11111111-2222-3333-4444-555555555555"), false, prompt, null,
+                null, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(),
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), null);
+    }
+
+    /** Pairs {@code name} with Bold and starts a real {@link WorkerLoop}, wired to this fixture's server, on a virtual thread. */
+    void startLoop(String name, Path clonePath) throws Exception {
+        startLoop(name, Map.of("alm", new WorkerConfig.Project(clonePath.toString(), null, null)));
+    }
+
+    /** As {@link #startLoop}, but the member never added "alm" to worker.yaml: this computer cannot run it. */
+    void startLoopWithoutProjects(String name) throws Exception {
+        startLoop(name, Map.of());
+    }
+
+    private void startLoop(String name, Map<String, WorkerConfig.Project> projects) throws Exception {
+        String key = pair(BOLD, name);
+        Path bin = Files.createDirectories(workerStateDir(name).resolve("bin"));
+        URI team = URI.create("http://127.0.0.1:" + api.port());
+        WorkerConfig workerConfig = new WorkerConfig(team.toString(), name, 1, FakeClaude.install(bin).toString(),
+                FakeGh.install(bin).toString(), workerStateDir(name), projects);
+        WorkerClient client = new WorkerClient(http, team, key);
+        Git git = new Git("git", null, Duration.ofSeconds(30));
+        Workspaces workspaces = new Workspaces(workerConfig.stateDir(), git);
+        Delivery delivery = new Delivery(git, new Gh(workerConfig.ghCommand(), null, Duration.ofSeconds(30)),
+                "Dispatch (backend)", "dispatch-backend@example.com");
+        Map<String, Agent> agents = Map.of("claude-code",
+                new ClaudeCodeAgent(workerConfig.claudeCommand(), FakeClaude.environment(), Duration.ofSeconds(1)));
+        WorkerLoop loop = new WorkerLoop(workerConfig, client, agents, workspaces, delivery, Redactor.patternsOnly(),
+                new ActiveRuns());
+        loops.add(loop);
+        Thread.ofVirtual().name("worker-loop-" + name).start(loop);
+    }
+
+    /** Where {@code name}'s worker keeps its own worktrees, run logs and agent notes: never the team machine's own state. */
+    Path workerStateDir(String name) {
+        return dir.resolve("workers").resolve(name);
+    }
+
+    Path worktreeOf(String name, long taskId) {
+        return workerStateDir(name).resolve("worktrees").resolve(Long.toString(taskId));
+    }
+
+    /** Waits for the worker's {@code /api/worker/result} to complete the offer {@link #offer} started. */
+    JobResult awaitResult() {
+        Instant deadline = Instant.now().plusSeconds(30);
+        while (reported.get() == null) {
+            if (Instant.now().isAfter(deadline)) {
+                throw new AssertionError("the job was never reported");
+            }
+            Thread.onSpinWait();
         }
-    };
+        return reported.get();
+    }
+
+    /** Waits for the worker's progress to report that its agent started. */
+    void awaitAgentStarted() {
+        Instant deadline = Instant.now().plusSeconds(30);
+        while (!agentStartedWithoutAPid.get()) {
+            if (Instant.now().isAfter(deadline)) {
+                throw new AssertionError("the agent never started");
+            }
+            Thread.onSpinWait();
+        }
+    }
 
     /** The Coordinator reads the store before it offers the job; a test must not poll before that happened. */
     private void awaitOffer() {
