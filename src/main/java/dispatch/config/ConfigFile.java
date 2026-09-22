@@ -44,9 +44,13 @@ public final class ConfigFile {
      */
     public static Config edit(Path file, Map<String, String> environment, UnaryOperator<String> change) {
         Path absolute = file.toAbsolutePath().normalize();
-        Object inProcessLock = IN_PROCESS_LOCKS.computeIfAbsent(absolute, ignored -> new Object());
+        // The lock file and the in-process monitor come from the REAL path, not whatever path this call was given:
+        // two different symlinks to the same config (or a symlink and its target) must lock the same file, or a
+        // concurrent edit through the other path races this one instead of waiting for it.
+        Path real = realPath(absolute);
+        Object inProcessLock = IN_PROCESS_LOCKS.computeIfAbsent(real, ignored -> new Object());
         synchronized (inProcessLock) {
-            Path lockFile = absolute.resolveSibling(absolute.getFileName() + ".lock");
+            Path lockFile = real.resolveSibling(real.getFileName() + ".lock");
             ensureLockFile(lockFile);
             try (FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.READ, StandardOpenOption.WRITE);
                  FileLock ignored = channel.lock()) {
@@ -56,6 +60,16 @@ public final class ConfigFile {
             } catch (IOException e) {
                 throw new UncheckedIOException("cannot edit " + absolute + ": " + e.getMessage(), e);
             }
+        }
+    }
+
+    /** {@code absolute}'s real path once symlinks are resolved, when it exists; {@code toRealPath()} itself requires
+     * that, so a config not yet written locks by its own (not yet symlinked) absolute path. */
+    private static Path realPath(Path absolute) {
+        try {
+            return Files.exists(absolute) ? absolute.toRealPath() : absolute;
+        } catch (IOException e) {
+            return absolute;
         }
     }
 
@@ -117,6 +131,9 @@ public final class ConfigFile {
             } catch (ConfigException e) {
                 throw new ConfigException(e.getMessage().replace(draft.toString(), file.toString()));
             }
+            // A rename keeps the moved file's OWN permissions, not the replaced path's; without this, every save
+            // would quietly reset the config from whatever it was chmod'd to back to createTempFile's own default.
+            copyPermissions(file, draft);
             try {
                 Files.move(draft, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException e) {
@@ -127,6 +144,13 @@ public final class ConfigFile {
             throw new UncheckedIOException("cannot write " + file + ": " + e.getMessage(), e);
         } finally {
             removeDraft(draft);
+        }
+    }
+
+    /** Copies {@code from}'s POSIX permissions onto {@code to}, when {@code from} exists and the filesystem has them. */
+    private static void copyPermissions(Path from, Path to) throws IOException {
+        if (Files.exists(from) && Files.getFileAttributeView(from, PosixFileAttributeView.class) != null) {
+            Files.setPosixFilePermissions(to, Files.getPosixFilePermissions(from));
         }
     }
 
