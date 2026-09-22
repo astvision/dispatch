@@ -19,15 +19,33 @@ function yamlPath(folder: string) {
   return `'${folder.replaceAll("'", "''")}'`;
 }
 
-/** Starts `dispatch ui` on a team config and logs the browser in; the returned function stops it. */
+/** Kills a still-running child and waits briefly for it to actually exit, so its port is free for the next run. */
+async function killAndWait(child: ReturnType<typeof spawn>) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill();
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 5_000);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+/** Starts `dispatch ui` on a team config and logs the browser in; the returned function stops it.
+ *  Everything below can throw (a slow link, an unexpected exit, a bad login); on any failure here the process and
+ *  the temp dir are cleaned up before rethrowing, since Playwright never calls the teardown this function hasn't
+ *  returned yet. */
 export default async function globalSetup() {
   const jar = readdirSync(TARGET).find((name) => /^dispatch-.*\d\.jar$/.test(name));
   if (!jar) throw new Error(`no dispatch jar in ${TARGET}; build it first: ./mvnw -Pui package`);
   const dir = mkdtempSync(path.join(tmpdir(), "dispatch-e2e-"));
-  clone(path.join(dir, "alm"));
-  clone(path.join(dir, "life"));
-  const configFile = path.join(dir, "dispatch.yaml");
-  writeFileSync(configFile, `# The e2e team's Dispatch
+  let ui: ReturnType<typeof spawn> | null = null;
+  try {
+    clone(path.join(dir, "alm"));
+    clone(path.join(dir, "life"));
+    const configFile = path.join(dir, "dispatch.yaml");
+    writeFileSync(configFile, `# The e2e team's Dispatch
 team: acme
 stateDir: ${yamlPath(path.join(dir, "state"))}
 
@@ -69,35 +87,46 @@ projects:
     baseBranch: main
     agent: claude-code
 `);
-  // Not a bot token, so the overview's check says so without asking Telegram.
-  writeFileSync(path.join(dir, "dispatch.env"), "TELEGRAM_BOT_TOKEN=e2e-not-a-bot-token\n", { mode: 0o600 });
+    // Not a bot token, so the overview's check says so without asking Telegram.
+    writeFileSync(path.join(dir, "dispatch.env"), "TELEGRAM_BOT_TOKEN=e2e-not-a-bot-token\n", { mode: 0o600 });
 
-  const ui = spawn("java", ["-jar", path.join(TARGET, jar), "ui", "--no-browser", "--port", String(PORT), "--config", configFile],
-    { stdio: ["ignore", "pipe", "inherit"] });
-  const link = await new Promise<string>((resolve, reject) => {
-    let printed = "";
-    const timer = setTimeout(() => reject(new Error(`dispatch ui printed no link within 30 s:\n${printed}`)), 30_000);
-    ui.stdout.on("data", (chunk: Buffer) => {
-      printed += chunk.toString();
-      const found = printed.match(/http:\/\/127\.0\.0\.1:\d+\/\?t=[A-Za-z0-9_-]+/);
-      if (found) {
-        clearTimeout(timer);
-        resolve(found[0]);
-      }
+    ui = spawn("java", ["-jar", path.join(TARGET, jar), "ui", "--no-browser", "--port", String(PORT), "--config", configFile],
+      { stdio: ["ignore", "pipe", "inherit"] });
+    const spawned = ui;
+    // 60 s, matching CI's own smoke step (.github/workflows/ci.yml's "Start the web UI and read the overview").
+    const link = await new Promise<string>((resolve, reject) => {
+      let printed = "";
+      const timer = setTimeout(() => reject(new Error(`dispatch ui printed no link within 60 s:\n${printed}`)), 60_000);
+      spawned.stdout.on("data", (chunk: Buffer) => {
+        printed += chunk.toString();
+        const found = printed.match(/http:\/\/127\.0\.0\.1:\d+\/\?t=[A-Za-z0-9_-]+/);
+        if (found) {
+          clearTimeout(timer);
+          resolve(found[0]);
+        }
+      });
+      spawned.on("exit", (code) => reject(new Error(`dispatch ui exited with ${code}:\n${printed}`)));
     });
-    ui.on("exit", (code) => reject(new Error(`dispatch ui exited with ${code}:\n${printed}`)));
-  });
 
-  mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  const browser = await request.newContext();
-  const login = await browser.get(link, { maxRedirects: 0 });
-  if (login.status() !== 302) throw new Error(`the login link answered ${login.status()}`);
-  await browser.storageState({ path: STATE_FILE });
-  await browser.dispose();
-  writeFileSync(PATHS_FILE, JSON.stringify({ configFile, cloneToAdd: path.join(dir, "life") }));
+    mkdirSync(path.dirname(STATE_FILE), { recursive: true });
+    const browser = await request.newContext();
+    try {
+      const login = await browser.get(link, { maxRedirects: 0 });
+      if (login.status() !== 302) throw new Error(`the login link answered ${login.status()}`);
+      await browser.storageState({ path: STATE_FILE });
+    } finally {
+      await browser.dispose();
+    }
+    writeFileSync(PATHS_FILE, JSON.stringify({ configFile, cloneToAdd: path.join(dir, "life") }));
+  } catch (e) {
+    if (ui) await killAndWait(ui);
+    rmSync(dir, { recursive: true, force: true });
+    throw e;
+  }
 
+  const started = ui;
   return async () => {
-    ui.kill();
+    started.kill();
     rmSync(dir, { recursive: true, force: true });
   };
 }
