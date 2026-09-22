@@ -11,6 +11,7 @@
 # Settings: DISPATCH_REF (branch or tag, default main), DISPATCH_HOME (where Dispatch goes, default
 # %LOCALAPPDATA%\Programs\Dispatch), DISPATCH_FROM_SOURCE=1 (build from source instead of downloading).
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
 $repo = if ($env:DISPATCH_REPO) { $env:DISPATCH_REPO } else { "astvision/dispatch" }
 $ref = if ($env:DISPATCH_REF) { $env:DISPATCH_REF } else { "main" }
