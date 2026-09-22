@@ -1,6 +1,7 @@
 package dispatch.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.Json;
@@ -108,6 +109,30 @@ class InitCommandAdvancedTest {
         String yaml = Files.readString(config);
         assertTrue(yaml.contains("    timeout: 20m\n"), yaml);
         assertTrue(!yaml.contains("alias:") && !yaml.contains("plan:\n      "), "nothing per phase was chosen: " + yaml);
+    }
+
+    @Test
+    void anInvalidStateDirectoryIsAskedAgainInsteadOfCrashing() throws IOException {
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        ScriptedTerminal terminal = new ScriptedTerminal("", TOKEN, "y", JAVA, repos.repo("alm").toString(), "", "", "", "",
+                "", "", "", "", "",                 // alias, planning and execution: all as chosen
+                "",                                 // add another project? no
+                "", "bold@example.com",
+                "", "", "", "", "",                 // planning timeout/budget, execution timeout/budget, runs: default
+                "bad\u0000path", "",                // state directory: a NUL character (invalid), then the default
+                "",                                 // gh command: default
+                "",                                 // write this setup? yes
+                "n");                               // background service? no
+
+        int exit = new InitCommand(terminal, token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)),
+                locations, Duration.ofSeconds(10), new ServiceCommand(terminal, new NoService(), null))
+                .run(new Cli.Init(config, false, true), Map.of("PATH", ""));
+
+        assertEquals(0, exit, terminal.output());
+        assertTrue(terminal.output().contains("WARN not a valid path"), terminal.output());
+        assertFalse(terminal.output().contains("Exception"), "a clean re-ask, not a raw stack trace: " + terminal.output());
+        Config written = ConfigLoader.load(config, SecretsFile.environment(config, Map.of()));
+        assertEquals(locations.stateDir().toAbsolutePath(), written.stateDir(), "the default was used once the bad answer was rejected");
     }
 
     private static final class NoService implements Service {

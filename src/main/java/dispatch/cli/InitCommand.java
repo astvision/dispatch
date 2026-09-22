@@ -355,7 +355,7 @@ public final class InitCommand {
         String executeTimeout = timeout("Execution timeout per run", "60m");
         BigDecimal executeBudget = budget("Execution budget per run in USD", "10");
         int runs = runs(team ? 2 : 1);
-        Path stateDir = ProjectProbe.expandHome(Path.of(required("State directory", locations.stateDir().toString()))).toAbsolutePath();
+        Path stateDir = stateDir(locations.stateDir().toString());
         String gh = required("GitHub CLI command", "gh");
         return new Setup.Advanced(planTimeout, planBudget, executeTimeout, executeBudget, runs, stateDir, gh);
     }
@@ -403,6 +403,18 @@ public final class InitCommand {
             terminal.warn("the number of runs at a time is a whole number, at least 1");
         }
         throw new CliException("Maximum concurrent runs is needed");
+    }
+
+    private Path stateDir(String defaultValue) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String answer = required("State directory", defaultValue);
+            try {
+                return ProjectProbe.expandHome(Path.of(answer)).toAbsolutePath();
+            } catch (InvalidPathException e) {
+                terminal.warn("not a valid path: " + e.getMessage());
+            }
+        }
+        throw new CliException("State directory is needed");
     }
 
     private void summary(Setup.Bot bot, boolean team, List<Config.Member> members, Setup.Chat chat, List<ProjectAddCommand.Project> projects,
