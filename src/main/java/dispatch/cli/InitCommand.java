@@ -37,6 +37,9 @@ public final class InitCommand {
 
     private static final int ATTEMPTS = 3;
     private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(30);
+    /** How long a wait for someone stays quiet before it says what to check; never later than halfway through the wait. */
+    private static final Duration HINT_AFTER = Duration.ofSeconds(20);
+    private static final String GREETING = "👋 Got it. Setup continues in the terminal where <code>dispatch init</code> runs.";
     private static final List<Terminal.Option<String>> MODELS = List.of(
             new Terminal.Option<>("Claude Code's default", "whatever your Claude account uses", null),
             new Terminal.Option<>("Sonnet", "", "sonnet"),
@@ -55,6 +58,7 @@ public final class InitCommand {
     private final Locations locations;
     private final Duration waitForPeople;
     private final ServiceCommand services;
+    private boolean hinted;
 
     /**
      * @param bots          the Telegram client for a bot token
@@ -235,8 +239,13 @@ public final class InitCommand {
         }
         Instant deadline = Instant.now().plus(waitForPeople);
         while (Instant.now().isBefore(deadline)) {
-            Optional<JsonNode> update = updates.next(InitCommand::isPrivateMessage, waiting, Duration.between(Instant.now(), deadline));
+            Instant until = hinted ? deadline : min(deadline, Instant.now().plus(min(HINT_AFTER, waitForPeople.dividedBy(2))));
+            Optional<JsonNode> update = updates.next(InitCommand::isPrivateMessage, waiting, Duration.between(Instant.now(), until));
             if (update.isEmpty()) {
+                if (!hinted && Instant.now().isBefore(deadline)) {
+                    hint();
+                    continue;
+                }
                 return Optional.empty();
             }
             JsonNode from = update.get().path("message").path("from");
@@ -245,6 +254,7 @@ public final class InitCommand {
                     || declined.stream().anyMatch(member -> member.id() == candidate.id())) {
                 continue;
             }
+            updates.greet(candidate.id());
             // Granting access never defaults to yes: a stray Enter must not make a stranger a member.
             if (terminal.confirm(question.formatted(describe(candidate)), false)) {
                 return Optional.of(candidate);
@@ -252,6 +262,27 @@ public final class InitCommand {
             declined.add(candidate);
         }
         return Optional.empty();
+    }
+
+    /**
+     * Said once, when a wait stays quiet: Telegram can hold a message back without any error reaching Dispatch, e.g. while the
+     * bot is connected to the account under Chat Automation.
+     */
+    private void hint() {
+        hinted = true;
+        terminal.say("  Nothing has reached the bot yet. If Start was pressed:");
+        terminal.say("  - no Start button because the chat was used before? Send the bot any message instead");
+        terminal.say("  - one tick on the message means Telegram has not delivered it to the bot: in Telegram, "
+                + "Settings > Chat Automation must not use this bot");
+        terminal.say("  - Dispatch already running with this bot? Stop it first: dispatch service stop");
+    }
+
+    private static Instant min(Instant a, Instant b) {
+        return a.isBefore(b) ? a : b;
+    }
+
+    private static Duration min(Duration a, Duration b) {
+        return a.compareTo(b) < 0 ? a : b;
     }
 
     private String claude(Map<String, String> env) {
@@ -430,6 +461,15 @@ public final class InitCommand {
                     offset = Math.max(offset, update.path("update_id").asLong() + 1);
                     read.add(update);
                 }
+            }
+        }
+
+        /** Best effort: answers in Telegram, so pressing Start is not met with silence while the terminal asks. */
+        void greet(long chatId) {
+            try {
+                api.sendMessage(chatId, null, GREETING, null, List.of());
+            } catch (TelegramException e) {
+                terminal.warn("could not answer in Telegram (" + e.getMessage() + ")");
             }
         }
 

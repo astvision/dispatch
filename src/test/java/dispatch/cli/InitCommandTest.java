@@ -137,6 +137,39 @@ class InitCommandTest {
     }
 
     @Test
+    void writingToTheBotIsAnsweredInTelegram() throws InterruptedException {
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        ScriptedTerminal terminal = new ScriptedTerminal("", TOKEN, "y");
+
+        init(terminal, false);
+
+        JsonNode reply = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
+        assertEquals(100, reply.path("chat_id").asLong());
+        assertTrue(reply.path("text").asText().contains("dispatch init"), reply.toString());
+    }
+
+    @Test
+    void aQuietWaitSaysWhatToCheckAndKeepsWaiting() throws InterruptedException {
+        waitForPeople = Duration.ofSeconds(6); // the hint comes halfway, after 3 seconds
+        ScriptedTerminal terminal = new ScriptedTerminal("", TOKEN, "y");
+        Thread late = Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(4000);
+            } catch (InterruptedException e) {
+                return;
+            }
+            telegram.pushUpdate(start(1, 100, "Bold"));
+        });
+
+        init(terminal, false);
+        late.join();
+
+        String output = terminal.output();
+        assertTrue(output.contains("Chat Automation"), output);
+        assertTrue(output.indexOf("Chat Automation") < output.indexOf("Is Bold (100) you?"), "the hint came first, then Bold: " + output);
+    }
+
+    @Test
     void refusedTokenIsAskedForAgain() {
         telegram.respond("getMe", 401, "{\"ok\":false,\"error_code\":401,\"description\":\"Unauthorized\"}");
         telegram.pushUpdate(start(1, 100, "Bold"));

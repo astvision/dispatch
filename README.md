@@ -45,7 +45,7 @@ gh api -H "Accept: application/vnd.github.raw" repos/astvision/dispatch/contents
 **2. Set up** with `dispatch init`. Create a bot with @BotFather (`/newbot`) first. The wizard uses the arrow keys and asks, step by step:
 1. **Who will use this bot:** just you, or your team.
 2. **The bot token:** typed masked, then checked with Telegram.
-3. **People:** you open the bot, press Start and confirm your name. For a team, teammates press Start while it waits, and when you add the bot to your team group it finds that group for its announcements.
+3. **People:** you open the bot, press Start and confirm your name. For a team, teammates press Start while it waits, and when you add the bot to your team group it finds that group for its announcements. The bot answers each Start in Telegram. If nothing arrives, the wizard says what to check. For example, Telegram may not deliver your messages while the bot is connected under Settings > Chat Automation.
 4. **Claude Code:** found on your PATH, or given.
 5. **Projects:** the folders of your git clones, each with the branch tasks start from and, from a list, the model and effort.
 6. **Commits:** the author of Dispatch's commits.
