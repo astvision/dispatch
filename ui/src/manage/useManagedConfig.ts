@@ -30,7 +30,8 @@ export function useManagedConfig() {
     setSaveError(null);
     try {
       const result = await call(config.version);
-      setSaved(result.restartNeeded);
+      // Only turn the notice on: a later save that changes nothing must not hide an earlier real save's notice.
+      if (result.restartNeeded) setSaved(true);
       await reload();
       return true;
     } catch (e) {

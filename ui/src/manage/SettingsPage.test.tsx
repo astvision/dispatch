@@ -37,6 +37,19 @@ test("a save that changed nothing does not say to restart", async () => {
   expect(screen.queryByText("Saved. Restart to apply")).not.toBeInTheDocument();
 });
 
+test("a later save that changes nothing keeps an earlier restart notice", async () => {
+  vi.mocked(api.getConfig).mockResolvedValueOnce(teamConfig).mockResolvedValue({ ...teamConfig, version: "v2" });
+  vi.mocked(api.saveSettings).mockResolvedValueOnce(saved).mockResolvedValueOnce(savedNoRestart);
+
+  render(<SettingsPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+  expect(await screen.findByText("Saved. Restart to apply")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await vi.waitFor(() => expect(api.saveSettings).toHaveBeenCalledTimes(2));
+  expect(screen.getByText("Saved. Restart to apply")).toBeInTheDocument();
+});
+
 test("a config changed on disk is explained and can be reloaded", async () => {
   vi.mocked(api.getConfig).mockResolvedValue(teamConfig);
   vi.mocked(api.saveSettings).mockRejectedValue(
