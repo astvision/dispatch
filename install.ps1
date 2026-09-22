@@ -26,9 +26,7 @@ function Quietly([scriptblock] $command) {
     try { & $command } finally { $ErrorActionPreference = $previous }
 }
 
-foreach ($needed in @(@("java", "install Java 25 or later, e.g. Temurin from https://adoptium.net"))) {
-    if (-not (Get-Command $needed[0] -ErrorAction SilentlyContinue)) { throw "$($needed[0]) is needed: $($needed[1])" }
-}
+if (-not (Get-Command java -ErrorAction SilentlyContinue)) { throw "java is needed: install Java 25 or later, e.g. Temurin from https://adoptium.net" }
 $settings = Quietly { java -XshowSettings:properties -version 2>&1 | Out-String }
 $match = [regex]::Match($settings, "java\.specification\.version = (\d+)")
 $version = if ($match.Success) { [int]$match.Groups[1].Value } else { 0 }
