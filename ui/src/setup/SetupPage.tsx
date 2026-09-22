@@ -30,10 +30,12 @@ export default function SetupPage({ onDone }: { onDone: () => void }) {
   }
   if (!state) return <Spin size="large" tip="Starting setup…"><div style={{ height: 200 }} /></Spin>;
 
-  // Resume where the server left off: Claude Code, Projects and Commits live only on this
-  // page, so a reload can't tell those apart and always resumes at Claude Code (step 3).
+  // Resume where the server left off: Claude Code, Projects and Commits live only on this page, so a reload
+  // can't tell those apart and always resumes at Claude Code (step 3). A team setup resumes at People (step 2)
+  // instead, even with members already confirmed, because the team name field (and its default) live there;
+  // skipping straight to step 3 would leave teamName empty and fail Write.
   if (step === null) {
-    setStep(state.bot == null ? 0 : state.members.length === 0 ? 2 : 3);
+    setStep(state.bot == null ? 0 : state.team || state.members.length === 0 ? 2 : 3);
     return <Spin size="large" tip="Starting setup…"><div style={{ height: 200 }} /></Spin>;
   }
 
