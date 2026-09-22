@@ -41,7 +41,7 @@ test("a service that does not come back shows the log's last lines", async () =>
   expect(result.current.phase).toBe("failed");
   expect(result.current.error).toMatch(/not running again/);
   expect(result.current.lines).toEqual(["level=ERROR event=app.failed"]);
-  expect(api.getLogs).toHaveBeenCalledWith({ lines: 20 });
+  expect(api.getLogs).toHaveBeenCalledWith({ lines: 20 }, expect.any(AbortSignal));
 });
 
 test("a refused restart says why", async () => {
@@ -52,4 +52,51 @@ test("a refused restart says why", async () => {
 
   expect(result.current.phase).toBe("failed");
   expect(result.current.error).toBe("Dispatch does not run as a background service here");
+});
+
+test("unmounting mid-restart stops the poll", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(api.restartService).mockResolvedValue(service);
+    vi.mocked(api.getOverview).mockResolvedValue(overview(false));
+    const { result, unmount } = renderHook(() => useRestart(10, 10_000));
+
+    let restarting!: Promise<void>;
+    act(() => {
+      restarting = result.current.restart();
+    });
+    await act(() => vi.advanceTimersByTimeAsync(10));
+    expect(api.getOverview).toHaveBeenCalledTimes(1);
+
+    unmount();
+    const callsAtUnmount = vi.mocked(api.getOverview).mock.calls.length;
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    await restarting;
+
+    expect(api.getOverview).toHaveBeenCalledTimes(callsAtUnmount);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a second restart while one is running does not start another", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(api.restartService).mockResolvedValue(service);
+    vi.mocked(api.getOverview).mockResolvedValue(overview(true));
+    const { result } = renderHook(() => useRestart(10, 10_000));
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = result.current.restart();
+      second = result.current.restart();
+    });
+    await act(() => vi.advanceTimersByTimeAsync(10));
+    await Promise.all([first, second]);
+
+    expect(api.restartService).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });

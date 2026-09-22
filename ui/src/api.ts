@@ -51,7 +51,7 @@ async function send<T>(path: string, init: RequestInit): Promise<T> {
   return body as T;
 }
 
-const get = <T,>(path: string) => send<T>(path, {});
+const get = <T,>(path: string, signal?: AbortSignal) => send<T>(path, { signal });
 
 export function post<T>(path: string, body: unknown = {}, signal?: AbortSignal): Promise<T> {
   return send<T>(path, {
@@ -62,7 +62,7 @@ export function post<T>(path: string, body: unknown = {}, signal?: AbortSignal):
   });
 }
 
-export const getOverview = () => get<Overview>("/api/overview");
+export const getOverview = (signal?: AbortSignal) => get<Overview>("/api/overview", signal);
 
 // Setup (spec: Screens and data flow, Setup). The server keeps the answers until Write.
 
@@ -241,6 +241,6 @@ export const renameMember = (version: string, id: number, name: string) => post<
 export const removeMember = (version: string, group: string, id: number) =>
   post<Saved>("/api/manage/people/remove", { version, group, id });
 export const setAdmin = (version: string, id: number, admin: boolean) => post<Saved>("/api/manage/people/admin", { version, id, admin });
-export const getLogs = (filter: { lines?: number; level?: LogLevel | null; event?: string | null }) =>
-  post<Logs>("/api/manage/logs", filter);
+export const getLogs = (filter: { lines?: number; level?: LogLevel | null; event?: string | null }, signal?: AbortSignal) =>
+  post<Logs>("/api/manage/logs", filter, signal);
 export const restartService = () => post<ServiceView>("/api/service/restart");
