@@ -63,17 +63,18 @@ public final class Setup {
     }
 
     /**
-     * @param team   the team's name, as the config and the state directory use it
-     * @param shared a team's bot (admins, a group chat) rather than a personal one
-     * @param chat   null for none
+     * @param team    the team's name, as the config and the state directory use it
+     * @param shared  a team's bot (admins, a group chat) rather than a personal one
+     * @param chat    null for none
+     * @param workers null unless there is a chat: a team's tasks run on members' own computers (ADR 0020)
      */
-    public record Answers(String team, boolean shared, List<Config.Member> members, Chat chat, String claude,
+    public record Answers(String team, boolean shared, List<Config.Member> members, Chat chat, Config.Workers workers, String claude,
                           List<ProjectAddCommand.Project> projects, String authorName, String authorEmail, Advanced advanced) {
 
         /** A quick setup: every advanced answer keeps its default. */
-        public Answers(String team, boolean shared, List<Config.Member> members, Chat chat, String claude,
+        public Answers(String team, boolean shared, List<Config.Member> members, Chat chat, Config.Workers workers, String claude,
                        List<ProjectAddCommand.Project> projects, String authorName, String authorEmail) {
-            this(team, shared, members, chat, claude, projects, authorName, authorEmail, Advanced.NONE);
+            this(team, shared, members, chat, workers, claude, projects, authorName, authorEmail, Advanced.NONE);
         }
     }
 
@@ -258,6 +259,12 @@ public final class Setup {
                 .append("  authorEmail: ").append(ConfigText.quoted(answers.authorEmail())).append('\n');
         if (advanced.ghCommand() != null && !advanced.ghCommand().equals("gh")) {
             yaml.append("  ghCommand: ").append(ConfigText.quoted(advanced.ghCommand())).append('\n');
+        }
+        if (answers.workers() != null) {
+            yaml.append('\n')
+                    .append("workers:\n")
+                    .append("  publicUrl: ").append(ConfigText.quoted(answers.workers().publicUrl())).append('\n')
+                    .append("  port: ").append(answers.workers().port()).append('\n');
         }
         yaml.append('\n')
                 .append("scheduler:\n  maxConcurrentRuns: ")

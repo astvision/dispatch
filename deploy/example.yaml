@@ -22,6 +22,10 @@ delivery:                         # Dispatch commits, pushes dispatch/<task> and
   authorEmail: dispatch-backend@users.noreply.github.com
   # ghCommand: /usr/bin/gh        # default: gh on PATH
 
+workers:                          # required once a group has a chat: each member's tasks then run on their own computer
+  publicUrl: https://team.example.com   # your tunnel or reverse proxy; members' workers reach this machine here
+  port: 7880                      # Dispatch listens on 127.0.0.1:<port>; the proxy forwards to it
+
 scheduler:
   maxConcurrentRuns: 2
 

@@ -106,6 +106,8 @@ class InitCommandTest {
                 "n",                                // wait for another teammate? no
                 "y",                                // a team group for announcements: yes
                 "",                                 // team name: from the group's title
+                "https://team.example.com",         // workers: public URL
+                "",                                 // workers: port (default 7880)
                 JAVA, repos.repo("alm").toString(), "", "", "", "", "",
                 "", "bold@example.com", "", "n");
 
@@ -119,6 +121,8 @@ class InitCommandTest {
         assertEquals(-1001234567890L, group.chatId());
         assertEquals(List.of(new Config.Member(100, "Bold"), new Config.Member(222, "Ali")), group.members());
         assertEquals("acme-backend", written.team());
+        assertTrue(written.isTeam());
+        assertEquals(new Config.Workers("https://team.example.com", 7880), written.workers());
         assertNull(service.installed, "not wanted this time");
         assertTrue(terminal.output().contains("dispatch run"), terminal.output());
     }

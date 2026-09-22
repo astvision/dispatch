@@ -50,7 +50,7 @@ class SetupTest {
     @Test
     void aWrittenSetupLoadsWithItsTokenInTheSecretsFile() throws IOException {
         GitFixture repos = GitFixture.create(dir, "alm");
-        Setup.Answers answers = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, "claude",
+        Setup.Answers answers = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, null, "claude",
                 List.of(new ProjectAddCommand.Project("alm", null, repos.repo("alm"), null, "main", "claude-code", "opus", null)),
                 "Dispatch (Bold)", "bold@example.com");
 
@@ -111,7 +111,7 @@ class SetupTest {
     void aQuickPersonalSetupRendersTheLayoutInitHasAlwaysWritten() {
         Path state = dir.resolve("state");
         Path alm = dir.resolve("alm");
-        Setup.Answers answers = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, "claude",
+        Setup.Answers answers = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, null, "claude",
                 List.of(new ProjectAddCommand.Project("alm", null, alm, null, "main", "claude-code", "opus", null)),
                 "Dispatch (Bold)", "bold@example.com");
 
@@ -162,7 +162,7 @@ class SetupTest {
         Path state = dir.resolve("state");
         Path alm = dir.resolve("alm");
         Setup.Answers answers = new Setup.Answers("acme", true, List.of(new Config.Member(100, "Bold"), new Config.Member(222, "Ali")),
-                new Setup.Chat(-1001234567890L, "ACME backend"), "claude",
+                new Setup.Chat(-1001234567890L, "ACME backend"), new Config.Workers("https://team.example.com", 7880), "claude",
                 List.of(new ProjectAddCommand.Project("alm", null, alm, "git@github.com:acme/alm.git", "main", "claude-code", null, null)),
                 "Dispatch (Bold)", "bold@example.com");
 
@@ -188,6 +188,10 @@ class SetupTest {
                 delivery:
                   authorName: 'Dispatch (Bold)'
                   authorEmail: 'bold@example.com'
+
+                workers:
+                  publicUrl: 'https://team.example.com'
+                  port: 7880
 
                 scheduler:
                   maxConcurrentRuns: 2
@@ -216,7 +220,7 @@ class SetupTest {
     void advancedAnswersAreWrittenAndEverythingElseKeepsItsDefault() throws IOException {
         GitFixture repos = GitFixture.create(dir, "alm");
         Path state = dir.resolve("elsewhere/state");
-        Setup.Answers answers = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, "claude",
+        Setup.Answers answers = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, null, "claude",
                 List.of(new ProjectAddCommand.Project("alm", "a", repos.repo("alm"), null, "main", "claude-code", null, "high",
                         new Config.PhaseSettings("opus", null), new Config.PhaseSettings(null, "low"))),
                 "Dispatch (Bold)", "bold@example.com",
@@ -250,9 +254,9 @@ class SetupTest {
         Path state = dir.resolve("state");
         List<ProjectAddCommand.Project> projects = List.of(new ProjectAddCommand.Project("alm", null, dir.resolve("alm"), null, "main",
                 "claude-code", null, null, new Config.PhaseSettings(null, null), null));
-        Setup.Answers quick = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, "claude", projects,
+        Setup.Answers quick = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, null, "claude", projects,
                 "Dispatch (Bold)", "bold@example.com");
-        Setup.Answers typedDefaults = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, "claude", projects,
+        Setup.Answers typedDefaults = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, null, "claude", projects,
                 "Dispatch (Bold)", "bold@example.com",
                 new Setup.Advanced("15m", new BigDecimal("2"), "60m", new BigDecimal("10"), 1, state, "gh"));
 

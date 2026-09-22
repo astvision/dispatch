@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -59,6 +61,7 @@ public final class ConfigLoader {
         List<Config.Project> projects = validateProjects(raw.projects(), agents, errors);
         Config.Telegram telegram = validateTelegram(raw.telegram(), projects, errors);
         Config.Delivery delivery = validateDelivery(raw.delivery(), errors);
+        Config.Workers workers = validateWorkers(raw.workers(), telegram, errors);
 
         String token = env.get("TELEGRAM_BOT_TOKEN");
         if (isBlank(token)) {
@@ -70,7 +73,7 @@ public final class ConfigLoader {
             throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));
         }
         return new Config(raw.team(), stateDir, telegram, raw.scheduler(), worktrees, raw.limits(), Map.copyOf(agents),
-                projects, delivery, new Config.Secrets(token, ghToken));
+                projects, delivery, workers, new Config.Secrets(token, ghToken));
     }
 
     private static ConfigFile read(Path file) {
@@ -226,6 +229,44 @@ public final class ConfigLoader {
         return new Config.Delivery(delivery.authorName(), delivery.authorEmail(), ghCommand);
     }
 
+    /**
+     * In a team every member's tasks run on their own computer, so the team machine must be reachable by their workers
+     * (spec: Configuration). A personal Dispatch needs none and runs its jobs in this process.
+     */
+    private static Config.Workers validateWorkers(Config.Workers workers, Config.Telegram telegram, List<String> errors) {
+        boolean team = telegram.groups().stream().anyMatch(group -> group.chatId() != null);
+        if (workers == null) {
+            if (team) {
+                errors.add("workers: required when more than one member is configured; each member's tasks run on their own "
+                        + "computer (publicUrl and port, see deploy/example.yaml)");
+            }
+            return null;
+        }
+        if (isBlank(workers.publicUrl())) {
+            errors.add("workers.publicUrl: required, the https URL members' workers reach this machine on");
+        } else if (!isWorkerUrl(workers.publicUrl())) {
+            errors.add("workers.publicUrl: must start with https:// (plain http only for 127.0.0.1), got '"
+                    + workers.publicUrl() + "'");
+        }
+        if (workers.port() < 1 || workers.port() > 65535) {
+            errors.add("workers.port: must be from 1 to 65535, got " + workers.port());
+        }
+        return workers;
+    }
+
+    /** Worker keys travel on every request: https everywhere, except loopback, which tests pair over. */
+    public static boolean isWorkerUrl(String url) {
+        try {
+            URI uri = new URI(url);
+            if ("https".equalsIgnoreCase(uri.getScheme())) {
+                return uri.getHost() != null;
+            }
+            return "http".equalsIgnoreCase(uri.getScheme()) && "127.0.0.1".equals(uri.getHost());
+        } catch (URISyntaxException e) {
+            return false;
+        }
+    }
+
     private static void validateLimitValues(String at, Config.RunLimits limits, List<String> errors) {
         if (limits.timeout() != null && (limits.timeout().isZero() || limits.timeout().isNegative())) {
             errors.add(at + ".timeout: must be positive");
@@ -367,6 +408,7 @@ public final class ConfigLoader {
             Config.Worktrees worktrees,
             Config.Limits limits,
             Map<String, Config.Agent> agents,
-            List<Config.Project> projects) {
+            List<Config.Project> projects,
+            Config.Workers workers) {
     }
 }

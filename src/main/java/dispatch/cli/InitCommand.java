@@ -115,11 +115,15 @@ public final class InitCommand {
         terminal.ok("you: " + describe(me) + (team ? ", admin" : ""));
         List<Config.Member> members = new ArrayList<>(List.of(me));
         Setup.Chat chat = null;
+        Config.Workers workers = null;
         String name = Setup.teamName(me.name().split("\\s+")[0]);
         if (team) {
             teammates(updates, members, declined, bot.username());
             chat = groupChat(updates, bot.username());
             name = Setup.teamName(required("Team name", chat == null ? name + "-team" : Setup.teamName(chat.title())));
+            if (chat != null) {
+                workers = workers();
+            }
         }
 
         terminal.step("4/6 Claude Code");
@@ -135,13 +139,14 @@ public final class InitCommand {
         String authorEmail = required("Author email", Setup.gitEmail().orElse(null));
         Setup.Advanced instance = advanced ? advancedAnswers(team) : Setup.Advanced.NONE;
 
-        summary(bot, team, members, chat, projects, authorName, authorEmail, configFile);
+        summary(bot, team, members, chat, workers, projects, authorName, authorEmail, configFile);
         if (!terminal.confirm("Write this setup?", true)) {
             throw new CliException("cancelled; nothing was written");
         }
         String yaml;
         try {
-            yaml = Setup.render(new Setup.Answers(name, team, members, chat, claude, projects, authorName, authorEmail, instance),
+            yaml = Setup.render(
+                    new Setup.Answers(name, team, members, chat, workers, claude, projects, authorName, authorEmail, instance),
                     locations.stateDir());
         } catch (ConfigException e) {
             throw new CliException(e.getMessage());
@@ -216,6 +221,29 @@ public final class InitCommand {
         Setup.Chat result = new Setup.Chat(chat.path("id").asLong(), chat.path("title").asText("group"));
         terminal.ok("group: " + result.title() + " (" + result.id() + ")");
         return result;
+    }
+
+    /** Where teammates' computers reach this one, once there is a group to announce to (ADR 0020): their tasks run there. */
+    private Config.Workers workers() {
+        terminal.say("Each teammate's tasks run on their own computer; it must reach this one through a tunnel or reverse proxy.");
+        String publicUrl = required("Public URL (e.g. https://team.example.com)", null);
+        return new Config.Workers(publicUrl, port());
+    }
+
+    private int port() {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String answer = required("Port Dispatch listens on for teammates' computers", "7880");
+            try {
+                int port = Integer.parseInt(answer);
+                if (port >= 1 && port <= 65535) {
+                    return port;
+                }
+            } catch (NumberFormatException e) {
+                // falls through to the warning
+            }
+            terminal.warn("a port is a whole number from 1 to 65535");
+        }
+        throw new CliException("Port is needed");
     }
 
     /**
@@ -417,13 +445,16 @@ public final class InitCommand {
         throw new CliException("State directory is needed");
     }
 
-    private void summary(Setup.Bot bot, boolean team, List<Config.Member> members, Setup.Chat chat, List<ProjectAddCommand.Project> projects,
-                         String authorName, String authorEmail, Path configFile) {
+    private void summary(Setup.Bot bot, boolean team, List<Config.Member> members, Setup.Chat chat, Config.Workers workers,
+                         List<ProjectAddCommand.Project> projects, String authorName, String authorEmail, Path configFile) {
         terminal.step("Summary");
         terminal.say("  Bot       @" + bot.username() + (team ? " (shared by your team)" : " (just you)"));
         terminal.say("  People    " + members.stream().map(InitCommand::describe).collect(Collectors.joining(", ")));
         if (team) {
             terminal.say("  Group     " + (chat == null ? "none" : chat.title()));
+        }
+        if (workers != null) {
+            terminal.say("  Workers   " + workers.publicUrl() + " (port " + workers.port() + ")");
         }
         terminal.say("  Projects  " + projects.stream().map(project -> project.name() + " (" + project.baseBranch()
                 + (project.model() == null ? "" : ", " + project.model()) + (project.effort() == null ? "" : ", " + project.effort()) + ")")

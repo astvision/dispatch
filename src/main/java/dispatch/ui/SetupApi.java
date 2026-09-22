@@ -285,8 +285,11 @@ public final class SetupApi {
                 }
                 List<ProjectAddCommand.Project> projects = projects(body.path("projects"));
                 String name = Setup.teamName(team ? text(body, "teamName") : members.getFirst().name().split("\\s+")[0]);
-                Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), team ? chat : null, text(body, "claude"),
-                        projects, text(body, "authorName"), text(body, "authorEmail"), advanced(body.path("advanced")));
+                // SHORTCUT: the web setup page has no workers step yet, so a team whose group is found here cannot
+                // yet be written; add one alongside the page's own team/worker onboarding (dispatch init already has it).
+                Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), team ? chat : null, null,
+                        text(body, "claude"), projects, text(body, "authorName"), text(body, "authorEmail"),
+                        advanced(body.path("advanced")));
                 String yaml;
                 try {
                     yaml = Setup.render(answers, locations.stateDir());
