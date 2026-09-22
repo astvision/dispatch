@@ -7,11 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
-import dispatch.config.Config;
-import dispatch.core.Groups;
-import dispatch.domain.Requester;
-import dispatch.store.Database;
-import dispatch.testing.TestClock;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -20,52 +15,17 @@ import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.net.UnknownHostException;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Callable;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /** Who may talk to the worker endpoints at all: the key check, the Host check, pairing and the setup route. */
-class WorkerApiTest {
-
-    private static final Requester BOLD = new Requester("telegram:100", "Bold");
-    private static final Requester ALI = new Requester("telegram:200", "Ali");
-
-    @TempDir
-    Path dir;
-
-    private Database db;
-    private WorkerKeys keys;
-    private WorkerApi api;
-    private final HttpClient http = HttpClient.newHttpClient();
-    private final TestClock clock = new TestClock(Instant.parse("2026-09-23T10:00:00Z"));
-
-    @BeforeEach
-    void setUp() throws Exception {
-        db = Database.open(dir.resolve("dispatch.db"));
-        db.migrate();
-        keys = new WorkerKeys(db, clock);
-        api = WorkerApi.start(config(), groups(), keys);
-    }
-
-    @AfterEach
-    void tearDown() {
-        api.close();
-        db.close();
-    }
+class WorkerApiTest extends WorkerApiFixture {
 
     @Test
     void aCodePairsOnceOverHttpAndTheKeyIsTheOnlyThingReturned() throws Exception {
@@ -237,7 +197,7 @@ class WorkerApiTest {
         // closes that channel (java.nio.channels.Channel's own contract for an interrupted blocking operation), so a
         // stalled client is refused by losing its connection outright, not by a graceful JSON body. Either way, the
         // client sees this end quickly instead of the read hanging until its own socket timeout.
-        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, Duration.ofMillis(300))) {
+        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, remote, attachments(), Duration.ofMillis(300))) {
             String head = "POST " + WorkerApi.PROJECTS + " HTTP/1.1\r\n"
                     + "Host: 127.0.0.1:" + impatient.port() + "\r\n"
                     + "Authorization: Bearer whatever\r\n"
@@ -271,7 +231,7 @@ class WorkerApiTest {
         // drain (and this connection) hangs until something external intervenes. This test's own client-side
         // SO_TIMEOUT is that intervention: short enough that an unbounded close() fails this test with a
         // SocketTimeoutException instead of silently passing.
-        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, Duration.ofMillis(500))) {
+        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, remote, attachments(), Duration.ofMillis(500))) {
             String key = pair(BOLD, "ann-laptop");
             byte[] oversized = new byte[80_000];
             Arrays.fill(oversized, (byte) 'y');
@@ -328,7 +288,8 @@ class WorkerApiTest {
     @Test
     void publicUrlWithAnExplicitPortDoesNotAlsoAllowTheBareHost() throws Exception {
         String key = pair(BOLD, "ann-laptop");
-        try (WorkerApi withPort = WorkerApi.start(config("https://team.example.com:8443"), groups(), keys)) {
+        try (WorkerApi withPort = WorkerApi.start(config("https://team.example.com:8443"), groups(), keys, remote,
+                attachments())) {
             Raw bareHost = rawPost(withPort.port(), WorkerApi.PROJECTS, "team.example.com", key, "{}");
             Raw hostWithPort = rawPost(withPort.port(), WorkerApi.PROJECTS, "team.example.com:8443", key, "{}");
 
@@ -350,90 +311,5 @@ class WorkerApiTest {
         }
         assertThrows(IOException.class, () -> new Socket(local, api.port()).close(),
                 "must not accept connections on a non-loopback address");
-    }
-
-    private record Captured(HttpResponse<String> answer, String log) {
-    }
-
-    private Captured capturingStdout(Callable<HttpResponse<String>> action) throws Exception {
-        PrintStream out = System.out;
-        ByteArrayOutputStream logged = new ByteArrayOutputStream();
-        try {
-            System.setOut(new PrintStream(logged, true, StandardCharsets.UTF_8));
-            return new Captured(action.call(), logged.toString(StandardCharsets.UTF_8));
-        } finally {
-            System.setOut(out);
-        }
-    }
-
-    private String pair(Requester member, String name) throws Exception {
-        return Json.read(post(WorkerApi.PAIR, null, pairBody(keys.newCode(member), name)).body()).get("key").asText();
-    }
-
-    private static String pairBody(String code, String name) {
-        return "{\"code\":\"" + code + "\",\"name\":\"" + name + "\"}";
-    }
-
-    private HttpResponse<String> post(String path, String key, String body) throws Exception {
-        HttpRequest.Builder request = HttpRequest.newBuilder(uri(path)).timeout(Duration.ofSeconds(30))
-                .POST(HttpRequest.BodyPublishers.ofString(body));
-        if (key != null) {
-            request.header("Authorization", "Bearer " + key);
-        }
-        return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
-    }
-
-    private URI uri(String path) {
-        return URI.create("http://127.0.0.1:" + api.port() + path);
-    }
-
-    private record Raw(int status, String body) {
-    }
-
-    private Raw rawPost(String path, String host, String key, String body) throws IOException {
-        return rawPost(api.port(), path, host, key, body);
-    }
-
-    private Raw rawPost(int port, String path, String host, String key, String body) throws IOException {
-        byte[] payload = body.getBytes(StandardCharsets.UTF_8);
-        String head = "POST " + path + " HTTP/1.1\r\n"
-                + "Host: " + host + "\r\n"
-                + "Authorization: Bearer " + key + "\r\n"
-                + "Content-Type: application/json\r\n"
-                + "Content-Length: " + payload.length + "\r\n"
-                + "Connection: close\r\n\r\n";
-        try (Socket socket = new Socket("127.0.0.1", port)) {
-            // A regression in the server's read/close handling must fail this test, not hang the build.
-            socket.setSoTimeout(5000);
-            OutputStream out = socket.getOutputStream();
-            out.write(head.getBytes(StandardCharsets.US_ASCII));
-            out.write(payload);
-            out.flush();
-            String response = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            int status = Integer.parseInt(response.substring(9, 12));
-            return new Raw(status, response.substring(response.indexOf("\r\n\r\n") + 4));
-        }
-    }
-
-    private Config config() {
-        return config("http://127.0.0.1:0");
-    }
-
-    private Config config(String publicUrl) {
-        return new Config("backend", dir, new Config.Telegram(List.of(), List.of(new Config.Group("backend", -100L,
-                List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))),
-                new Config.Scheduler(2), Config.Worktrees.DEFAULT,
-                new Config.Limits(new Config.RunLimits(Duration.ofMinutes(30), new java.math.BigDecimal("2")),
-                        new Config.RunLimits(Duration.ofMinutes(60), new java.math.BigDecimal("10"))),
-                Map.of("claude-code", new Config.Agent("claude")),
-                List.of(new Config.Project("alm", null, "git@github.com:acme/alm.git", null, "main", "claude-code", "opus",
-                        "high", List.of(), null, null, null)),
-                new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", "gh"),
-                new Config.Workers(publicUrl, 0), new Config.Secrets("token", null));
-    }
-
-    private Groups groups() {
-        return new Groups(List.of(new Config.Group("backend", -100L,
-                List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm"))));
     }
 }

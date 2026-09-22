@@ -8,8 +8,13 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import dispatch.Json;
 import dispatch.Log;
+import dispatch.OwnerOnly;
 import dispatch.config.Config;
+import dispatch.core.AttachmentSource;
 import dispatch.core.Groups;
+import dispatch.core.Job;
+import dispatch.core.JobResult;
+import dispatch.domain.Attachment;
 import dispatch.store.Workers;
 import dispatch.telegram.TelegramNames;
 import dispatch.ui.ApiException;
@@ -20,10 +25,13 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -67,30 +75,42 @@ public final class WorkerApi implements AutoCloseable {
     private final Config config;
     private final Groups groups;
     private final WorkerKeys keys;
+    private final RemoteWorkers workers;
+    private final AttachmentSource attachments;
     private final Set<String> hosts;
     private final Duration bodyReadTimeout;
     private final ExecutorService bodyReads;
 
-    private WorkerApi(HttpServer server, Config config, Groups groups, WorkerKeys keys, Duration bodyReadTimeout) {
+    private WorkerApi(HttpServer server, Config config, Groups groups, WorkerKeys keys, RemoteWorkers workers,
+                      AttachmentSource attachments, Duration bodyReadTimeout) {
         this.server = server;
         this.config = config;
         this.groups = groups;
         this.keys = keys;
+        this.workers = workers;
+        this.attachments = attachments;
         this.hosts = allowedHosts(config.workers(), server.getAddress().getPort());
         this.bodyReadTimeout = bodyReadTimeout;
         this.bodyReads = Executors.newVirtualThreadPerTaskExecutor();
     }
 
-    /** @param config must have a {@code workers} block; {@code port} 0 takes any free port, as tests do */
-    public static WorkerApi start(Config config, Groups groups, WorkerKeys keys) throws IOException {
-        return start(config, groups, keys, DEFAULT_BODY_READ_TIMEOUT);
+    /**
+     * @param config      must have a {@code workers} block; {@code port} 0 takes any free port, as tests do
+     * @param workers     the jobs waiting for members' computers
+     * @param attachments where a task's files come from — the channel they were sent in; the bytes pass through and no
+     *                    copy stays on this machine
+     */
+    public static WorkerApi start(Config config, Groups groups, WorkerKeys keys, RemoteWorkers workers,
+                                  AttachmentSource attachments) throws IOException {
+        return start(config, groups, keys, workers, attachments, DEFAULT_BODY_READ_TIMEOUT);
     }
 
     /** @param bodyReadTimeout overrides {@link #DEFAULT_BODY_READ_TIMEOUT}; a real wall-clock bound, for tests. */
-    static WorkerApi start(Config config, Groups groups, WorkerKeys keys, Duration bodyReadTimeout) throws IOException {
+    static WorkerApi start(Config config, Groups groups, WorkerKeys keys, RemoteWorkers workers,
+                           AttachmentSource attachments, Duration bodyReadTimeout) throws IOException {
         HttpServer http = HttpServer.create(
                 new InetSocketAddress(InetAddress.getByName("127.0.0.1"), config.workers().port()), 0);
-        WorkerApi api = new WorkerApi(http, config, groups, keys, bodyReadTimeout);
+        WorkerApi api = new WorkerApi(http, config, groups, keys, workers, attachments, bodyReadTimeout);
         http.createContext("/", api::handle);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         http.start();
@@ -167,14 +187,69 @@ public final class WorkerApi implements AutoCloseable {
         route(exchange, path, worker, body);
     }
 
-    /** The protocol routes join this switch in the next task. */
     private void route(HttpExchange exchange, String path, Workers.Paired worker, JsonNode body) throws IOException,
             InterruptedException {
-        if (path.equals(PROJECTS)) {
-            json(exchange, 200, Json.write(projects(worker)));
-            return;
+        switch (path) {
+            case PROJECTS -> json(exchange, 200, Json.write(projects(worker)));
+            case NEXT -> {
+                Optional<Job> job = workers.next(worker);
+                ObjectNode answer = Json.object();
+                if (job.isPresent()) {
+                    answer.set("job", Json.MAPPER.<JsonNode>valueToTree(job.get()));
+                } else {
+                    answer.putNull("job");
+                }
+                json(exchange, 200, Json.write(answer));
+            }
+            case PROGRESS -> {
+                boolean cancel = workers.progress(worker, new RemoteWorkers.Progress(
+                        required(body, "taskId").asLong(), required(body, "seq").asInt(),
+                        text(body, "worktree"), text(body, "baseSha"), body.path("agentStarted").asBoolean(false),
+                        body.hasNonNull("steps") ? body.get("steps").asInt() : null, text(body, "lastAction")));
+                json(exchange, 200, Json.write(Json.object().put("cancel", cancel)));
+            }
+            case RESULT -> {
+                JobResult result = Json.MAPPER.treeToValue(required(body, "result"), JobResult.class);
+                workers.result(worker, required(body, "taskId").asLong(), required(body, "seq").asInt(), result);
+                json(exchange, 200, Json.write(Json.object().put("ok", true)));
+            }
+            case ATTACHMENT -> attachment(exchange, worker, required(body, "taskId").asLong(), required(body, "fileRef").asText());
+            default -> throw new ApiException(404, "not_found", "no such worker API: " + path);
         }
-        throw new ApiException(404, "not_found", "no such worker API: " + path);
+    }
+
+    /**
+     * One of the leased job's files, fetched from the channel and streamed straight through. The team machine writes it
+     * owner-only while it is in flight and deletes it whatever happens: the bytes belong to the requester.
+     */
+    private void attachment(HttpExchange exchange, Workers.Paired worker, long taskId, String fileRef) throws IOException {
+        Job job = workers.leased(worker, taskId);
+        Attachment file = job.attachments().stream().filter(candidate -> candidate.fileRef().equals(fileRef)).findFirst()
+                .orElseThrow(() -> new ApiException(404, "not_found", "task " + taskId + " has no such file"));
+        Path dir = config.stateDir().resolve("outgoing");
+        OwnerOnly.createDirectories(dir);
+        Path copy = dir.resolve(taskId + "-" + WorkerKeys.sha256(file.fileRef()).substring(0, 16));
+        try {
+            attachments.download(file.fileRef(), copy);
+            byte[] bytes = Files.readAllBytes(copy);
+            exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
+            send(exchange, 200, bytes);
+        } catch (RuntimeException e) {
+            throw new ApiException(404, "not_found", "cannot fetch " + file.name() + ": " + e.getMessage());
+        } finally {
+            Files.deleteIfExists(copy);
+        }
+    }
+
+    private static JsonNode required(JsonNode body, String field) {
+        if (!body.hasNonNull(field)) {
+            throw new ApiException(400, "invalid", field + ": required");
+        }
+        return body.get(field);
+    }
+
+    private static String text(JsonNode body, String field) {
+        return body.hasNonNull(field) ? body.get(field).asText() : null;
     }
 
     private Workers.Paired authenticate(HttpExchange exchange) {
