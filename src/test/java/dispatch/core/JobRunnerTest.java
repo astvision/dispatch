@@ -69,6 +69,8 @@ class JobRunnerTest {
 
     @Test
     void aPlanJobRunsTheAgentInANewWorktreeAndReportsWhatTheStoreMustRecord() throws Exception {
+        Instant before = Instant.now().minusSeconds(5); // OS process start times can be truncated to the second
+
         JobResult result = runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
 
         assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome());
@@ -77,6 +79,8 @@ class JobRunnerTest {
         assertEquals(worktree.toString(), events.worktree, "the Coordinator must record the worktree while the run goes on");
         assertEquals(GitFixture.sh(repos.seed, "git", "rev-parse", "HEAD"), events.baseSha);
         assertTrue(events.pid > 0, "the agent's process is recorded for orphan detection");
+        assertFalse(events.processStart.isBefore(before), "the pid's own start time, which Recovery matches against the live process");
+        assertFalse(events.processStart.isAfter(Instant.now()), "the pid's own start time, which Recovery matches against the live process");
         assertEquals("Plan this: fix the login timeout", Files.readString(worktree.resolve("fake-claude.prompt")));
         assertEquals(SESSION.toString(), valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--session-id"));
         assertTrue(Files.exists(repos.stateDir.resolve("runs/" + TASK + "/1.jsonl")));

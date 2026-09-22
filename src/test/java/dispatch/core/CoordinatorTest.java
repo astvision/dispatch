@@ -2,6 +2,7 @@ package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -89,7 +90,7 @@ class CoordinatorTest {
         assertFalse(job.resume(), "no earlier planning run started the session");
         assertTrue(job.prompt().contains("Fix the login timeout"), job.prompt());
         assertEquals("dispatch #" + id + ": Fix the login timeout", job.commitSubject());
-        assertEquals(List.of("Requested-by: Bold"), job.commitTrailers());
+        assertEquals(List.of(), job.commitTrailers(), "a PLAN job never delivers, so it never pays for Runs.forTask");
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
         assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'PLAN_READY'").get("n"));
     }
@@ -169,6 +170,23 @@ class CoordinatorTest {
         assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
         assertEquals("CANCELLED", row("SELECT status FROM run WHERE task_id = ?", id).get("status"));
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_FAILED'").get("n"));
+    }
+
+    /** Pins plan ruling 7: recordBuildSession happens while the job is built, before the worker can fail its setup. */
+    @Test
+    void aFirstExecuteThatFailsInSetupStillKeepsTheGeneratedBuildSessionId() {
+        long id = queue("Fix the login timeout");
+        coordinator(projects(List.of(ALM)), remember(JobResult.succeeded(agentResult(PLAN_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+
+        coordinator(projects(List.of(ALM)), remember(JobResult.failed(FailureReason.SETUP, "the task has no worktree", null)))
+                .execute(claim());
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("FAILED", task.get("phase"));
+        assertEquals("SETUP", task.get("failure_reason"));
+        assertNotNull(task.get("build_session_id"),
+                "the session id generated for this first EXECUTE survives even though the worker never got to run");
     }
 
     private Coordinator coordinator(Projects projects, Worker worker) {

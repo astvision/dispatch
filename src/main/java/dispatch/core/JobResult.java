@@ -29,7 +29,7 @@ public record JobResult(
     }
 
     public JobResult {
-        files = List.copyOf(files);
+        files = files == null ? List.of() : List.copyOf(files);
     }
 
     /** An agent that finished its work; a planning run's plan is in {@code agent.structuredOutput()}. */

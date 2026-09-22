@@ -96,7 +96,7 @@ public final class Coordinator {
             transitions.failed(taskId, seq, FailureReason.SETUP, "project " + task.project() + " is no longer configured", null);
             return Optional.empty();
         }
-        return Optional.of(switch (claimed.kind()) {
+        return Optional.of(switch (run.kind()) {
             case PLAN -> planJob(task, run, project.get());
             case EXECUTE -> executeJob(task, run, project.get());
             case DELIVER -> deliverJob(task, run, project.get());
@@ -108,7 +108,7 @@ public final class Coordinator {
         Config.RunLimits limits = planLimits.apply(project);
         // A task that already has a plan is being corrected: this run's instruction is the member's reply.
         String prompt = task.planJson() == null ? Prompts.plan(task) : Prompts.correction(task, run);
-        return job(task, run, project, task.sessionId(), agentStartedBefore(task.id(), RunKind.PLAN, run.seq()), prompt,
+        return newJob(task, run, project, task.sessionId(), agentStartedBefore(task.id(), RunKind.PLAN, run.seq()), prompt,
                 project.planModel(), project.planEffort(), limits.timeout().toMillis(), limits.budgetUsd(),
                 attachments(task.id()), null);
     }
@@ -116,24 +116,24 @@ public final class Coordinator {
     private Job executeJob(Task task, Run run, Config.Project project) {
         Config.RunLimits limits = executeLimits.apply(project);
         boolean resume = agentStartedBefore(task.id(), RunKind.EXECUTE, run.seq());
-        return job(task, run, project, buildSession(task), resume, executePrompt(task, run, resume), project.executeModel(),
+        return newJob(task, run, project, buildSession(task), resume, executePrompt(task, run, resume), project.executeModel(),
                 project.executeEffort(), limits.timeout().toMillis(), limits.budgetUsd(), attachments(task.id()), null);
     }
 
     /** A delivery run has no agent: it commits what the failed delivery left, with that run's summary as the body. */
     private Job deliverJob(Task task, Run run, Config.Project project) {
-        return job(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction());
+        return newJob(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction());
     }
 
-    private Job job(Task task, Run run, Config.Project project, UUID sessionId, boolean resume, String prompt, String model,
+    private Job newJob(Task task, Run run, Config.Project project, UUID sessionId, boolean resume, String prompt, String model,
                     String effort, long timeoutMillis, BigDecimal budgetUsd, List<Attachment> attachments,
                     String deliverySummary) {
         Job.Project on = new Job.Project(project.name(), project.repo(), project.path(), project.baseBranch(), project.agent(),
                 project.copyFiles());
         return new Job(task.id(), run.seq(), run.kind(), on, task.baseBranch(), task.baseSha(),
                 task.worktree() == null ? null : task.worktree().toString(), task.prUrl(), sessionId, resume, prompt, model,
-                effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(), trailers(task),
-                deliverySummary);
+                effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
+                trailers(task, run.kind()), deliverySummary);
     }
 
     /**
@@ -151,8 +151,14 @@ public final class Coordinator {
         };
     }
 
-    /** The delivery commit's trailers: who asked, and whoever approved the plan (later runs do not change that). */
-    private List<String> trailers(Task task) {
+    /**
+     * The delivery commit's trailers: who asked, and whoever approved the plan (later runs do not change that). Only
+     * EXECUTE and DELIVER jobs ever deliver, so a PLAN job skips the {@code Runs.forTask} query and gets none.
+     */
+    private List<String> trailers(Task task, RunKind kind) {
+        if (kind != RunKind.EXECUTE && kind != RunKind.DELIVER) {
+            return List.of();
+        }
         List<String> trailers = new ArrayList<>(List.of("Requested-by: " + task.requester().name()));
         db.transactionReturning(tx -> Runs.forTask(tx, task.id())).stream()
                 .filter(run -> run.cause() == RunCause.APPROVAL && run.requestedByName() != null)

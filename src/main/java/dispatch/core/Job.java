@@ -49,15 +49,15 @@ public record Job(
         String deliverySummary) {
 
     public Job {
-        attachments = List.copyOf(attachments);
-        commitTrailers = List.copyOf(commitTrailers);
+        attachments = attachments == null ? List.of() : List.copyOf(attachments);
+        commitTrailers = commitTrailers == null ? List.of() : List.copyOf(commitTrailers);
     }
 
     /** @param path the clone the run works from, null when the worker keeps its own under {@code repos/<name>} */
     public record Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles) {
 
         public Project {
-            copyFiles = List.copyOf(copyFiles);
+            copyFiles = copyFiles == null ? List.of() : List.copyOf(copyFiles);
         }
     }
 }
