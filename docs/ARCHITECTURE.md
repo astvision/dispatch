@@ -298,10 +298,14 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
   - fewer than `maxConcurrentRuns` runs are active (default 2), and
   - the run is a PLAN, or its project has no active EXECUTE/DELIVER run.
 - A claim is a conditional update, `QUEUED → RUNNING`.
+- The sweeper removes, every hour, worktrees of finished tasks unchanged for longer than `worktrees.idleDays` (7):
+  - COMPLETED/FAILED tasks only if the worktree is clean and its commits are on origin; otherwise it keeps them and logs a WARN;
+  - CANCELLED/REJECTED tasks even if dirty, logging the discarded paths;
+  - never active tasks (planning, awaiting approval, executing).
 
-**The worker boundary.** A claimed run is carried by the `Coordinator`, which is the only part that reads or writes the
-store. It reads the task, the run, the project, this phase's limits, the attachments and whether the session's agent
-already ran into one immutable `Job`, and applies the returned `JobResult` as exactly one transition.
+  The `dispatch/<id>` branch stays in the clone, so a later retry or follow-up recreates the worktree. The sweep re-reads the task's phase just before removing its worktree and skips it if a follow-up or retry made it active.
+
+**The worker boundary.** A claimed run is carried by the `Coordinator`, which is the only part that reads or writes the store. It reads the task, the run, the project, this phase's limits, the attachments and whether the session's agent already ran into one immutable `Job`. Building that job can itself write to the store: a task's first execution run has the Coordinator record the new build session id before the job is ever handed to a worker, so the `JobEvents` writes below are not the only mid-run store write. It applies the returned `JobResult` as exactly one transition.
 
 ```java
 interface Worker { JobResult run(Job job, JobEvents events, ActiveRuns.ActiveRun control); }
@@ -311,18 +315,7 @@ interface JobEvents {
 }
 ```
 
-`JobRunner` is the worker in this process: worktree, attachments, agent under its timeout, delivery. It is built with no
-`Database`, `Projects` or `Config`, so the same class runs a job on a team member's own computer with HTTP in between
-(W-2 for the split, W-3 for the remote workers). Cancelling reaches it through `control`: `ActiveRuns.stop` sets the run's
-stop reason, the runner stops its agent (SIGTERM, 10 s grace, SIGKILL) and answers `CANCELLED`. A worker that throws is
-the worker breaking: the run is logged as `run.crashed` and fails as `INTERNAL`.
-
-- The sweeper removes, every hour, worktrees of finished tasks unchanged for longer than `worktrees.idleDays` (7):
-  - COMPLETED/FAILED tasks only if the worktree is clean and its commits are on origin; otherwise it keeps them and logs a WARN;
-  - CANCELLED/REJECTED tasks even if dirty, logging the discarded paths;
-  - never active tasks (planning, awaiting approval, executing).
-
-  The `dispatch/<id>` branch stays in the clone, so a later retry or follow-up recreates the worktree. The sweep re-reads the task's phase just before removing its worktree and skips it if a follow-up or retry made it active.
+`JobRunner` is the worker in this process: worktree, attachments, agent under its timeout, delivery. It is built with no `Database`, `Projects` or `Config`, so the same class runs a job on a team member's own computer with HTTP in between (W-2 for the split, W-3 for the remote workers). Cancelling reaches it through `control`: `ActiveRuns.stop` sets the run's stop reason, the runner stops its agent (SIGTERM, 10 s grace, SIGKILL) and answers `CANCELLED`. A worker that throws is the worker breaking: the run is logged as `run.crashed` and fails as `INTERNAL`.
 
 ## Failure and recovery
 
