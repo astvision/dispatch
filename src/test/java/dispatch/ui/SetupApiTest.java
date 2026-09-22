@@ -278,6 +278,9 @@ class SetupApiTest {
         telegram.pushUpdate(start(1, 100, "Bold"));
         call("/api/setup/people/next", "{}");
         call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+        // The confirmation above made its own getUpdates request(s); drain them so the awaitRequest below only ever
+        // sees the fresh one this test's own poll makes, not a leftover from an earlier call on the shared queue.
+        telegram.drain("getUpdates");
         String writeBody = "{\"claude\":\"" + json(JAVA) + "\",\"authorName\":\"a\",\"authorEmail\":\"a@example.com\","
                 + "\"projects\":[{\"folder\":\"" + json(repos.repo("alm").toString()) + "\",\"name\":\"alm\",\"baseBranch\":\"main\"}]}";
 
@@ -285,7 +288,9 @@ class SetupApiTest {
         try {
             // No update is pushed: this polls for the whole 1s poll duration set up in setUp().
             Future<JsonNode> emptyPoll = executor.submit(() -> call("/api/setup/people/next", "{}"));
-            Thread.sleep(200); // let the poll start and take the "reading" lock
+            // Waiting for the actual getUpdates request (not a sleep) proves the poll has started and taken the
+            // "reading" lock before write() below tries to take it too, as the token-swap tests do.
+            telegram.awaitRequest("getUpdates", Duration.ofSeconds(2));
             long started = System.nanoTime();
             JsonNode written = call("/api/setup/write", writeBody);
             long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
