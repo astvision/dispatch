@@ -128,6 +128,24 @@ class SetupApiTest {
     }
 
     @Test
+    void aTeammateSkippedAfterYouAreConfirmedIsNotOfferedAgainAtOnce() throws Exception {
+        call("/api/setup/team", "{\"team\":true}");
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}"); // you're confirmed
+
+        telegram.pushUpdate(start(2, 222, "Ali"));
+        JsonNode found = call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":222,\"accept\":false}"); // skip Ali, after you were already in
+
+        JsonNode again = call("/api/setup/people/next", "{}");
+
+        assertEquals(222, found.path("candidate").path("id").asLong());
+        assertTrue(again.path("candidate").isNull(), "Ali, declined after confirmation, is not offered again at once: " + again);
+    }
+
+    @Test
     void aPersonalBotRefusesASecondMemberAndClearsTheCandidate() throws Exception {
         call("/api/setup/team", "{\"team\":false}");
         call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");

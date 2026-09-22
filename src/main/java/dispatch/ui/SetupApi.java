@@ -85,6 +85,8 @@ public final class SetupApi {
     private Setup.Updates updates;
     private final List<Config.Member> members = new ArrayList<>();
     private final List<Config.Member> declined = new ArrayList<>();
+    /** People declined before you were confirmed, e.g. a teammate who pressed Start first; each offered once more. */
+    private final List<Config.Member> offerAgain = new ArrayList<>();
     private Config.Member candidate;
     private Setup.Chat chat;
 
@@ -142,6 +144,7 @@ public final class SetupApi {
             updates = new Setup.Updates(checked.api());
             members.clear();
             declined.clear();
+            offerAgain.clear();
             candidate = null;
             chat = null;
         }
@@ -155,11 +158,12 @@ public final class SetupApi {
                 if (candidate != null) {
                     return new Candidate(person(candidate));
                 }
-                // Someone declined as you, e.g. a teammate who pressed Start first, may still join the team.
-                Optional<Config.Member> earlier = members.isEmpty() ? Optional.empty() : declined.stream().findFirst();
+                // Someone declined before you were confirmed, e.g. a teammate who pressed Start first, may still
+                // join the team; each such person is offered again only once, and only for a team's bot.
+                Optional<Config.Member> earlier = team && !offerAgain.isEmpty() ? Optional.of(offerAgain.getFirst()) : Optional.empty();
                 if (earlier.isPresent()) {
                     candidate = earlier.get();
-                    declined.remove(candidate);
+                    offerAgain.remove(candidate);
                     return new Candidate(person(candidate));
                 }
                 source = requireUpdates();
@@ -194,6 +198,12 @@ public final class SetupApi {
             declined.add(candidate);
             candidate = null;
             throw new CliException("a personal bot has one member: you");
+        }
+        if (accept && members.isEmpty()) {
+            // You are the one being confirmed now; anyone declined earlier moves to offerAgain so a team's bot
+            // can still offer them once more (they may have pressed Start before you did).
+            offerAgain.addAll(declined);
+            declined.clear();
         }
         // Granting access is always this explicit answer; nothing is accepted by default.
         (accept ? members : declined).add(candidate);
@@ -335,7 +345,8 @@ public final class SetupApi {
     }
 
     private synchronized boolean known(Config.Member member) {
-        return members.stream().anyMatch(m -> m.id() == member.id()) || declined.stream().anyMatch(m -> m.id() == member.id());
+        return members.stream().anyMatch(m -> m.id() == member.id()) || declined.stream().anyMatch(m -> m.id() == member.id())
+                || offerAgain.stream().anyMatch(m -> m.id() == member.id());
     }
 
     private Setup.Updates requireUpdates() {
