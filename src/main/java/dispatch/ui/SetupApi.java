@@ -13,6 +13,7 @@ import dispatch.config.Config;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -284,7 +285,7 @@ public final class SetupApi {
                 List<ProjectAddCommand.Project> projects = projects(body.path("projects"));
                 String name = Setup.teamName(team ? text(body, "teamName") : members.getFirst().name().split("\\s+")[0]);
                 Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), team ? chat : null, text(body, "claude"),
-                        projects, text(body, "authorName"), text(body, "authorEmail"));
+                        projects, text(body, "authorName"), text(body, "authorEmail"), advanced(body.path("advanced")));
                 Setup.write(configFile, Setup.render(answers, locations.stateDir()), bot.token());
                 try {
                     updates.acknowledge();
@@ -324,13 +325,64 @@ public final class SetupApi {
             }
             String model = choice(item, "model", MODELS);
             String effort = choice(item, "effort", EFFORTS);
-            projects.add(new ProjectAddCommand.Project(name, null, probe.folder(), probe.originUrl(), text(item, "baseBranch"),
-                    "claude-code", model, effort));
+            projects.add(new ProjectAddCommand.Project(name, optionalText(item, "alias"), probe.folder(), probe.originUrl(),
+                    text(item, "baseBranch"), "claude-code", model, effort, phase(item.path("plan")), phase(item.path("execute"))));
         }
         if (projects.isEmpty()) {
             throw new CliException("add at least one project");
         }
         return projects;
+    }
+
+    /** A project's own model and effort for one phase, from the Advanced section; null when neither is set. */
+    static Config.PhaseSettings phase(JsonNode settings) {
+        String model = choice(settings, "model", MODELS);
+        String effort = choice(settings, "effort", EFFORTS);
+        return model == null && effort == null ? null : new Config.PhaseSettings(model, effort);
+    }
+
+    /** The Advanced section's instance answers; each one left out keeps its default. */
+    private Setup.Advanced advanced(JsonNode advanced) {
+        String stateDir = optionalText(advanced, "stateDir");
+        return new Setup.Advanced(duration(advanced, "planTimeout"), budget(advanced, "planBudgetUsd"),
+                duration(advanced, "executeTimeout"), budget(advanced, "executeBudgetUsd"), runs(advanced),
+                stateDir == null ? null : ProjectProbe.expandHome(Path.of(stateDir)).toAbsolutePath(),
+                optionalText(advanced, "ghCommand"));
+    }
+
+    static String duration(JsonNode body, String field) {
+        String value = optionalText(body, field);
+        if (value == null) {
+            return null;
+        }
+        try {
+            Config.RunLimits.parseDuration(value);
+            return value;
+        } catch (IllegalArgumentException e) {
+            throw new CliException(field + ": " + e.getMessage());
+        }
+    }
+
+    static BigDecimal budget(JsonNode body, String field) {
+        JsonNode value = body.path(field);
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (!value.isNumber() || value.decimalValue().signum() <= 0) {
+            throw new CliException(field + " must be a positive number of dollars, e.g. 2 or 12.5");
+        }
+        return value.decimalValue();
+    }
+
+    private static Integer runs(JsonNode body) {
+        JsonNode value = body.path("maxConcurrentRuns");
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (!value.isIntegralNumber() || value.asInt() < 1) {
+            throw new CliException("maxConcurrentRuns must be a whole number, at least 1");
+        }
+        return value.asInt();
     }
 
     private ProjectProbe probe(String folder) {

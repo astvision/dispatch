@@ -328,6 +328,56 @@ class SetupApiTest {
     }
 
     @Test
+    void theAdvancedSectionReachesTheConfig() throws Exception {
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+
+        call("/api/setup/write", """
+                {"claude":"claude","authorName":"a","authorEmail":"a@example.com",
+                 "projects":[{"folder":"%s","name":"alm","baseBranch":"main","alias":"a",
+                              "plan":{"model":"opus"},"execute":{"model":null,"effort":"low"}}],
+                 "advanced":{"planTimeout":"30m","executeBudgetUsd":12.5,"maxConcurrentRuns":3,"ghCommand":"/opt/gh/bin/gh"}}"""
+                .formatted(json(repos.repo("alm").toString())));
+
+        Config loaded = ConfigLoader.load(config, SecretsFile.environment(config, Map.of()));
+        Config.Project project = loaded.projects().getFirst();
+        assertEquals("a", project.alias());
+        assertEquals("opus", project.planModel());
+        assertEquals("low", project.executeEffort());
+        assertEquals(java.time.Duration.ofMinutes(30), loaded.limits().plan().timeout());
+        assertEquals(new java.math.BigDecimal("12.5"), loaded.limits().execute().budgetUsd());
+        assertEquals(3, loaded.scheduler().maxConcurrentRuns());
+        assertEquals("/opt/gh/bin/gh", loaded.delivery().ghCommand());
+        assertEquals(dir.resolve("state").toAbsolutePath(), loaded.stateDir(), "the default state directory");
+    }
+
+    @Test
+    void advancedAnswersAreCheckedBeforeAnythingIsWritten() throws Exception {
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+        String project = "{\"folder\":\"" + json(repos.repo("alm").toString()) + "\",\"name\":\"alm\",\"baseBranch\":\"main\"}";
+
+        CliException timeout = assertThrows(CliException.class, () -> call("/api/setup/write",
+                "{\"claude\":\"claude\",\"authorName\":\"a\",\"authorEmail\":\"a@example.com\",\"projects\":[" + project
+                        + "],\"advanced\":{\"planTimeout\":\"soon\"}}"));
+        CliException budget = assertThrows(CliException.class, () -> call("/api/setup/write",
+                "{\"claude\":\"claude\",\"authorName\":\"a\",\"authorEmail\":\"a@example.com\",\"projects\":[" + project
+                        + "],\"advanced\":{\"planBudgetUsd\":0}}"));
+        CliException effort = assertThrows(CliException.class, () -> call("/api/setup/write",
+                "{\"claude\":\"claude\",\"authorName\":\"a\",\"authorEmail\":\"a@example.com\",\"projects\":["
+                        + project.replace("}", ",\"plan\":{\"effort\":\"huge\"}}") + "]}"));
+
+        assertTrue(timeout.getMessage().startsWith("planTimeout: invalid duration 'soon'"), timeout.getMessage());
+        assertTrue(budget.getMessage().contains("planBudgetUsd must be a positive number"), budget.getMessage());
+        assertTrue(effort.getMessage().startsWith("effort must be one of"), effort.getMessage());
+        assertFalse(Files.exists(config));
+    }
+
+    @Test
     void theServiceIsInstalledForTheWrittenConfig() throws Exception {
         aWholePersonalSetupWritesAConfigThatLoads();
 

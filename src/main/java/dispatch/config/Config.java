@@ -80,7 +80,7 @@ public record Config(
             return new RunLimits(timeout == null ? null : parseDuration(timeout), budgetUsd);
         }
 
-        static Duration parseDuration(String text) {
+        public static Duration parseDuration(String text) {
             Matcher matcher = DURATION.matcher(text.strip());
             if (!matcher.matches()) {
                 throw new IllegalArgumentException("invalid duration '" + text + "' (use a number with s, m or h, e.g. 90s, 15m, 2h)");

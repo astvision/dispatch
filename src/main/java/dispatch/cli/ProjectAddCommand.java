@@ -76,11 +76,22 @@ public final class ProjectAddCommand {
         terminal.say("  A running Dispatch picks it up when restarted.");
     }
 
-    /** What a new project's block says; everything the person typed is quoted where YAML would read it differently. */
-    public record Project(String name, String alias, Path folder, String originUrl, String baseBranch, String agent, String model, String effort) {
+    /**
+     * What a new project's block says; everything the person typed is quoted where YAML would read it differently.
+     *
+     * @param plan    the model and effort for planning runs only; null for none
+     * @param execute likewise for execution runs
+     */
+    public record Project(String name, String alias, Path folder, String originUrl, String baseBranch, String agent, String model,
+                          String effort, Config.PhaseSettings plan, Config.PhaseSettings execute) {
+
+        public Project(String name, String alias, Path folder, String originUrl, String baseBranch, String agent, String model,
+                       String effort) {
+            this(name, alias, folder, originUrl, baseBranch, agent, model, effort, null, null);
+        }
     }
 
-    static List<String> projectLines(Project project) {
+    public static List<String> projectLines(Project project) {
         List<String> lines = new ArrayList<>(List.of("name: " + yaml(project.name())));
         if (project.alias() != null) {
             lines.add("alias: " + yaml(project.alias()));
@@ -97,7 +108,22 @@ public final class ProjectAddCommand {
         if (project.effort() != null) {
             lines.add("effort: " + yaml(project.effort()));
         }
+        phaseLines(lines, "plan", project.plan());
+        phaseLines(lines, "execute", project.execute());
         return lines;
+    }
+
+    private static void phaseLines(List<String> lines, String phase, Config.PhaseSettings settings) {
+        if (settings == null || settings.model() == null && settings.effort() == null) {
+            return;
+        }
+        lines.add(phase + ":");
+        if (settings.model() != null) {
+            lines.add("  model: " + yaml(settings.model()));
+        }
+        if (settings.effort() != null) {
+            lines.add("  effort: " + yaml(settings.effort()));
+        }
     }
 
     static String yaml(String value) {
