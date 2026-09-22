@@ -49,6 +49,13 @@ class CliTest {
     }
 
     @Test
+    void initAsksTheAdvancedQuestionsOnlyWhenAskedTo() {
+        assertEquals(new Cli.Init(DEFAULT_CONFIG, false, true), parse("init", "--advanced"));
+        assertEquals(false, parse("init") instanceof Cli.Init init && init.advanced());
+        assertTrue(error("check", "--advanced").contains("check does not take --advanced"));
+    }
+
+    @Test
     void serviceActionsAndTheRunLogFile() {
         assertEquals(new Cli.Service(DEFAULT_CONFIG, "install"), parse("service", "install"));
         assertEquals(new Cli.Service(Path.of("team.yaml"), "status"), parse("service", "status", "--config", "team.yaml"));

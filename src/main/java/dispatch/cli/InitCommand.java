@@ -5,6 +5,7 @@ import dispatch.config.Config;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -40,6 +41,19 @@ public final class InitCommand {
             new Terminal.Option<>("High", "", "high"),
             new Terminal.Option<>("Extra high", "", "xhigh"),
             new Terminal.Option<>("Max", "most thorough", "max"));
+    /** An Advanced per-phase choice: the first keeps what was chosen for both phases. */
+    private static final List<Terminal.Option<String>> PHASE_MODELS = List.of(
+            new Terminal.Option<>("Same as above", "the model chosen for both phases", null),
+            new Terminal.Option<>("Sonnet", "", "sonnet"),
+            new Terminal.Option<>("Opus", "", "opus"),
+            new Terminal.Option<>("Fable", "", "fable"));
+    private static final List<Terminal.Option<String>> PHASE_EFFORTS = List.of(
+            new Terminal.Option<>("Same as above", "the effort chosen for both phases", null),
+            new Terminal.Option<>("Low", "fastest", "low"),
+            new Terminal.Option<>("Medium", "", "medium"),
+            new Terminal.Option<>("High", "", "high"),
+            new Terminal.Option<>("Extra high", "", "xhigh"),
+            new Terminal.Option<>("Max", "most thorough", "max"));
 
     private final Terminal terminal;
     private final Function<String, BotApi> bots;
@@ -47,6 +61,7 @@ public final class InitCommand {
     private final Duration waitForPeople;
     private final ServiceCommand services;
     private boolean hinted;
+    private boolean advanced;
 
     /**
      * @param bots          the Telegram client for a bot token
@@ -64,6 +79,7 @@ public final class InitCommand {
 
     public int run(Cli.Init options, Map<String, String> processEnvironment) {
         try {
+            advanced = options.advanced();
             init(options.configFile().toAbsolutePath(), options.force(), processEnvironment);
             return 0;
         } catch (CliException e) {
@@ -116,12 +132,14 @@ public final class InitCommand {
         terminal.say("Dispatch commits each task's changes as:");
         String authorName = required("Author name", "Dispatch (" + me.name().split("\\s+")[0] + ")");
         String authorEmail = required("Author email", Setup.gitEmail().orElse(null));
+        Setup.Advanced instance = advanced ? advancedAnswers(team) : Setup.Advanced.NONE;
 
         summary(bot, team, members, chat, projects, authorName, authorEmail, configFile);
         if (!terminal.confirm("Write this setup?", true)) {
             throw new CliException("cancelled; nothing was written");
         }
-        String yaml = Setup.render(new Setup.Answers(name, team, members, chat, claude, projects, authorName, authorEmail), locations.stateDir());
+        String yaml = Setup.render(new Setup.Answers(name, team, members, chat, claude, projects, authorName, authorEmail, instance),
+                locations.stateDir());
         Setup.write(configFile, yaml, bot.token());
         try {
             updates.acknowledge();
@@ -306,7 +324,79 @@ public final class InitCommand {
         String base = required("Branch tasks start from", probe.defaultBranch());
         String model = terminal.choose("Model", MODELS, 0);
         String effort = terminal.choose("Effort", EFFORTS, 0);
-        return Optional.of(new ProjectAddCommand.Project(name, null, probe.folder(), probe.originUrl(), base, "claude-code", model, effort));
+        if (!advanced) {
+            return Optional.of(new ProjectAddCommand.Project(name, null, probe.folder(), probe.originUrl(), base, "claude-code", model, effort));
+        }
+        String alias = terminal.ask("Alias, a short name to use in tasks (blank for none)", null).strip();
+        Config.PhaseSettings plan = phase("Planning");
+        Config.PhaseSettings execute = phase("Execution");
+        return Optional.of(new ProjectAddCommand.Project(name, alias.isEmpty() ? null : alias, probe.folder(), probe.originUrl(), base,
+                "claude-code", model, effort, plan, execute));
+    }
+
+    /** A phase's own model and effort; null when both stay as chosen for both phases. */
+    private Config.PhaseSettings phase(String label) {
+        String model = terminal.choose(label + " model", PHASE_MODELS, 0);
+        String effort = terminal.choose(label + " effort", PHASE_EFFORTS, 0);
+        return model == null && effort == null ? null : new Config.PhaseSettings(model, effort);
+    }
+
+    /** `dispatch init --advanced`: limits, concurrency, state directory and gh; Enter keeps each default. */
+    private Setup.Advanced advancedAnswers(boolean team) {
+        terminal.step("Advanced");
+        String planTimeout = timeout("Planning timeout per run (e.g. 15m, 2h)", "15m");
+        BigDecimal planBudget = budget("Planning budget per run in USD", "2");
+        String executeTimeout = timeout("Execution timeout per run", "60m");
+        BigDecimal executeBudget = budget("Execution budget per run in USD", "10");
+        int runs = runs(team ? 2 : 1);
+        Path stateDir = ProjectProbe.expandHome(Path.of(required("State directory", locations.stateDir().toString()))).toAbsolutePath();
+        String gh = required("GitHub CLI command", "gh");
+        return new Setup.Advanced(planTimeout, planBudget, executeTimeout, executeBudget, runs, stateDir, gh);
+    }
+
+    private String timeout(String question, String defaultValue) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String answer = required(question, defaultValue);
+            try {
+                Config.RunLimits.parseDuration(answer);
+                return answer;
+            } catch (IllegalArgumentException e) {
+                terminal.warn(e.getMessage());
+            }
+        }
+        throw new CliException(question + " is needed");
+    }
+
+    private BigDecimal budget(String question, String defaultValue) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String answer = required(question, defaultValue);
+            try {
+                BigDecimal budget = new BigDecimal(answer);
+                if (budget.signum() > 0) {
+                    return budget;
+                }
+            } catch (NumberFormatException e) {
+                // falls through to the warning
+            }
+            terminal.warn("a budget is a positive number of dollars, e.g. 2 or 12.5");
+        }
+        throw new CliException(question + " is needed");
+    }
+
+    private int runs(int defaultValue) {
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String answer = required("Maximum concurrent runs", String.valueOf(defaultValue));
+            try {
+                int runs = Integer.parseInt(answer);
+                if (runs >= 1) {
+                    return runs;
+                }
+            } catch (NumberFormatException e) {
+                // falls through to the warning
+            }
+            terminal.warn("the number of runs at a time is a whole number, at least 1");
+        }
+        throw new CliException("Maximum concurrent runs is needed");
     }
 
     private void summary(Setup.Bot bot, boolean team, List<Config.Member> members, Setup.Chat chat, List<ProjectAddCommand.Project> projects,
