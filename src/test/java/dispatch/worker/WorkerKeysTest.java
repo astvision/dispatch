@@ -6,8 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dispatch.domain.Phase;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
+import dispatch.store.Tasks;
 import dispatch.store.Workers;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
@@ -17,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -121,6 +125,16 @@ class WorkerKeysTest {
     }
 
     @Test
+    void revokingAWorkerFreesTheUnfinishedTaskItWasPinnedTo() {
+        WorkerKeys.NewKey paired = keys.pair(keys.newCode(BOLD), "ann-laptop").orElseThrow();
+        long taskId = pinnedTask(BOLD, paired.workerId());
+
+        keys.revoke(paired.workerId(), BOLD.ref(), false);
+
+        assertEquals(Optional.empty(), db.transactionReturning(tx -> Tasks.workerOf(tx, taskId)));
+    }
+
+    @Test
     void removingAMemberRevokesTheirWorkers() {
         WorkerKeys.NewKey bold = keys.pair(keys.newCode(BOLD), "bold-laptop").orElseThrow();
         WorkerKeys.NewKey ali = keys.pair(keys.newCode(ALI), "ali-laptop").orElseThrow();
@@ -129,6 +143,25 @@ class WorkerKeysTest {
 
         assertTrue(keys.authenticate(bold.key()).isPresent());
         assertTrue(keys.authenticate(ali.key()).isEmpty(), "Ali is no longer a member");
+    }
+
+    @Test
+    void removingAMemberFreesTheUnfinishedTasksPinnedToTheirWorkers() {
+        WorkerKeys.NewKey ali = keys.pair(keys.newCode(ALI), "ali-laptop").orElseThrow();
+        long taskId = pinnedTask(ALI, ali.workerId());
+
+        keys.revokeWorkersOfEveryoneExcept(Set.of(BOLD.ref()));
+
+        assertEquals(Optional.empty(), db.transactionReturning(tx -> Tasks.workerOf(tx, taskId)));
+    }
+
+    private long pinnedTask(Requester requester, long workerId) {
+        return db.transactionReturning(tx -> {
+            long id = Tasks.insert(tx, new Tasks.NewTask("alm", "t", "t", requester, "telegram:-1/" + UUID.randomUUID(),
+                    "telegram:-1", UUID.randomUUID(), "main", Priority.NORMAL), Phase.PLANNING, clock.instant());
+            Tasks.recordWorker(tx, id, workerId, clock.instant());
+            return id;
+        });
     }
 
     @Test

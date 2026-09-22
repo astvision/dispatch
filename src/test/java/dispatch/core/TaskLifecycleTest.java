@@ -20,6 +20,7 @@ import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
 import dispatch.store.Database;
 import dispatch.store.Runs;
+import dispatch.store.Tasks;
 import dispatch.store.Workers;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
@@ -158,6 +159,27 @@ class TaskLifecycleTest {
         long id = create(BOLD, "alm", "Fix login timeout", "96");
 
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_WAITING' AND task_id = ?", id).get("n"));
+        JsonNode status = tasksStatusPayload();
+        assertFalse(status.get("queued").get(0).has("waitingForWorker"), status.toString());
+    }
+
+    @Test
+    void statusStillExplainsATaskPinnedToAnOfflineWorkerEvenWithAnotherLiveOne() {
+        tasks = teamTaskService();
+        WorkerKeys keys = new WorkerKeys(db, clock);
+        long pinned = keys.pair(keys.newCode(BOLD), "ann-laptop").orElseThrow().workerId();
+        db.transaction(tx -> Workers.touch(tx, pinned, clock.instant()));
+        long id = create(BOLD, "alm", "Fix login timeout", "97");
+        db.transaction(tx -> Tasks.recordWorker(tx, id, pinned, clock.instant()));
+        long other = keys.pair(keys.newCode(BOLD), "ann-desktop").orElseThrow().workerId();
+
+        // The pinned laptop goes silent, but Bold's desktop is live: the note must still follow the pin, not the member.
+        clock.advance(Duration.ofSeconds(Workers.SEEN_WITHIN.toSeconds() + 1));
+        db.transaction(tx -> Workers.touch(tx, other, clock.instant()));
+
+        JsonNode status = tasksStatusPayload();
+        assertTrue(status.get("queued").get(0).get("waitingForWorker").asBoolean(),
+                "pinned to the silent laptop, not the live desktop: " + status);
     }
 
     @Test

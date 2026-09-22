@@ -52,27 +52,31 @@ public final class Workers {
     }
 
     /**
-     * Revokes every worker of someone not in {@code memberRefs}. An empty set means nobody is a member any more, so
-     * every active worker is revoked.
+     * Revokes every worker of someone not in {@code memberRefs}, returning the ids just revoked so the caller can clear
+     * their pin on whatever tasks they held (in the same transaction). An empty set means nobody is a member any more,
+     * so every active worker is revoked.
      */
-    public static int revokeMembersExcept(Tx tx, Set<String> memberRefs, Instant now) {
-        if (memberRefs.isEmpty()) {
-            return tx.update("UPDATE worker SET revoked_at = ? WHERE revoked_at IS NULL", now);
-        }
-        Object[] params = new Object[memberRefs.size() + 1];
-        params[0] = now;
-        int i = 1;
-        for (String ref : memberRefs) {
-            params[i++] = ref;
-        }
-        return tx.update("UPDATE worker SET revoked_at = ? WHERE revoked_at IS NULL AND member_ref NOT IN ("
-                + Tx.placeholders(memberRefs.size()) + ")", params);
+    public static List<Long> revokeMembersExcept(Tx tx, Set<String> memberRefs, Instant now) {
+        String where = memberRefs.isEmpty() ? "" : " AND member_ref NOT IN (" + Tx.placeholders(memberRefs.size()) + ")";
+        Object[] whereParams = memberRefs.toArray();
+        List<Long> ids = tx.list("SELECT id FROM worker WHERE revoked_at IS NULL" + where, row -> row.longValue("id"), whereParams);
+        Object[] updateParams = new Object[whereParams.length + 1];
+        updateParams[0] = now;
+        System.arraycopy(whereParams, 0, updateParams, 1, whereParams.length);
+        tx.update("UPDATE worker SET revoked_at = ? WHERE revoked_at IS NULL" + where, updateParams);
+        return ids;
     }
 
     /** Whether {@code memberRef} has a worker that reported since {@code since}. */
     public static boolean hasConnected(Tx tx, String memberRef, Instant since) {
         return tx.one("SELECT 1 AS found FROM worker WHERE member_ref = ? AND revoked_at IS NULL AND last_seen_at > ? LIMIT 1",
                 row -> true, memberRef, since).isPresent();
+    }
+
+    /** Whether worker {@code workerId} itself is live: not revoked and reported since {@code since}. */
+    public static boolean isLive(Tx tx, long workerId, Instant since) {
+        return tx.one("SELECT 1 AS found FROM worker WHERE id = ? AND revoked_at IS NULL AND last_seen_at > ? LIMIT 1",
+                row -> true, workerId, since).isPresent();
     }
 
     public static void insertCode(Tx tx, String codeSha256, Requester member, Instant now, Instant expiresAt) {

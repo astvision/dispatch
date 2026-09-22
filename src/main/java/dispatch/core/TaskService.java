@@ -744,6 +744,7 @@ public final class TaskService {
         }
         ArrayNode running = payload.putArray("running");
         ArrayNode queued = payload.putArray("queued");
+        Instant workerSeenSince = requiresWorker ? clock.instant().minus(Workers.SEEN_WITHIN) : null;
         for (Runs.InProgress run : Runs.inProgress(tx, visibleProjects)) {
             boolean isRunning = run.status() == RunStatus.RUNNING;
             ObjectNode item = (isRunning ? running : queued).addObject().put("taskId", run.taskId()).put("project", run.project())
@@ -757,8 +758,7 @@ public final class TaskService {
             } else {
                 item.put("queuedAt", text(run.queuedAt()));
                 Task queuedTask = active.get(run.taskId());
-                if (requiresWorker && queuedTask != null
-                        && !Workers.hasConnected(tx, queuedTask.requester().ref(), clock.instant().minus(Workers.SEEN_WITHIN))) {
+                if (requiresWorker && queuedTask != null && waitsForWorker(tx, queuedTask, workerSeenSince)) {
                     item.put("waitingForWorker", true);
                 }
             }
@@ -918,6 +918,15 @@ public final class TaskService {
     /** A run's task is active while the run is queued or running; null only if it finished between the two reads. */
     private static String priority(Task task) {
         return task == null ? null : task.priority().name();
+    }
+
+    /**
+     * Whether {@code task} has nobody to run it right now: any of the requester's computers, or — once the task has a
+     * worktree — only the one it is pinned to (a revoked pin no longer counts; {@link Tasks#clearWorkerPin} clears it).
+     */
+    private static boolean waitsForWorker(Tx tx, Task task, Instant since) {
+        Optional<Long> pinned = Tasks.workerOf(tx, task.id());
+        return pinned.isPresent() ? !Workers.isLive(tx, pinned.get(), since) : !Workers.hasConnected(tx, task.requester().ref(), since);
     }
 
     private static String name(Enum<?> constant) {

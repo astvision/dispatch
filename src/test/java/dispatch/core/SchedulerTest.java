@@ -100,7 +100,7 @@ class SchedulerTest {
     }
 
     @Test
-    void aRunWhoseComputerFellSilentIsNotClaimedAgain() {
+    void aTaskWithOnlyASilentComputerIsNotClaimed() {
         long id = queuedTaskOf("telegram:100");
         long worker = pair("telegram:100", "ann-laptop");
         db.transaction(tx -> Workers.touch(tx, worker, clock.instant().minus(Workers.SEEN_WITHIN).minusSeconds(1)));
@@ -108,6 +108,23 @@ class SchedulerTest {
         assertTrue(db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(),
                 clock.instant().minus(Workers.SEEN_WITHIN))).isEmpty(), "silent for over a minute is gone");
         assertEquals("QUEUED", SqlRows.single(dbFile, "SELECT status FROM run WHERE task_id = ?", id).get("status"));
+    }
+
+    @Test
+    void aRevokedWorkersUnfinishedPinnedTaskBecomesClaimableByTheMembersOtherLiveWorker() {
+        long id = queuedTaskOf("telegram:100");
+        long revoked = pair("telegram:100", "ann-laptop");
+        long other = pair("telegram:100", "ann-desktop");
+        db.transaction(tx -> Tasks.recordWorker(tx, id, revoked, clock.instant()));
+        db.transaction(tx -> Workers.touch(tx, other, clock.instant()));
+
+        assertTrue(db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(),
+                clock.instant().minus(Workers.SEEN_WITHIN))).isEmpty(), "still pinned to the laptop, which is silent");
+
+        new WorkerKeys(db, clock).revoke(revoked, "telegram:100", false);
+
+        assertEquals(id, db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(),
+                clock.instant().minus(Workers.SEEN_WITHIN))).orElseThrow().taskId(), "revoking the laptop frees the pin");
     }
 
     @Test

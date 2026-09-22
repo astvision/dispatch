@@ -3,6 +3,7 @@ package dispatch.worker;
 import dispatch.Log;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
+import dispatch.store.Tasks;
 import dispatch.store.Tx;
 import dispatch.store.Workers;
 import dispatch.telegram.TelegramNames;
@@ -157,8 +158,12 @@ public final class WorkerKeys {
         if (worker.isEmpty() || (!admin && !worker.get().memberRef().equals(memberRef))) {
             return false;
         }
-        boolean revoked = Workers.revoke(tx, workerId, clock.instant());
+        Instant now = clock.instant();
+        boolean revoked = Workers.revoke(tx, workerId, now);
         if (revoked) {
+            // Its unfinished tasks are no longer pinned to it, so a follow-up or retry goes to whichever of the
+            // member's other computers is live instead of waiting on this one forever.
+            Tasks.clearWorkerPin(tx, workerId, now);
             tx.afterCommit(() -> Log.info("worker.revoked", "worker", workerId, "member", worker.get().memberRef(), "by", memberRef));
         }
         return revoked;
@@ -171,7 +176,12 @@ public final class WorkerKeys {
      *                       every worker is revoked
      */
     public void revokeWorkersOfEveryoneExcept(Set<String> currentMembers) {
-        int revoked = db.transactionReturning(tx -> Workers.revokeMembersExcept(tx, currentMembers, clock.instant()));
+        int revoked = db.transactionReturning(tx -> {
+            Instant now = clock.instant();
+            List<Long> ids = Workers.revokeMembersExcept(tx, currentMembers, now);
+            ids.forEach(id -> Tasks.clearWorkerPin(tx, id, now));
+            return ids.size();
+        });
         if (revoked > 0) {
             Log.warn("worker.revoked_former_members", "workers", revoked);
         }

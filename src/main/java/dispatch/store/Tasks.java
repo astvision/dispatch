@@ -174,6 +174,17 @@ public final class Tasks {
         return tx.one("SELECT worker_id FROM task WHERE id = ?", row -> row.longOrNull("worker_id"), id);
     }
 
+    /**
+     * Clears the pin to {@code workerId} on its still-active tasks, once that worker is revoked: a follow-up or retry
+     * then goes to whichever of the member's other computers is live, rather than waiting on this one forever. The old
+     * worktree stays on the revoked machine, so such a run starts a fresh one from the base branch. A finished task's
+     * pin is left as a record of which computer actually did the work.
+     */
+    public static int clearWorkerPin(Tx tx, long workerId, Instant now) {
+        return tx.update("UPDATE task SET worker_id = NULL, updated_at = ? WHERE worker_id = ? AND phase IN (?, ?, ?)",
+                now, workerId, Phase.PLANNING, Phase.AWAITING_APPROVAL, Phase.EXECUTING);
+    }
+
     private static Task map(Row row) throws java.sql.SQLException {
         return new Task(
                 row.longValue("id"),
