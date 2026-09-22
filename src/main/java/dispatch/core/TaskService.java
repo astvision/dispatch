@@ -704,6 +704,11 @@ public final class TaskService {
         return task.requester().ref().equals(who.ref());
     }
 
+    /** Whether {@code viewerRef} gave the task; a group chat (null viewer) owns nothing, so it sees headlines only (ADR 0020). */
+    private static boolean ownedBy(Task task, String viewerRef) {
+        return task != null && viewerRef != null && task.requester().ref().equals(viewerRef);
+    }
+
     /** Why a member may see a task but not act on it: it is someone else's (ADR 0020). */
     private static ObjectNode notRequester(Task task) {
         return Json.object().put("taskId", task.id()).put("reason", "requester").put("requester", task.requester().name());
@@ -736,8 +741,10 @@ public final class TaskService {
                     .put("title", run.title()).put("kind", run.kind().name()).put("priority", priority(active.get(run.taskId())));
             if (isRunning) {
                 item.put("startedAt", text(run.startedAt()));
-                activeRuns.activity(run.taskId()).ifPresent(activity ->
-                        item.put("steps", activity.steps()).put("lastAction", activity.lastAction()));
+                if (ownedBy(active.get(run.taskId()), viewerRef)) {
+                    activeRuns.activity(run.taskId()).ifPresent(activity ->
+                            item.put("steps", activity.steps()).put("lastAction", activity.lastAction()));
+                }
             } else {
                 item.put("queuedAt", text(run.queuedAt()));
             }
@@ -754,14 +761,17 @@ public final class TaskService {
         return payload;
     }
 
-    /** Posts the most recently finished tasks of {@code visibleProjects}, newest first, with their total cost. */
-    public void history(Tx tx, Set<String> visibleProjects, String originRef, String chatRef) {
+    /**
+     * Posts the most recently finished tasks of {@code visibleProjects}, newest first; the total cost is shown only on
+     * the viewer's own tasks, everyone else's carry just the headline (ADR 0020).
+     */
+    public void history(Tx tx, Set<String> visibleProjects, String viewerRef, String originRef, String chatRef) {
         List<Task> finished = Tasks.finished(tx, visibleProjects, HISTORY_SIZE);
         Map<Long, BigDecimal> costs = Runs.costs(tx, finished.stream().map(Task::id).toList());
         ObjectNode payload = Json.object();
         ArrayNode listed = payload.putArray("tasks");
         for (Task task : finished) {
-            BigDecimal cost = costs.get(task.id());
+            BigDecimal cost = ownedBy(task, viewerRef) ? costs.get(task.id()) : null;
             listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                     .put("phase", task.phase().name()).put("priority", task.priority().name())
                     .put("requester", task.requester().name()).put("createdAt", text(task.createdAt())).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
@@ -770,8 +780,11 @@ public final class TaskService {
         enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, payload, clock.instant());
     }
 
-    /** Posts one task's timeline: its runs in order, how it ended, and what it cost. Tasks outside {@code visibleProjects} are not found. */
-    public void timeline(Tx tx, Set<String> visibleProjects, long taskId, String originRef, String chatRef) {
+    /**
+     * Posts one task's timeline: its runs in order, how it ended, and what it cost. Tasks outside {@code visibleProjects}
+     * are not found. Someone else's task stops at the headline: no runs, no cost (ADR 0020).
+     */
+    public void timeline(Tx tx, Set<String> visibleProjects, String viewerRef, long taskId, String originRef, String chatRef) {
         Optional<Task> found = Tasks.find(tx, taskId).filter(task -> visibleProjects.contains(task.project()));
         if (found.isEmpty()) {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), clock.instant());
@@ -783,6 +796,11 @@ public final class TaskService {
                 .put("prUrl", task.prUrl())
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
                 .put("completedAt", text(task.completedAt()));
+        if (!ownedBy(task, viewerRef)) {
+            payload.put("headline", true).putNull("costUsd");
+            enqueue(tx, null, OutboxKind.TASK_TIMELINE, chatRef, originRef, payload, clock.instant());
+            return;
+        }
         ArrayNode runs = payload.putArray("runs");
         BigDecimal total = null;
         for (Run run : Runs.forTask(tx, taskId)) {
@@ -812,7 +830,8 @@ public final class TaskService {
     }
 
     /**
-     * Statistics of tasks given in {@code period} ("week": the last 7 days, "month": since the 1st, "all").
+     * Statistics of tasks given in {@code period} ("week": the last 7 days, "month": since the 1st, "all"). Outside the
+     * viewer's own "me" view, cost is dropped from the summary and shown per person only on the viewer's own row (ADR 0020).
      *
      * @param viewerRef  the member asking in their private chat; null in a group chat, which has no "me" view
      * @param groupNames the groups whose tasks the viewer may count
@@ -846,7 +865,11 @@ public final class TaskService {
         ObjectNode payload = Json.object().put("view", view).put("period", period).put("canViewMe", viewerRef != null);
         groupNames.forEach(payload.putArray("groups")::add);
         payload.set("summary", Statistics.summary(given, runs));
-        payload.set("people", view.equals("people") ? Statistics.people(given, runs) : Json.MAPPER.createArrayNode());
+        if (!view.equals("me")) {
+            // A group's total holds other members' costs (ADR 0020).
+            ((ObjectNode) payload.get("summary")).putNull("costUsd").putNull("averageCostUsd");
+        }
+        payload.set("people", view.equals("people") ? Statistics.people(given, runs, viewerRef) : Json.MAPPER.createArrayNode());
         return Optional.of(payload);
     }
 

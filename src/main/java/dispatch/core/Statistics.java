@@ -62,20 +62,26 @@ final class Statistics {
                 .put("approvedWithoutCorrectionPercent", executed.isEmpty() ? null : Math.round(100.0 * firstPlan / executed.size()));
     }
 
-    /** One line per requester: tasks given, completed, and their cost; the most active first. */
-    static ArrayNode people(List<Task> tasks, List<Runs.Cost> runs) {
+    /** One line per requester: tasks given, completed, and their cost, shown only on the viewer's own row (ADR 0020); the most active first. */
+    static ArrayNode people(List<Task> tasks, List<Runs.Cost> runs, String viewerRef) {
         Map<Long, BigDecimal> costs = costsByTask(runs);
         Map<String, List<Task>> byRequester = new LinkedHashMap<>();
         tasks.forEach(task -> byRequester.computeIfAbsent(task.requester().ref(), ref -> new ArrayList<>()).add(task));
         ArrayNode people = Json.MAPPER.createArrayNode();
-        byRequester.values().stream()
-                .sorted(Comparator.<List<Task>>comparingInt(List::size).reversed()
-                        .thenComparing(given -> given.getLast().requester().name()))
-                .forEach(given -> {
-                    BigDecimal cost = given.stream().map(task -> costs.getOrDefault(task.id(), BigDecimal.ZERO))
-                            .reduce(BigDecimal.ZERO, BigDecimal::add);
-                    people.addObject().put("name", given.getLast().requester().name()).put("tasks", given.size())
-                            .put("completed", count(given, Phase.COMPLETED)).put("costUsd", money(cost));
+        byRequester.entrySet().stream()
+                .sorted(Comparator.<Map.Entry<String, List<Task>>>comparingInt(entry -> entry.getValue().size()).reversed()
+                        .thenComparing(entry -> entry.getValue().getLast().requester().name()))
+                .forEach(entry -> {
+                    List<Task> given = entry.getValue();
+                    ObjectNode person = people.addObject().put("name", given.getLast().requester().name()).put("tasks", given.size())
+                            .put("completed", count(given, Phase.COMPLETED));
+                    if (entry.getKey().equals(viewerRef)) {
+                        BigDecimal cost = given.stream().map(task -> costs.getOrDefault(task.id(), BigDecimal.ZERO))
+                                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                        person.put("costUsd", money(cost));
+                    } else {
+                        person.putNull("costUsd");
+                    }
                 });
         return people;
     }

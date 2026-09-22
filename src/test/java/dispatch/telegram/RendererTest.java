@@ -372,6 +372,16 @@ class RendererTest {
     }
 
     @Test
+    void historyTaskWithoutCostShowsNoCostSeparator() {
+        String html = renderer.render(OutboxKind.HISTORY, historyPayload()).html();
+
+        int date = html.indexOf("09-16 10:00");
+        assertTrue(date >= 0, html);
+        assertEquals("", html.substring(date + "09-16 10:00".length(), html.indexOf('\n', date)),
+                "no cost shown for a task with costUsd null: " + html);
+    }
+
+    @Test
     void emptyHistorySaysSo() {
         ObjectNode payload = Json.object();
         payload.putArray("tasks");
@@ -397,6 +407,18 @@ class RendererTest {
         assertEquals(List.of(new Renderer.Button(messages.getString("stats.period.week"), "stats:week:me"),
                 new Renderer.Button("✓ " + messages.getString("stats.period.month"), "stats:month:me"),
                 new Renderer.Button(messages.getString("stats.period.all"), "stats:all:me")), keyboard.get(2));
+    }
+
+    @Test
+    void statsWithoutCostShowNoCostFigures() {
+        ObjectNode payload = statsPayload("group:backend");
+        ((ObjectNode) payload.get("summary")).putNull("costUsd").putNull("averageCostUsd");
+        payload.putArray("people").addObject().put("name", "Ali").put("tasks", 2).put("completed", 1).putNull("costUsd");
+
+        String html = renderer.render(OutboxKind.STATS, payload).html();
+
+        assertFalse(html.contains("$"), html);
+        assertTrue(html.contains("Ali") && html.contains("2 даалгавар"), html);
     }
 
     @Test
@@ -437,6 +459,19 @@ class RendererTest {
         assertTrue(html.contains("10:07 ▶️") && html.contains("1 мин 2 сек · $0.26"), html);
         assertTrue(html.contains("✅") && html.contains("https://github.com/acme/life/pull/1"), html);
         assertTrue(html.contains("$0.52"), html);
+    }
+
+    @Test
+    void timelineOfSomeoneElsesTaskShowsOnlyTheHeadlineWithNoRunsOrTotal() {
+        ObjectNode payload = timelinePayload().put("headline", true).putNull("costUsd");
+
+        String html = renderer.render(OutboxKind.TASK_TIMELINE, payload).html();
+
+        assertTrue(html.contains("<b>#2</b> life · Bold"), html);
+        assertTrue(html.contains("✅") && html.contains("https://github.com/acme/life/pull/1"), html);
+        assertFalse(html.contains("10:00 📋"), "someone else's runs are not shown: " + html);
+        String totalPrefix = messages.getString("timeline.total").substring(0, messages.getString("timeline.total").indexOf('{'));
+        assertFalse(html.contains(totalPrefix), "someone else's cost is not shown: " + html);
     }
 
     @Test

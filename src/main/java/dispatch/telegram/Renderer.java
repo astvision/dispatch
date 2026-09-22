@@ -434,9 +434,12 @@ public final class Renderer {
         for (JsonNode task : tasks) {
             String phase = task.path("phase").asText();
             String icons = (OUTCOME_ICONS.getOrDefault(phase, "•") + " " + icon(task)).strip();
-            StringBuilder block = new StringBuilder("\n").append(format("history.line", icons, taskId(task),
-                    escape(task.path("project").asText()), escape(task.path("requester").asText()),
-                    shortDateTime(task.path("createdAt").asText()), money(task.path("costUsd"))))
+            String line = task.hasNonNull("costUsd")
+                    ? format("history.line", icons, taskId(task), escape(task.path("project").asText()),
+                            escape(task.path("requester").asText()), shortDateTime(task.path("createdAt").asText()), money(task.path("costUsd")))
+                    : format("history.lineNoCost", icons, taskId(task), escape(task.path("project").asText()),
+                            escape(task.path("requester").asText()), shortDateTime(task.path("createdAt").asText()));
+            StringBuilder block = new StringBuilder("\n").append(line)
                     .append("\n").append(escapeWithin(task.path("title").asText(), TITLE_LIMIT));
             if (task.hasNonNull("prUrl")) {
                 block.append("\n").append(escape(task.path("prUrl").asText()));
@@ -466,8 +469,10 @@ public final class Renderer {
             html.append("\n\n").append(format("stats.tasks", summary.path("tasks").asInt(), summary.path("completed").asInt(),
                     summary.path("failed").asInt(), summary.path("rejected").asInt(), summary.path("cancelled").asInt(),
                     summary.path("active").asInt()));
-            html.append("\n").append(format("stats.pullRequests", summary.path("pullRequests").asInt(), money(summary.path("costUsd")),
-                    money(summary.path("averageCostUsd"))));
+            html.append("\n").append(summary.hasNonNull("costUsd")
+                    ? format("stats.pullRequests", summary.path("pullRequests").asInt(), money(summary.path("costUsd")),
+                            money(summary.path("averageCostUsd")))
+                    : format("stats.pullRequestsNoCost", summary.path("pullRequests").asInt()));
             if (summary.hasNonNull("medianMinutesToPr")) {
                 html.append("\n").append(format("stats.timeToPr", duration(Duration.ofMinutes(summary.path("medianMinutesToPr").asLong()))));
             }
@@ -478,8 +483,11 @@ public final class Renderer {
         List<String> blocks = new ArrayList<>(List.of(html.toString()));
         for (JsonNode person : payload.path("people")) {
             String separator = blocks.size() == 1 ? "\n" : "";
-            blocks.add(separator + format("stats.person", escape(person.path("name").asText()), person.path("tasks").asInt(),
-                    person.path("completed").asInt(), money(person.path("costUsd"))));
+            blocks.add(separator + (person.hasNonNull("costUsd")
+                    ? format("stats.person", escape(person.path("name").asText()), person.path("tasks").asInt(),
+                            person.path("completed").asInt(), money(person.path("costUsd")))
+                    : format("stats.personNoCost", escape(person.path("name").asText()), person.path("tasks").asInt(),
+                            person.path("completed").asInt())));
         }
 
         List<Button> views = new ArrayList<>();
@@ -513,6 +521,11 @@ public final class Renderer {
                 escape(payload.path("requester").asText()))
                 + "\n" + escapeWithin(payload.path("title").asText(), TITLE_LIMIT)
                 + "\n" + format("timeline.created", dateTime(payload.path("createdAt").asText())) + "\n");
+        if (payload.path("headline").asBoolean()) {
+            // Someone else's task: its runs and cost are theirs (ADR 0020).
+            blocks.add("\n" + outcome(payload));
+            return plain(joinWithin(blocks, "\n"));
+        }
         for (JsonNode run : payload.path("runs")) {
             blocks.add(time(run.path("queuedAt").asText()) + " " + runHeadline(run) + runResult(run));
         }

@@ -177,9 +177,12 @@ public final class UpdateHandler {
                 giveTask(tx, who, command.args(), message, origin);
             }
             case "status" -> tasks.status(tx, visible, privateChat ? who.ref() : null, origin, chatRef);
-            case "history" -> taskId(command.args()).ifPresentOrElse(
-                    id -> tasks.timeline(tx, visible, id, origin, chatRef),
-                    () -> tasks.history(tx, visible, origin, chatRef));
+            case "history" -> {
+                String viewer = privateChat ? who.ref() : null;
+                taskId(command.args()).ifPresentOrElse(
+                        id -> tasks.timeline(tx, visible, viewer, id, origin, chatRef),
+                        () -> tasks.history(tx, visible, viewer, origin, chatRef));
+            }
             case "cancel" -> {
                 if (!privateChat) {
                     privateOnly(tx, chatRef, origin);
