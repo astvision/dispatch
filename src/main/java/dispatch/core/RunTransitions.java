@@ -52,8 +52,9 @@ public final class RunTransitions {
         db.transaction(tx -> Tasks.recordWorktree(tx, taskId, worktree, baseSha, clock.instant()));
     }
 
-    public void recordProcess(long taskId, int seq, long pid, Instant pidStart) {
-        db.transaction(tx -> Runs.recordProcess(tx, taskId, seq, pid, pidStart));
+    /** @param pid null when the agent runs on a member's own computer */
+    public void agentStarted(long taskId, int seq, Long pid, Instant processStart) {
+        db.transaction(tx -> Runs.recordAgentStarted(tx, taskId, seq, clock.instant(), pid, processStart));
     }
 
     public void planSucceeded(long taskId, int seq, Plan plan, AgentResult result) {

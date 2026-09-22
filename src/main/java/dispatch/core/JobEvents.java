@@ -9,8 +9,11 @@ public interface JobEvents {
     void worktreeCreated(String worktree, String baseSha);
 
     /**
-     * The agent's process started: recorded so a restart recognises its orphan, and so the next run of this kind knows
-     * the session was started and resumes it.
+     * The run's agent session started: recorded at once, so the next run of this kind resumes it instead of starting over.
+     *
+     * @param pid          the agent's process, null for a remote worker — the process is on the member's computer and
+     *                     startup recovery here only kills this machine's own orphans (ADR 0008)
+     * @param processStart when that process started; null with a null pid
      */
-    void agentStarted(long pid, Instant processStart);
+    void agentStarted(Long pid, Instant processStart);
 }

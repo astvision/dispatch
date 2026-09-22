@@ -77,8 +77,8 @@ public final class Coordinator {
             }
 
             @Override
-            public void agentStarted(long pid, Instant processStart) {
-                transitions.recordProcess(claimed.taskId(), claimed.seq(), pid, processStart);
+            public void agentStarted(Long pid, Instant processStart) {
+                transitions.agentStarted(claimed.taskId(), claimed.seq(), pid, processStart);
             }
         };
     }

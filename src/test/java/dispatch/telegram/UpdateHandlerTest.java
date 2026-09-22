@@ -551,7 +551,7 @@ class UpdateHandlerTest {
         long taskId = taskAwaitingApproval(List.of());
         db.transaction(tx -> tasks.approve(tx, new dispatch.domain.Requester("telegram:100", "Bold"), taskId, 1));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
-        db.transaction(tx -> tx.update("UPDATE run SET pid = 1 WHERE task_id = ? AND seq = ?", run.taskId(), run.seq()));
+        db.transaction(tx -> Runs.recordAgentStarted(tx, run.taskId(), run.seq(), clock.instant(), 1L, clock.instant()));
         transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", null, 3, List.of(),
                 null, null, null), List.of("README.md"), "https://github.com/acme/alm/pull/1");
         long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));
@@ -576,7 +576,7 @@ class UpdateHandlerTest {
         long taskId = taskAwaitingApproval(List.of());
         db.transaction(tx -> tasks.approve(tx, new dispatch.domain.Requester("telegram:100", "Bold"), taskId, 1));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
-        db.transaction(tx -> tx.update("UPDATE run SET pid = 1 WHERE task_id = ? AND seq = ?", run.taskId(), run.seq()));
+        db.transaction(tx -> Runs.recordAgentStarted(tx, run.taskId(), run.seq(), clock.instant(), 1L, clock.instant()));
         transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", null, 3, List.of(),
                 null, null, null), List.of("README.md"), "https://github.com/acme/alm/pull/1");
         long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));

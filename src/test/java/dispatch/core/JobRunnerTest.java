@@ -268,8 +268,8 @@ class JobRunnerTest {
         }
 
         @Override
-        public void agentStarted(long pid, Instant processStart) {
-            this.pid = pid;
+        public void agentStarted(Long pid, Instant processStart) {
+            this.pid = pid == null ? 0 : pid;
             this.processStart = processStart;
         }
     }

@@ -100,7 +100,7 @@ class CoordinatorTest {
         long id = queue("Fix the login timeout");
         Worker worker = (job, events, control) -> {
             events.worktreeCreated("/var/lib/dispatch/worktrees/" + id, "abc123");
-            events.agentStarted(4242, Instant.parse("2026-09-17T10:00:01Z"));
+            events.agentStarted(4242L, Instant.parse("2026-09-17T10:00:01Z"));
             return JobResult.succeeded(agentResult(PLAN_JSON));
         };
 
@@ -109,7 +109,25 @@ class CoordinatorTest {
         Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
         assertEquals("/var/lib/dispatch/worktrees/" + id, task.get("worktree"));
         assertEquals("abc123", task.get("base_sha"));
-        assertEquals("4242", row("SELECT pid FROM run WHERE task_id = ?", id).get("pid"));
+        Map<String, String> run = row("SELECT pid, agent_started_at FROM run WHERE task_id = ?", id);
+        assertEquals("4242", run.get("pid"));
+        assertNotNull(run.get("agent_started_at"));
+    }
+
+    @Test
+    void aRemoteWorkersAgentIsRecordedAsStartedWithoutAProcess() {
+        long id = queue("Fix the login timeout");
+        Worker worker = (job, events, control) -> {
+            events.agentStarted(null, null);
+            return JobResult.failed(FailureReason.AGENT, "model overloaded", null);
+        };
+
+        coordinator(projects(List.of(ALM)), worker).execute(claim());
+
+        Map<String, String> run = row("SELECT pid, pid_start, agent_started_at FROM run WHERE task_id = ?", id);
+        assertNull(run.get("pid"), "the process is on the member's computer, not here");
+        assertNull(run.get("pid_start"));
+        assertNotNull(run.get("agent_started_at"), "the next run of this kind must know the session was started");
     }
 
     @Test

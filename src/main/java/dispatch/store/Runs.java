@@ -162,11 +162,12 @@ public final class Runs {
 
     /**
      * Whether a run of {@code kind} before {@code seq} got as far as starting its agent, and so started the phase's agent
-     * session: a run that failed during setup never did, and resuming its session would fail.
+     * session: a run that failed during setup never did, and resuming its session would fail. Keyed off the session, not
+     * off a process id: a remote worker's agent runs on the member's computer and leaves no pid here.
      */
     public static boolean agentStartedBefore(Tx tx, long taskId, RunKind kind, int seq) {
-        return tx.one("SELECT 1 AS found FROM run WHERE task_id = ? AND kind = ? AND seq < ? AND pid IS NOT NULL LIMIT 1",
-                row -> true, taskId, kind, seq).isPresent();
+        return tx.one("SELECT 1 AS found FROM run WHERE task_id = ? AND kind = ? AND seq < ? AND agent_started_at IS NOT NULL"
+                + " LIMIT 1", row -> true, taskId, kind, seq).isPresent();
     }
 
     public static int nextSeq(Tx tx, long taskId) {
@@ -182,8 +183,16 @@ public final class Runs {
                 .orElse(OptionalInt.empty());
     }
 
-    public static void recordProcess(Tx tx, long taskId, int seq, long pid, Instant pidStart) {
-        tx.update("UPDATE run SET pid = ?, pid_start = ? WHERE task_id = ? AND seq = ?", pid, pidStart, taskId, seq);
+    /**
+     * Records that this run's agent session started.
+     *
+     * @param at       when the store learned it, which is what the next run of this kind reads
+     * @param pid      the agent's process, null when it runs on a member's own computer
+     * @param pidStart when that process started; null with a null pid
+     */
+    public static void recordAgentStarted(Tx tx, long taskId, int seq, Instant at, Long pid, Instant pidStart) {
+        tx.update("UPDATE run SET agent_started_at = ?, pid = ?, pid_start = ? WHERE task_id = ? AND seq = ?",
+                at, pid, pidStart, taskId, seq);
     }
 
     /** Ends a running run; false if it was not running (already finished elsewhere). */
