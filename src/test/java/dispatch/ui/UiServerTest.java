@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.cli.CliException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -15,6 +16,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -167,6 +169,35 @@ class UiServerTest {
         assertFalse(UiServer.hasUi("/no-such-ui"));
     }
 
+    @Test
+    void postRoutesGetTheJsonBodyAndAnswerWithTheirStatus() throws Exception {
+        try (UiServer posting = UiServer.start(0, "/ui-test", Map.of(), Map.<String, Function<JsonNode, Object>>of(
+                "/api/echo", body -> Map.of("got", body.path("name").asText()),
+                "/api/busy", body -> {
+                    throw new ApiException(409, "conflict", "Dispatch is running with this bot; stop it first");
+                }))) {
+            String cookie = cookie(get(posting.loginUri(), null).headers().firstValue("Set-Cookie").orElseThrow());
+            String origin = "http://127.0.0.1:" + posting.port();
+
+            HttpResponse<String> echo = post(posting, "/api/echo", cookie, origin, "{\"name\":\"Bold\"}");
+            HttpResponse<String> empty = post(posting, "/api/echo", cookie, origin, "");
+            HttpResponse<String> busy = post(posting, "/api/busy", cookie, origin, "{}");
+            HttpResponse<String> notJson = post(posting, "/api/echo", cookie, origin, "{name");
+            HttpResponse<String> tooLarge = post(posting, "/api/echo", cookie, origin, "{\"name\":\"" + "x".repeat(70_000) + "\"}");
+            HttpResponse<String> readingAPostRoute = http.send(HttpRequest.newBuilder(URI.create(origin + "/api/echo"))
+                    .header("Cookie", cookie).GET().build(), HttpResponse.BodyHandlers.ofString());
+
+            assertEquals("{\"got\":\"Bold\"}", echo.body());
+            assertEquals("{\"got\":\"\"}", empty.body(), "an empty body is {}");
+            assertEquals(409, busy.statusCode());
+            assertTrue(busy.body().contains("\"error\":\"conflict\"") && busy.body().contains("stop it first"), busy.body());
+            assertEquals(400, notJson.statusCode());
+            assertTrue(notJson.body().contains("not JSON"), notJson.body());
+            assertEquals(413, tooLarge.statusCode());
+            assertEquals(405, readingAPostRoute.statusCode());
+        }
+    }
+
     private String login() throws Exception {
         return cookie(get(server.loginUri(), null).headers().firstValue("Set-Cookie").orElseThrow());
     }
@@ -185,6 +216,12 @@ class UiServerTest {
             request.header("Cookie", cookie);
         }
         return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> post(UiServer target, String path, String cookie, String origin, String body) throws Exception {
+        return http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + target.port() + path)).header("Cookie", cookie)
+                .header("Origin", origin).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
 
     /** HttpClient will not send another Host header, so this one request is written by hand. */

@@ -1,5 +1,7 @@
 package dispatch.ui;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import dispatch.Json;
@@ -14,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -31,17 +34,21 @@ public final class UiServer implements AutoCloseable {
             ".ico", "image/x-icon",
             ".json", "application/json; charset=utf-8",
             ".woff2", "font/woff2");
+    private static final int MAX_BODY = 64 * 1024;
 
     private final HttpServer server;
     private final UiAuth auth;
     private final String resourceRoot;
     private final Map<String, Supplier<Object>> getRoutes;
+    private final Map<String, Function<JsonNode, Object>> postRoutes;
 
-    private UiServer(HttpServer server, String resourceRoot, Map<String, Supplier<Object>> getRoutes) {
+    private UiServer(HttpServer server, String resourceRoot, Map<String, Supplier<Object>> getRoutes,
+                     Map<String, Function<JsonNode, Object>> postRoutes) {
         this.server = server;
         this.auth = new UiAuth(server.getAddress().getPort());
         this.resourceRoot = resourceRoot;
         this.getRoutes = Map.copyOf(getRoutes);
+        this.postRoutes = Map.copyOf(postRoutes);
     }
 
     /**
@@ -50,8 +57,14 @@ public final class UiServer implements AutoCloseable {
      * @param getRoutes    API paths, e.g. "/api/overview", and what they answer as JSON
      */
     public static UiServer start(int port, String resourceRoot, Map<String, Supplier<Object>> getRoutes) throws IOException {
+        return start(port, resourceRoot, getRoutes, Map.of());
+    }
+
+    /** @param postRoutes API paths that change something, and what they answer, given the request's JSON body */
+    public static UiServer start(int port, String resourceRoot, Map<String, Supplier<Object>> getRoutes,
+                                 Map<String, Function<JsonNode, Object>> postRoutes) throws IOException {
         HttpServer http = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 0);
-        UiServer ui = new UiServer(http, resourceRoot, getRoutes);
+        UiServer ui = new UiServer(http, resourceRoot, getRoutes, postRoutes);
         http.createContext("/", ui::handle);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         http.start();
@@ -138,18 +151,38 @@ public final class UiServer implements AutoCloseable {
     }
 
     private void api(HttpExchange exchange, String path, boolean reading) throws IOException {
-        Supplier<Object> route = getRoutes.get(path);
-        if (route == null) {
+        Supplier<Object> getRoute = getRoutes.get(path);
+        Function<JsonNode, Object> postRoute = postRoutes.get(path);
+        if (getRoute == null && postRoute == null) {
             json(exchange, 404, error("not_found", "no such API: " + path));
             return;
         }
-        if (!reading) {
-            json(exchange, 405, error("method", path + " only answers GET"));
+        if (reading ? getRoute == null : postRoute == null) {
+            json(exchange, 405, error("method", path + " only answers " + (reading ? "POST" : "GET")));
             return;
         }
-        String body;
+        JsonNode body = null;
+        if (!reading) {
+            byte[] raw = exchange.getRequestBody().readNBytes(MAX_BODY + 1);
+            if (raw.length > MAX_BODY) {
+                // Drain remaining bytes (up to 1 MiB total) to avoid JDK client reset after 413
+                exchange.getRequestBody().readNBytes(1024 * 1024 - raw.length);
+                json(exchange, 413, error("too_large", "the request is larger than " + MAX_BODY / 1024 + " KiB"));
+                return;
+            }
+            try {
+                body = raw.length == 0 ? Json.object() : Json.MAPPER.readTree(raw);
+            } catch (JsonProcessingException e) {
+                json(exchange, 400, error("invalid", "the request is not JSON"));
+                return;
+            }
+        }
+        String answer;
         try {
-            body = Json.write(route.get());
+            answer = Json.write(reading ? getRoute.get() : postRoute.apply(body));
+        } catch (ApiException e) {
+            json(exchange, e.status(), error(e.code(), e.getMessage()));
+            return;
         } catch (CliException e) {
             json(exchange, 400, error("invalid", e.getMessage()));
             return;
@@ -160,7 +193,7 @@ public final class UiServer implements AutoCloseable {
             json(exchange, 500, error("internal", "something went wrong; the terminal running dispatch ui shows what"));
             return;
         }
-        json(exchange, 200, body);
+        json(exchange, 200, answer);
     }
 
     private void page(HttpExchange exchange, String path) throws IOException {
