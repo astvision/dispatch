@@ -597,26 +597,27 @@ class RunExecutorTest {
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm"))));
         tasks = new TaskService(groups, projects, activeRuns, clock, schedulerWakes::incrementAndGet, () -> { });
         RunTransitions transitions = new RunTransitions(db, clock, () -> { });
-        executorUnderTest = new RunExecutor(db, projects, workspaces, delivery, Map.of("claude-code", agent()), transitions,
-                activeRuns, project -> new Config.RunLimits(planTimeout, new BigDecimal("2")),
-                project -> new Config.RunLimits(Duration.ofSeconds(30), new BigDecimal("10")), Redactor.patternsOnly(),
-                (fileRef, target) -> {
-                    byte[] content = sentFiles.get(fileRef);
-                    if (content == null) {
-                        throw new IllegalStateException("file " + fileRef + " is gone");
-                    }
-                    try {
-                        Files.write(target, content);
-                    } catch (IOException e) {
-                        throw new java.io.UncheckedIOException(e);
-                    }
-                },
+        executorUnderTest = new Coordinator(db, projects, transitions, activeRuns,
+                project -> new Config.RunLimits(planTimeout, new BigDecimal("2")),
+                project -> new Config.RunLimits(Duration.ofSeconds(30), new BigDecimal("10")),
+                new JobRunner(workspaces, delivery, Map.of("claude-code", agent()), Redactor.patternsOnly(),
+                        (fileRef, target) -> {
+                            byte[] content = sentFiles.get(fileRef);
+                            if (content == null) {
+                                throw new IllegalStateException("file " + fileRef + " is gone");
+                            }
+                            try {
+                                Files.write(target, content);
+                            } catch (IOException e) {
+                                throw new java.io.UncheckedIOException(e);
+                            }
+                        }),
                 schedulerWakes::incrementAndGet);
         db.transaction(tx -> tasks.create(tx, BOLD, "alm", description, Priority.NORMAL, BOLD.ref() + "/" + System.nanoTime()));
         return Long.parseLong(row("SELECT max(id) AS id FROM task").get("id"));
     }
 
-    private RunExecutor executorUnderTest;
+    private Coordinator executorUnderTest;
     private Sweeper sweeper;
     private final Map<String, byte[]> sentFiles = new java.util.HashMap<>();
 

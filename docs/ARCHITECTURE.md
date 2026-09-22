@@ -88,7 +88,7 @@ projects                   wherever each project's path points; Dispatch adds wo
 └──────────────────────┬──────────────────────────▲──────────────┘
           core commands │                          │ outbox rows
 ┌──────────────────────▼──────────────────────────┴──────────────┐
-│ core       TaskService   Scheduler -> RunExecutor   Recovery   │
+│ core       TaskService   Scheduler -> Coordinator   Recovery   │
 │            Splitter                                 Sweeper    │
 └───────┬─────────────────────────┬─────────────────────┬────────┘
    store (SQLite)          workspace (git, gh)     agent: Agent
@@ -101,7 +101,7 @@ projects                   wherever each project's path points; Dispatch adds wo
 | `config` | YAML + env loading into records. Startup fails naming the invalid field. `ConfigText` and `ConfigEdit` change the file's text in place (add a project or a member; set, remove or append a value), so comments and layout stay; `ConfigFile` replaces the file only with a version that validates. `ConfigFile.edit` holds an exclusive lock on the sibling `.lock` file across read, change, validation and replace. |
 | `cli` | The `dispatch` command: `init` (the setup wizard, on a JLine terminal), `project add`, `check`, `service install/start/stop/status/uninstall` (systemd user unit, launchd agent, Task Scheduler task), and `run` (with `--log-file` for services). Per-OS default locations; the secrets file beside the config is merged under the process environment. `install.sh` and `install.ps1` download the release jar and launcher, or build them from source, and install them. |
 | `store` | SQLite access and migrations (`PRAGMA user_version`); conditional updates. One connection behind a lock. |
-| `core` | `TaskService`: the channel-neutral commands `draft / split / create / approve / reject / correct / followUp / retry / cancel / status / history / timeline / stats`. `Scheduler` picks runs; `RunExecutor` drives one run; `Splitter` runs splits beside them; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
+| `core` | `TaskService`: the channel-neutral commands `draft / split / create / approve / reject / correct / followUp / retry / cancel / status / history / timeline / stats`. `Scheduler` picks runs; `Coordinator` drives one run: it reads the store and the config into an immutable `Job`, hands it to a `Worker` — in this process `JobRunner`, which does the worktree, the agent and the delivery and touches no store — and applies the returned `JobResult` through `RunTransitions`; `Splitter` runs splits beside them; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
 | `agent` | `Agent` interface and `ClaudeCodeAgent` (CLI subprocess + stream-json parser). Tests run the real adapter against a fake `claude` shell script that replays recorded output. `CodexAgent` comes later. |
 | `workspace` | Clone, fetch, worktree add/remove/recreate, `copyFiles`, commit, push, `gh pr create`, delivering a failed delivery again. |
 | `telegram` | Bot API client (`java.net.http` + Jackson, including file downloads for attachments), `Poller`, `UpdateHandler` (parses updates, calls `TaskService`), `OutboxSender`, status edits, `messages_mn.properties`. |
@@ -253,7 +253,7 @@ interface RunHandle {
 }
 ```
 
-The timeout is enforced by `RunExecutor` (a watchdog calls `cancel()`), not by the agent. `RunHandle.activity()` returns the agent's step count and latest tool call, parsed from the stream as it arrives, for `/status`.
+The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the agent. `RunHandle.activity()` returns the agent's step count and latest tool call, parsed from the stream as it arrives, for `/status`.
 
 `ClaudeCodeAgent` passes the prompt on stdin to:
 
@@ -304,6 +304,18 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
   - never active tasks (planning, awaiting approval, executing).
 
   The `dispatch/<id>` branch stays in the clone, so a later retry or follow-up recreates the worktree. The sweep re-reads the task's phase just before removing its worktree and skips it if a follow-up or retry made it active.
+
+**The worker boundary.** A claimed run is carried by the `Coordinator`, which is the only part that reads or writes the store. It reads the task, the run, the project, this phase's limits, the attachments and whether the session's agent already ran into one immutable `Job`. Building that job can itself write to the store: a task's first execution run has the Coordinator record the new build session id before the job is ever handed to a worker, so the `JobEvents` writes below are not the only mid-run store write. It applies the returned `JobResult` as exactly one transition.
+
+```java
+interface Worker { JobResult run(Job job, JobEvents events, ActiveRuns.ActiveRun control); }
+interface JobEvents {
+    void worktreeCreated(String worktree, String baseSha);   // recorded at once: the next run continues there
+    void agentStarted(long pid, Instant processStart);       // recorded at once: orphan detection, session resume
+}
+```
+
+`JobRunner` is the worker in this process: worktree, attachments, agent under its timeout, delivery. It is built with no `Database`, `Projects` or `Config`, so the same class runs a job on a team member's own computer with HTTP in between (W-2 for the split, W-3 for the remote workers). Cancelling reaches it through `control`: `ActiveRuns.stop` sets the run's stop reason, the runner stops its agent (SIGTERM, 10 s grace, SIGKILL) and answers `CANCELLED`. A worker that throws is the worker breaking: the run is logged as `run.crashed` and fails as `INTERNAL`.
 
 ## Failure and recovery
 

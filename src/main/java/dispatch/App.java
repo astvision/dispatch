@@ -5,13 +5,14 @@ import dispatch.agent.claude.ClaudeCodeAgent;
 import dispatch.config.Config;
 import dispatch.config.MemberWriter;
 import dispatch.core.ActiveRuns;
+import dispatch.core.Coordinator;
 import dispatch.core.DraftExpiry;
 import dispatch.core.Sweeper;
 import dispatch.core.Groups;
+import dispatch.core.JobRunner;
 import dispatch.core.Membership;
 import dispatch.core.Projects;
 import dispatch.core.Recovery;
-import dispatch.core.RunExecutor;
 import dispatch.core.RunTransitions;
 import dispatch.core.Scheduler;
 import dispatch.core.Signal;
@@ -102,8 +103,10 @@ public final class App {
                 schedulerSignal::wake, outboxSignal::wake, taskTopics, draftId -> splitter[0].start(draftId));
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(config.agents().get("claude-code").command(), environment, Duration.ofSeconds(10)));
-        RunExecutor executor = new RunExecutor(db, projects, workspaces, delivery, agents, transitions, activeRuns,
-                config::planLimits, config::executeLimits, redactor, api::downloadFile, schedulerSignal::wake);
+        // Personal mode runs the job in this process; a team member's own computer runs the same JobRunner (W-3).
+        JobRunner jobRunner = new JobRunner(workspaces, delivery, agents, redactor, api::downloadFile);
+        Coordinator coordinator = new Coordinator(db, projects, transitions, activeRuns, config::planLimits,
+                config::executeLimits, jobRunner, schedulerSignal::wake);
         // Splitting happens before a project is chosen, so it cannot use the project's agent (ADR 0013).
         splitter[0] = new Splitter(db, tasks, agents.get("claude-code"), workspaces.splitsDir(), clock, Duration.ofMinutes(1));
 
@@ -130,7 +133,7 @@ public final class App {
         App[] app = new App[1];
         Scheduler scheduler = new Scheduler(db, config.scheduler().maxConcurrentRuns(), schedulerSignal, clock,
                 run -> Thread.ofVirtual().name("run-" + run.taskId() + "." + run.seq())
-                        .start(app[0].guarded(() -> executor.execute(run))),
+                        .start(app[0].guarded(() -> coordinator.execute(run))),
                 Duration.ofSeconds(5));
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
         Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1));
