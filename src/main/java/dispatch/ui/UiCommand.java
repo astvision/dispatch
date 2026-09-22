@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.cli.Checks;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.BindException;
 import java.net.URI;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -47,8 +49,11 @@ public final class UiCommand {
         try {
             SetupApi setup = new SetupApi(options.configFile().toAbsolutePath(), locations, bots, service, ServiceCommand.runningJar(),
                     processEnvironment);
+            ManageApi manage = new ManageApi(options.configFile().toAbsolutePath(), service, processEnvironment);
+            Map<String, Function<JsonNode, Object>> postRoutes = new HashMap<>(setup.routes());
+            postRoutes.putAll(manage.routes());
             server = UiServer.start(options.port(), resourceRoot, Map.<String, Supplier<Object>>of("/api/overview", overview::get),
-                    setup.routes());
+                    postRoutes);
         } catch (BindException e) {
             throw new CliException("port " + options.port() + " is in use; choose another with --port");
         } catch (IOException e) {

@@ -36,8 +36,8 @@ public final class SetupApi {
 
     /** Under browsers' and proxies' idle limits; the page asks again right away. */
     static final Duration POLL = Duration.ofSeconds(25);
-    private static final Set<String> MODELS = Set.of("sonnet", "opus", "fable");
-    private static final Set<String> EFFORTS = Set.of("low", "medium", "high", "xhigh", "max");
+    static final Set<String> MODELS = Set.of("sonnet", "opus", "fable");
+    static final Set<String> EFFORTS = Set.of("low", "medium", "high", "xhigh", "max");
     private static final String PERSONAL_BOT_ONE_MEMBER =
             "a personal bot has one member: you; go back and choose My team, or start setup again";
 
@@ -425,7 +425,7 @@ public final class SetupApi {
         return new Person(member.id(), member.name());
     }
 
-    private static String text(JsonNode body, String field) {
+    static String text(JsonNode body, String field) {
         JsonNode value = body.path(field);
         if (!value.isTextual() || value.asText().isBlank()) {
             throw new CliException(field + " is needed");
@@ -433,12 +433,12 @@ public final class SetupApi {
         return value.asText().strip();
     }
 
-    private static String optionalText(JsonNode body, String field) {
+    static String optionalText(JsonNode body, String field) {
         JsonNode value = body.path(field);
         return value.isTextual() && !value.asText().isBlank() ? value.asText().strip() : null;
     }
 
-    private static String choice(JsonNode body, String field, Set<String> allowed) {
+    static String choice(JsonNode body, String field, Set<String> allowed) {
         String value = optionalText(body, field);
         if (value != null && !allowed.contains(value)) {
             throw new CliException(field + " must be one of " + allowed.stream().sorted().toList() + ", or left out");
@@ -446,14 +446,14 @@ public final class SetupApi {
         return value;
     }
 
-    private static boolean requiredBoolean(JsonNode body, String field) {
+    static boolean requiredBoolean(JsonNode body, String field) {
         if (!body.path(field).isBoolean()) {
             throw new CliException(field + " must be true or false");
         }
         return body.path(field).asBoolean();
     }
 
-    private static long requiredLong(JsonNode body, String field) {
+    static long requiredLong(JsonNode body, String field) {
         if (!body.path(field).isIntegralNumber()) {
             throw new CliException(field + " must be a number");
         }
