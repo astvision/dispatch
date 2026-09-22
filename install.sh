@@ -46,8 +46,10 @@ download_release() {
       curl -fsSL -o "$dir/$asset" "$base/$asset" || return 1
     done
   fi
-  # Verify exactly the two files we install; SHA256SUMS also lists dispatch.cmd, which we didn't download.
-  lines=$(grep -E '  (dispatch\.jar|dispatch)$' "$dir/SHA256SUMS")
+  # Verify exactly the two files we install; SHA256SUMS also lists dispatch.cmd, which we didn't download. The
+  # `|| true` keeps a zero-match grep (e.g. a truncated SHA256SUMS) from tripping `set -e` on some shells (dash,
+  # bash 3.2) even though this function is called as an `if` condition; the explicit check below is what must fail.
+  lines=$(grep -E '  (dispatch\.jar|dispatch)$' "$dir/SHA256SUMS" || true)
   [ "$(printf '%s\n' "$lines" | grep -c .)" -eq 2 ] || fail "SHA256SUMS does not list both dispatch.jar and dispatch"
   if command -v sha256sum >/dev/null 2>&1; then
     (cd "$dir" && printf '%s\n' "$lines" | sha256sum -c - >/dev/null) || fail "the downloaded dispatch.jar or dispatch does not match its checksum"
