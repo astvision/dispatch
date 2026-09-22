@@ -33,7 +33,8 @@ $match = [regex]::Match($settings, "java\.specification\.version = (\d+)")
 $version = if ($match.Success) { [int]$match.Groups[1].Value } else { 0 }
 if ($version -lt 25) { throw "Java 25 or later is needed; java on your PATH is $version" }
 
-# Downloads the release's jar and launcher into $dir and checks the jar's checksum; $false when there is no release.
+# Downloads the release's jar and launcher into $dir and verifies both against SHA256SUMS; $false (after showing the
+# download command's own error) when there is no release or the download otherwise fails.
 function Get-Release($dir) {
     $release = if ($ref -like "v*") { $ref } else { "latest" }
     $viaGh = $false
@@ -43,21 +44,28 @@ function Get-Release($dir) {
     }
     if ($viaGh) {
         $tag = if ($release -eq "latest") { @() } else { @($release) }
-        Quietly { gh release download @tag --repo $repo --dir $dir --pattern dispatch.jar --pattern dispatch.jar.sha256 --pattern dispatch.cmd *> $null }
+        Quietly { gh release download @tag --repo $repo --dir $dir --pattern dispatch.jar --pattern dispatch.cmd --pattern SHA256SUMS }
         if ($LASTEXITCODE -ne 0) { return $false }
     } else {
         $base = if ($release -eq "latest") { "https://github.com/$repo/releases/latest/download" } else { "https://github.com/$repo/releases/download/$release" }
         try {
-            foreach ($asset in @("dispatch.jar", "dispatch.jar.sha256", "dispatch.cmd")) {
+            foreach ($asset in @("dispatch.jar", "dispatch.cmd", "SHA256SUMS")) {
                 Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile (Join-Path $dir $asset)
             }
         } catch {
+            Write-Host $_.Exception.Message -ForegroundColor Red
             return $false
         }
     }
-    $expected = ((Get-Content (Join-Path $dir "dispatch.jar.sha256") -Raw) -split "\s+")[0]
-    $actual = (Get-FileHash (Join-Path $dir "dispatch.jar") -Algorithm SHA256).Hash
-    if ($actual -ne $expected.ToUpperInvariant()) { throw "the downloaded dispatch.jar does not match its checksum" }
+    # Verify exactly the two files we install; SHA256SUMS also lists the Unix launcher, which we didn't download.
+    $sums = Get-Content (Join-Path $dir "SHA256SUMS")
+    foreach ($file in @("dispatch.jar", "dispatch.cmd")) {
+        $line = $sums | Where-Object { $_ -match "  $([regex]::Escape($file))$" } | Select-Object -First 1
+        if (-not $line) { throw "SHA256SUMS does not list $file" }
+        $expected = ($line -split "\s+")[0]
+        $actual = (Get-FileHash (Join-Path $dir $file) -Algorithm SHA256).Hash
+        if ($actual -ne $expected.ToUpperInvariant()) { throw "the downloaded $file does not match its checksum" }
+    }
     return $true
 }
 
@@ -74,13 +82,16 @@ if ($fromCheckout) {
 } else {
     $temporary = Join-Path ([IO.Path]::GetTempPath()) ("dispatch-" + [guid]::NewGuid())
     New-Item -ItemType Directory -Force -Path $temporary | Out-Null
-    if (-not $env:DISPATCH_FROM_SOURCE) {
+    # DISPATCH_REF must resolve to a release (main -> latest, v* -> that tag) to be downloadable; any other ref names
+    # a branch or commit, which only a source build can produce.
+    $attemptDownload = (-not $env:DISPATCH_FROM_SOURCE) -and (($ref -eq "main") -or ($ref -like "v*"))
+    if ($attemptDownload) {
         Step "Downloading Dispatch ($repo)"
         if (Get-Release $temporary) {
             $jarPath = Join-Path $temporary "dispatch.jar"
             $launcherPath = Join-Path $temporary "dispatch.cmd"
         } else {
-            Step "No release to download; building from source instead"
+            Step "Could not download a release (see above); building from source instead (no web UI)"
         }
     }
     if (-not $jarPath) {

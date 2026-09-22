@@ -32,23 +32,27 @@ command -v java >/dev/null 2>&1 || fail "Java 25 or later is needed, e.g. Temuri
 java_version=$(java -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java\.specification\.version = \([0-9]*\).*/\1/p')
 [ "${java_version:-0}" -ge 25 ] || fail "Java 25 or later is needed; java on your PATH is ${java_version:-unknown}"
 
-# Downloads the release's jar and launcher into $1 and checks the jar's checksum; fails quietly when there is no release.
+# Downloads the release's jar and launcher into $1 and verifies both against SHA256SUMS; returns 1 (with the download
+# command's own error on stderr) when there is no release or the download otherwise fails.
 download_release() {
   dir=$1
   if [ "${ref#v}" != "$ref" ]; then release=$ref; else release=latest; fi
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     if [ "$release" = latest ]; then set -- ; else set -- "$release"; fi
-    gh release download "$@" --repo "$repo" --dir "$dir" --pattern dispatch.jar --pattern dispatch.jar.sha256 --pattern dispatch 2>/dev/null || return 1
+    gh release download "$@" --repo "$repo" --dir "$dir" --pattern dispatch.jar --pattern dispatch --pattern SHA256SUMS || return 1
   else
     if [ "$release" = latest ]; then base="https://github.com/$repo/releases/latest/download"; else base="https://github.com/$repo/releases/download/$release"; fi
-    for asset in dispatch.jar dispatch.jar.sha256 dispatch; do
-      curl -fsSL -o "$dir/$asset" "$base/$asset" 2>/dev/null || return 1
+    for asset in dispatch.jar dispatch SHA256SUMS; do
+      curl -fsSL -o "$dir/$asset" "$base/$asset" || return 1
     done
   fi
+  # Verify exactly the two files we install; SHA256SUMS also lists dispatch.cmd, which we didn't download.
+  lines=$(grep -E '  (dispatch\.jar|dispatch)$' "$dir/SHA256SUMS")
+  [ "$(printf '%s\n' "$lines" | grep -c .)" -eq 2 ] || fail "SHA256SUMS does not list both dispatch.jar and dispatch"
   if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$dir" && sha256sum -c dispatch.jar.sha256 >/dev/null) || fail "the downloaded dispatch.jar does not match its checksum"
+    (cd "$dir" && printf '%s\n' "$lines" | sha256sum -c - >/dev/null) || fail "the downloaded dispatch.jar or dispatch does not match its checksum"
   else
-    (cd "$dir" && shasum -a 256 -c dispatch.jar.sha256 >/dev/null) || fail "the downloaded dispatch.jar does not match its checksum"
+    (cd "$dir" && printf '%s\n' "$lines" | shasum -a 256 -c - >/dev/null) || fail "the downloaded dispatch.jar or dispatch does not match its checksum"
   fi
 }
 
@@ -64,12 +68,18 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 jar="" launcher=""
-if [ -z "$source_dir" ] && [ -z "${DISPATCH_FROM_SOURCE:-}" ]; then
+# DISPATCH_REF must resolve to a release (main -> latest, v* -> that tag) to be downloadable; any other ref names a
+# branch or commit, which only a source build can produce.
+attempt_download=""
+case "$ref" in
+  main | v*) attempt_download=1 ;;
+esac
+if [ -z "$source_dir" ] && [ -z "${DISPATCH_FROM_SOURCE:-}" ] && [ -n "$attempt_download" ]; then
   step "Downloading Dispatch ($repo)"
   if download_release "$work"; then
     jar="$work/dispatch.jar" launcher="$work/dispatch"
   else
-    step "No release to download; building from source instead"
+    step "Could not download a release (see above); building from source instead (no web UI)"
   fi
 fi
 if [ -z "$jar" ]; then
