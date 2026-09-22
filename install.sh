@@ -8,9 +8,10 @@
 #
 #   gh api -H "Accept: application/vnd.github.raw" repos/astvision/dispatch/contents/install.sh | sh
 #
-# Needs git and Java 25 or later. Settings: DISPATCH_REF (branch or tag, default main), DISPATCH_HOME (where the jar goes,
-# default ~/.local/share/dispatch), DISPATCH_BIN (where the dispatch command goes, default ~/.local/bin),
-# DISPATCH_FROM_SOURCE=1 (build from source instead of downloading).
+# Needs Java 25 or later; git too when building from source (DISPATCH_FROM_SOURCE=1, DISPATCH_REF names a branch rather
+# than main or a v* tag, or the download fails). Settings: DISPATCH_REF (branch or tag, default main), DISPATCH_HOME
+# (where the jar goes, default ~/.local/share/dispatch), DISPATCH_BIN (where the dispatch command goes, default
+# ~/.local/bin), DISPATCH_FROM_SOURCE=1 (build from source instead of downloading).
 set -eu
 
 repo="${DISPATCH_REPO:-astvision/dispatch}"

@@ -37,7 +37,7 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 
 ## Installing
 
-- `install.sh` and `install.ps1` download the release jar and launcher over HTTPS (or through the authenticated GitHub CLI while the repository is private), and verify their SHA-256 checksum before installing them. They build Dispatch from source instead when there is no release, when `DISPATCH_FROM_SOURCE=1` is set, or when run from a checkout; a source build without Node has no web UI. Read a script before piping it into a shell if you do not trust the source.
+- `install.sh` and `install.ps1` download the release jar and launcher over HTTPS (or through the authenticated GitHub CLI while the repository is private), and verify their SHA-256 checksum before installing them. They build Dispatch from source instead when run from a checkout, when `DISPATCH_FROM_SOURCE=1` is set, when `DISPATCH_REF` names a branch rather than `main` or a `v*` tag, or when the download fails; a source build without Node has no web UI. Read a script before piping it into a shell if you do not trust the source.
 - The background service (ADR 0016) runs as the user who installed it, with the PATH setup ran with, and logs to `dispatch.log` in the owner-only state directory.
 
 ## The web UI

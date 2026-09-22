@@ -32,8 +32,9 @@ Dispatch runs on your own machine, with a bot for just you or one your team shar
 
 **You need** Java 25 or later, git, Claude Code (run `claude` once to log in), and the GitHub CLI logged in with `gh auth login` for pull requests.
 
-**1. Install** with one command. It downloads the latest release (or builds Dispatch from source when there is none) and
-puts `dispatch` on your PATH. `DISPATCH_FROM_SOURCE=1` builds from source instead:
+**1. Install** with one command. It downloads the latest release and puts `dispatch` on your PATH, and builds Dispatch
+from source instead when run from a checkout, when `DISPATCH_FROM_SOURCE=1` is set, when `DISPATCH_REF` names a branch
+rather than `main` or a `v*` tag, or when the download fails:
 
 ```sh
 # macOS, Linux
@@ -106,7 +107,8 @@ ssh -L 7878:localhost:7878 you@server    # then, on the server:
 dispatch ui --no-browser                 # and open the link it prints on your computer
 ```
 
-The page listens only on the machine it runs on. Anyone with its link can act as you, like a shell: see SECURITY.md.
+The tunnel's local and remote ports must match (as above): the page only accepts requests for its own port. The page
+listens only on the machine it runs on. Anyone with its link can act as you, like a shell: see SECURITY.md.
 
 ## Set up a team instance with systemd (Linux server)
 

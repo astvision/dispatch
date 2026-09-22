@@ -24,5 +24,6 @@ We rejected three alternatives:
 
 - Whoever holds the link, or a session made with it, can act as the user who runs `dispatch ui`, as with a shell.
 - Releases are built by CI; `install.sh` and `install.ps1` download them and check their checksum, and build from source
-  only when asked (`DISPATCH_FROM_SOURCE=1`) or when there is no release.
+  instead when run from a checkout, when asked (`DISPATCH_FROM_SOURCE=1`), when `DISPATCH_REF` names a branch rather
+  than `main` or a `v*` tag, or when the download fails.
 - Changing the page needs Node; building Dispatch itself still does not.
