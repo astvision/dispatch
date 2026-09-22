@@ -89,7 +89,7 @@ class ConfigEditTest {
         String reserved = ConfigEdit.set(CONFIG, At.of("team"), "no");
         String colon = ConfigEdit.set(CONFIG, At.of("projects").item("name", "alm").key("baseBranch"), "a: b");
 
-        assertEquals("a value must fit on one line", injected.getMessage());
+        assertEquals("a value must be plain text on one line", injected.getMessage());
         assertTrue(reserved.contains("team: 'no'\n"), reserved);
         assertTrue(colon.contains("baseBranch: 'a: b'\n"), colon);
     }
@@ -165,5 +165,79 @@ class ConfigEditTest {
         assertEquals("no projects[name=crm] in the config", project.getMessage());
         assertEquals("no projects[name=crm] in the config", nested.getMessage());
         assertTrue(firstKey.getMessage().contains("shares its line"), firstKey.getMessage());
+    }
+
+    @Test
+    void controlAndUnicodeLineSeparatorsInAValueAreRejected() {
+        ConfigException ls = assertThrows(ConfigException.class, () -> ConfigEdit.set(CONFIG, At.of("team"), "a\u2028b"));
+        ConfigException ps = assertThrows(ConfigException.class, () -> ConfigEdit.set(CONFIG, At.of("team"), "a\u2029b"));
+        ConfigException nel = assertThrows(ConfigException.class, () -> ConfigEdit.set(CONFIG, At.of("team"), "a\u0085b"));
+        ConfigException tab = assertThrows(ConfigException.class, () -> ConfigEdit.set(CONFIG, At.of("team"), "a\tb"));
+
+        assertEquals("a value must be plain text on one line", ls.getMessage());
+        assertEquals("a value must be plain text on one line", ps.getMessage());
+        assertEquals("a value must be plain text on one line", nel.getMessage());
+        assertEquals("a value must be plain text on one line", tab.getMessage());
+    }
+
+    @Test
+    void aConfigContainingAUnicodeLineSeparatorIsRefused() {
+        String before = "team: bold\u2028\nx: 1\n";
+
+        ConfigException e = assertThrows(ConfigException.class, () -> ConfigEdit.set(before, At.of("x"), "2"));
+
+        assertEquals("the config contains a Unicode line separator; remove it and try again", e.getMessage());
+    }
+
+    @Test
+    void aKeyWithABlockScalarValueIsRefused() {
+        String before = "a:\n  b: |\n    text\n  c: 1\nd: 2\n";
+
+        ConfigException e = assertThrows(ConfigException.class, () -> ConfigEdit.remove(before, At.of("a", "b")));
+
+        assertEquals("a.b is a multi-line value; edit it by hand", e.getMessage());
+    }
+
+    @Test
+    void settingABlockScalarValueIsRefused() {
+        String before = "a:\n  b: |\n    text\nc: 1\n";
+
+        ConfigException e = assertThrows(ConfigException.class, () -> ConfigEdit.set(before, At.of("a", "b"), "x"));
+
+        assertEquals("a.b is a multi-line value; edit it by hand", e.getMessage());
+    }
+
+    @Test
+    void aMissingKeyAfterABlockScalarIsRefused() {
+        String before = "a:\n  b: |\n    text\nc: 1\n";
+
+        ConfigException e = assertThrows(ConfigException.class, () -> ConfigEdit.set(before, At.of("a", "d"), "x"));
+
+        assertEquals("a is a multi-line value; edit it by hand", e.getMessage());
+    }
+
+    @Test
+    void aliasedValuesAreRefused() {
+        String before = "defs:\n  greeting: &g hello\nx: *g\n";
+
+        ConfigException setEx = assertThrows(ConfigException.class, () -> ConfigEdit.set(before, At.of("x"), "hi"));
+        ConfigException removeEx = assertThrows(ConfigException.class, () -> ConfigEdit.remove(before, At.of("x")));
+
+        assertEquals("x uses a YAML alias; edit it by hand", setEx.getMessage());
+        assertEquals("x uses a YAML alias; edit it by hand", removeEx.getMessage());
+    }
+
+    @Test
+    void aKeyNameMustBeAWord() {
+        ConfigException e = assertThrows(ConfigException.class, () -> ConfigEdit.set("a:\n", At.of("a", "x: y\nz"), "v"));
+
+        assertEquals("a config key must be letters, digits, '_' or '-'", e.getMessage());
+    }
+
+    @Test
+    void aDashValueIsQuoted() {
+        String after = ConfigEdit.set(CONFIG, At.of("team"), "-");
+
+        assertTrue(after.contains("team: '-'\n"), after);
     }
 }

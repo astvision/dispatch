@@ -61,8 +61,14 @@ public final class ConfigText {
         return new StringBuilder(text).insert(lines.startOfLineAfter(lastLine(members.getValue().getLast())), entry).toString();
     }
 
+    /** Characters that YAML reads as an indicator when they lead a plain scalar, e.g. '-' as a sequence entry. */
+    private static final String LEADING_INDICATORS = "-?:,[]{}#&*!|>'\"%@`";
+
     /** A YAML scalar for {@code value}: plain when that reads the same, single-quoted otherwise. */
     public static String yaml(String value) {
+        if (!value.isEmpty() && LEADING_INDICATORS.indexOf(value.charAt(0)) >= 0) {
+            return quoted(value);
+        }
         return value.matches("[A-Za-z0-9._/-]+") ? value : quoted(value);
     }
 
@@ -175,6 +181,9 @@ public final class ConfigText {
         private final List<Integer> starts = new ArrayList<>(List.of(0));
 
         Lines(String text) {
+            if (text.indexOf('\u0085') >= 0 || text.indexOf(' ') >= 0 || text.indexOf(' ') >= 0) {
+                throw new ConfigException("the config contains a Unicode line separator; remove it and try again");
+            }
             this.text = text;
             this.newline = text.contains("\r\n") ? "\r\n" : "\n";
             for (int i = 0; i < text.length(); i++) {

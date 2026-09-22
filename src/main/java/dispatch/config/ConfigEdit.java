@@ -111,8 +111,17 @@ public final class ConfigEdit {
         if (!(walk.last() instanceof ScalarNode target)) {
             throw new ConfigException(at + " holds a list or a mapping, not a single value; edit it by hand");
         }
+        if (isBlockScalar(target)) {
+            throw new ConfigException(at + " is a multi-line value; edit it by hand");
+        }
+        Node key = walk.keys.getLast();
         int start = lines.index(target.getStartMark());
         int end = lines.index(target.getEndMark());
+        // An alias (*name) composes to the anchor's own node, whose marks sit where "&name" was written, earlier in the
+        // text than the key that points to it here; editing that range would silently rewrite the anchor's definition.
+        if (end < start || (key != null && start < lines.index(key.getStartMark()))) {
+            throw new ConfigException(at + " uses a YAML alias; edit it by hand");
+        }
         // An empty value ("model:") starts right after its colon.
         String replacement = start == end ? " " + scalar : scalar;
         return text.substring(0, start) + replacement + text.substring(end);
@@ -131,13 +140,24 @@ public final class ConfigEdit {
         Node parent = walk.nodes.get(at.steps().size() - 1);
         refuseFlow(parent, at.describe(at.steps().size() - 1));
         Node target = walk.last();
+        if (endsInBlockScalar(target)) {
+            throw new ConfigException(at + " is a multi-line value; edit it by hand");
+        }
         Node first = at.steps().getLast() instanceof Key ? walk.keys.getLast() : target;
+        // As in set(), an alias's node carries the anchor definition's marks; here that means it can point earlier in
+        // the text than the key that names it, or make the removal range empty or run backwards.
+        if (lines.index(target.getStartMark()) < lines.index(first.getStartMark())) {
+            throw new ConfigException(at + " uses a YAML alias; edit it by hand");
+        }
         String before = lines.prefix(first.getStartMark()).strip();
         if (at.steps().getLast() instanceof Key ? !before.isEmpty() : !before.endsWith("-")) {
             throw new ConfigException("cannot remove " + at + ": it shares its line with other entries; edit it by hand");
         }
         int from = lines.startOfLine(first.getStartMark().getLine());
         int to = lines.startOfLineAfter(ConfigText.lastLine(target));
+        if (to <= from) {
+            throw new ConfigException(at + " uses a YAML alias; edit it by hand");
+        }
         return text.substring(0, from) + text.substring(to);
     }
 
@@ -154,6 +174,9 @@ public final class ConfigEdit {
         }
         Node target = walk.last();
         if (target instanceof SequenceNode list && list.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !list.getValue().isEmpty()) {
+            if (endsInBlockScalar(list)) {
+                throw new ConfigException(at + " is a multi-line value; edit it by hand");
+            }
             String prefix = lines.prefix(list.getValue().getFirst().getStartMark());
             int insertAt = lines.startOfLineAfter(ConfigText.lastLine(list));
             return new StringBuilder(text).insert(insertAt, prefix + scalar + lines.newline).toString();
@@ -169,8 +192,10 @@ public final class ConfigEdit {
 
     /** The value as YAML: plain when that reads the same, single-quoted otherwise. */
     static String scalar(String value) {
-        if (value.contains("\n") || value.contains("\r")) {
-            throw new ConfigException("a value must fit on one line");
+        // Every ISO control character (so \n, \r and \t too) plus the Unicode line/paragraph separators SnakeYAML also
+        // treats as line breaks: any of these would shift where later edits land, since Lines counts only '\n'.
+        if (value.codePoints().anyMatch(cp -> Character.isISOControl(cp) || cp == ' ' || cp == ' ')) {
+            throw new ConfigException("a value must be plain text on one line");
         }
         return RESERVED.contains(value.toLowerCase(Locale.ROOT)) ? ConfigText.quoted(value) : ConfigText.yaml(value);
     }
@@ -183,9 +208,15 @@ public final class ConfigEdit {
             if (!(at.steps().get(i) instanceof Key key)) {
                 throw new ConfigException("no " + at.describe(i + 1) + " in the config");
             }
+            if (!key.name().matches("[A-Za-z0-9_-]+")) {
+                throw new ConfigException("a config key must be letters, digits, '_' or '-'");
+            }
             names.add(key.name());
         }
         Node parent = walk.last();
+        if (endsInBlockScalar(parent)) {
+            throw new ConfigException(at.describe(found) + " is a multi-line value; edit it by hand");
+        }
         int indent;
         int insertAt;
         if (parent instanceof MappingNode map && map.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !map.getValue().isEmpty()) {
@@ -225,6 +256,26 @@ public final class ConfigEdit {
     private static boolean isEmpty(Node node) {
         return node instanceof ScalarNode scalar && scalar.getValue().isEmpty()
                 && scalar.getScalarStyle() == DumperOptions.ScalarStyle.PLAIN;
+    }
+
+    private static boolean isBlockScalar(Node node) {
+        return node instanceof ScalarNode scalar
+                && (scalar.getScalarStyle() == DumperOptions.ScalarStyle.LITERAL || scalar.getScalarStyle() == DumperOptions.ScalarStyle.FOLDED);
+    }
+
+    /**
+     * True when the line {@link ConfigText#lastLine} would report for {@code node} actually belongs to a block scalar
+     * ({@code |} or {@code >}): SnakeYAML places such a scalar's end mark one line past its real last line, which would
+     * misplace a deletion's end or an insertion's position.
+     */
+    private static boolean endsInBlockScalar(Node node) {
+        if (node instanceof MappingNode map && map.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !map.getValue().isEmpty()) {
+            return endsInBlockScalar(map.getValue().getLast().getValueNode());
+        }
+        if (node instanceof SequenceNode list && list.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !list.getValue().isEmpty()) {
+            return endsInBlockScalar(list.getValue().getLast());
+        }
+        return isBlockScalar(node);
     }
 
     /** The nodes found along a path: {@code nodes.get(i)} after i steps, {@code keys.get(i - 1)} the key node of step i, or null. */
