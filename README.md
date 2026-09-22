@@ -61,6 +61,8 @@ gh api -H "Accept: application/vnd.github.raw" repos/astvision/dispatch/contents
 
 Or run `dispatch ui` and set it up in your browser: the same steps, with a QR code for the bot, buttons to confirm people, and a folder browser for your clones. On a server, open the page through `ssh -L` (see [Manage it in the browser](#manage-it-in-the-browser)).
 
+Both have an Advanced section that stays closed unless you open it (in the terminal: `dispatch init --advanced`): per project an alias, and a model and effort for planning and for execution; for the whole instance the timeout and budget per run for planning and for execution, how many runs at a time, the state directory and the GitHub CLI command. Whatever you leave alone keeps its default.
+
 It shows a summary and writes nothing until you confirm. Then it offers to keep Dispatch running in the background, also after a restart.
 
 | | Config | Secrets (only you can read) | State and log |
@@ -75,7 +77,7 @@ dispatch check                                   # config, bot token, claude, pr
 dispatch service status                          # also: start, stop, install, uninstall
 dispatch project add ~/work/crm --effort high    # add another clone, then: dispatch service stop && dispatch service start
 dispatch run                                     # run in this terminal instead of the background
-dispatch ui                                      # the overview in your browser
+dispatch ui                                      # manage it in your browser: projects, people, settings, logs
 ```
 
 The service is a systemd user service on Linux, a launchd agent on macOS and a Task Scheduler task on Windows. It starts at login and restarts after a failure. On Linux, it keeps running after you log out only once lingering is on; `dispatch service status` says so.
@@ -101,7 +103,17 @@ Every planning and execution run reads the project's `CLAUDE.md` (or `.claude/CL
 
 `dispatch ui` shows Dispatch's version and files, whether the background service runs, and everything `dispatch check`
 finds, with what to do about it. It prints a link and opens it in your browser; the link works once, and Ctrl+C stops the
-page. Without a config, the page sets Dispatch up, step by step, as `dispatch init` does. Changing projects, people and settings in the browser comes next.
+page. Without a config, the page sets Dispatch up, step by step, as `dispatch init` does.
+
+With a config, the page has a menu:
+
+- **Overview:** the version and files, the background service with **Restart**, and what `dispatch check` finds.
+- **Projects:** add a clone with the folder browser; change a project's base branch, alias, model and effort, for both phases or per phase; remove it.
+- **People:** each group's members and the admins: rename, remove, make or unmake admin. New people still join by writing to the bot and an admin's approval in Telegram.
+- **Settings:** the timeout and budget per run, how many runs at a time, the commit author, and the Claude Code and GitHub CLI commands.
+- **Logs:** the background service's log, refreshed every 2 seconds, filtered by level and event, with secrets masked.
+
+A save changes only the lines it must, so your comments and layout stay, and keeps the previous file as `dispatch.yaml.bak`. It is refused when the file changed on disk since the page loaded it: reload and try again. The running Dispatch reads its config when it starts, so after a save the page offers **Restart now**.
 
 On a server, from your own computer:
 
