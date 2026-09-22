@@ -53,3 +53,25 @@ test("typing a path and clicking Go lists it", async () => {
   expect(await screen.findByText("/mnt/d/work")).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "Use crm" })).toBeInTheDocument();
 });
+
+test("the Advanced section adds an alias to the project", async () => {
+  vi.mocked(api.listFolders).mockResolvedValue({
+    path: "/home/bold", parent: "/home", truncated: false, folders: [{ name: "alm", path: "/home/bold/alm", gitClone: true }],
+  });
+  vi.mocked(api.probeProject).mockResolvedValue({
+    folder: "/home/bold/alm", name: "alm", originUrl: null, originHadCredentials: false, baseBranch: "main",
+  });
+  const update = vi.fn();
+
+  render(<ProjectsStep draft={draft} update={update} next={vi.fn()} back={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Use alm" }));
+  expect(await screen.findByText("Advanced")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Alias")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("Advanced"));
+  fireEvent.change(await screen.findByLabelText("Alias"), { target: { value: " a " } });
+  fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+
+  await vi.waitFor(() => expect(update).toHaveBeenCalledWith({
+    projects: [{ folder: "/home/bold/alm", name: "alm", baseBranch: "main", model: null, effort: null, alias: "a" }],
+  }));
+});

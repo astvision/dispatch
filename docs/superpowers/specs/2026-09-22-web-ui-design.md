@@ -160,4 +160,4 @@ Each milestone is built test-first on its own branch with a stacked draft pull r
 |---|---|---|
 | UI-1 | The refactor into `Setup`, `Checks` and the service and project logic; `UiServer`, `UiAuth` and static files; the frontend skeleton; CI, the release workflow and the install scripts; `dispatch ui` showing the Overview with `check` findings | The command tests pass unchanged; the auth tests pass; the release jar opens the Overview on all three OS in CI (a start-up smoke test) |
 | UI-2 | Setup in the browser: all six steps, confirming people in the browser, the QR code, the folder browser | A whole setup in the browser against `FakeTelegram` in Playwright, and once live against a real bot, without touching the terminal after `dispatch ui` |
-| UI-3 | Management: Projects, People, Settings, service Start, Stop and Restart, Logs, and the save flow | The Playwright management test passes; saving keeps `.bak` and refuses a config changed on disk |
+| UI-3 | Split into UI-3a (the management pages) and UI-3b (the same pages as a Telegram Mini App): see `2026-09-22-mini-app-design.md` | As that spec says |

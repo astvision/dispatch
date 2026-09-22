@@ -40,10 +40,15 @@ public final class OverviewApi {
     }
 
     public Overview get() {
-        Service.Status status = service.status();
-        ServiceView serviceView = new ServiceView(service.describe(), status.installed(), status.running(), status.detail(), status.notes());
+        ServiceView serviceView = serviceView(service);
         List<Checks.Finding> findings = checks.run(configFile, processEnvironment, finding -> { });
         return new Overview(version, configFile.toString(), stateDir().toString(), Files.exists(configFile), serviceView, findings);
+    }
+
+    /** The service's status as the pages show it. */
+    static ServiceView serviceView(Service service) {
+        Service.Status status = service.status();
+        return new ServiceView(service.describe(), status.installed(), status.running(), status.detail(), status.notes());
     }
 
     /** The config's state directory; the default one when there is no config yet, or it does not load (the checks say why). */

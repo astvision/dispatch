@@ -14,7 +14,7 @@ public final class Cli {
     private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group", "log-file",
             "port");
     private static final List<String> SERVICE_ACTIONS = List.of("install", "start", "stop", "status", "uninstall");
-    private static final Set<String> SWITCHES = Set.of("force", "no-browser");
+    private static final Set<String> SWITCHES = Set.of("force", "no-browser", "advanced");
 
     private Cli() {
     }
@@ -37,8 +37,15 @@ public final class Cli {
     public record Ui(Path configFile, int port, boolean openBrowser) implements Invocation {
     }
 
-    /** @param force replaces an existing config and secrets file */
-    public record Init(Path configFile, boolean force) implements Invocation {
+    /**
+     * @param force    replaces an existing config and secrets file
+     * @param advanced also asks for aliases, per-phase model and effort, limits, concurrency, state directory and gh
+     */
+    public record Init(Path configFile, boolean force, boolean advanced) implements Invocation {
+
+        public Init(Path configFile, boolean force) {
+            this(configFile, force, false);
+        }
     }
 
     /** Options left out are null: they come from the clone, or the config's only group. */
@@ -54,7 +61,9 @@ public final class Cli {
                 usage: dispatch [command] [--config FILE]
 
                 commands:
-                  init     set up your own Dispatch: bot, you, Claude Code, projects
+                  init [--advanced]
+                           set up your own Dispatch: bot, you, Claude Code, projects;
+                           --advanced also asks for limits, per-phase model and effort, and more
                   run      start the bot (the default)
                   check    check the config, bot token, agent, projects and GitHub CLI
                   service install|start|stop|status|uninstall
@@ -113,8 +122,9 @@ public final class Cli {
                         arguments.values().get("effort"), arguments.values().get("group"));
             }
             case "init" -> {
-                arguments.allow(0, Set.of("config", "force"));
-                yield new Init(arguments.configFile(defaults), arguments.switches().contains("force"));
+                arguments.allow(0, Set.of("config", "force", "advanced"));
+                yield new Init(arguments.configFile(defaults), arguments.switches().contains("force"),
+                        arguments.switches().contains("advanced"));
             }
             case "check" -> {
                 arguments.allow(0, Set.of("config"));

@@ -11,6 +11,7 @@ import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
 import dispatch.workspace.WorkspaceException;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -66,7 +67,25 @@ public final class Setup {
      * @param chat   null for none
      */
     public record Answers(String team, boolean shared, List<Config.Member> members, Chat chat, String claude,
-                          List<ProjectAddCommand.Project> projects, String authorName, String authorEmail) {
+                          List<ProjectAddCommand.Project> projects, String authorName, String authorEmail, Advanced advanced) {
+
+        /** A quick setup: every advanced answer keeps its default. */
+        public Answers(String team, boolean shared, List<Config.Member> members, Chat chat, String claude,
+                       List<ProjectAddCommand.Project> projects, String authorName, String authorEmail) {
+            this(team, shared, members, chat, claude, projects, authorName, authorEmail, Advanced.NONE);
+        }
+    }
+
+    /**
+     * Setup's Advanced answers for the whole instance; each null keeps today's default: plan 15m and $2, execute 60m and
+     * $10, 1 run at a time for a personal bot and 2 for a team's, the default state directory, and "gh".
+     *
+     * @param planTimeout a duration as the config writes it, e.g. "15m"
+     */
+    public record Advanced(String planTimeout, BigDecimal planBudgetUsd, String executeTimeout, BigDecimal executeBudgetUsd,
+                           Integer maxConcurrentRuns, Path stateDir, String ghCommand) {
+
+        public static final Advanced NONE = new Advanced(null, null, null, null, null, null, null);
     }
 
     /** Dispatch or another program already reads this bot's updates; Telegram gives them to one reader at a time. */
@@ -204,7 +223,10 @@ public final class Setup {
         }
     }
 
+    /** Writes only what differs from the defaults, so a quick setup renders the same config as it always has. */
     public static String render(Answers answers, Path stateDir) {
+        Advanced advanced = answers.advanced();
+        Path state = advanced.stateDir() != null ? advanced.stateDir() : stateDir;
         String team = answers.team();
         boolean shared = answers.shared();
         List<Config.Member> members = answers.members();
@@ -214,7 +236,7 @@ public final class Setup {
         StringBuilder yaml = new StringBuilder()
                 .append("# Written by dispatch init. Edit it freely: dispatch check says if something is wrong.\n")
                 .append("team: ").append(team).append('\n')
-                .append("stateDir: ").append(ConfigText.quoted(stateDir.toAbsolutePath().toString())).append("\n\n")
+                .append("stateDir: ").append(ConfigText.quoted(state.toAbsolutePath().toString())).append("\n\n")
                 .append("telegram:\n");
         if (shared) {
             yaml.append("  admins:            # who lets people join, from Telegram (ADR 0015)\n")
@@ -232,11 +254,18 @@ public final class Setup {
         projects.forEach(project -> yaml.append("        - ").append(ConfigText.yaml(project.name())).append('\n'));
         yaml.append("\ndelivery:\n")
                 .append("  authorName: ").append(ConfigText.quoted(answers.authorName())).append('\n')
-                .append("  authorEmail: ").append(ConfigText.quoted(answers.authorEmail())).append("\n\n")
-                .append("scheduler:\n  maxConcurrentRuns: ").append(shared ? 2 : 1).append("\n\n")
+                .append("  authorEmail: ").append(ConfigText.quoted(answers.authorEmail())).append('\n');
+        if (advanced.ghCommand() != null && !advanced.ghCommand().equals("gh")) {
+            yaml.append("  ghCommand: ").append(ConfigText.quoted(advanced.ghCommand())).append('\n');
+        }
+        yaml.append('\n')
+                .append("scheduler:\n  maxConcurrentRuns: ")
+                .append(advanced.maxConcurrentRuns() != null ? advanced.maxConcurrentRuns() : shared ? 2 : 1).append("\n\n")
                 .append("limits:              # per run, for every project; a project may set its own under limits\n")
-                .append("  plan:\n    timeout: 15m\n    budgetUsd: 2\n")
-                .append("  execute:\n    timeout: 60m\n    budgetUsd: 10\n\n")
+                .append("  plan:\n    timeout: ").append(timeout(advanced.planTimeout(), "15m"))
+                .append("\n    budgetUsd: ").append(budget(advanced.planBudgetUsd(), "2")).append('\n')
+                .append("  execute:\n    timeout: ").append(timeout(advanced.executeTimeout(), "60m"))
+                .append("\n    budgetUsd: ").append(budget(advanced.executeBudgetUsd(), "10")).append("\n\n")
                 .append("agents:\n  claude-code:\n    command: ").append(ConfigText.quoted(claude)).append("\n\n")
                 .append("projects:\n");
         for (ProjectAddCommand.Project project : projects) {
@@ -246,6 +275,14 @@ public final class Setup {
             }
         }
         return yaml.toString();
+    }
+
+    private static String timeout(String value, String defaultValue) {
+        return value == null ? defaultValue : ConfigText.yaml(value);
+    }
+
+    private static String budget(BigDecimal value, String defaultValue) {
+        return value == null ? defaultValue : value.toPlainString();
     }
 
     /**

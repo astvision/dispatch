@@ -4,9 +4,7 @@ import dispatch.config.Config;
 import dispatch.config.ConfigFile;
 import dispatch.config.ConfigText;
 import dispatch.config.ConfigException;
-import dispatch.config.ConfigLoader;
 import dispatch.workspace.Git;
-import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,6 +13,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * `dispatch project add <folder>`: adds a clone on this machine as a project (ADR 0014). The name, origin and base branch
@@ -47,40 +46,56 @@ public final class ProjectAddCommand {
             throw new CliException("no config at " + configFile + "; create one with: dispatch init");
         }
         Map<String, String> environment = validationEnvironment(processEnvironment);
-        Config config = load(configFile, configFile, environment);
-        ProjectProbe probe = ProjectProbe.of(options.folder(), new Git("git", null, GIT_TIMEOUT));
+        ProjectProbe probe = ProjectProbe.of(options.folder(), new Git("git", null, GIT_TIMEOUT)); // before the lock: it runs git
         String name = options.name() != null ? options.name() : probe.defaultName();
-        if (taken(config, name)) {
-            throw new CliException("a project named '" + name + "' already exists; choose another name with --name");
-        }
-        String base = options.base() != null ? options.base() : probe.defaultBranch();
-        if (base == null) {
-            throw new CliException("cannot tell which branch tasks in " + probe.folder() + " should start from; name it with --base");
-        }
-        String group = options.group() != null ? options.group() : onlyGroup(config);
         if (probe.originHadCredentials()) {
             terminal.warn("origin's URL holds credentials; it is not copied into the config");
         }
-        List<String> lines = projectLines(new Project(name, options.alias(), probe.folder(), probe.originUrl(), base,
-                config.agents().keySet().iterator().next(), options.model(), options.effort()));
-        String edited;
+        // base and group depend on the config as ConfigFile.edit reads it under its lock, so they are only known once
+        // the edit runs; captured here so the success message below can still report what was actually used.
+        AtomicReference<String> baseUsed = new AtomicReference<>();
+        AtomicReference<String> groupUsed = new AtomicReference<>();
         try {
-            edited = ConfigText.addProject(Files.readString(configFile), group, yaml(name), lines);
-        } catch (IOException e) {
-            throw new CliException("cannot read " + configFile + ": " + e.getMessage());
-        } catch (ConfigException e) {
+            ConfigFile.edit(configFile, environment, text -> {
+                Config config = ConfigFile.parse(configFile, text, environment);
+                if (taken(config, name)) {
+                    throw new CliException("a project named '" + name + "' already exists; choose another name with --name");
+                }
+                String base = options.base() != null ? options.base() : probe.defaultBranch();
+                if (base == null) {
+                    throw new CliException(
+                            "cannot tell which branch tasks in " + probe.folder() + " should start from; name it with --base");
+                }
+                String group = options.group() != null ? options.group() : onlyGroup(config);
+                baseUsed.set(base);
+                groupUsed.set(group);
+                List<String> lines = projectLines(new Project(name, options.alias(), probe.folder(), probe.originUrl(), base,
+                        config.agents().keySet().iterator().next(), options.model(), options.effort()));
+                return ConfigText.addProject(text, group, yaml(name), lines);
+            });
+        } catch (ConfigException | UncheckedIOException e) {
             throw new CliException(e.getMessage());
         }
-        replaceValidated(configFile, edited, environment);
-        terminal.ok("added " + name + ": " + probe.folder() + " (base " + base + ", group " + group + ")");
+        terminal.ok("added " + name + ": " + probe.folder() + " (base " + baseUsed.get() + ", group " + groupUsed.get() + ")");
         terminal.say("  A running Dispatch picks it up when restarted.");
     }
 
-    /** What a new project's block says; everything the person typed is quoted where YAML would read it differently. */
-    public record Project(String name, String alias, Path folder, String originUrl, String baseBranch, String agent, String model, String effort) {
+    /**
+     * What a new project's block says; everything the person typed is quoted where YAML would read it differently.
+     *
+     * @param plan    the model and effort for planning runs only; null for none
+     * @param execute likewise for execution runs
+     */
+    public record Project(String name, String alias, Path folder, String originUrl, String baseBranch, String agent, String model,
+                          String effort, Config.PhaseSettings plan, Config.PhaseSettings execute) {
+
+        public Project(String name, String alias, Path folder, String originUrl, String baseBranch, String agent, String model,
+                       String effort) {
+            this(name, alias, folder, originUrl, baseBranch, agent, model, effort, null, null);
+        }
     }
 
-    static List<String> projectLines(Project project) {
+    public static List<String> projectLines(Project project) {
         List<String> lines = new ArrayList<>(List.of("name: " + yaml(project.name())));
         if (project.alias() != null) {
             lines.add("alias: " + yaml(project.alias()));
@@ -97,7 +112,22 @@ public final class ProjectAddCommand {
         if (project.effort() != null) {
             lines.add("effort: " + yaml(project.effort()));
         }
+        phaseLines(lines, "plan", project.plan());
+        phaseLines(lines, "execute", project.execute());
         return lines;
+    }
+
+    private static void phaseLines(List<String> lines, String phase, Config.PhaseSettings settings) {
+        if (settings == null || settings.model() == null && settings.effort() == null) {
+            return;
+        }
+        lines.add(phase + ":");
+        if (settings.model() != null) {
+            lines.add("  model: " + yaml(settings.model()));
+        }
+        if (settings.effort() != null) {
+            lines.add("  effort: " + yaml(settings.effort()));
+        }
     }
 
     static String yaml(String value) {
@@ -116,14 +146,6 @@ public final class ProjectAddCommand {
         return environment;
     }
 
-    private static Config load(Path file, Path shownAs, Map<String, String> environment) {
-        try {
-            return ConfigLoader.load(file, environment);
-        } catch (ConfigException e) {
-            throw new CliException(e.getMessage().replace(file.toString(), shownAs.toString()));
-        }
-    }
-
     private static boolean taken(Config config, String name) {
         return config.projects().stream().anyMatch(project -> project.name().equalsIgnoreCase(name)
                 || project.alias() != null && project.alias().equalsIgnoreCase(name));
@@ -135,13 +157,5 @@ public final class ProjectAddCommand {
             throw new CliException("the config has several groups (" + String.join(", ", names) + "); choose one with --group");
         }
         return names.getFirst();
-    }
-
-    private static void replaceValidated(Path configFile, String edited, Map<String, String> environment) {
-        try {
-            ConfigFile.replace(configFile, edited, environment);
-        } catch (ConfigException | UncheckedIOException e) {
-            throw new CliException(e.getMessage());
-        }
     }
 }

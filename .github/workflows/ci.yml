@@ -56,6 +56,13 @@ jobs:
       - name: Build and test
         shell: bash
         run: ./mvnw --batch-mode -Pui verify
+      - name: Browser tests of the pages (Linux)
+        if: runner.os == 'Linux'
+        working-directory: ui
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run e2e
       - name: Start the web UI and read the overview
         shell: bash
         run: |

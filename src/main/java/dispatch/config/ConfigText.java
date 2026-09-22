@@ -61,16 +61,36 @@ public final class ConfigText {
         return new StringBuilder(text).insert(lines.startOfLineAfter(lastLine(members.getValue().getLast())), entry).toString();
     }
 
+    /** Characters that YAML reads as an indicator when they lead a plain scalar, e.g. '-' as a sequence entry. */
+    private static final String LEADING_INDICATORS = "-?:,[]{}#&*!|>'\"%@`";
+
     /** A YAML scalar for {@code value}: plain when that reads the same, single-quoted otherwise. */
     public static String yaml(String value) {
+        requirePlainText(value);
+        if (!value.isEmpty() && LEADING_INDICATORS.indexOf(value.charAt(0)) >= 0) {
+            return quoted(value);
+        }
         return value.matches("[A-Za-z0-9._/-]+") ? value : quoted(value);
     }
 
     public static String quoted(String value) {
+        requirePlainText(value);
         return "'" + value.replace("'", "''") + "'";
     }
 
-    private static MappingNode root(String text) {
+    /**
+     * Refuses a typed value that could not stay a single line once written: every ISO control character (so \n, \r and
+     * \t too) plus the Unicode line/paragraph separators and NEL that SnakeYAML also treats as line breaks. Any of these
+     * would shift where a later {@link Lines}-based edit lands, since {@link Lines} counts only '\n'. Shared by every
+     * writer of a typed value (this class, {@link ConfigEdit}), so none of them can write what the other refuses.
+     */
+    static void requirePlainText(String value) {
+        if (value.codePoints().anyMatch(cp -> Character.isISOControl(cp) || cp == '\u0085' || cp == ' ' || cp == ' ')) {
+            throw new ConfigException("a value must be plain text on one line");
+        }
+    }
+
+    static MappingNode root(String text) {
         try {
             if (new Yaml().compose(new StringReader(text)) instanceof MappingNode top) {
                 return top;
@@ -149,7 +169,7 @@ public final class ConfigText {
      * The line a node's text ends on. A block collection's end mark is where the next token starts, often the next line, so
      * its last value decides.
      */
-    private static int lastLine(Node node) {
+    static int lastLine(Node node) {
         if (node instanceof MappingNode map && map.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !map.getValue().isEmpty()) {
             return lastLine(map.getValue().getLast().getValueNode());
         }
@@ -168,17 +188,26 @@ public final class ConfigText {
     }
 
     /** The text's lines and their start offsets. SnakeYAML counts columns in code points, Java strings in chars. */
-    private static final class Lines {
+    static final class Lines {
 
         final String newline;
         private final String text;
         private final List<Integer> starts = new ArrayList<>(List.of(0));
 
         Lines(String text) {
+            if (text.indexOf('\u0085') >= 0 || text.indexOf(' ') >= 0 || text.indexOf(' ') >= 0) {
+                throw new ConfigException("the config contains a Unicode line separator; remove it and try again");
+            }
             this.text = text;
             this.newline = text.contains("\r\n") ? "\r\n" : "\n";
             for (int i = 0; i < text.length(); i++) {
-                if (text.charAt(i) == '\n' && i + 1 < text.length()) {
+                char c = text.charAt(i);
+                // SnakeYAML counts a lone \r as a line break of its own; this class counts only '\n', so a lone \r
+                // would make every later edit's line count disagree with what SnakeYAML's marks meant.
+                if (c == '\r' && (i + 1 == text.length() || text.charAt(i + 1) != '\n')) {
+                    throw new ConfigException("the config contains a carriage return without a line feed; remove it and try again");
+                }
+                if (c == '\n' && i + 1 < text.length()) {
                     starts.add(i + 1);
                 }
             }

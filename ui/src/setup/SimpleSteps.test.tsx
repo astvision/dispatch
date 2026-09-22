@@ -88,3 +88,18 @@ test("the commit author is prefilled and required", async () => {
   expect(await screen.findByText("Both are needed.")).toBeInTheDocument();
   expect(next).not.toHaveBeenCalled();
 });
+
+test("the commits step's Advanced section is closed, and what is typed there joins the draft", async () => {
+  const update = vi.fn();
+
+  render(<CommitsStep state={{ ...state, members: [{ id: 100, name: "Bold Bat" }] }} draft={draft} update={update} next={vi.fn()} back={vi.fn()} />);
+  expect(screen.queryByLabelText("Planning timeout per run")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("Advanced"));
+  fireEvent.change(await screen.findByLabelText("Planning timeout per run"), { target: { value: "30m" } });
+  fireEvent.change(screen.getByLabelText("GitHub CLI command"), { target: { value: " /opt/gh/bin/gh " } });
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+  await vi.waitFor(() => expect(update).toHaveBeenCalledWith({
+    authorName: "Dispatch (Bold)", authorEmail: "bold@example.com", advanced: { planTimeout: "30m", ghCommand: "/opt/gh/bin/gh" },
+  }));
+});

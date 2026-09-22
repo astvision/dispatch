@@ -54,6 +54,23 @@ class UiCommandTest {
     }
 
     @Test
+    void theManagementRoutesAreServed() throws Exception {
+        try (UiServer server = command("/ui-test").start(new Cli.Ui(dir.resolve("dispatch.yaml"), 0, false), Map.of())) {
+            HttpClient http = HttpClient.newHttpClient();
+            String setCookie = http.send(HttpRequest.newBuilder(server.loginUri()).build(), HttpResponse.BodyHandlers.discarding())
+                    .headers().firstValue("Set-Cookie").orElseThrow();
+
+            HttpResponse<String> config = http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/api/manage/config"))
+                    .header("Cookie", setCookie.substring(0, setCookie.indexOf(';')))
+                    .header("Origin", "http://127.0.0.1:" + server.port())
+                    .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(400, config.statusCode(), config.body());
+            assertTrue(config.body().contains("set Dispatch up first"), config.body());
+        }
+    }
+
+    @Test
     void aBuildWithoutTheUiSaysHowToGetIt() {
         CliException e = assertThrows(CliException.class,
                 () -> command("/no-such-ui").start(new Cli.Ui(dir.resolve("dispatch.yaml"), 0, false), Map.of()));

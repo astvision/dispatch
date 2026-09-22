@@ -74,6 +74,19 @@ final class LaunchdService implements Service {
         Service.required(commands, List.of("launchctl", "bootout", domain() + "/" + LABEL));
     }
 
+    /**
+     * {@code kickstart -k} restarts a loaded agent in one step, without the unload/reload gap of the default stop();
+     * start(): {@code bootout} returns before teardown finishes, so a bootstrap right after it often fails and leaves
+     * the agent stopped. When the agent is installed but not loaded, kickstart fails first, so this falls back to
+     * {@link #start} (bootstrap) instead.
+     */
+    @Override
+    public void restart() {
+        if (commands.run(List.of("launchctl", "kickstart", "-k", domain() + "/" + LABEL)).exitCode() != 0) {
+            start();
+        }
+    }
+
     @Override
     public Status status() {
         if (!Files.exists(plist)) {

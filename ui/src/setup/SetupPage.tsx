@@ -1,6 +1,6 @@
 import { Button, Card, Result, Spin, Steps, Typography } from "antd";
 import { useState } from "react";
-import type { ProjectChoice } from "../api";
+import type { ProjectChoice, SetupAdvanced } from "../api";
 import { useSetupState } from "../useSetupState";
 import BotStep from "./BotStep";
 import ClaudeStep from "./ClaudeStep";
@@ -17,6 +17,8 @@ export interface Draft {
   authorName: string;
   authorEmail: string;
   teamName: string;
+  /** The Advanced section's instance answers; left out when it is not used. */
+  advanced?: SetupAdvanced;
 }
 
 export default function SetupPage({ onDone }: { onDone: () => void }) {

@@ -10,9 +10,11 @@ import dispatch.cli.Service;
 import dispatch.cli.ServiceCommand;
 import dispatch.cli.Setup;
 import dispatch.config.Config;
+import dispatch.config.ConfigException;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -35,8 +37,8 @@ public final class SetupApi {
 
     /** Under browsers' and proxies' idle limits; the page asks again right away. */
     static final Duration POLL = Duration.ofSeconds(25);
-    private static final Set<String> MODELS = Set.of("sonnet", "opus", "fable");
-    private static final Set<String> EFFORTS = Set.of("low", "medium", "high", "xhigh", "max");
+    static final Set<String> MODELS = Set.of("sonnet", "opus", "fable");
+    static final Set<String> EFFORTS = Set.of("low", "medium", "high", "xhigh", "max");
     private static final String PERSONAL_BOT_ONE_MEMBER =
             "a personal bot has one member: you; go back and choose My team, or start setup again";
 
@@ -284,8 +286,14 @@ public final class SetupApi {
                 List<ProjectAddCommand.Project> projects = projects(body.path("projects"));
                 String name = Setup.teamName(team ? text(body, "teamName") : members.getFirst().name().split("\\s+")[0]);
                 Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), team ? chat : null, text(body, "claude"),
-                        projects, text(body, "authorName"), text(body, "authorEmail"));
-                Setup.write(configFile, Setup.render(answers, locations.stateDir()), bot.token());
+                        projects, text(body, "authorName"), text(body, "authorEmail"), advanced(body.path("advanced")));
+                String yaml;
+                try {
+                    yaml = Setup.render(answers, locations.stateDir());
+                } catch (ConfigException e) {
+                    throw new CliException(e.getMessage());
+                }
+                Setup.write(configFile, yaml, bot.token());
                 try {
                     updates.acknowledge();
                 } catch (TelegramException e) {
@@ -324,13 +332,64 @@ public final class SetupApi {
             }
             String model = choice(item, "model", MODELS);
             String effort = choice(item, "effort", EFFORTS);
-            projects.add(new ProjectAddCommand.Project(name, null, probe.folder(), probe.originUrl(), text(item, "baseBranch"),
-                    "claude-code", model, effort));
+            projects.add(new ProjectAddCommand.Project(name, optionalText(item, "alias"), probe.folder(), probe.originUrl(),
+                    text(item, "baseBranch"), "claude-code", model, effort, phase(item.path("plan")), phase(item.path("execute"))));
         }
         if (projects.isEmpty()) {
             throw new CliException("add at least one project");
         }
         return projects;
+    }
+
+    /** A project's own model and effort for one phase, from the Advanced section; null when neither is set. */
+    static Config.PhaseSettings phase(JsonNode settings) {
+        String model = choice(settings, "model", MODELS);
+        String effort = choice(settings, "effort", EFFORTS);
+        return model == null && effort == null ? null : new Config.PhaseSettings(model, effort);
+    }
+
+    /** The Advanced section's instance answers; each one left out keeps its default. */
+    private Setup.Advanced advanced(JsonNode advanced) {
+        String stateDir = optionalText(advanced, "stateDir");
+        return new Setup.Advanced(duration(advanced, "planTimeout"), budget(advanced, "planBudgetUsd"),
+                duration(advanced, "executeTimeout"), budget(advanced, "executeBudgetUsd"), runs(advanced),
+                stateDir == null ? null : ProjectProbe.expandHome(Path.of(stateDir)).toAbsolutePath(),
+                optionalText(advanced, "ghCommand"));
+    }
+
+    static String duration(JsonNode body, String field) {
+        String value = optionalText(body, field);
+        if (value == null) {
+            return null;
+        }
+        try {
+            Config.RunLimits.parseDuration(value);
+            return value;
+        } catch (IllegalArgumentException e) {
+            throw new CliException(field + ": " + e.getMessage());
+        }
+    }
+
+    static BigDecimal budget(JsonNode body, String field) {
+        JsonNode value = body.path(field);
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (!value.isNumber() || value.decimalValue().signum() <= 0) {
+            throw new CliException(field + " must be a positive number of dollars, e.g. 2 or 12.5");
+        }
+        return value.decimalValue();
+    }
+
+    private static Integer runs(JsonNode body) {
+        JsonNode value = body.path("maxConcurrentRuns");
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.asInt() < 1) {
+            throw new CliException("maxConcurrentRuns must be a whole number, at least 1");
+        }
+        return value.asInt();
     }
 
     private ProjectProbe probe(String folder) {
@@ -373,7 +432,7 @@ public final class SetupApi {
         return new Person(member.id(), member.name());
     }
 
-    private static String text(JsonNode body, String field) {
+    static String text(JsonNode body, String field) {
         JsonNode value = body.path(field);
         if (!value.isTextual() || value.asText().isBlank()) {
             throw new CliException(field + " is needed");
@@ -381,12 +440,12 @@ public final class SetupApi {
         return value.asText().strip();
     }
 
-    private static String optionalText(JsonNode body, String field) {
+    static String optionalText(JsonNode body, String field) {
         JsonNode value = body.path(field);
         return value.isTextual() && !value.asText().isBlank() ? value.asText().strip() : null;
     }
 
-    private static String choice(JsonNode body, String field, Set<String> allowed) {
+    static String choice(JsonNode body, String field, Set<String> allowed) {
         String value = optionalText(body, field);
         if (value != null && !allowed.contains(value)) {
             throw new CliException(field + " must be one of " + allowed.stream().sorted().toList() + ", or left out");
@@ -394,14 +453,14 @@ public final class SetupApi {
         return value;
     }
 
-    private static boolean requiredBoolean(JsonNode body, String field) {
+    static boolean requiredBoolean(JsonNode body, String field) {
         if (!body.path(field).isBoolean()) {
             throw new CliException(field + " must be true or false");
         }
         return body.path(field).asBoolean();
     }
 
-    private static long requiredLong(JsonNode body, String field) {
+    static long requiredLong(JsonNode body, String field) {
         if (!body.path(field).isIntegralNumber()) {
             throw new CliException(field + " must be a number");
         }

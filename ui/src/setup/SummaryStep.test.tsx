@@ -46,3 +46,13 @@ test("writing sends every answer and then offers the background service", async 
   fireEvent.click(screen.getByRole("button", { name: "Open the overview" }));
   expect(onDone).toHaveBeenCalled();
 });
+
+test("the Advanced answers are written too", async () => {
+  const write = vi.mocked(api.writeSetup).mockResolvedValue({ configFile: state.configFile, secretsFile: "/x/dispatch.env" });
+
+  render(<SummaryStep state={state} draft={{ ...draft, advanced: { maxConcurrentRuns: 3 } }} back={vi.fn()} onDone={vi.fn()} />);
+  expect(screen.getByText("maxConcurrentRuns 3")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Write this setup" }));
+
+  await vi.waitFor(() => expect(write).toHaveBeenCalledWith(expect.objectContaining({ advanced: { maxConcurrentRuns: 3 } })));
+});

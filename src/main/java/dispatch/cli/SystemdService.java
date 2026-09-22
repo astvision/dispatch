@@ -65,6 +65,11 @@ final class SystemdService implements Service {
     }
 
     @Override
+    public void restart() {
+        Service.required(commands, List.of("systemctl", "--user", "restart", UNIT));
+    }
+
+    @Override
     public Status status() {
         if (!Files.exists(unitFile)) {
             return new Status(false, false, "not installed", List.of());

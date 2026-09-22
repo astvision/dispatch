@@ -24,6 +24,7 @@ export default function SummaryStep({ state, draft, back, onDone }: Props) {
       authorName: draft.authorName,
       authorEmail: draft.authorEmail,
       projects: draft.projects,
+      ...(draft.advanced ? { advanced: draft.advanced } : {}),
     }));
     if (result) setWritten(result);
   };
@@ -63,6 +64,11 @@ export default function SummaryStep({ state, draft, back, onDone }: Props) {
         </Descriptions.Item>
         <Descriptions.Item label="Claude Code"><Typography.Text code>{draft.claude}</Typography.Text></Descriptions.Item>
         <Descriptions.Item label="Commits">{draft.authorName} &lt;{draft.authorEmail}&gt;</Descriptions.Item>
+        {draft.advanced && (
+          <Descriptions.Item label="Advanced">
+            {Object.entries(draft.advanced).map(([name, value]) => `${name} ${value}`).join(", ")}
+          </Descriptions.Item>
+        )}
         <Descriptions.Item label="Config"><Typography.Text code>{state.configFile}</Typography.Text></Descriptions.Item>
       </Descriptions>
       {writing.error && <Alert type="error" showIcon message={writing.error.message} />}

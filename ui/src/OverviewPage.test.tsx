@@ -53,3 +53,20 @@ test("an ended session says to open a new link", async () => {
 
   expect(await screen.findByText(/restart dispatch ui/)).toBeInTheDocument();
 });
+
+test("without a background service Restart is not offered", async () => {
+  answer(200, { ...overview, service: { ...overview.service, installed: false, running: false, detail: "not installed" } });
+
+  render(<OverviewPage />);
+
+  expect(await screen.findByText(/stop it and start it again where it runs/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
+});
+
+test("an installed service can be restarted from here", async () => {
+  answer(200, overview);
+
+  render(<OverviewPage />);
+
+  expect(await screen.findByRole("button", { name: "Restart" })).toBeInTheDocument();
+});
