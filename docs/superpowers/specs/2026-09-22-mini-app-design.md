@@ -8,7 +8,9 @@ Manage a Dispatch that is already set up from the browser (`dispatch ui`) and, w
 
 In scope: the management pages (Overview with checks and service, Projects, People, Settings, Logs, the save flow) and a second, opt-in way to reach them from Telegram.
 
-Out of scope: setting Dispatch up from Telegram (the bot needs a token and a running Dispatch first, so setup stays in `dispatch init` and `dispatch ui`); tasks, plans and approvals (they stay in the chat); running tunnel software.
+Also in scope: members' own task pages in the Mini App (status, history, cancel, retry), and an Advanced section in setup for everything the config supports.
+
+Out of scope: setting Dispatch up from Telegram (the bot needs a token and a running Dispatch first, so setup stays in `dispatch init` and `dispatch ui`); approving, correcting or rejecting plans (they stay in the chat); running tunnel software.
 
 ## Decisions
 
@@ -17,9 +19,10 @@ Out of scope: setting Dispatch up from Telegram (the bot needs a token and a run
 | Mini App or web UI | Both: `dispatch ui` for setup and SSH, the Mini App for managing from Telegram | First setup cannot happen inside a bot that is not set up yet |
 | How the phone reaches Dispatch | The owner provides a public `https://` URL (Cloudflare Tunnel, Tailscale Funnel, a reverse proxy with a domain) that forwards to a local port | Dispatch stays on 127.0.0.1 and runs no tunnel software; every tunnel works |
 | Which process serves the Mini App | `dispatch run` (the bot), on its own port, only when configured | It is always up with the bot; `dispatch ui` runs only while open |
-| Who may use it | A personal bot's member; a team bot's `telegram.admins` | They are the people who may change the setup today |
+| Who may use it | Every member; admins also manage | Members follow their own tasks; admins are the people who may change the setup today |
 | How they log in | Telegram's signed launch data (`initData`), checked on every request | Telegram already knows who opened it; nothing to type or store |
-| What it shows | The management pages only | Tasks work well in the chat; the pages are what the chat lacks |
+| What it shows | Members: their own tasks. Admins: all tasks of their groups and the management pages | Task lists and timelines read better as pages; approvals stay in the chat |
+| Setup options | An Advanced section (closed by default) for per-phase model and effort, aliases, limits, concurrency, state directory, gh command | A quick setup stays quick; a careful one can set everything the config supports |
 
 These are recorded as ADR 0019, "Managing Dispatch from a Telegram Mini App".
 
@@ -43,8 +46,8 @@ Without `miniApp`, nothing listens and the bot shows no Manage button. `ConfigLo
 
 ### Opening it
 
-- At start, and whenever the admins change, the bot sets the chat menu button of each allowed person's private chat to a Web App button "Manage" pointing at `publicUrl` (`setChatMenuButton` with `chat_id`). Everyone else keeps the default menu.
-- `/manage` answers an allowed person with the same Web App button, and anyone else with "only admins can manage Dispatch".
+- At start, and whenever members change, the bot sets the chat menu button of each member's private chat to a Web App button "Manage" pointing at `publicUrl` (`setChatMenuButton` with `chat_id`). Everyone else keeps the default menu.
+- `/manage` answers a member with the same Web App button, and anyone else as the bot answers non-members today.
 
 ### Restart
 
@@ -57,7 +60,7 @@ On every Mini App request, before anything else:
 
 1. **Signature.** The request carries `Authorization: tma <initData>`. Dispatch computes the secret key as HMAC-SHA256 of the bot token with the key `"WebAppData"`, then HMAC-SHA256 of the data-check string (every field except `hash`, sorted by key, `key=value` joined by `\n`) with that secret, and compares it with `hash` in constant time. Mismatch: 401.
 2. **Freshness.** `auth_date` is at most 1 hour old (and not in the future beyond 1 minute). Older: 401 `{"error":"expired"}`, and the page says to close and reopen the Mini App.
-3. **Who.** The `user.id` in the signed data is the personal bot's member or one of `telegram.admins`. Otherwise 403.
+3. **Who.** The `user.id` in the signed data is a member of a group in the config (or an admin). Otherwise 403 "ask an admin to add you". The role is decided here, on the server, from the config: an admin is in `telegram.admins`, or is a personal bot's one member. Management routes and the all-tasks routes answer 403 to anyone who is not an admin.
 4. **Host.** `Host` is `publicUrl`'s host or `127.0.0.1:<port>`. Otherwise 403.
 
 Also:
@@ -69,9 +72,28 @@ Also:
 - `dispatch check` reports the Mini App: off, or on with its URL; a warning when `publicUrl` does not answer over HTTPS.
 - SECURITY.md and ADR 0019 say plainly that turning it on puts a shell-equivalent API on the internet, protected by Telegram's signature, the one-hour limit and the admin list.
 
+## Advanced setup (UI-3a)
+
+`dispatch ui` setup and `dispatch init` gain an Advanced section, closed by default:
+
+- Per project: alias; model and effort for plan and for execute separately (the config's `plan:` and `execute:` blocks), besides the existing one for both.
+- Limits: timeout and budget for plan and for execute.
+- Maximum concurrent runs.
+- State directory and `gh` command.
+
+`Setup.render` writes only values that differ from today's defaults, so a quick setup writes the same config as before. The same fields are on the Settings and Projects pages.
+
+## Task pages (UI-3b, Mini App only)
+
+Only the running bot holds the queue, so task pages are served by `dispatch run`:
+
+- **My tasks** (every member): their own running, queued, awaiting-approval and finished tasks, with each task's timeline. Cancel and Retry use the same code and rules as `/cancel N` and `/retry N`.
+- **Tasks** (admins): every task of their groups, like `/status` and `/history`, with the same actions on their groups' tasks.
+- Approving, correcting and rejecting plans stay in the chat; a task awaiting approval links to its chat.
+
 ## Pages (UI-3a)
 
-Shared by `dispatch ui` and the Mini App:
+Shared by `dispatch ui` and the Mini App (admins only in the Mini App):
 
 - **Overview:** as in UI-1, plus Restart (see above).
 - **Projects:** a table; Add with the folder browser and `ProjectProbe`; edit base branch, model and effort; Remove.
@@ -104,5 +126,5 @@ As in the web UI spec (JSON errors, messages for people). Mini App additions: 40
 
 | Milestone | Delivers | Done when |
 |---|---|---|
-| UI-3a | `ManageApi` and the pages: Projects, People, Settings, Logs, Restart and the save flow, in `dispatch ui`; Playwright | Playwright passes; saving keeps `.bak` and refuses a config changed on disk; a live run edits a real config |
-| UI-3b | `miniApp` config, the server in `dispatch run`, `TelegramAuth`, the Manage menu button and `/manage`, theme and phone layout, `dispatch check`, ADR 0019, docs | The auth tests pass; a live run opens and uses the pages from a phone through a tunnel |
+| UI-3a | Advanced setup (both setups); `ManageApi` and the pages: Projects, People, Settings, Logs, Restart and the save flow, in `dispatch ui`; Playwright | `InitCommandTest` passes; Playwright passes; saving keeps `.bak` and refuses a config changed on disk; a live run edits a real config |
+| UI-3b | `miniApp` config, the server in `dispatch run`, `TelegramAuth` with member and admin roles, My tasks and admin Tasks with Cancel and Retry, the Manage menu button and `/manage`, theme and phone layout, `dispatch check`, ADR 0019, docs | The auth and role tests pass; a live run opens the pages from a phone through a tunnel as an admin and as a member |
