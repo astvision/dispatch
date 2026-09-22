@@ -44,6 +44,12 @@ public interface Service {
 
     void stop();
 
+    /** Stops and starts it, e.g. to pick up a changed config; a service manager with its own restart overrides this. */
+    default void restart() {
+        stop();
+        start();
+    }
+
     Status status();
 
     void uninstall();

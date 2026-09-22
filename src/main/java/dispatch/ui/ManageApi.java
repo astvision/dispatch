@@ -1,6 +1,7 @@
 package dispatch.ui;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dispatch.Redactor;
 import dispatch.cli.CliException;
 import dispatch.cli.ProjectAddCommand;
 import dispatch.cli.ProjectProbe;
@@ -17,6 +18,8 @@ import dispatch.workspace.Git;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -26,13 +29,16 @@ import java.nio.file.attribute.PosixFileAttributeView;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -44,6 +50,13 @@ import java.util.regex.Pattern;
 public final class ManageApi {
 
     static final String CHANGED = "the config changed on disk since this page loaded it; reload to see the change";
+    static final int DEFAULT_LOG_LINES = 200;
+    static final int MAX_LOG_LINES = 2000;
+    /** ponytail: only the log's last MiB is read, so a narrow filter can find fewer lines than asked; read further back in chunks if that matters. */
+    static final int TAIL_BYTES = 1024 * 1024;
+    private static final Set<String> LEVELS = Set.of("INFO", "WARN", "ERROR");
+    private static final Pattern LEVEL = Pattern.compile("(?:^| )level=(\\S+)");
+    private static final Pattern EVENT = Pattern.compile("(?:^| )event=(\\S+)");
     /** Claude Code accepts both short names (opus) and full model ids (claude-opus-5); only the shape is checked here. */
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._-]{1,100}");
 
@@ -73,6 +86,10 @@ public final class ManageApi {
     public record Saved(boolean saved, boolean restartNeeded, String version) {
     }
 
+    /** @param exists false before the service has written its log */
+    public record Logs(String file, boolean exists, List<String> lines) {
+    }
+
     private final Path configFile;
     private final Service service;
     private final Map<String, String> processEnvironment;
@@ -93,7 +110,9 @@ public final class ManageApi {
                 Map.entry("/api/manage/projects/remove", this::removeProject),
                 Map.entry("/api/manage/people/rename", this::renameMember),
                 Map.entry("/api/manage/people/remove", this::removeMember),
-                Map.entry("/api/manage/people/admin", this::setAdmin));
+                Map.entry("/api/manage/people/admin", this::setAdmin),
+                Map.entry("/api/manage/logs", this::logs),
+                Map.entry("/api/service/restart", body -> restart()));
     }
 
     ConfigView config() {
@@ -274,6 +293,65 @@ public final class ManageApi {
         List<Long> memberIds = config.telegram().groups().stream().flatMap(group -> group.members().stream())
                 .map(Config.Member::id).toList();
         return config.telegram().admins().stream().filter(memberIds::contains).count();
+    }
+
+    /** The service log's last lines, as `dispatch service install` has it write them, filtered and redacted. */
+    private Logs logs(JsonNode body) {
+        JsonNode requested = body.path("lines");
+        int lines = requested.isMissingNode() || requested.isNull() ? DEFAULT_LOG_LINES : requested.asInt(0);
+        if (!requested.isMissingNode() && !requested.isNull() && (!requested.isIntegralNumber() || lines < 1 || lines > MAX_LOG_LINES)) {
+            throw new CliException("lines must be a whole number from 1 to " + MAX_LOG_LINES);
+        }
+        String level = SetupApi.optionalText(body, "level");
+        if (level != null && !LEVELS.contains(level)) {
+            throw new CliException("level must be one of INFO, WARN, ERROR, or left out");
+        }
+        String event = SetupApi.optionalText(body, "event");
+        RunCommand.Prepared prepared = prepare();
+        Path file = prepared.config().stateDir().resolve("dispatch.log");
+        if (!Files.exists(file)) {
+            return new Logs(file.toString(), false, List.of());
+        }
+        Redactor redactor = Redactor.fromEnvironment(prepared.environment());
+        return new Logs(file.toString(), true, tail(file, lines, level, event).stream().map(redactor::redact).toList());
+    }
+
+    /** The last {@code max} lines of the file's last {@link #TAIL_BYTES} that have {@code level} and an event containing {@code event}. */
+    static List<String> tail(Path file, int max, String level, String event) {
+        try (SeekableByteChannel channel = Files.newByteChannel(file)) {
+            long size = channel.size();
+            long start = Math.max(0, size - TAIL_BYTES);
+            ByteBuffer buffer = ByteBuffer.allocate((int) (size - start));
+            channel.position(start);
+            while (buffer.hasRemaining() && channel.read(buffer) >= 0) {
+                // reads until the buffer is full or the file ends
+            }
+            List<String> lines = new ArrayList<>(new String(buffer.array(), 0, buffer.position(), StandardCharsets.UTF_8).lines().toList());
+            if (start > 0 && !lines.isEmpty()) {
+                lines.removeFirst(); // it began mid-line
+            }
+            List<String> matching = lines.stream().filter(line -> matches(line, LEVEL, level, true) && matches(line, EVENT, event, false)).toList();
+            return matching.subList(Math.max(0, matching.size() - max), matching.size());
+        } catch (IOException e) {
+            throw new CliException("cannot read " + file + ": " + e.getMessage());
+        }
+    }
+
+    private static boolean matches(String line, Pattern field, String wanted, boolean exact) {
+        if (wanted == null) {
+            return true;
+        }
+        Matcher found = field.matcher(line);
+        return found.find() && (exact ? found.group(1).equals(wanted) : found.group(1).contains(wanted));
+    }
+
+    /** Restarts the background service; not offered when Dispatch is not installed as one (spec: Restart). */
+    private OverviewApi.ServiceView restart() {
+        if (!service.status().installed()) {
+            throw new CliException("Dispatch does not run as a background service here; stop it and start it again where it runs");
+        }
+        service.restart();
+        return OverviewApi.serviceView(service);
     }
 
     /**

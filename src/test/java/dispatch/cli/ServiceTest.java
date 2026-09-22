@@ -110,6 +110,23 @@ class ServiceTest {
         assertTrue(error.getMessage().contains("No medium found"), error.getMessage());
     }
 
+    @Test
+    void restartAsksEachServiceManager() {
+        Service.forOs("Linux", dir, commands, "bold").restart();
+        List<String> linux = List.copyOf(commands.run);
+        commands.run.clear();
+        commands.answer("id -u", 0, "501\n");
+        Service.forOs("Mac OS X", dir, commands, "bold").restart();
+        List<String> mac = List.copyOf(commands.run);
+        commands.run.clear();
+        Service.forOs("Windows 11", dir, commands, "ACME\\bold").restart();
+
+        assertEquals(List.of("systemctl --user restart dispatch.service"), linux, "systemd restarts it in one step");
+        assertEquals(List.of("id -u", "launchctl bootout gui/501/io.dispatch.agent", "id -u",
+                "launchctl bootstrap gui/501 " + dir.resolve("Library/LaunchAgents/io.dispatch.agent.plist")), mac);
+        assertEquals(List.of("schtasks /End /TN Dispatch", "schtasks /Run /TN Dispatch"), commands.run);
+    }
+
     private static Service.Spec spec(Path home) {
         return new Service.Spec(JAVA, home.resolve("dispatch/dispatch.jar"), home.resolve(".config/dispatch/dispatch.yaml"),
                 home.resolve("state/dispatch.log"), "/usr/bin:/home/bold/.local/bin", home.resolve("state"));

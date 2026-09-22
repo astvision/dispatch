@@ -306,6 +306,65 @@ class ManageApiTest {
         assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.resolve("dispatch.yaml.bak"))));
     }
 
+    @Test
+    void theLogShowsItsLastLinesFilteredAndRedacted() throws Exception {
+        Path log = dir.resolve("state/dispatch.log");
+        Files.createDirectories(log.getParent());
+        Files.writeString(log, """
+                ts=2026-09-22T10:00:00.000Z level=INFO event=app.started
+                ts=2026-09-22T10:00:01.000Z level=WARN event=telegram.poll_failed error="bot %s refused"
+                ts=2026-09-22T10:00:02.000Z level=INFO event=task.created task=1
+                ts=2026-09-22T10:00:03.000Z level=ERROR event=task.run_failed task=1
+                """.formatted(TOKEN));
+
+        JsonNode all = call("/api/manage/logs", "{}");
+        JsonNode warnings = call("/api/manage/logs", "{\"level\":\"WARN\"}");
+        JsonNode lastTask = call("/api/manage/logs", "{\"event\":\"task.\",\"lines\":1}");
+
+        assertTrue(all.path("exists").asBoolean());
+        assertEquals(log.toString(), all.path("file").asText());
+        assertEquals(4, all.path("lines").size());
+        assertEquals("ts=2026-09-22T10:00:01.000Z level=WARN event=telegram.poll_failed error=\"bot [redacted] refused\"",
+                warnings.path("lines").get(0).asText());
+        assertEquals(1, warnings.path("lines").size());
+        assertEquals("ts=2026-09-22T10:00:03.000Z level=ERROR event=task.run_failed task=1", lastTask.path("lines").get(0).asText());
+        assertEquals(1, lastTask.path("lines").size());
+    }
+
+    @Test
+    void beforeTheServiceWritesItsLogThereIsNone() throws Exception {
+        JsonNode logs = call("/api/manage/logs", "{}");
+
+        assertFalse(logs.path("exists").asBoolean());
+        assertEquals(0, logs.path("lines").size());
+        assertEquals(dir.resolve("state/dispatch.log").toString(), logs.path("file").asText());
+    }
+
+    @Test
+    void aLongLogIsReadFromItsEnd() throws IOException {
+        Path log = dir.resolve("long.log");
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 40_000; i++) {
+            text.append("ts=2026-09-22T10:00:00.000Z level=INFO event=tick i=").append(i).append('\n');
+        }
+        Files.writeString(log, text);
+
+        assertEquals(List.of("ts=2026-09-22T10:00:00.000Z level=INFO event=tick i=39998", "ts=2026-09-22T10:00:00.000Z level=INFO event=tick i=39999"),
+                ManageApi.tail(log, 2, null, null));
+        assertTrue(ManageApi.tail(log, 40_000, null, null).getFirst().startsWith("ts="), "a line cut by the 1 MiB window is left out");
+    }
+
+    @Test
+    void restartGoesThroughTheServiceOnlyWhenItIsInstalled() throws Exception {
+        JsonNode restarted = call("/api/service/restart", "{}");
+        service.installed = false;
+        CliException notInstalled = assertThrows(CliException.class, () -> call("/api/service/restart", "{}"));
+
+        assertEquals(List.of("stop", "start"), service.actions);
+        assertTrue(restarted.path("running").asBoolean(), restarted.toString());
+        assertEquals("Dispatch does not run as a background service here; stop it and start it again where it runs", notInstalled.getMessage());
+    }
+
     private String settings(String version, String planBudget, String gh) {
         return """
                 {"version":"%s","planTimeout":"15m","planBudgetUsd":%s,"executeTimeout":"1h","executeBudgetUsd":10,
