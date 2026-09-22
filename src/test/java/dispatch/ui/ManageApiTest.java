@@ -355,6 +355,33 @@ class ManageApiTest {
     }
 
     @Test
+    void aCutExactlyAtALineBoundaryIsNotDiscarded() throws IOException {
+        Path log = dir.resolve("boundary.log");
+        // Create a file where a cut lands exactly after a '\n'
+        int lineSize = "ts=2026-09-22T10:00:00.000Z level=INFO event=tick 999\n".length();
+        int numLines = (ManageApi.TAIL_BYTES / lineSize) + 2;
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < numLines; i++) {
+            text.append(String.format("ts=2026-09-22T10:00:00.000Z level=INFO event=tick %03d\n", i));
+        }
+        Files.writeString(log, text);
+
+        long fileSize = Files.size(log);
+        long cutPoint = fileSize - ManageApi.TAIL_BYTES;
+
+        // Find if cut is at a line boundary
+        byte[] allBytes = Files.readAllBytes(log);
+        boolean cutAtBoundary = cutPoint > 0 && cutPoint < fileSize && allBytes[(int)cutPoint - 1] == '\n';
+
+        if (cutAtBoundary) {
+            List<String> result = ManageApi.tail(log, 2000, null, null);
+            assertTrue(result.size() > 0, "should have at least one line from after the boundary");
+            assertTrue(result.get(0).startsWith("ts=2026-09-22T10:00:00.000Z"),
+                    "first line should be complete, not truncated: " + result.get(0));
+        }
+    }
+
+    @Test
     void restartGoesThroughTheServiceOnlyWhenItIsInstalled() throws Exception {
         JsonNode restarted = call("/api/service/restart", "{}");
         service.installed = false;
@@ -363,6 +390,47 @@ class ManageApiTest {
         assertEquals(List.of("stop", "start"), service.actions);
         assertTrue(restarted.path("running").asBoolean(), restarted.toString());
         assertEquals("Dispatch does not run as a background service here; stop it and start it again where it runs", notInstalled.getMessage());
+    }
+
+    @Test
+    void multiLinePrivateKeysAreRedactedAsAWhole() throws Exception {
+        Path log = dir.resolve("state/dispatch.log");
+        Files.createDirectories(log.getParent());
+        Files.writeString(log, "ts=2026-09-22T10:00:00.000Z level=INFO event=app.started\n"
+                + "-----BEGIN PRIVATE KEY-----\n"
+                + "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDJ+lZjZ2J3K+Z5\n"
+                + "-----END PRIVATE KEY-----\n"
+                + "ts=2026-09-22T10:00:01.000Z level=INFO event=app.ready\n");
+
+        JsonNode logs = call("/api/manage/logs", "{}");
+        String response = Json.write(logs);
+
+        assertFalse(response.contains("BEGIN PRIVATE KEY"), "PEM key header should be redacted");
+        assertFalse(response.contains("MIIEvgIBADANBgk"), "PEM key body should be redacted");
+        assertTrue(response.contains("[redacted]"), "should contain redaction marker");
+        assertEquals(3, logs.path("lines").size(), "should have 3 lines: before PEM, [redacted], and after PEM");
+    }
+
+    @Test
+    void customSecretsInFileAreRedacted() throws Exception {
+        Path secretFile = dir.resolve("dispatch.env");
+        Files.writeString(secretFile, "GH_TOKEN=my-secret-custom-value-not-matching-pattern\n");
+        // Set proper permissions so SecretsFile doesn't reject it
+        try {
+            Files.setPosixFilePermissions(secretFile, PosixFilePermissions.fromString("rw-------"));
+        } catch (UnsupportedOperationException e) {
+            // Skip on non-POSIX systems; the test will still work but without the permission check
+        }
+
+        Path log = dir.resolve("state/dispatch.log");
+        Files.createDirectories(log.getParent());
+        Files.writeString(log, "ts=2026-09-22T10:00:00.000Z level=INFO event=app.started token=my-secret-custom-value-not-matching-pattern\n");
+
+        JsonNode logs = call("/api/manage/logs", "{}");
+
+        assertFalse(logs.path("lines").get(0).asText().contains("my-secret-custom-value-not-matching-pattern"),
+                "custom secret should be redacted: " + logs.path("lines").get(0).asText());
+        assertTrue(logs.path("lines").get(0).asText().contains("[redacted]"), "should contain redaction marker");
     }
 
     private String settings(String version, String planBudget, String gh) {

@@ -312,12 +312,30 @@ public final class ManageApi {
         if (!Files.exists(file)) {
             return new Logs(file.toString(), false, List.of());
         }
+        // Redact the whole tail before splitting and filtering (to handle multi-line patterns like PEM keys)
         Redactor redactor = Redactor.fromEnvironment(prepared.environment());
-        return new Logs(file.toString(), true, tail(file, lines, level, event).stream().map(redactor::redact).toList());
+        String rawTail = tailRaw(file);
+        String redacted = redactor.redact(rawTail);
+        List<String> allLines = redacted.lines().toList();
+        List<String> matching = allLines.stream()
+                .filter(line -> matches(line, LEVEL, level, true) && matches(line, EVENT, event, false))
+                .toList();
+        List<String> result = matching.subList(Math.max(0, matching.size() - lines), matching.size());
+        return new Logs(file.toString(), true, result);
     }
 
     /** The last {@code max} lines of the file's last {@link #TAIL_BYTES} that have {@code level} and an event containing {@code event}. */
     static List<String> tail(Path file, int max, String level, String event) {
+        String rawTail = tailRaw(file);
+        List<String> allLines = rawTail.lines().toList();
+        List<String> matching = allLines.stream()
+                .filter(line -> matches(line, LEVEL, level, true) && matches(line, EVENT, event, false))
+                .toList();
+        return matching.subList(Math.max(0, matching.size() - max), matching.size());
+    }
+
+    /** The raw text content from the last {@link #TAIL_BYTES} of the file, without filtering or redaction. */
+    static String tailRaw(Path file) {
         try (SeekableByteChannel channel = Files.newByteChannel(file)) {
             long size = channel.size();
             long start = Math.max(0, size - TAIL_BYTES);
@@ -326,12 +344,24 @@ public final class ManageApi {
             while (buffer.hasRemaining() && channel.read(buffer) >= 0) {
                 // reads until the buffer is full or the file ends
             }
-            List<String> lines = new ArrayList<>(new String(buffer.array(), 0, buffer.position(), StandardCharsets.UTF_8).lines().toList());
-            if (start > 0 && !lines.isEmpty()) {
-                lines.removeFirst(); // it began mid-line
+            String text = new String(buffer.array(), 0, buffer.position(), StandardCharsets.UTF_8);
+            if (start > 0 && !text.isEmpty()) {
+                // Only remove the first line if it was actually cut mid-line
+                // Check if the byte before start is a newline
+                ByteBuffer prevByte = ByteBuffer.allocate(1);
+                channel.position(start - 1);
+                channel.read(prevByte);
+                if (prevByte.get(0) != '\n') {
+                    // Cut was mid-line; remove the partial first line
+                    int firstNewline = text.indexOf('\n');
+                    if (firstNewline >= 0) {
+                        text = text.substring(firstNewline + 1);
+                    } else {
+                        text = ""; // entire buffer was a single partial line
+                    }
+                }
             }
-            List<String> matching = lines.stream().filter(line -> matches(line, LEVEL, level, true) && matches(line, EVENT, event, false)).toList();
-            return matching.subList(Math.max(0, matching.size() - max), matching.size());
+            return text;
         } catch (IOException e) {
             throw new CliException("cannot read " + file + ": " + e.getMessage());
         }
