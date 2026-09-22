@@ -8,6 +8,7 @@ import dispatch.config.ConfigLoader;
 import dispatch.config.ConfigText;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
+import dispatch.telegram.TelegramNames;
 import dispatch.workspace.Git;
 import dispatch.workspace.WorkspaceException;
 import java.io.IOException;
@@ -325,7 +326,7 @@ public final class Setup {
     }
 
     private static String displayName(JsonNode user) {
-        String name = (user.path("first_name").asText("") + " " + user.path("last_name").asText("")).strip();
+        String name = TelegramNames.clean(user.path("first_name").asText("") + " " + user.path("last_name").asText(""));
         return name.isEmpty() ? user.path("username").asText("?") : name;
     }
 }

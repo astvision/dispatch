@@ -582,7 +582,7 @@ public final class UpdateHandler {
     private static String displayName(JsonNode user) {
         String first = user.path("first_name").asText("");
         String last = user.path("last_name").asText("");
-        String name = (first + " " + last).strip();
+        String name = TelegramNames.clean(first + " " + last);
         return name.isEmpty() ? user.path("username").asText("?") : name;
     }
 

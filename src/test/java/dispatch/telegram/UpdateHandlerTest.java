@@ -9,6 +9,7 @@ import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
+import dispatch.config.ConfigLoader;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Groups;
 import dispatch.core.Membership;
@@ -25,6 +26,7 @@ import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import java.math.BigDecimal;
 import java.net.http.HttpClient;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -250,6 +252,75 @@ class UpdateHandlerTest {
         joinHandler.handle(message(623, 41, 555, "Ali", 555L, "private", "Fix the login timeout", null));
 
         assertEquals("1", row("SELECT count(*) AS n FROM draft").get("n"), "their messages are tasks now");
+    }
+
+    /** A display name Telegram accepts must not fail a join: displayName() cleans it before it ever reaches the config. */
+    @Test
+    void strangerWhoseNameHasAControlCharacterIsStillApprovedAndTheConfigThenLoads() throws Exception {
+        Path configFile = dir.resolve("dispatch.yaml");
+        Files.writeString(configFile, """
+                team: acme
+                stateDir: '%s'
+
+                telegram:
+                  admins: [100]
+                  groups:
+                    - name: backend
+                      members:
+                        - id: 100
+                          name: 'Bold'
+                      projects:
+                        - alm
+
+                delivery:
+                  authorName: 'Dispatch (acme)'
+                  authorEmail: 'dispatch@example.com'
+
+                scheduler:
+                  maxConcurrentRuns: 1
+
+                limits:
+                  plan:
+                    timeout: 15m
+                    budgetUsd: 2
+                  execute:
+                    timeout: 60m
+                    budgetUsd: 10
+
+                agents:
+                  claude-code:
+                    command: 'claude'
+
+                projects:
+                  - name: alm
+                    path: '%s'
+                    baseBranch: main
+                    agent: claude-code
+                """.formatted(dir.resolve("state").toString().replace("'", "''"), dir.resolve("work/alm").toString().replace("'", "''")));
+        Map<String, String> env = Map.of("TELEGRAM_BOT_TOKEN", "123456789" + ":AAH-fake-token-for-tests-only-0123456789");
+        Config loaded = ConfigLoader.load(configFile, env);
+        Projects projects = new Projects(loaded.projects(), project -> Optional.empty());
+        Groups joinable = new Groups(loaded.telegram());
+        dispatch.config.MemberWriter writer = dispatch.config.MemberWriter.file(configFile, env);
+        BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
+        UpdateHandler joinHandler = new UpdateHandler(db, new TaskService(joinable, projects, new ActiveRuns(), clock, () -> { }, () -> { }),
+                new Membership(joinable, writer, clock, () -> { }), joinable, projects, api, renderer, dispatch.Redactor.patternsOnly(),
+                FakeTelegram.BOT_USERNAME, clock, () -> { });
+
+        // "\u0007" here is a literal backslash-u-0007, a JSON escape for a Bell character once parsed, not a raw control byte.
+        joinHandler.handle(message(620, 40, 555, "Bold Bat\\u0007", 555L, "private", "hi", null));
+        assertEquals("OPEN", row("SELECT status FROM join_request").get("status"));
+        long requestId = Long.parseLong(row("SELECT id FROM join_request").get("id"));
+
+        joinHandler.handle(privateCallback(622, 100, "Bold", "join:" + requestId + ":backend"));
+
+        assertEquals(renderer.text("callback.joinApproved"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertTrue(joinable.isMember("telegram:555"));
+
+        Config.Member added = ConfigLoader.load(configFile, env).telegram().groups().getFirst().members().stream()
+                .filter(member -> member.id() == 555).findFirst().orElseThrow();
+        assertEquals("Bold Bat", added.name());
     }
 
     @Test
