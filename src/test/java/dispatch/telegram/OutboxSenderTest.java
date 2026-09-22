@@ -176,7 +176,7 @@ class OutboxSenderTest {
     }
 
     @Test
-    void privateMessageTelegramRefusesFallsBackToTheGroupWithAStartHint() throws Exception {
+    void privateMessageTelegramRefusesFallsBackToTheGroupAsANoticeWithoutItsContent() throws Exception {
         telegram.respond("sendMessage", 403,
                 "{\"ok\":false,\"error_code\":403,\"description\":\"Forbidden: bot can't initiate conversation with a user\"}");
         long id = enqueuePrivate(OutboxKind.TASK_QUEUED, Json.object().put("taskId", 42).put("project", "alm"));

@@ -13,7 +13,7 @@ A person listed in one or more groups. They may give tasks for their groups' pro
 _Avoid_: User, operator, admin
 
 **Admin**:
-A person who decides who may use a shared bot. When someone new writes to it, admins choose the group to add them to, or deny them.
+A person who decides who may use a shared bot. When someone new writes to it, admins choose the group to add them to, or deny them. An admin may also cancel any task, even one in a group they are not a member of (ADR 0020).
 _Avoid_: Owner, moderator
 
 **Requester**:

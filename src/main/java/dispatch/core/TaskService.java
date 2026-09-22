@@ -453,13 +453,13 @@ public final class TaskService {
             notAllowed(tx, who, originRef, chatRef, now);
             return CorrectResult.NOT_ALLOWED;
         }
-        if (text == null || text.isBlank()) {
-            return CorrectResult.EMPTY;
-        }
         Task task = Tasks.find(tx, taskId).orElseThrow(() -> new IllegalStateException("task " + taskId + " does not exist"));
         if (!isRequester(task, who)) {
             enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef, notRequester(task), now);
             return CorrectResult.REFUSED;
+        }
+        if (text == null || text.isBlank()) {
+            return CorrectResult.EMPTY;
         }
         if (task.phase() != Phase.AWAITING_APPROVAL) {
             enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef,
