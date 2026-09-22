@@ -29,28 +29,45 @@ import java.util.concurrent.TimeoutException;
  * run comes back as {@code INTERRUPTED}, exactly as a restart mid-run does today, and whatever that worker reports
  * afterwards is refused with 409 — it keeps its worktree, so /retry delivers it again.
  *
- * <p>Nothing here writes the store's run state: the Coordinator still makes the one transition per run.
+ * <p>Nothing here writes the store's run state: the Coordinator still makes the one transition per run. An offer's
+ * {@code answer} future is the single source of truth for how a job ended: every path that decides the job is over —
+ * a worker's own {@link #result}, or this class giving up on its behalf in {@link #givenUp} — completes it exactly
+ * once, under {@link #lock}, together with setting {@code expired}. Nothing may act on an offer's behalf once
+ * {@code expired} is true.
  */
 public final class RemoteWorkers implements Worker {
 
     /** Without progress for this long, the worker is gone. */
     public static final Duration LEASE = Duration.ofSeconds(60);
-    /** How long /api/worker/next waits before answering "nothing". */
+    /** How long /api/worker/next waits before answering "nothing"; the protocol default for Task 6's server. */
     public static final Duration LONG_POLL = Duration.ofSeconds(25);
-    /** How often a waiting thread looks up from its future to check the clock. */
+    /** How often a waiting thread looks up from its future to check the clock; the production default. */
     private static final Duration TICK = Duration.ofMillis(200);
 
     private final Database db;
     private final Clock clock;
     private final Runnable wakeScheduler;
+    private final Duration longPoll;
+    private final Duration tick;
     private final Object lock = new Object();
     private final List<Offer> offers = new ArrayList<>();
 
     /** @param wakeScheduler called when a worker asks for work, so a run queued while it was away starts at once */
     public RemoteWorkers(Database db, Clock clock, Runnable wakeScheduler) {
+        this(db, clock, wakeScheduler, LONG_POLL, TICK);
+    }
+
+    /**
+     * @param longPoll overrides {@link #LONG_POLL}; a real wall-clock bound, so tests don't pay a real 25 s wait.
+     * @param tick     overrides the give-up/lease-watchdog poll interval, so a test racing it doesn't need up to 200 ms
+     *                 of real time per attempt to land in the window it is testing.
+     */
+    RemoteWorkers(Database db, Clock clock, Runnable wakeScheduler, Duration longPoll, Duration tick) {
         this.db = db;
         this.clock = clock;
         this.wakeScheduler = wakeScheduler;
+        this.longPoll = longPoll;
+        this.tick = tick;
     }
 
     /** One job waiting for, or running on, a member's computer. */
@@ -65,7 +82,7 @@ public final class RemoteWorkers implements Worker {
         private final CompletableFuture<JobResult> answer = new CompletableFuture<>();
         private Long takenBy;
         private Instant leaseUntil;
-        /** The lease ran out: this job is over and nothing this worker sends about it counts any more. */
+        /** The job is over, one way or another: nothing this worker sends about it counts any more. */
         private boolean expired;
         private boolean worktreeRecorded;
         private boolean agentRecorded;
@@ -87,12 +104,9 @@ public final class RemoteWorkers implements Worker {
         try {
             while (true) {
                 try {
-                    return offer.answer.get(TICK.toMillis(), TimeUnit.MILLISECONDS);
+                    return offer.answer.get(tick.toMillis(), TimeUnit.MILLISECONDS);
                 } catch (TimeoutException e) {
-                    JobResult givenUp = givenUp(offer);
-                    if (givenUp != null) {
-                        return givenUp;
-                    }
+                    givenUp(offer);
                 }
             }
         } catch (InterruptedException e) {
@@ -109,43 +123,55 @@ public final class RemoteWorkers implements Worker {
     }
 
     private Offer offer(Job job, JobEvents events, ActiveRuns.ActiveRun control) {
-        String memberRef = db.transactionReturning(tx -> Tasks.find(tx, job.taskId()))
-                .orElseThrow(() -> new IllegalStateException("job for missing task " + job.taskId()))
-                .requester().ref();
-        Long onlyWorker = db.transactionReturning(tx -> Tasks.workerOf(tx, job.taskId())).orElse(null);
-        Offer offer = new Offer(job, events, control, memberRef, onlyWorker, clock.instant());
+        record TaskInfo(String memberRef, Long onlyWorker) {
+        }
+        TaskInfo info = db.transactionReturning(tx -> {
+            String memberRef = Tasks.find(tx, job.taskId())
+                    .orElseThrow(() -> new IllegalStateException("job for missing task " + job.taskId()))
+                    .requester().ref();
+            return new TaskInfo(memberRef, Tasks.workerOf(tx, job.taskId()).orElse(null));
+        });
+        Offer offer = new Offer(job, events, control, info.memberRef(), info.onlyWorker(), clock.instant());
         synchronized (lock) {
             offers.add(offer);
             lock.notifyAll();
         }
-        Log.info("worker.job_offered", "task", job.taskId(), "run", job.seq(), "member", memberRef, "worker", onlyWorker);
+        Log.info("worker.job_offered", "task", job.taskId(), "run", job.seq(), "member", info.memberRef(), "worker",
+                info.onlyWorker());
         return offer;
     }
 
-    /** Why this job is over although no worker reported; null while it may still run. */
-    private JobResult givenUp(Offer offer) {
+    /** Ends this offer's wait when nobody will finish it: shutdown, unclaimed for {@link #LEASE}, or claimed but silent. */
+    private void givenUp(Offer offer) {
         Instant now = clock.instant();
         synchronized (lock) {
+            if (offer.expired) {
+                // Already resolved — by a worker's own result(), or by an earlier call here. Nothing left to decide.
+                return;
+            }
             if (offer.control.stopReason() == ActiveRuns.StopReason.INTERRUPTED) {
-                return JobResult.failed(FailureReason.INTERRUPTED, "Dispatch stopped while the run was active", null);
+                offer.expired = true;
+                offer.answer.complete(JobResult.failed(FailureReason.INTERRUPTED, "Dispatch stopped while the run was active", null));
+                return;
             }
             if (offer.takenBy == null) {
                 if (now.isBefore(offer.offeredAt.plus(LEASE))) {
-                    return null;
+                    return;
                 }
                 Log.warn("worker.offer_expired", "task", offer.job.taskId(), "run", offer.job.seq(), "member", offer.memberRef);
-                return JobResult.failed(FailureReason.INTERRUPTED, "no computer took this run", null);
+                offer.expired = true;
+                offer.answer.complete(JobResult.failed(FailureReason.INTERRUPTED, "no computer took this run", null));
+                return;
             }
             if (now.isBefore(offer.leaseUntil)) {
-                return null;
+                return;
             }
-            // Drop the lease first: the worker's late result must find nothing and get 409.
             Log.warn("worker.lease_expired", "task", offer.job.taskId(), "run", offer.job.seq(), "worker", offer.takenBy);
             offer.leaseUntil = now;
             offer.takenBy = null;
             offer.expired = true;
-            return JobResult.failed(FailureReason.INTERRUPTED,
-                    "your computer stopped reporting for " + LEASE.toSeconds() + "s", null);
+            offer.answer.complete(JobResult.failed(FailureReason.INTERRUPTED,
+                    "your computer stopped reporting for " + LEASE.toSeconds() + "s", null));
         }
     }
 
@@ -157,26 +183,38 @@ public final class RemoteWorkers implements Worker {
     }
 
     /**
-     * The next job for {@code worker}, waiting up to {@link #LONG_POLL}. A job is this worker's when its requester is the
-     * worker's member and either the task has no computer yet or this is that computer.
-     *
-     * <p>The wait is bounded by the wall clock, not the injected {@link Clock}: it is how long this HTTP request may
-     * actually block, not a business fact a test needs to move by hand the way it moves the lease.
+     * The next job for {@code worker}, waiting up to this instance's long-poll bound. A job is this worker's when its
+     * requester is the worker's member and either the task has no computer yet or this is that computer.
      */
     public Optional<Job> next(Workers.Paired worker) throws InterruptedException {
         wakeScheduler.run();
-        long deadlineNanos = System.nanoTime() + LONG_POLL.toNanos();
+        Offer taken = awaitMatch(worker);
+        return taken == null ? Optional.empty() : Optional.of(recordAndReturn(taken, worker));
+    }
+
+    /**
+     * Waits under {@link #lock} for a matching offer and reserves it there, atomically with the match: two computers
+     * polling at once can never both reserve the same offer.
+     *
+     * <p>The wait itself is bounded by the wall clock, not the injected {@link Clock}: it is how long this HTTP request
+     * may actually block, not a business fact a test needs to move by hand the way it moves the lease.
+     */
+    private Offer awaitMatch(Workers.Paired worker) throws InterruptedException {
+        long deadlineNanos = System.nanoTime() + longPoll.toNanos();
         synchronized (lock) {
             while (true) {
                 Optional<Offer> match = offers.stream().filter(offer -> matches(offer, worker)).findFirst();
                 if (match.isPresent()) {
-                    return Optional.of(take(match.get(), worker));
+                    Offer offer = match.get();
+                    offer.takenBy = worker.id();
+                    offer.leaseUntil = clock.instant().plus(LEASE);
+                    return offer;
                 }
                 long leftMillis = (deadlineNanos - System.nanoTime()) / 1_000_000;
                 if (leftMillis <= 0) {
-                    return Optional.empty();
+                    return null;
                 }
-                lock.wait(Math.min(leftMillis, TICK.toMillis()));
+                lock.wait(Math.min(leftMillis, tick.toMillis()));
             }
         }
     }
@@ -186,12 +224,23 @@ public final class RemoteWorkers implements Worker {
                 && (offer.onlyWorker == null || offer.onlyWorker == worker.id());
     }
 
-    private Job take(Offer offer, Workers.Paired worker) {
-        Instant now = clock.instant();
-        offer.takenBy = worker.id();
-        offer.leaseUntil = now.plus(LEASE);
-        // Recorded at once: from here the task's worktree and session live on this computer and nowhere else.
-        db.transaction(tx -> Tasks.recordWorker(tx, offer.job.taskId(), worker.id(), now));
+    /**
+     * Records the task's affinity outside {@link #lock}, so one worker's SQLite write never blocks every other worker's
+     * next/progress/result or the lease watchdog. A failed write releases the reservation {@link #awaitMatch} made, so
+     * the offer is takeable again on the next poll instead of dying unmatchable.
+     */
+    private Job recordAndReturn(Offer offer, Workers.Paired worker) {
+        try {
+            db.transaction(tx -> Tasks.recordWorker(tx, offer.job.taskId(), worker.id(), clock.instant()));
+        } catch (RuntimeException e) {
+            synchronized (lock) {
+                if (!offer.expired) {
+                    offer.takenBy = null;
+                    offer.leaseUntil = null;
+                }
+            }
+            throw e;
+        }
         Log.info("worker.job_taken", "task", offer.job.taskId(), "run", offer.job.seq(), "worker", worker.id(),
                 "name", worker.name());
         return offer.job;
@@ -199,23 +248,36 @@ public final class RemoteWorkers implements Worker {
 
     /** What the worker is doing; renews the lease and answers whether the member cancelled the task. */
     public boolean progress(Workers.Paired worker, Progress progress) {
-        Offer offer = held(worker, progress.taskId(), progress.seq());
+        Offer offer;
+        boolean newWorktree;
+        boolean newAgent;
+        boolean cancelled;
         synchronized (lock) {
+            offer = held(worker, progress.taskId(), progress.seq());
             offer.leaseUntil = clock.instant().plus(LEASE);
+            newWorktree = progress.worktree() != null && !offer.worktreeRecorded;
+            if (newWorktree) {
+                offer.worktreeRecorded = true;
+            }
+            newAgent = progress.agentStarted() && !offer.agentRecorded;
+            if (newAgent) {
+                offer.agentRecorded = true;
+            }
+            if (progress.steps() != null) {
+                offer.control.reportActivity(new AgentActivity(progress.steps(), progress.lastAction()));
+            }
+            cancelled = offer.control.stopReason() == ActiveRuns.StopReason.CANCELLED;
         }
-        if (progress.worktree() != null && !offer.worktreeRecorded) {
+        // Reserved under the lock above so two overlapping posts can each fire at most once; written outside it so a
+        // slow DB write never blocks every other worker's next/progress/result.
+        if (newWorktree) {
             offer.events.worktreeCreated(progress.worktree(), progress.baseSha());
-            offer.worktreeRecorded = true;
         }
-        if (progress.agentStarted() && !offer.agentRecorded) {
+        if (newAgent) {
             // No pid: that process runs on the member's computer and this machine kills only its own orphans.
             offer.events.agentStarted(null, null);
-            offer.agentRecorded = true;
         }
-        if (progress.steps() != null) {
-            offer.control.reportActivity(new AgentActivity(progress.steps(), progress.lastAction()));
-        }
-        return offer.control.stopReason() == ActiveRuns.StopReason.CANCELLED;
+        return cancelled;
     }
 
     /**
@@ -229,12 +291,19 @@ public final class RemoteWorkers implements Worker {
     }
 
     public void result(Workers.Paired worker, long taskId, int seq, JobResult result) {
-        Offer offer = held(worker, taskId, seq);
+        Offer offer;
         synchronized (lock) {
+            offer = held(worker, taskId, seq);
             offer.takenBy = null;
-            offer.leaseUntil = clock.instant();
+            offer.expired = true;
         }
-        offer.answer.complete(result);
+        // held() validated and the mutation above happened in the same lock acquisition, so a concurrent givenUp() can
+        // no longer see this offer as still open — but it may already have completed the future first; complete()'s
+        // own return value is the tie-breaker, not a second read of state that could itself be stale.
+        if (!offer.answer.complete(result)) {
+            throw new ApiException(409, "lease_expired",
+                    "this run's lease has expired; keep its worktree, the member can retry it");
+        }
         Log.info("worker.job_reported", "task", taskId, "run", seq, "worker", worker.id(), "outcome", result.outcome());
     }
 
@@ -247,7 +316,7 @@ public final class RemoteWorkers implements Worker {
     private Offer held(Workers.Paired worker, long taskId, int seq) {
         synchronized (lock) {
             Optional<Offer> found = offers.stream().filter(offer -> offer.job.taskId() == taskId).findFirst();
-            if (found.isEmpty() || found.get().takenBy == null) {
+            if (found.isEmpty() || found.get().expired || found.get().takenBy == null) {
                 throw new ApiException(409, "lease_expired",
                         "this run's lease has expired; keep its worktree, the member can retry it");
             }
