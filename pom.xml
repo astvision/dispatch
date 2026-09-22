@@ -97,6 +97,7 @@
                                     <manifestEntries>
                                         <Multi-Release>true</Multi-Release>
                                         <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
                                     </manifestEntries>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
