@@ -89,7 +89,12 @@ class UpdateHandlerTest {
     }
 
     private UpdateHandler handlerWithWorkers(dispatch.worker.WorkerKeys keys) {
-        return new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
+        return handlerWithWorkers(keys, groups);
+    }
+
+    private UpdateHandler handlerWithWorkers(dispatch.worker.WorkerKeys keys, Groups groupsOverride) {
+        Membership membershipOverride = new Membership(groupsOverride, UpdateHandlerTest::noJoins, clock, () -> { });
+        return new UpdateHandler(db, tasks, membershipOverride, groupsOverride, projects, api, renderer, redactor, BOT, clock,
                 () -> { }, keys, "https://team.example.com");
     }
 
@@ -848,6 +853,47 @@ class UpdateHandlerTest {
         JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'WORKER_PAIRING'").get("payload"));
         assertTrue(payload.get("personal").asBoolean(), payload.toString());
         assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"), "and it is not taken for a task");
+    }
+
+    @Test
+    void anAdminRevokesAnotherMembersWorker() {
+        Groups adminGroups = new Groups(new Config.Telegram(List.of(100L), groups.all()));
+        dispatch.worker.WorkerKeys keys = new dispatch.worker.WorkerKeys(db, clock);
+        dispatch.worker.WorkerKeys.NewKey ali =
+                keys.pair(keys.newCode(new dispatch.domain.Requester("telegram:200", "Ali")), "ali-laptop").orElseThrow();
+
+        handlerWithWorkers(keys, adminGroups).handle(privateCommand(1, 100, "Bold", "/worker revoke " + ali.workerId()));
+
+        assertEquals("true", Json.read(row("SELECT payload FROM outbox WHERE kind = 'WORKER_REVOKED'").get("payload"))
+                .get("found").asText());
+        assertTrue(keys.authenticate(ali.key()).isEmpty(), "an admin may revoke anyone's computer");
+    }
+
+    @Test
+    void workerInAGroupChatIsPrivateOnlyAndMakesNoCode() {
+        handlerWithWorkers(new dispatch.worker.WorkerKeys(db, clock))
+                .handle(message(1, 1, 100, "Bold", GROUP, "supergroup", "/worker", null));
+
+        assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox").get("kind"));
+        assertEquals("0", row("SELECT count(*) AS n FROM pairing_code").get("n"));
+    }
+
+    @Test
+    void workerRevokeWithoutAValidNumberAnswersWithUsage() {
+        handlerWithWorkers(new dispatch.worker.WorkerKeys(db, clock)).handle(privateCommand(1, 100, "Bold", "/worker revoke abc"));
+
+        assertEquals("WORKER_USAGE", row("SELECT kind FROM outbox").get("kind"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_REVOKED'").get("n"));
+    }
+
+    @Test
+    void workerFromANonMemberJoinsWhenAdminsAreConfiguredInsteadOfBeingRefused() {
+        Groups adminGroups = new Groups(new Config.Telegram(List.of(999L), groups.all()));
+
+        handlerWithWorkers(new dispatch.worker.WorkerKeys(db, clock), adminGroups).handle(privateCommand(1, 777, "Eve", "/worker"));
+
+        assertEquals("1", row("SELECT count(*) AS n FROM join_request").get("n"), "the join flow (ADR 0015) takes it, not a refusal");
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'NOT_ALLOWED'").get("n"));
     }
 
     private long taskAwaitingApproval() {

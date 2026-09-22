@@ -31,6 +31,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -79,6 +80,9 @@ public final class UpdateHandler {
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
                          WorkerKeys workers, String workerUrl) {
+        if (workers != null) {
+            Objects.requireNonNull(workerUrl, "workerUrl is required when workers is configured");
+        }
         this.db = db;
         this.tasks = tasks;
         this.membership = membership;
@@ -96,12 +100,6 @@ public final class UpdateHandler {
 
     public void handle(JsonNode update) {
         long updateId = update.path("update_id").asLong();
-        if (update.has("message") && needsWorkerKeys(update.get("message"))) {
-            // WorkerKeys manages its own transaction (it is also called from the worker HTTP server), so it cannot run
-            // nested inside the update's transaction below; this is the one command shape that needs it.
-            handleWorkerKeysCommand(update.get("message"), updateId);
-            return;
-        }
         db.transaction(tx -> {
             if (update.has("message")) {
                 onMessage(tx, update.get("message"));
@@ -110,70 +108,6 @@ public final class UpdateHandler {
             } else if (update.has("my_chat_member")) {
                 onMembershipChange(tx, update.get("my_chat_member"));
             }
-            Kv.put(tx, OFFSET_KEY, Long.toString(updateId + 1));
-        });
-    }
-
-    /** True only for a member's own private /worker command while this instance runs in team mode. */
-    private boolean needsWorkerKeys(JsonNode message) {
-        if (workers == null) {
-            return false;
-        }
-        JsonNode from = message.path("from");
-        if (!isPrivateChatOf(message.path("chat"), from) || !from.has("id")) {
-            return false;
-        }
-        if (!groups.isMember(Refs.user(from.get("id").asLong()))) {
-            return false;
-        }
-        return isWorkerCommand(message);
-    }
-
-    /**
-     * /worker outside the update's own transaction: the pairing code or revoke runs first (WorkerKeys' own transaction),
-     * then a short transaction records the outbox message and advances the offset, exactly as {@link #handle} does for
-     * every other update.
-     */
-    private void handleWorkerKeysCommand(JsonNode message, long updateId) {
-        JsonNode from = message.path("from");
-        long chatId = message.path("chat").path("id").asLong();
-        Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
-        Long thread = message.path("is_topic_message").asBoolean(false) && message.has("message_thread_id")
-                ? message.get("message_thread_id").asLong()
-                : null;
-        String origin = Refs.message(chatId, message.path("message_id").asLong(), thread);
-        String chatRef = Refs.chat(chatId);
-        String args = Command.parse(message).map(Command::args).orElse("");
-
-        OutboxKind kind;
-        ObjectNode payload;
-        String[] words = args.strip().split("\\s+");
-        if (words.length >= 2 && words[0].equals("revoke")) {
-            long workerId;
-            try {
-                workerId = Long.parseLong(words[1]);
-            } catch (NumberFormatException e) {
-                workerId = -1;
-            }
-            boolean found = workerId > 0 && workers.revoke(workerId, who.ref(), groups.isAdmin(who.ref()));
-            kind = OutboxKind.WORKER_REVOKED;
-            payload = Json.object().put("workerId", workerId).put("found", found);
-        } else {
-            payload = Json.object().put("personal", false)
-                    .put("code", workers.newCode(who))
-                    .put("minutes", (int) WorkerKeys.CODE_LIFETIME.toMinutes())
-                    .put("url", workerUrl);
-            ArrayNode list = payload.putArray("workers");
-            for (Workers.Paired paired : workers.of(who.ref())) {
-                ObjectNode item = list.addObject().put("id", paired.id()).put("name", paired.name());
-                item.put("lastSeenAt", paired.lastSeenAt() == null ? null : paired.lastSeenAt().toString());
-            }
-            kind = OutboxKind.WORKER_PAIRING;
-        }
-        OutboxKind sentKind = kind;
-        ObjectNode sentPayload = payload;
-        db.transaction(tx -> {
-            enqueue(tx, sentKind, chatRef, origin, sentPayload);
             Kv.put(tx, OFFSET_KEY, Long.toString(updateId + 1));
         });
     }
@@ -201,17 +135,17 @@ public final class UpdateHandler {
             onChatMessage(tx, message, true);
             return;
         }
-        if (privateChat && isWorkerCommand(message)) {
-            // Someone who is not a member still gets a plain refusal from /worker, not a join prompt or silence.
-            onChatMessage(tx, message, true);
-            return;
-        }
         if (privateChat && !groups.admins().isEmpty()) {
             // Someone new writes to a shared bot: they ask to join, and the admins decide (ADR 0015).
             Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
             JoinRequestResult result = membership.requestJoin(tx, who, from.path("username").asText(null),
                     Refs.message(chatId, message.path("message_id").asLong(), null));
             tx.afterCommit(() -> Log.info("telegram.join_message", "requester", who.ref(), "result", result));
+            return;
+        }
+        if (privateChat && isWorkerCommand(message)) {
+            // No admins to ask (so no join flow above): /worker still gets a plain refusal instead of silence.
+            onChatMessage(tx, message, true);
             return;
         }
         if (!groups.isGroupChat(Refs.chat(chatId))) {
@@ -312,7 +246,7 @@ public final class UpdateHandler {
                     privateOnly(tx, chatRef, origin);
                     return;
                 }
-                worker(tx, who, origin, chatRef);
+                worker(tx, who, command.args(), origin, chatRef);
             }
             case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
@@ -617,17 +551,51 @@ public final class UpdateHandler {
         enqueue(tx, OutboxKind.PROJECTS, chatRef, origin, payload);
     }
 
-    /**
-     * /worker for anyone not routed to {@link #handleWorkerKeysCommand}: someone who is not a member (refused), or this
-     * instance runs in personal mode (nothing to pair). A member in team mode never reaches here; {@link #handle} sends
-     * that case to {@link #handleWorkerKeysCommand} instead, since WorkerKeys needs its own transaction.
-     */
-    private void worker(Tx tx, Requester who, String origin, String chatRef) {
+    /** /worker gives a one-time pairing code and lists the member's computers; /worker revoke N takes one away. */
+    private void worker(Tx tx, Requester who, String args, String origin, String chatRef) {
         if (!groups.isMember(who.ref())) {
             enqueue(tx, OutboxKind.NOT_ALLOWED, chatRef, origin, Json.object().put("name", who.name()));
             return;
         }
-        enqueue(tx, OutboxKind.WORKER_PAIRING, chatRef, origin, Json.object().put("personal", true));
+        if (workers == null) {
+            enqueue(tx, OutboxKind.WORKER_PAIRING, chatRef, origin, Json.object().put("personal", true));
+            return;
+        }
+        String[] words = args.strip().split("\\s+");
+        if (words[0].equals("revoke")) {
+            revokeWorker(tx, who, words.length >= 2 ? words[1] : null, origin, chatRef);
+            return;
+        }
+        ObjectNode payload = Json.object().put("personal", false)
+                .put("code", workers.newCode(tx, who))
+                .put("minutes", (int) WorkerKeys.CODE_LIFETIME.toMinutes())
+                .put("url", workerUrl);
+        ArrayNode list = payload.putArray("workers");
+        for (Workers.Paired paired : workers.of(tx, who.ref())) {
+            ObjectNode item = list.addObject().put("id", paired.id()).put("name", paired.name());
+            item.put("lastSeenAt", paired.lastSeenAt() == null ? null : paired.lastSeenAt().toString());
+        }
+        enqueue(tx, OutboxKind.WORKER_PAIRING, chatRef, origin, payload);
+    }
+
+    /** @param number the argument after "revoke", or null when none was given; anything but a positive id is a usage refusal */
+    private void revokeWorker(Tx tx, Requester who, String number, String origin, String chatRef) {
+        long workerId = number == null ? -1 : parsePositiveLong(number);
+        if (workerId <= 0) {
+            enqueue(tx, OutboxKind.WORKER_USAGE, chatRef, origin, Json.object());
+            return;
+        }
+        boolean found = workers.revoke(tx, workerId, who.ref(), groups.isAdmin(who.ref()));
+        enqueue(tx, OutboxKind.WORKER_REVOKED, chatRef, origin, Json.object().put("workerId", workerId).put("found", found));
+    }
+
+    /** -1 for anything that is not a positive integer, so the caller can treat "not a valid id" as one case. */
+    private static long parsePositiveLong(String text) {
+        try {
+            return Long.parseLong(text);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private void enqueue(Tx tx, OutboxKind kind, String chatRef, String origin, ObjectNode payload) {

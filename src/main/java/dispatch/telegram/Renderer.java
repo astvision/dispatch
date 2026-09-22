@@ -140,6 +140,7 @@ public final class Renderer {
             case WORKER_REVOKED -> plain(payload.path("found").asBoolean()
                     ? format("worker.revoked", String.valueOf(payload.path("workerId").asInt()))
                     : format("worker.revokeNotFound", String.valueOf(payload.path("workerId").asInt())));
+            case WORKER_USAGE -> plain(text("worker.usage"));
             case WORKER_WAITING -> plain(format("worker.waiting", taskId(payload)));
             case JOIN_REQUEST -> joinRequest(payload);
             case JOIN_REQUESTED -> plain(text("join.requested"));

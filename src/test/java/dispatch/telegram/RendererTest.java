@@ -715,6 +715,7 @@ class RendererTest {
                 yield payload;
             }
             case WORKER_REVOKED -> Json.object().put("workerId", 3).put("found", true);
+            case WORKER_USAGE -> Json.object();
             case WORKER_WAITING -> Json.object().put("taskId", 7);
         };
     }

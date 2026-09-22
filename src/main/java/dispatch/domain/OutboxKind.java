@@ -50,6 +50,8 @@ public enum OutboxKind {
     /** To a member privately: a one-time pairing code and the computers they have paired (W-3). */
     WORKER_PAIRING,
     WORKER_REVOKED,
+    /** /worker revoke without a valid positive id. */
+    WORKER_USAGE,
     /** To the requester, once: their task waits because none of their computers is connected. */
     WORKER_WAITING
 }

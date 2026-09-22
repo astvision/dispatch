@@ -3,6 +3,7 @@ package dispatch.worker;
 import dispatch.Log;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
+import dispatch.store.Tx;
 import dispatch.store.Workers;
 import dispatch.telegram.TelegramNames;
 import java.nio.charset.StandardCharsets;
@@ -46,22 +47,30 @@ public final class WorkerKeys {
 
     /** A fresh one-time code for {@code member}; only its hash is kept, so it can never be shown again. */
     public String newCode(Requester member) {
+        return db.transactionReturning(tx -> newCode(tx, member));
+    }
+
+    /** As {@link #newCode(Requester)}, inside a transaction the caller already has open (e.g. the bot's /worker). */
+    public String newCode(Tx tx, Requester member) {
         Instant now = clock.instant();
         StringBuilder code = new StringBuilder(CODE_LENGTH);
         for (int i = 0; i < CODE_LENGTH; i++) {
             code.append(CODE_ALPHABET[random.nextInt(CODE_ALPHABET.length)]);
         }
         String text = code.toString();
-        db.transaction(tx -> {
-            Workers.deleteExpiredCodes(tx, now);
-            Workers.insertCode(tx, sha256(text), member, now, now.plus(CODE_LIFETIME));
-        });
-        Log.info("worker.code_issued", "member", member.ref(), "expires_in_minutes", CODE_LIFETIME.toMinutes());
+        Workers.deleteExpiredCodes(tx, now);
+        Workers.insertCode(tx, sha256(text), member, now, now.plus(CODE_LIFETIME));
+        tx.afterCommit(() -> Log.info("worker.code_issued", "member", member.ref(), "expires_in_minutes", CODE_LIFETIME.toMinutes()));
         return text;
     }
 
     public List<Workers.Paired> of(String memberRef) {
-        return db.transactionReturning(tx -> Workers.ofMember(tx, memberRef));
+        return db.transactionReturning(tx -> of(tx, memberRef));
+    }
+
+    /** As {@link #of(String)}, inside a transaction the caller already has open. */
+    public List<Workers.Paired> of(Tx tx, String memberRef) {
+        return Workers.ofMember(tx, memberRef);
     }
 
     /** What a worker is told once, when it pairs. */
@@ -127,23 +136,30 @@ public final class WorkerKeys {
             return Optional.empty();
         }
         byte[] presented = sha256Bytes(key);
-        // ponytail: a linear scan over a team's handful of workers; index by hash if a team ever has hundreds.
-        Optional<Workers.Paired> found = db.transactionReturning(Workers::active).stream()
-                .filter(worker -> MessageDigest.isEqual(presented, HexFormat.of().parseHex(worker.keySha256())))
-                .findFirst();
-        found.ifPresent(worker -> db.transaction(tx -> Workers.touch(tx, worker.id(), clock.instant())));
-        return found;
+        return db.transactionReturning(tx -> {
+            // ponytail: a linear scan over a team's handful of workers; index by hash if a team ever has hundreds.
+            Optional<Workers.Paired> found = Workers.active(tx).stream()
+                    .filter(worker -> MessageDigest.isEqual(presented, HexFormat.of().parseHex(worker.keySha256())))
+                    .findFirst();
+            found.ifPresent(worker -> Workers.touch(tx, worker.id(), clock.instant()));
+            return found;
+        });
     }
 
     /** @param admin an admin may revoke anyone's worker; everybody else only their own */
     public boolean revoke(long workerId, String memberRef, boolean admin) {
-        Optional<Workers.Paired> worker = db.transactionReturning(tx -> Workers.find(tx, workerId));
+        return db.transactionReturning(tx -> revoke(tx, workerId, memberRef, admin));
+    }
+
+    /** As {@link #revoke(long, String, boolean)}, inside a transaction the caller already has open. */
+    public boolean revoke(Tx tx, long workerId, String memberRef, boolean admin) {
+        Optional<Workers.Paired> worker = Workers.find(tx, workerId);
         if (worker.isEmpty() || (!admin && !worker.get().memberRef().equals(memberRef))) {
             return false;
         }
-        boolean revoked = db.transactionReturning(tx -> Workers.revoke(tx, workerId, clock.instant()));
+        boolean revoked = Workers.revoke(tx, workerId, clock.instant());
         if (revoked) {
-            Log.info("worker.revoked", "worker", workerId, "member", worker.get().memberRef(), "by", memberRef);
+            tx.afterCommit(() -> Log.info("worker.revoked", "worker", workerId, "member", worker.get().memberRef(), "by", memberRef));
         }
         return revoked;
     }
