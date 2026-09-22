@@ -44,7 +44,7 @@ export default function OverviewPage() {
           type="info"
           showIcon
           message="Dispatch is not set up yet"
-          description="Run dispatch init in a terminal on this machine. Setting up in the browser comes next."
+          description="Set it up on this page, or run dispatch init in a terminal on this machine."
         />
       )}
       <Card title="Dispatch">
