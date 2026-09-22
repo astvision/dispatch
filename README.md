@@ -70,6 +70,8 @@ It shows a summary and writes nothing until you confirm. Then it offers to keep 
 | macOS, Linux | `~/.config/dispatch/dispatch.yaml` | `~/.config/dispatch/dispatch.env` | `~/.local/state/dispatch` |
 | Windows | `%APPDATA%\Dispatch\dispatch.yaml` | `%APPDATA%\Dispatch\dispatch.env` | `%LOCALAPPDATA%\Dispatch` |
 
+Every change to the config — from the pages, `dispatch project add`, or the running bot adding someone who joined from Telegram — first takes an exclusive lock on `dispatch.yaml.lock` beside it, so two writers never lose each other's change; leave that file in place.
+
 **3. Use it.** Write a task to the bot in Telegram (see [Use it](#use-it)). From the terminal:
 
 ```sh
@@ -108,7 +110,7 @@ page. Without a config, the page sets Dispatch up, step by step, as `dispatch in
 With a config, the page has a menu:
 
 - **Overview:** the version and files, the background service with **Restart**, and what `dispatch check` finds.
-- **Projects:** add a clone with the folder browser; change a project's base branch, alias, model and effort, for both phases or per phase; remove it.
+- **Projects:** add a clone with the folder browser; change a project's base branch, alias, model and effort, for both phases or per phase; remove it. A project's model may be any model id (for example `claude-opus-5`), while setup offers Sonnet, Opus and Fable.
 - **People:** each group's members and the admins: rename, remove, make or unmake admin. New people still join by writing to the bot and an admin's approval in Telegram.
 - **Settings:** the timeout and budget per run, how many runs at a time, the commit author, and the Claude Code and GitHub CLI commands.
 - **Logs:** the background service's log, refreshed every 2 seconds, filtered by level and event, with secrets masked.
