@@ -43,6 +43,13 @@ class UiCommandTest {
                     .header("Cookie", setCookie.substring(0, setCookie.indexOf(';'))).build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(200, overview.statusCode(), overview.body());
             assertTrue(overview.body().contains("\"configured\":false"), overview.body());
+
+            HttpResponse<String> setupState = http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/api/setup/state"))
+                    .header("Cookie", setCookie.substring(0, setCookie.indexOf(';')))
+                    .header("Origin", "http://127.0.0.1:" + server.port())
+                    .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, setupState.statusCode(), setupState.body());
+            assertTrue(setupState.body().contains("\"configExists\":false"), setupState.body());
         }
     }
 

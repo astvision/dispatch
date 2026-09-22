@@ -118,10 +118,12 @@ public final class Setup {
                         return Optional.of(update);
                     }
                 }
-                long seconds = Duration.between(Instant.now(), deadline).toSeconds();
-                if (seconds <= 0) {
+                Duration remaining = Duration.between(Instant.now(), deadline);
+                if (remaining.isZero() || remaining.isNegative()) {
                     return Optional.empty();
                 }
+                // At least 1: a remainder under a second is still time left, not "seconds <= 0" truncated away.
+                long seconds = Math.max(remaining.toSeconds(), 1);
                 List<JsonNode> fetched;
                 try {
                     fetched = api.getUpdates(offset, (int) Math.min(seconds, 25));

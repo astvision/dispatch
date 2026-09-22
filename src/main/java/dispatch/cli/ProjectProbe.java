@@ -12,10 +12,10 @@ import java.util.Optional;
  *
  * @param originUrl null when there is no origin, or when its URL holds credentials, which never go into the config
  */
-record ProjectProbe(Path folder, String defaultName, String originUrl, boolean originHadCredentials, String defaultBranch) {
+public record ProjectProbe(Path folder, String defaultName, String originUrl, boolean originHadCredentials, String defaultBranch) {
 
     /** @param given as typed; "~" stands for the home directory on every OS */
-    static ProjectProbe of(Path given, Git git) {
+    public static ProjectProbe of(Path given, Git git) {
         Path folder = expandHome(given).toAbsolutePath().normalize();
         if (!Files.exists(folder.resolve(".git"))) {
             throw new CliException(folder + " is not a git clone");
@@ -58,7 +58,7 @@ record ProjectProbe(Path folder, String defaultName, String originUrl, boolean o
         return name.isEmpty() ? "project" : name;
     }
 
-    static Path expandHome(Path given) {
+    public static Path expandHome(Path given) {
         String text = given.toString();
         if (text.equals("~") || text.startsWith("~/") || text.startsWith("~\\")) {
             return Path.of(System.getProperty("user.home") + text.substring(1));

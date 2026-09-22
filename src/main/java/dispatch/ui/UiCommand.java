@@ -5,6 +5,7 @@ import dispatch.cli.Cli;
 import dispatch.cli.CliException;
 import dispatch.cli.Locations;
 import dispatch.cli.Service;
+import dispatch.cli.ServiceCommand;
 import dispatch.telegram.BotApi;
 import java.awt.Desktop;
 import java.io.IOException;
@@ -44,7 +45,10 @@ public final class UiCommand {
                 processEnvironment, version());
         UiServer server;
         try {
-            server = UiServer.start(options.port(), resourceRoot, Map.<String, Supplier<Object>>of("/api/overview", overview::get));
+            SetupApi setup = new SetupApi(options.configFile().toAbsolutePath(), locations, bots, service, ServiceCommand.runningJar(),
+                    processEnvironment);
+            server = UiServer.start(options.port(), resourceRoot, Map.<String, Supplier<Object>>of("/api/overview", overview::get),
+                    setup.routes());
         } catch (BindException e) {
             throw new CliException("port " + options.port() + " is in use; choose another with --port");
         } catch (IOException e) {

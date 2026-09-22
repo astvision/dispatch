@@ -54,21 +54,7 @@ public final class ServiceCommand {
 
     /** Checks the config and its secrets first, so a service never starts on a setup that cannot run. */
     void install(Path configFile, Map<String, String> processEnvironment) {
-        RunCommand.Prepared prepared;
-        try {
-            prepared = RunCommand.prepare(configFile, processEnvironment);
-        } catch (ConfigException e) {
-            throw new CliException(e.getMessage());
-        }
-        if (jar == null || !Files.isRegularFile(jar)) {
-            throw new CliException("the service runs dispatch.jar, but this is not running from it; install Dispatch first");
-        }
-        Path java = Executables.serviceJava(Path.of(ProcessHandle.current().info().command().orElse("java")),
-                System.getProperty("os.name"), processEnvironment, Path.of(System.getProperty("user.home")));
-        String path = processEnvironment.entrySet().stream().filter(entry -> entry.getKey().equalsIgnoreCase("PATH"))
-                .map(Map.Entry::getValue).findFirst().orElse("");
-        Service.Spec spec = new Service.Spec(java, jar.toAbsolutePath(), configFile.toAbsolutePath(),
-                prepared.config().stateDir().resolve("dispatch.log"), path, prepared.config().stateDir());
+        Service.Spec spec = specFor(jar, configFile, processEnvironment);
         terminal.during("Installing the " + service.describe(), () -> {
             service.install(spec);
             return null;
@@ -93,12 +79,31 @@ public final class ServiceCommand {
         status.notes().forEach(terminal::warn);
     }
 
-    private static Path runningJar() {
+    public static Path runningJar() {
         try {
             Path location = Path.of(ServiceCommand.class.getProtectionDomain().getCodeSource().getLocation().toURI());
             return location.toString().endsWith(".jar") ? location : null;
         } catch (URISyntaxException | SecurityException e) {
             return null;
         }
+    }
+
+    /** What the service runs: this process's Java, {@code jar}, and the config, whose secrets are checked first. */
+    public static Service.Spec specFor(Path jar, Path configFile, Map<String, String> processEnvironment) {
+        RunCommand.Prepared prepared;
+        try {
+            prepared = RunCommand.prepare(configFile, processEnvironment);
+        } catch (ConfigException e) {
+            throw new CliException(e.getMessage());
+        }
+        if (jar == null || !Files.isRegularFile(jar)) {
+            throw new CliException("the service runs dispatch.jar, but this is not running from it; install Dispatch first");
+        }
+        Path java = Executables.serviceJava(Path.of(ProcessHandle.current().info().command().orElse("java")),
+                System.getProperty("os.name"), processEnvironment, Path.of(System.getProperty("user.home")));
+        String path = processEnvironment.entrySet().stream().filter(entry -> entry.getKey().equalsIgnoreCase("PATH"))
+                .map(Map.Entry::getValue).findFirst().orElse("");
+        return new Service.Spec(java, jar.toAbsolutePath(), configFile.toAbsolutePath(),
+                prepared.config().stateDir().resolve("dispatch.log"), path, prepared.config().stateDir());
     }
 }
