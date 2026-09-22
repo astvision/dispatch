@@ -241,6 +241,11 @@ class RemoteWorkersTest {
      * regardless of who the scheduler favors, so enough repeats make the old, unsynchronized behavior fail reliably.
      */
     private static final int RACE_ITERATIONS = 30;
+    /**
+     * {@code twoConcurrentFirstProgressPostsRecordTheWorktreeAndAgentStartOnce}'s pre-fix RED landed at iteration 26
+     * of 30 — close enough to the edge that a future regression narrowing the window could slip a whole run of 30.
+     */
+    private static final int WORKTREE_RACE_ITERATIONS = 150;
 
     @Test
     void aSecondComputerCannotTakeAJobAlreadyReported() throws Exception {
@@ -381,7 +386,7 @@ class RemoteWorkersTest {
 
     @Test
     void twoConcurrentFirstProgressPostsRecordTheWorktreeAndAgentStartOnce() throws Exception {
-        for (int i = 0; i < RACE_ITERATIONS; i++) {
+        for (int i = 0; i < WORKTREE_RACE_ITERATIONS; i++) {
             long id = queue(BOLD, "Fix the login timeout " + i);
             Workers.Paired ann = pair(BOLD, "ann-laptop-" + i);
             AtomicInteger worktreeCalls = new AtomicInteger();
@@ -425,6 +430,59 @@ class RemoteWorkersTest {
             remote.result(ann, id, 1, JobResult.cancelled(null));
             assertTrue(runThread.join(Duration.ofSeconds(10)), "the run thread should have finished");
         }
+    }
+
+    /**
+     * A give-up (here, a fully-elapsed lease) can complete an offer while a progress post's own store write for that
+     * same offer is still in flight — the write runs outside {@link RemoteWorkers#lock} deliberately (finding 3), so
+     * it can never block every other worker's next/progress/result. Deterministic: a blocking {@link JobEvents} seam
+     * (as in {@code twoConcurrentFirstProgressPosts…}) pins the exact moment the race must resolve, so this needs no
+     * repeated-iteration race loop.
+     */
+    @Test
+    void aProgressWhoseStoreWriteIsInFlightWhenTheLeaseExpiresIsRefused() throws Exception {
+        long id = queue(BOLD, "Fix the login timeout");
+        Workers.Paired ann = pair(BOLD, "ann-laptop");
+        CountDownLatch reachedEffect = new CountDownLatch(1);
+        CountDownLatch releaseEffect = new CountDownLatch(1);
+        ActiveRuns.ActiveRun control = activeRuns.register(id, 1);
+        JobEvents blockingEvents = new JobEvents() {
+            @Override
+            public void worktreeCreated(String worktree, String baseSha) {
+                reachedEffect.countDown();
+                awaitLatch(releaseEffect);
+            }
+
+            @Override
+            public void agentStarted(Long pid, Instant processStart) {
+            }
+        };
+        Thread runThread = Thread.ofVirtual().start(() -> remote.run(minimalJob(id), blockingEvents, control));
+        awaitOffer();
+        remote.next(ann).orElseThrow();
+
+        AtomicReference<RuntimeException> progressOutcome = new AtomicReference<>();
+        Thread progressThread = Thread.ofVirtual().start(() -> {
+            try {
+                remote.progress(ann, new RemoteWorkers.Progress(id, 1, "/home/ann/work/alm-7", "6f3030a", true, 1, "Bash: ls"));
+            } catch (RuntimeException e) {
+                progressOutcome.set(e);
+            }
+        });
+
+        assertTrue(reachedEffect.await(10, TimeUnit.SECONDS), "the progress post should have reached its store write");
+        clock.advance(RemoteWorkers.LEASE.plusSeconds(1));
+        assertTrue(runThread.join(Duration.ofSeconds(10)),
+                "the coordinator thread must conclude the run without waiting for the in-flight write");
+
+        releaseEffect.countDown();
+        assertTrue(progressThread.join(Duration.ofSeconds(10)), "the progress post should have finished");
+
+        assertTrue(progressOutcome.get() instanceof ApiException, "a post whose write finished after the run already"
+                + " concluded must be refused, not silently accepted as 200");
+        ApiException refused = (ApiException) progressOutcome.get();
+        assertEquals(409, refused.status());
+        assertEquals("lease_expired", refused.code());
     }
 
     /** A minimal Job for tests that drive {@link RemoteWorkers#run} directly, without the full Coordinator. */

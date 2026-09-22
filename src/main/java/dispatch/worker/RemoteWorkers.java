@@ -214,7 +214,8 @@ public final class RemoteWorkers implements Worker {
                 if (leftMillis <= 0) {
                     return null;
                 }
-                lock.wait(Math.min(leftMillis, tick.toMillis()));
+                // At least 1 ms: Object.wait(0) means "wait forever", and a sub-millisecond tick truncates to 0.
+                lock.wait(Math.max(1, Math.min(leftMillis, tick.toMillis())));
             }
         }
     }
@@ -228,6 +229,11 @@ public final class RemoteWorkers implements Worker {
      * Records the task's affinity outside {@link #lock}, so one worker's SQLite write never blocks every other worker's
      * next/progress/result or the lease watchdog. A failed write releases the reservation {@link #awaitMatch} made, so
      * the offer is takeable again on the next poll instead of dying unmatchable.
+     *
+     * <p>Because this write is outside {@link #lock}, a shutdown-driven give-up can expire the offer while it is still
+     * in flight: the worker that took it may still receive the {@link Job} for a run the coordinator already
+     * concluded. That worker's first {@code progress}/{@code result} then finds {@link #held} refusing it with 409 —
+     * it keeps the worktree it was given, so a retry delivers to it again.
      */
     private Job recordAndReturn(Offer offer, Workers.Paired worker) {
         try {
@@ -271,13 +277,37 @@ public final class RemoteWorkers implements Worker {
         // Reserved under the lock above so two overlapping posts can each fire at most once; written outside it so a
         // slow DB write never blocks every other worker's next/progress/result.
         if (newWorktree) {
-            offer.events.worktreeCreated(progress.worktree(), progress.baseSha());
+            fireEffect(offer, () -> offer.events.worktreeCreated(progress.worktree(), progress.baseSha()));
         }
         if (newAgent) {
             // No pid: that process runs on the member's computer and this machine kills only its own orphans.
-            offer.events.agentStarted(null, null);
+            fireEffect(offer, () -> offer.events.agentStarted(null, null));
         }
         return cancelled;
+    }
+
+    /**
+     * Fires a store-writing effect for {@code offer}, refusing it with 409 when a give-up (shutdown or lease expiry)
+     * has already closed the offer — or does so while the write is still in flight, since the write itself
+     * deliberately runs outside {@link #lock} so it can never block every other worker's next/progress/result (see
+     * {@link #recordAndReturn}). The check before the call skips an effect already known to be doomed; the one after
+     * catches a give-up that lands during the call itself. Either way the value the write recorded (a real worktree
+     * path, a real agent start) was true when reported — only the run had already ended without it — so it is left
+     * as is, not rolled back.
+     */
+    private void fireEffect(Offer offer, Runnable effect) {
+        requireOpen(offer);
+        effect.run();
+        requireOpen(offer);
+    }
+
+    private void requireOpen(Offer offer) {
+        synchronized (lock) {
+            if (offer.expired) {
+                throw new ApiException(409, "lease_expired",
+                        "this run's lease has expired; keep its worktree, the member can retry it");
+            }
+        }
     }
 
     /**
