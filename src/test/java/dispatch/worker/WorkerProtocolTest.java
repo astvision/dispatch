@@ -188,6 +188,30 @@ class WorkerProtocolTest extends WorkerApiFixture {
     }
 
     @Test
+    void aDownloadFailureIsLoggedNotEchoedAndAnswers500() throws Exception {
+        String key = pair();
+        offer(job("Implement the approved plan"));
+        post(WorkerApi.NEXT, key, "{}");
+        // A real Telegram-backed AttachmentSource's exception message routinely carries the download URL, which
+        // carries the bot token as a query parameter — that must never reach the worker's HTTP response.
+        AttachmentSource failing = (fileRef, target) -> {
+            throw new RuntimeException("https://api.telegram.org/botSECRET-TOKEN/getFile?file_id=" + fileRef);
+        };
+
+        try (WorkerApi failingApi = WorkerApi.start(config(), groups(), keys, remote, failing)) {
+            HttpResponse<String> answer = http.send(HttpRequest.newBuilder(
+                            URI.create("http://127.0.0.1:" + failingApi.port() + WorkerApi.ATTACHMENT))
+                            .header("Authorization", "Bearer " + key)
+                            .POST(HttpRequest.BodyPublishers.ofString("{\"taskId\":7,\"fileRef\":\"photo-id\"}")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(500, answer.statusCode());
+            assertEquals("internal", Json.read(answer.body()).get("error").asText());
+            assertFalse(answer.body().contains("SECRET-TOKEN"), answer.body());
+        }
+    }
+
+    @Test
     void progressAndResultForARunThisComputerDoesNotHoldAreRefused() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
