@@ -38,9 +38,8 @@ export default function PeoplePage() {
                              <Button size="small" aria-label={`Rename ${member.name}`}
                                      onClick={() => setRenaming({ id: member.id, name: member.name })}>Rename</Button>
                              {!current.personal && (
-                               <Button size="small" aria-label={member.admin ? `Remove ${member.name} as admin` : `Make ${member.name} admin`}
-                                       onClick={() => void save((version) => setAdmin(version, member.id, !member.admin))}>
-                                 {member.admin ? "Remove admin" : "Make admin"}
+                               <Button size="small" onClick={() => void save((version) => setAdmin(version, member.id, !member.admin))}>
+                                 {member.admin ? `Remove ${member.name} as admin` : `Make ${member.name} admin`}
                                </Button>
                              )}
                              <Popconfirm title={`Remove ${member.name} from ${group.name}?`} okText="Remove"
