@@ -37,7 +37,9 @@ public final class ConfigFile {
      * racing it.
      *
      * @param change turns the file's current text into the edited text; may throw {@link ConfigException} or a
-     *               {@link dispatch.cli.CliException} to abort, leaving the file unchanged
+     *               {@link dispatch.cli.CliException} to abort, leaving the file unchanged. Returning the text
+     *               unchanged (e.g. a member already present) validates it but never rewrites the file: no new inode,
+     *               no permissions reset.
      * @return the config the file now holds
      */
     public static Config edit(Path file, Map<String, String> environment, UnaryOperator<String> change) {
@@ -50,7 +52,7 @@ public final class ConfigFile {
                  FileLock ignored = channel.lock()) {
                 String current = Files.readString(absolute);
                 String edited = change.apply(current);
-                return replace(absolute, edited, environment);
+                return edited.equals(current) ? parse(absolute, current, environment) : replace(absolute, edited, environment);
             } catch (IOException e) {
                 throw new UncheckedIOException("cannot edit " + absolute + ": " + e.getMessage(), e);
             }

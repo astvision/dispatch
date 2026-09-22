@@ -5,6 +5,7 @@ import dispatch.config.ConfigFile;
 import dispatch.config.ConfigText;
 import dispatch.config.ConfigException;
 import dispatch.workspace.Git;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -72,7 +73,7 @@ public final class ProjectAddCommand {
                         config.agents().keySet().iterator().next(), options.model(), options.effort()));
                 return ConfigText.addProject(text, group, yaml(name), lines);
             });
-        } catch (ConfigException e) {
+        } catch (ConfigException | UncheckedIOException e) {
             throw new CliException(e.getMessage());
         }
         terminal.ok("added " + name + ": " + probe.folder() + " (base " + baseUsed.get() + ", group " + groupUsed.get() + ")");

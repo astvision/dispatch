@@ -1,6 +1,7 @@
 package dispatch.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.config.Config;
@@ -9,8 +10,10 @@ import dispatch.testing.GitFixture;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -70,6 +73,32 @@ class ProjectAddCommandTest {
         assertTrue(output.contains("FAIL a project named 'alm' already exists; choose another name with --name"), output);
         assertTrue(output.contains("FAIL " + dir.resolve("work/notes") + " is not a git clone"), output);
         assertTrue(output.contains("effort: must be one of low, medium, high, xhigh, max"), output);
+    }
+
+    @Test
+    void anUnwritableConfigDirectoryFailsCleanlyInsteadOfCrashing() throws IOException {
+        Assumptions.assumeFalse(System.getProperty("os.name").toLowerCase().contains("win"), "POSIX permissions");
+        Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            Path probe = dir.resolve(".write-probe");
+            boolean enforced;
+            try {
+                Files.createFile(probe);
+                Files.deleteIfExists(probe);
+                enforced = false;
+            } catch (IOException e) {
+                enforced = true;
+            }
+            Assumptions.assumeTrue(enforced, "directory permissions are not enforced here (likely running as root)");
+
+            int exit = add(new Cli.ProjectAdd(config, life, null, null, null, null, null, null));
+
+            assertEquals(1, exit, terminal.output());
+            assertTrue(terminal.output().contains("FAIL"), terminal.output());
+            assertFalse(terminal.output().contains("Exception"), "a clean failure, not a raw stack trace: " + terminal.output());
+        } finally {
+            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
     }
 
     private int add(Cli.ProjectAdd options) {

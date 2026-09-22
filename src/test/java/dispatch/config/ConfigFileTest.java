@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -14,6 +16,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 class ConfigFileTest {
@@ -89,6 +93,19 @@ class ConfigFileTest {
                 () -> ConfigFile.edit(file, ENV, text -> ConfigEdit.set(text, ConfigEdit.At.of("scheduler", "maxConcurrentRuns"), "0")));
 
         assertEquals(before, Files.readString(file));
+    }
+
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "POSIX permissions")
+    void anUnchangedEditNeverRewritesTheFile() throws Exception {
+        Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+        FileTime before = Files.getLastModifiedTime(file);
+
+        Config config = ConfigFile.edit(file, ENV, text -> text);
+
+        assertEquals(2, config.scheduler().maxConcurrentRuns(), "the unchanged text is still validated and its config returned");
+        assertEquals(before, Files.getLastModifiedTime(file), "no replace happened: the file was never rewritten");
+        assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)), "so its permissions stayed too");
     }
 
     @Test
