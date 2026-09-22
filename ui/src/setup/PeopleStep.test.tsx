@@ -27,7 +27,11 @@ afterEach(() => {
 });
 
 test("whoever writes to the bot is confirmed with a click", async () => {
-  vi.mocked(api.nextPerson).mockResolvedValue({ candidate: { id: 100, name: "Bold" } });
+  // The next poll is left hanging once Bold is confirmed: a mock that kept resolving the same candidate would
+  // make the "Is Bold you?" card reappear right after it closes, which isn't what a real, updated bot would do.
+  vi.mocked(api.nextPerson)
+    .mockResolvedValueOnce({ candidate: { id: 100, name: "Bold" } })
+    .mockReturnValue(new Promise(() => {}));
   const answer = vi.mocked(api.answerPerson).mockResolvedValue({ ...state, members: [{ id: 100, name: "Bold" }] });
   const refresh = vi.fn().mockResolvedValue(undefined);
 
@@ -38,6 +42,44 @@ test("whoever writes to the bot is confirmed with a click", async () => {
   fireEvent.click(screen.getByRole("button", { name: "That's me" }));
   await vi.waitFor(() => expect(answer).toHaveBeenCalledWith(100, true));
   expect(refresh).toHaveBeenCalled();
+  await vi.waitFor(() => expect(screen.queryByText("Is Bold you?")).not.toBeInTheDocument());
+});
+
+test("saying not me drops the candidate and asks for another", async () => {
+  const nextPerson = vi.mocked(api.nextPerson)
+    .mockResolvedValueOnce({ candidate: { id: 100, name: "Bold" } })
+    .mockReturnValue(new Promise(() => {})); // the next poll is left hanging: found must not come back on its own
+  const answer = vi.mocked(api.answerPerson).mockResolvedValue(state);
+
+  render(<PeopleStep state={state} refresh={vi.fn().mockResolvedValue(undefined)} {...props} />);
+  expect(await screen.findByText("Is Bold you?")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Not me" }));
+
+  await vi.waitFor(() => expect(answer).toHaveBeenCalledWith(100, false));
+  await vi.waitFor(() => expect(screen.queryByText("Is Bold you?")).not.toBeInTheDocument());
+  await vi.waitFor(() => expect(nextPerson).toHaveBeenCalledTimes(2));
+});
+
+test("a confirmed personal user stops polling for another candidate", async () => {
+  const nextPerson = vi.mocked(api.nextPerson)
+    .mockResolvedValueOnce({ candidate: { id: 100, name: "Bold" } })
+    .mockReturnValue(new Promise(() => {})); // would resolve immediately if polled again
+  vi.mocked(api.answerPerson).mockResolvedValue({ ...state, members: [{ id: 100, name: "Bold" }] });
+
+  // refresh() really re-fetches state and hands the page new props with the member added; model that by
+  // re-rendering with the confirmed state the moment refresh() is called, the same order the real answer flow
+  // produces (refresh happens before the candidate is locally dropped, not after).
+  let showConfirmed = () => {};
+  const refresh = vi.fn(async () => showConfirmed());
+  const utils = render(<PeopleStep state={state} refresh={refresh} {...props} />);
+  showConfirmed = () =>
+    utils.rerender(<PeopleStep state={{ ...state, members: [{ id: 100, name: "Bold" }] }} refresh={refresh} {...props} />);
+
+  expect(await screen.findByText("Is Bold you?")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "That's me" }));
+
+  await vi.waitFor(() => expect(screen.queryByText(/Is Bold you\?|Add Bold to the team\?/)).not.toBeInTheDocument());
+  expect(nextPerson).toHaveBeenCalledTimes(1);
 });
 
 test("a quiet wait shows what to check", async () => {
@@ -52,12 +94,30 @@ test("a quiet wait shows what to check", async () => {
   expect(screen.getByText(/one tick on the message/)).toBeInTheDocument();
 });
 
-test("another reader of the bot offers to stop the background service", async () => {
-  vi.mocked(api.nextPerson).mockRejectedValue(new api.ApiError("conflict", "cannot read the bot's messages; stop it first"));
+test("another reader of the bot offers to stop the background service, then polling resumes", async () => {
+  const nextPerson = vi.mocked(api.nextPerson)
+    .mockRejectedValue(new api.ApiError("conflict", "cannot read the bot's messages; stop it first"));
   const stop = vi.mocked(api.stopService).mockResolvedValue({ name: "s", installed: true, running: false, detail: "", notes: [] });
 
   render(<PeopleStep state={state} refresh={vi.fn()} {...props} />);
 
   fireEvent.click(await screen.findByRole("button", { name: "Stop the background service" }));
   await vi.waitFor(() => expect(stop).toHaveBeenCalled());
+  await vi.waitFor(() => expect(nextPerson).toHaveBeenCalledTimes(2));
+});
+
+test("an answer that fails can be tried again, dropping the candidate and polling once more", async () => {
+  const nextPerson = vi.mocked(api.nextPerson)
+    .mockResolvedValueOnce({ candidate: { id: 100, name: "Bold" } })
+    .mockReturnValue(new Promise(() => {}));
+  vi.mocked(api.answerPerson).mockRejectedValue(new api.ApiError("invalid", "that person is no longer waiting; wait for the next one"));
+
+  render(<PeopleStep state={state} refresh={vi.fn()} {...props} />);
+  expect(await screen.findByText("Is Bold you?")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "That's me" }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+  await vi.waitFor(() => expect(nextPerson).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("Is Bold you?")).not.toBeInTheDocument();
 });

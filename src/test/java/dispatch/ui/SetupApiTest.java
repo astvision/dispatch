@@ -128,6 +128,24 @@ class SetupApiTest {
     }
 
     @Test
+    void aPersonalBotRefusesASecondMemberAndClearsTheCandidate() throws Exception {
+        call("/api/setup/team", "{\"team\":false}");
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+        telegram.pushUpdate(start(2, 200, "Ali"));
+        call("/api/setup/people/next", "{}");
+
+        CliException second = assertThrows(CliException.class, () -> call("/api/setup/people/answer", "{\"id\":200,\"accept\":true}"));
+
+        assertTrue(second.getMessage().contains("one member"), second.getMessage());
+        JsonNode state = call("/api/setup/state", "{}");
+        assertEquals(1, state.path("members").size(), "Ali was never added");
+        assertTrue(state.path("candidate").isNull(), "the declined candidate is cleared so the page moves on");
+    }
+
+    @Test
     void nobodyWritingAnswersNullAndAnotherReaderIsAConflict() throws Exception {
         call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
 

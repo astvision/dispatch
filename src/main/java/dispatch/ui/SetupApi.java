@@ -188,6 +188,13 @@ public final class SetupApi {
         if (candidate == null || candidate.id() != id) {
             throw new CliException("that person is no longer waiting; wait for the next one");
         }
+        if (accept && !team && !members.isEmpty()) {
+            // A personal bot has one member; whoever else wrote to it is declined, not silently added, so the
+            // page can move on to the next candidate instead of leaving this one stuck as pending.
+            declined.add(candidate);
+            candidate = null;
+            throw new CliException("a personal bot has one member: you");
+        }
         // Granting access is always this explicit answer; nothing is accepted by default.
         (accept ? members : declined).add(candidate);
         candidate = null;

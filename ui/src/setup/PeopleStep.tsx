@@ -20,11 +20,14 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
   const hintAfterMs = state.hintAfterSeconds * 1000;
   const askPerson = useCallback((signal: AbortSignal) => nextPerson(signal).then((r) => r.candidate), []);
   const askGroup = useCallback((signal: AbortSignal) => nextGroup(signal).then((r) => r.group), []);
-  const person = useLongPoll(phase === "people", askPerson, hintAfterMs);
+  const you = state.members[0];
+  // A personal bot has one member: once you're confirmed, stop asking Telegram for a next candidate, otherwise
+  // whoever messages the bot next shows up as someone to add, and answering "yes" would try to add a second member.
+  const polling = phase === "people" && (!you || state.team);
+  const person = useLongPoll(polling, askPerson, hintAfterMs);
   const group = useLongPoll(phase === "group", askGroup, hintAfterMs);
   const answering = useAction();
   const stopping = useAction();
-  const you = state.members[0];
   const firstName = you?.name.split(/\s+/)[0]?.toLowerCase() ?? "";
   const groupTitle = group.found?.title ?? state.group?.title;
   const teamName = draft.teamName || (groupTitle ?? (firstName ? `${firstName}-team` : ""));
@@ -37,6 +40,7 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
     const result = await answering.run(async () => {
       await answerPerson(id, accept);
       await refresh();
+      return true; // useAction.run resolves to the callback's value; awaiting refresh() alone would leave it undefined
     });
     if (result === undefined) return;
     person.reset();
@@ -69,10 +73,10 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
               renderItem={(m, i) => <List.Item>{m.name} ({m.id}){state.team && i === 0 ? ", admin" : ""}</List.Item>} />
       )}
 
-      {phase === "people" && !person.found && !person.error && (!you || state.team) && (
+      {polling && !person.found && !person.error && (
         <Spin description={you ? "Waiting for a teammate to press Start" : "Waiting for you to press Start"}><div style={{ height: 48 }} /></Spin>
       )}
-      {phase === "people" && person.quiet && !person.found && (
+      {polling && person.quiet && !person.found && (
         <Alert type="warning" showIcon message="Nothing has reached the bot yet. If Start was pressed:"
                description={<ul style={{ margin: 0, paddingLeft: 20 }}>{state.hints.map((h) => <li key={h}>{h}</li>)}</ul>} />
       )}
@@ -95,7 +99,20 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
       {stopping.error && <Alert type="error" showIcon message={stopping.error.message} />}
       {otherError && (
         <Alert type="error" showIcon message={otherError.message}
-               action={<Button onClick={() => { person.retry(); group.retry(); }}>Try again</Button>} />
+               action={
+                 <Button
+                   onClick={() => {
+                     // A failed answer (e.g. "that person is no longer waiting") leaves a stale candidate behind;
+                     // dropping it, not just clearing the error, is what lets polling pick up the next one.
+                     answering.clear();
+                     person.reset();
+                     person.retry();
+                     group.retry();
+                   }}
+                 >
+                   Try again
+                 </Button>
+               } />
       )}
 
       {state.team && you && phase === "people" && (
