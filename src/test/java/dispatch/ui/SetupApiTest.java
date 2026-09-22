@@ -142,28 +142,55 @@ class SetupApiTest {
     }
 
     @Test
-    void aTokenChangeDuringALongPollNeverLeaksTheOldBotsCandidateOrGroup() throws Exception {
+    void aTokenChangeDuringALongPollNeverLeaksTheOldBotsCandidate() throws Exception {
         SetupApi longPoll = new SetupApi(config, new Locations(config, dir.resolve("state")),
                 token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)), service,
-                Files.writeString(dir.resolve("dispatch-longpoll.jar"), "stand-in"), Map.of(), Duration.ofSeconds(2));
-        call(longPoll, "/api/setup/team", "{\"team\":true}");
+                Files.writeString(dir.resolve("dispatch-longpoll-person.jar"), "stand-in"), Map.of(), Duration.ofSeconds(2));
         call(longPoll, "/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             Future<JsonNode> stalePerson = executor.submit(() -> call(longPoll, "/api/setup/people/next", "{}"));
-            Future<JsonNode> staleGroup = executor.submit(() -> call(longPoll, "/api/setup/group/next", "{}"));
-            Thread.sleep(300); // let both long polls start reading with the old Setup.Updates instance
+            // Waiting for the actual getUpdates request (not a sleep) proves the OLD Setup.Updates is genuinely
+            // polling before the token swap below, so the guard this test exercises is not a coincidence of timing.
+            telegram.awaitRequest("getUpdates", Duration.ofSeconds(2));
             call(longPoll, "/api/setup/token", "{\"token\":\"" + TOKEN + "\"}"); // swaps bot/updates mid-poll
-            telegram.pushUpdate(start(1, 100, "Bold")); // only the OLD Updates instance is still polling for this
+            telegram.pushUpdate(start(1, 100, "Bold")); // only the OLD Updates instance is still around to read this
 
             JsonNode stalePersonResult = stalePerson.get(5, TimeUnit.SECONDS);
-            JsonNode staleGroupResult = staleGroup.get(5, TimeUnit.SECONDS);
 
             assertTrue(stalePersonResult.path("candidate").isNull(), stalePersonResult.toString());
+            assertTrue(call(longPoll, "/api/setup/state", "{}").path("candidate").isNull());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void aTokenChangeDuringALongPollNeverLeaksTheOldBotsGroup() throws Exception {
+        SetupApi longPoll = new SetupApi(config, new Locations(config, dir.resolve("state")),
+                token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)), service,
+                Files.writeString(dir.resolve("dispatch-longpoll-group.jar"), "stand-in"), Map.of(), Duration.ofSeconds(2));
+        call(longPoll, "/api/setup/team", "{\"team\":true}");
+        call(longPoll, "/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call(longPoll, "/api/setup/people/next", "{}");
+        call(longPoll, "/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+        // The confirmation above made its own getUpdates request(s); drain them so the awaitRequest below only ever
+        // sees the fresh one nextGroup makes, not a leftover from an earlier call on the shared FakeTelegram queue.
+        telegram.drain("getUpdates");
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<JsonNode> staleGroup = executor.submit(() -> call(longPoll, "/api/setup/group/next", "{}"));
+            telegram.awaitRequest("getUpdates", Duration.ofSeconds(2));
+            call(longPoll, "/api/setup/token", "{\"token\":\"" + TOKEN + "\"}"); // swaps bot/updates mid-poll
+            telegram.pushUpdate(botAddedTo(2, -1001234567890L, "ACME backend")); // only the OLD instance reads this
+
+            JsonNode staleGroupResult = staleGroup.get(5, TimeUnit.SECONDS);
+
             assertTrue(staleGroupResult.path("group").isNull(), staleGroupResult.toString());
-            JsonNode state = call(longPoll, "/api/setup/state", "{}");
-            assertTrue(state.path("candidate").isNull(), state.toString());
-            assertTrue(state.path("group").isNull(), state.toString());
+            assertTrue(call(longPoll, "/api/setup/state", "{}").path("group").isNull());
         } finally {
             executor.shutdownNow();
         }
@@ -246,6 +273,15 @@ class SetupApiTest {
         return Json.read("""
                 {"update_id":%d,"message":{"message_id":1,"from":{"id":%d,"is_bot":false,"first_name":"%s"},
                  "chat":{"id":%d,"type":"private"},"date":1789640000,"text":"/start"}}""".formatted(updateId, userId, firstName, userId));
+    }
+
+    private static JsonNode botAddedTo(long updateId, long chatId, String title) {
+        return Json.read("""
+                {"update_id":%d,"my_chat_member":{"chat":{"id":%d,"title":"%s","type":"supergroup"},
+                 "from":{"id":100,"is_bot":false,"first_name":"Bold"},"date":1789640000,
+                 "old_chat_member":{"user":{"id":1,"is_bot":true,"first_name":"Dispatch"},"status":"left"},
+                 "new_chat_member":{"user":{"id":1,"is_bot":true,"first_name":"Dispatch"},"status":"member"}}}"""
+                .formatted(updateId, chatId, title));
     }
 
     /** A background service that only remembers what it was asked to run. */
