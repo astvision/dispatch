@@ -58,7 +58,7 @@ class UiServerTest {
 
         assertEquals(401, response.statusCode());
         assertTrue(response.body().contains("\"error\":\"session\""), response.body());
-        assertEquals(401, get(path("/api/ping"), "dispatch_session=made-up").statusCode());
+        assertEquals(401, get(path("/api/ping"), "dispatch_session_" + server.port() + "=made-up").statusCode());
     }
 
     @Test
@@ -143,8 +143,8 @@ class UiServerTest {
         HttpResponse<String> assets = get(path("/assets"), cookie);
         HttpResponse<String> assetsSlash = get(path("/assets/"), cookie);
 
-        assertTrue(assets.statusCode() == 404 || assets.statusCode() == 200, "GET /assets: " + assets.statusCode());
-        assertTrue(assetsSlash.statusCode() == 404 || assetsSlash.statusCode() == 200, "GET /assets/: " + assetsSlash.statusCode());
+        assertEquals(200, assets.statusCode(), "a path with no extension in its last segment falls through to index.html");
+        assertEquals(200, assetsSlash.statusCode(), "a path with no extension in its last segment falls through to index.html");
     }
 
     /**

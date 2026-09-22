@@ -83,7 +83,7 @@ public final class UiServer implements AutoCloseable {
             } catch (RuntimeException e) {
                 // Last-resort safety net: without this, the JDK HttpServer drops the connection silently (TRACE-level
                 // log only) and the person staring at a blank browser tab has nothing to go on.
-                System.err.println("dispatch ui: " + exchange.getRequestURI() + " failed");
+                System.err.println("dispatch ui: " + exchange.getRequestURI().getPath() + " failed");
                 e.printStackTrace();
                 json(exchange, 500, error("internal", "something went wrong; the terminal running dispatch ui shows what"));
             }
@@ -132,7 +132,7 @@ public final class UiServer implements AutoCloseable {
             text(exchange, 401, "This link was used already or is wrong. Restart dispatch ui for a new one.");
             return;
         }
-        exchange.getResponseHeaders().set("Set-Cookie", UiAuth.COOKIE + "=" + session.get() + "; HttpOnly; SameSite=Strict; Path=/");
+        exchange.getResponseHeaders().set("Set-Cookie", auth.cookieName() + "=" + session.get() + "; HttpOnly; SameSite=Strict; Path=/");
         exchange.getResponseHeaders().set("Location", "/");
         exchange.sendResponseHeaders(302, -1);
     }

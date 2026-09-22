@@ -15,8 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 final class UiAuth {
 
-    static final String COOKIE = "dispatch_session";
-
+    private final String cookie;
     private final SecureRandom random = new SecureRandom();
     private final String token = randomValue();
     private final AtomicBoolean tokenUsed = new AtomicBoolean();
@@ -25,8 +24,15 @@ final class UiAuth {
     private final Set<String> origins;
 
     UiAuth(int port) {
+        // Port-scoped: two `dispatch ui` instances on different ports must not share a session, since the browser
+        // sends every cookie whose name and path match to 127.0.0.1 regardless of which port set it.
+        this.cookie = "dispatch_session_" + port;
         this.hosts = Set.of("127.0.0.1:" + port, "localhost:" + port);
         this.origins = Set.of("http://127.0.0.1:" + port, "http://localhost:" + port);
+    }
+
+    String cookieName() {
+        return cookie;
     }
 
     String token() {
@@ -49,9 +55,9 @@ final class UiAuth {
         if (cookieHeader == null) {
             return false;
         }
-        for (String cookie : cookieHeader.split(";")) {
-            String[] nameValue = cookie.strip().split("=", 2);
-            if (nameValue.length == 2 && nameValue[0].equals(COOKIE) && sessions.contains(nameValue[1])) {
+        for (String pair : cookieHeader.split(";")) {
+            String[] nameValue = pair.strip().split("=", 2);
+            if (nameValue.length == 2 && nameValue[0].equals(cookie) && sessions.contains(nameValue[1])) {
                 return true;
             }
         }

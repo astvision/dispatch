@@ -19,8 +19,6 @@ import java.util.function.Supplier;
 /** `dispatch ui`: serves the web UI on 127.0.0.1 and prints its one-time login link (ADR 0018). */
 public final class UiCommand {
 
-    public static final int DEFAULT_PORT = 7878;
-
     private final PrintStream out;
     private final Function<String, BotApi> bots;
     private final Locations locations;
