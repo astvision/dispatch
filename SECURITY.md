@@ -46,7 +46,7 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 token that gives a single browser a session and then stops working, and restarting `dispatch ui` ends every session.
 Requests with another Host (DNS rebinding) or, for changes, another Origin are refused. The bot token never reaches the
 browser. Whoever has the link or a session acts as you, with what you may do in a shell: don't paste the link where
-others see it, and stop `dispatch ui` when you are done.
+others see it, and stop `dispatch ui` when you are done. Setup's folder browser lists folder names on the machine that runs Dispatch and says which are git clones; it never shows a file's contents.
 
 ## State on disk
 

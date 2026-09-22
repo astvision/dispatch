@@ -51,6 +51,9 @@ gh api -H "Accept: application/vnd.github.raw" repos/astvision/dispatch/contents
 ```
 
 **2. Set up** with `dispatch init`. Create a bot with @BotFather (`/newbot`) first. The wizard uses the arrow keys and asks, step by step:
+
+Or run `dispatch ui` and set it up in your browser: the same steps, with a QR code for the bot, buttons to confirm people, and a folder browser for your clones. On a server, open the page through `ssh -L` (see [Manage it in the browser](#manage-it-in-the-browser)).
+
 1. **Who will use this bot:** just you, or your team.
 2. **The bot token:** typed masked, then checked with Telegram.
 3. **People:** you open the bot, press Start and confirm your name. For a team, teammates press Start while it waits, and when you add the bot to your team group it finds that group for its announcements. The bot answers each Start in Telegram. If nothing arrives, the wizard says what to check. For example, Telegram may not deliver your messages while the bot is connected under Settings > Chat Automation.
@@ -98,7 +101,7 @@ Every planning and execution run reads the project's `CLAUDE.md` (or `.claude/CL
 
 `dispatch ui` shows Dispatch's version and files, whether the background service runs, and everything `dispatch check`
 finds, with what to do about it. It prints a link and opens it in your browser; the link works once, and Ctrl+C stops the
-page. Setting up and changing projects, people and settings in the browser come next.
+page. Without a config, the page sets Dispatch up, step by step, as `dispatch init` does. Changing projects, people and settings in the browser comes next.
 
 On a server, from your own computer:
 

@@ -104,7 +104,7 @@ projects                   wherever each project's path points; Dispatch adds wo
 | `agent` | `Agent` interface and `ClaudeCodeAgent` (CLI subprocess + stream-json parser). Tests run the real adapter against a fake `claude` shell script that replays recorded output. `CodexAgent` comes later. |
 | `workspace` | Clone, fetch, worktree add/remove/recreate, `copyFiles`, commit, push, `gh pr create`, delivering a failed delivery again. |
 | `telegram` | Bot API client (`java.net.http` + Jackson, including file downloads for attachments), `Poller`, `UpdateHandler` (parses updates, calls `TaskService`), `OutboxSender`, status edits, `messages_mn.properties`. |
-| `ui` | `UiServer` (JDK HttpServer, loopback only), `UiAuth` (one-time link, session cookie, Host and Origin checks), `OverviewApi` (version, paths, service status, `Checks`), and the React + Ant Design page in `ui/`, bundled into the jar by the `ui` profile. |
+| `ui` | `UiServer` (JDK HttpServer, loopback only), `UiAuth` (one-time link, session cookie, Host and Origin checks), `OverviewApi` (version, paths, service status, `Checks`), `SetupApi` (setup in the browser: the steps of `dispatch init` as POST calls, answers kept in memory until Write) and `Folders` (the folder browser); `dispatch.cli.Setup` holds what `dispatch init` and `SetupApi` share: the token check, the setup updates, and rendering and writing the config. The React + Ant Design page in `ui/` is bundled into the jar by the `ui` profile. |
 
 `core` never imports `telegram`. A second messenger would be a new package that calls `TaskService` and renders the same outbox rows.
 
