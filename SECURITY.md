@@ -11,7 +11,7 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 **Who can make the agent act**
 - Only members listed in a group of the instance config, for the projects of their groups, in their own private chat with the bot, and only through messages, commands, buttons and replies to plans. Everyone else is refused or ignored.
 - Only a task's requester can approve, correct, reject, reprioritize, follow up on or retry it (ADR 0011, 0012, 0020). The requester or an admin can cancel it; an admin may cancel any task, even one outside their own groups.
-- Reports (`/status`, `/history`, `/stats`) only cover the viewer's groups, or in a group chat that group's projects. Another group's task is answered as not found. For a task that is not the viewer's own, they show only its headline — who, project, title, state and PR link — never its plan, the agent's actions or its cost (ADR 0020). A group chat has no viewer, so it always sees headlines only.
+- Reports (`/status`, `/history`, `/stats`) only cover the viewer's groups, or in a group chat that group's projects. Another group's task is answered as not found. For a task that is not the viewer's own, they show only its headline — who, project, title, priority, state and PR link — never its plan, the agent's actions or its cost (ADR 0020). A group chat has no viewer, so it always sees headlines only.
 - Plans and results go to the requester's private chat. If Telegram refuses that chat (the requester never pressed Start, or blocked the bot), the group gets a content-free notice naming the task instead of the message itself (ADR 0020).
 - Anyone who controls a member's Telegram account, the bot token or the configured group can act as that member.
 

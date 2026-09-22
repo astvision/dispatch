@@ -196,7 +196,7 @@ Each plan and result ends with the model that answered, the cost and the duratio
 
 **In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot`, `/stats@bot` and `/projects@bot` there cover that group's projects. Replying to an outcome line there is a follow-up too. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
 
-Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject, reprioritize, follow up on or retry their task; the requester or an admin can cancel it. Other members see only a task's headline: who, project, title, state and pull request, not its plan, the agent's actions or its cost. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
+Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject, reprioritize, follow up on or retry their task; the requester or an admin can cancel it. Other members see only a task's headline: who, project, title, priority, state and pull request, not its plan, the agent's actions or its cost. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
 
 ## Run from a checkout
 
