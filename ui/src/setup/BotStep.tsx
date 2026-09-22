@@ -1,11 +1,11 @@
 import { Alert, Button, Form, Input, Space, Typography } from "antd";
 import { useState } from "react";
-import { checkToken, type BotView } from "../api";
+import { checkToken, type BotView, type SetupState } from "../api";
 import { useAction } from "../useAction";
 
-export default function BotStep({ next, back }: { next: () => void; back: () => void }) {
+export default function BotStep({ state, next, back }: { state: SetupState; next: () => void; back: () => void }) {
   const [token, setToken] = useState("");
-  const [bot, setBot] = useState<BotView | null>(null);
+  const [bot, setBot] = useState<BotView | null>(state.bot);
   const { busy, error, run } = useAction();
 
   const check = async () => {

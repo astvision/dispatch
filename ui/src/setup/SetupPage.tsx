@@ -21,7 +21,7 @@ export interface Draft {
 
 export default function SetupPage({ onDone }: { onDone: () => void }) {
   const { state, error, refresh } = useSetupState();
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState<number | null>(null);
   const [draft, setDraft] = useState<Draft>({ claude: "", projects: [], authorName: "", authorEmail: "", teamName: "" });
 
   if (error) {
@@ -30,12 +30,19 @@ export default function SetupPage({ onDone }: { onDone: () => void }) {
   }
   if (!state) return <Spin size="large" tip="Starting setup…"><div style={{ height: 200 }} /></Spin>;
 
+  // Resume where the server left off: Claude Code, Projects and Commits live only on this
+  // page, so a reload can't tell those apart and always resumes at Claude Code (step 3).
+  if (step === null) {
+    setStep(state.bot == null ? 0 : state.members.length === 0 ? 2 : 3);
+    return <Spin size="large" tip="Starting setup…"><div style={{ height: 200 }} /></Spin>;
+  }
+
   const update = (change: Partial<Draft>) => setDraft((current) => ({ ...current, ...change }));
   const next = () => {
     void refresh();
-    setStep((current) => current + 1);
+    setStep((current) => (current ?? 0) + 1);
   };
-  const back = () => setStep((current) => current - 1);
+  const back = () => setStep((current) => Math.max(0, (current ?? 0) - 1));
   const props = { state, draft, update, refresh, next, back, onDone };
 
   const steps = [

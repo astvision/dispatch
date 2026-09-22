@@ -46,7 +46,7 @@ test("a refused token shows why and does not move on", async () => {
   vi.mocked(api.checkToken).mockRejectedValue(new api.ApiError("invalid", "Telegram refused that token or could not be reached (401)"));
   const next = vi.fn();
 
-  render(<BotStep next={next} back={vi.fn()} />);
+  render(<BotStep state={state} next={next} back={vi.fn()} />);
   fireEvent.change(screen.getByLabelText("Bot token"), { target: { value: "123:abc" } });
   fireEvent.click(screen.getByRole("button", { name: "Check" }));
 
@@ -57,12 +57,22 @@ test("a refused token shows why and does not move on", async () => {
 test("a checked token shows the bot and the topics tip", async () => {
   vi.mocked(api.checkToken).mockResolvedValue({ username: "acme_bot", topicsEnabled: false });
 
-  render(<BotStep next={vi.fn()} back={vi.fn()} />);
+  render(<BotStep state={state} next={vi.fn()} back={vi.fn()} />);
   fireEvent.change(screen.getByLabelText("Bot token"), { target: { value: "123:abc" } });
   fireEvent.click(screen.getByRole("button", { name: "Check" }));
 
   expect(await screen.findByText("@acme_bot")).toBeInTheDocument();
   expect(screen.getByText(/turn on topics/)).toBeInTheDocument();
+});
+
+test("a bot already checked by the server needs no token to move on", async () => {
+  const next = vi.fn();
+
+  render(<BotStep state={{ ...state, bot: { username: "acme_bot", topicsEnabled: true } }} next={next} back={vi.fn()} />);
+
+  expect(await screen.findByText("@acme_bot")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+  expect(api.checkToken).not.toHaveBeenCalled();
 });
 
 test("the commit author is prefilled and required", async () => {
