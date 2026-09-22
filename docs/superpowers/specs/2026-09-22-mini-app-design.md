@@ -88,7 +88,7 @@ Also:
 Only the running bot holds the queue, so task pages are served by `dispatch run`:
 
 - **My tasks** (every member): their own running, queued, awaiting-approval and finished tasks, with each task's timeline. Cancel and Retry use the same code and rules as `/cancel N` and `/retry N`.
-- **Tasks** (admins): every task of their groups, like `/status` and `/history`, with the same actions on their groups' tasks.
+- **Tasks** (admins): every task of their groups, like `/status` and `/history`; another member's task shows only its headline (ADR 0020), and Cancel is the only action on it.
 - Approving, correcting and rejecting plans stay in the chat; a task awaiting approval links to its chat.
 
 ## Pages (UI-3a)

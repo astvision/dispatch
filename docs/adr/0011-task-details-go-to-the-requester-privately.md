@@ -1,5 +1,7 @@
 # Task details go to the requester privately
 
+Amended by ADR 0020: members see only each other's headlines; only the requester (or an admin, to cancel) acts.
+
 Tasks are still created in the team group, and Dispatch acknowledges them there in one line. Everything that follows goes to the requester's private chat with the bot:
 - the plan with its Approve and Reject buttons;
 - answers to corrections (a reply to the plan there is a correction);

@@ -25,7 +25,7 @@ Out of scope: running a member's tasks on the team machine when their computer i
 
 Rejected: workers that keep their own task state with the team machine as a relay (team views would be rebuilt from reports and could drift); workers talking through the bot (Telegram delivers a bot's updates to one reader only); SSH to the team machine (every member would need an account there).
 
-These are recorded as ADR 0020, "Team members' tasks run on their own computers".
+These are recorded as ADR 0021, "Team members' tasks run on their own computers".
 
 ## Architecture
 
@@ -67,7 +67,7 @@ A follow-up or retry of a task goes to the worker that holds its worktree and se
 - **Revoking.** `/worker` lists the member's workers (name, last seen); `/worker revoke` removes one. An admin may revoke anyone's. Removing a member revokes their workers. A revoked key gets 401 and the worker stops with "paired key revoked: pair again".
 - **Every request.** The key is compared in constant time and names the member. A worker receives only its member's jobs and reports only on a run it holds the lease for; anything else is 403. `workers.publicUrl` must be `https://`; plain HTTP is accepted only from `127.0.0.1`, for local tests.
 - **What the team machine holds.** The bot token, the queue, headlines, and the plan and result texts it relays to Telegram, plus attachments until they are fetched. Not: members' Claude or GitHub credentials, Claude transcripts, code, raw agent output. SECURITY.md says plainly that the team machine's owner can read the relayed texts in its database.
-- **What members see.** In team mode, for another member's task, announcements, `/status`, `/history` and `/stats` show only who, project, title, state and PR link. Only the requester may approve, correct, follow up, retry or change priority; the requester or an admin may cancel. This replaces today's rule that any group member may cancel, retry or follow up.
+- **What members see.** For another member's task (ADR 0020, built in W-1), announcements, `/status`, `/history` and `/stats` show only who, project, title, state and PR link. Only the requester may approve, correct, follow up, retry or change priority; the requester or an admin may cancel. This replaces today's rule that any group member may cancel, retry or follow up.
 - The worker endpoints are a separate server from `dispatch ui` and the Mini App, with their own authentication; they share nothing but the jar.
 
 ## Configuration
@@ -137,4 +137,4 @@ Each milestone is built test-first on its own branch with a stacked draft pull r
 | W-1 Privacy | In team mode: headline-only view of others' tasks in `/status`, `/history`, `/stats`; requester-only actions, cancel also by an admin | The visibility tests pass; personal mode's tests pass unchanged |
 | W-2 Split | `RunExecutor` into Coordinator and JobRunner behind `Worker`; the in-process worker | Every existing test passes unchanged |
 | W-3 Remote workers | `workers` config, WorkerApi, pairing (`/worker`, `dispatch worker pair`), leases, progress, cancel, attachments, `dispatch worker run`; team mode requires workers | The protocol tests and the two-worker end-to-end test pass |
-| W-4 Worker setup | `dispatch worker init`, the worker setup in `dispatch ui`, the worker service, `check`, README, SECURITY.md, ARCHITECTURE.md, ADR 0020 | A live run with two members' computers |
+| W-4 Worker setup | `dispatch worker init`, the worker setup in `dispatch ui`, the worker service, `check`, README, SECURITY.md, ARCHITECTURE.md, ADR 0021 | A live run with two members' computers |
