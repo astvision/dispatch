@@ -10,6 +10,7 @@ import dispatch.cli.Service;
 import dispatch.cli.ServiceCommand;
 import dispatch.cli.Setup;
 import dispatch.config.Config;
+import dispatch.config.ConfigException;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
@@ -286,7 +287,13 @@ public final class SetupApi {
                 String name = Setup.teamName(team ? text(body, "teamName") : members.getFirst().name().split("\\s+")[0]);
                 Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), team ? chat : null, text(body, "claude"),
                         projects, text(body, "authorName"), text(body, "authorEmail"), advanced(body.path("advanced")));
-                Setup.write(configFile, Setup.render(answers, locations.stateDir()), bot.token());
+                String yaml;
+                try {
+                    yaml = Setup.render(answers, locations.stateDir());
+                } catch (ConfigException e) {
+                    throw new CliException(e.getMessage());
+                }
+                Setup.write(configFile, yaml, bot.token());
                 try {
                     updates.acknowledge();
                 } catch (TelegramException e) {

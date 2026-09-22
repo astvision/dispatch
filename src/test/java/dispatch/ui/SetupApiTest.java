@@ -328,6 +328,27 @@ class SetupApiTest {
     }
 
     @Test
+    void aBaseBranchOrGhCommandWithACarriageReturnIsRefusedAndWritesNothing() throws Exception {
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+        String clone = json(repos.repo("alm").toString());
+
+        CliException base = assertThrows(CliException.class, () -> call("/api/setup/write", """
+                {"claude":"claude","authorName":"a","authorEmail":"a@example.com",
+                 "projects":[{"folder":"%s","name":"alm","baseBranch":"main\\rx"}]}""".formatted(clone)));
+        CliException gh = assertThrows(CliException.class, () -> call("/api/setup/write", """
+                {"claude":"claude","authorName":"a","authorEmail":"a@example.com",
+                 "projects":[{"folder":"%s","name":"alm","baseBranch":"main"}],"advanced":{"ghCommand":"gh\\rx"}}"""
+                .formatted(clone)));
+
+        assertEquals("a value must be plain text on one line", base.getMessage());
+        assertEquals("a value must be plain text on one line", gh.getMessage());
+        assertFalse(Files.exists(config));
+    }
+
+    @Test
     void theAdvancedSectionReachesTheConfig() throws Exception {
         call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
         telegram.pushUpdate(start(1, 100, "Bold"));

@@ -2,6 +2,7 @@ package dispatch.cli;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.config.Config;
+import dispatch.config.ConfigException;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
@@ -138,8 +139,13 @@ public final class InitCommand {
         if (!terminal.confirm("Write this setup?", true)) {
             throw new CliException("cancelled; nothing was written");
         }
-        String yaml = Setup.render(new Setup.Answers(name, team, members, chat, claude, projects, authorName, authorEmail, instance),
-                locations.stateDir());
+        String yaml;
+        try {
+            yaml = Setup.render(new Setup.Answers(name, team, members, chat, claude, projects, authorName, authorEmail, instance),
+                    locations.stateDir());
+        } catch (ConfigException e) {
+            throw new CliException(e.getMessage());
+        }
         Setup.write(configFile, yaml, bot.token());
         try {
             updates.acknowledge();

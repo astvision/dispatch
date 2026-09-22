@@ -190,6 +190,17 @@ class ConfigEditTest {
     }
 
     @Test
+    void aConfigContainingALoneCarriageReturnIsRefused() {
+        // SnakeYAML reads a lone \r as its own line break; Lines counts only '\n', so a file holding one (e.g. from
+        // before this was refused at write time) must be refused too, rather than silently misplacing every edit.
+        String before = "team: bold\rx\nprojects:\n  - name: alm\n";
+
+        ConfigException e = assertThrows(ConfigException.class, () -> ConfigEdit.set(before, At.of("team"), "x"));
+
+        assertEquals("the config contains a carriage return without a line feed; remove it and try again", e.getMessage());
+    }
+
+    @Test
     void aKeyWithABlockScalarValueIsRefused() {
         String before = "a:\n  b: |\n    text\n  c: 1\nd: 2\n";
 

@@ -190,13 +190,9 @@ public final class ConfigEdit {
         throw new ConfigException(at + " is not a list; edit it by hand");
     }
 
-    /** The value as YAML: plain when that reads the same, single-quoted otherwise. */
+    /** The value as YAML: plain when that reads the same, single-quoted otherwise; refused when it is not plain
+     * text on one line, same as every other writer of a typed value ({@link ConfigText#yaml}, {@link ConfigText#quoted}). */
     static String scalar(String value) {
-        // Every ISO control character (so \n, \r and \t too) plus the Unicode line/paragraph separators SnakeYAML also
-        // treats as line breaks: any of these would shift where later edits land, since Lines counts only '\n'.
-        if (value.codePoints().anyMatch(cp -> Character.isISOControl(cp) || cp == ' ' || cp == ' ')) {
-            throw new ConfigException("a value must be plain text on one line");
-        }
         return RESERVED.contains(value.toLowerCase(Locale.ROOT)) ? ConfigText.quoted(value) : ConfigText.yaml(value);
     }
 

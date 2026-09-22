@@ -143,6 +143,15 @@ class ConfigTextTest {
     }
 
     @Test
+    void typedValuesWithControlCharactersAreRefused() {
+        ConfigException yaml = assertThrows(ConfigException.class, () -> ConfigText.yaml("main\rx"));
+        ConfigException quoted = assertThrows(ConfigException.class, () -> ConfigText.quoted("main\rx"));
+
+        assertEquals("a value must be plain text on one line", yaml.getMessage());
+        assertEquals("a value must be plain text on one line", quoted.getMessage());
+    }
+
+    @Test
     void unknownGroupIsRefused() {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigText.addProject("telegram:\n  groups:\n    - name: bold\n      projects: [alm]\nprojects:\n  - name: alm\n",

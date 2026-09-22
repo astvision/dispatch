@@ -177,6 +177,20 @@ class ManageApiTest {
     }
 
     @Test
+    void aProjectWithACarriageReturnInBaseBranchIsRefusedAndChangesNothing() throws Exception {
+        GitFixture repos = GitFixture.create(dir, "life");
+        byte[] before = Files.readAllBytes(config);
+
+        CliException refused = assertThrows(CliException.class, () -> call("/api/manage/projects/add", """
+                {"version":"%s","folder":"%s","name":"life","baseBranch":"main\\rx"}"""
+                .formatted(version(), json(repos.repo("life").toString()))));
+
+        assertEquals("a value must be plain text on one line", refused.getMessage());
+        assertArrayEquals(before, Files.readAllBytes(config));
+        assertFalse(Files.exists(dir.resolve("dispatch.yaml.bak")));
+    }
+
+    @Test
     void aProjectIsEditedFieldByField() throws Exception {
         call("/api/manage/projects/edit", """
                 {"version":"%s","name":"crm","baseBranch":"develop","alias":null,"model":null,"effort":"high",

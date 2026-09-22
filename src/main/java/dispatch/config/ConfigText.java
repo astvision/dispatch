@@ -66,6 +66,7 @@ public final class ConfigText {
 
     /** A YAML scalar for {@code value}: plain when that reads the same, single-quoted otherwise. */
     public static String yaml(String value) {
+        requirePlainText(value);
         if (!value.isEmpty() && LEADING_INDICATORS.indexOf(value.charAt(0)) >= 0) {
             return quoted(value);
         }
@@ -73,7 +74,20 @@ public final class ConfigText {
     }
 
     public static String quoted(String value) {
+        requirePlainText(value);
         return "'" + value.replace("'", "''") + "'";
+    }
+
+    /**
+     * Refuses a typed value that could not stay a single line once written: every ISO control character (so \n, \r and
+     * \t too) plus the Unicode line/paragraph separators and NEL that SnakeYAML also treats as line breaks. Any of these
+     * would shift where a later {@link Lines}-based edit lands, since {@link Lines} counts only '\n'. Shared by every
+     * writer of a typed value (this class, {@link ConfigEdit}), so none of them can write what the other refuses.
+     */
+    static void requirePlainText(String value) {
+        if (value.codePoints().anyMatch(cp -> Character.isISOControl(cp) || cp == '\u0085' || cp == ' ' || cp == ' ')) {
+            throw new ConfigException("a value must be plain text on one line");
+        }
     }
 
     static MappingNode root(String text) {
@@ -187,7 +201,13 @@ public final class ConfigText {
             this.text = text;
             this.newline = text.contains("\r\n") ? "\r\n" : "\n";
             for (int i = 0; i < text.length(); i++) {
-                if (text.charAt(i) == '\n' && i + 1 < text.length()) {
+                char c = text.charAt(i);
+                // SnakeYAML counts a lone \r as a line break of its own; this class counts only '\n', so a lone \r
+                // would make every later edit's line count disagree with what SnakeYAML's marks meant.
+                if (c == '\r' && (i + 1 == text.length() || text.charAt(i + 1) != '\n')) {
+                    throw new ConfigException("the config contains a carriage return without a line feed; remove it and try again");
+                }
+                if (c == '\n' && i + 1 < text.length()) {
                     starts.add(i + 1);
                 }
             }
