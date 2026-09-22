@@ -136,6 +136,11 @@ public final class Renderer {
             case HELP -> plain(format(payload.path("privateChat").asBoolean() ? "help.private" : "help",
                     projectList(payload.path("projects")), escape(payload.path("bot").asText())));
             case PROJECTS -> projects(payload.path("projects"));
+            case WORKER_PAIRING -> workerPairing(payload);
+            case WORKER_REVOKED -> plain(payload.path("found").asBoolean()
+                    ? format("worker.revoked", String.valueOf(payload.path("workerId").asInt()))
+                    : format("worker.revokeNotFound", String.valueOf(payload.path("workerId").asInt())));
+            case WORKER_WAITING -> plain(format("worker.waiting", taskId(payload)));
             case JOIN_REQUEST -> joinRequest(payload);
             case JOIN_REQUESTED -> plain(text("join.requested"));
             case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
@@ -234,6 +239,28 @@ public final class Renderer {
         String icon = outcome == null ? "" : OUTCOME_ICONS.getOrDefault(outcome, "") + " ";
         String name = icon + "#" + taskId + " · " + project + " · " + title;
         return name.length() <= 128 ? name : name.substring(0, 127) + "…";
+    }
+
+    /** The member's one-time code, the exact command to run with it, and the computers they already paired. */
+    private Rendered workerPairing(JsonNode payload) {
+        if (payload.path("personal").asBoolean()) {
+            return plain(text("worker.personal"));
+        }
+        StringBuilder html = new StringBuilder(format("worker.pairing", escape(payload.path("code").asText()),
+                String.valueOf(payload.path("minutes").asInt()), escape(payload.path("url").asText())));
+        JsonNode workers = payload.path("workers");
+        if (workers.isEmpty()) {
+            return plain(html.append("\n\n").append(text("worker.none")).toString());
+        }
+        html.append("\n\n").append(text("worker.list"));
+        for (JsonNode worker : workers) {
+            String id = String.valueOf(worker.path("id").asInt());
+            String name = escape(worker.path("name").asText());
+            html.append("\n").append(worker.hasNonNull("lastSeenAt")
+                    ? format("worker.item", id, name, age(Instant.parse(worker.get("lastSeenAt").asText())))
+                    : format("worker.itemNeverSeen", id, name));
+        }
+        return plain(html.append("\n\n").append(text("worker.revokeHint")).toString());
     }
 
     /** Asks an admin about someone who wants to use the bot; once decided, says what was decided and by whom. */

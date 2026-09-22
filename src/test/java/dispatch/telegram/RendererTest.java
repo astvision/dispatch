@@ -6,10 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.domain.OutboxKind;
 import dispatch.testing.TestClock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.ResourceBundle;
@@ -66,6 +68,31 @@ class RendererTest {
         assertTrue(rendered.document().markdown().contains("150. Step 150 touches"), rendered.document().markdown());
         assertTrue(rendered.html().length() <= 1024, "caption limit");
         assertEquals("approve:42:1", rendered.keyboard().getFirst().getFirst().data());
+    }
+
+    @Test
+    void thePairingMessageShowsTheCodeTheCommandAndTheMembersComputers() {
+        ObjectNode payload = Json.object().put("personal", false).put("code", "ABCD2345").put("minutes", 10)
+                .put("url", "https://team.example.com");
+        ArrayNode workers = payload.putArray("workers");
+        workers.addObject().put("id", 3).put("name", "ann-laptop").put("lastSeenAt", clock.instant().minus(Duration.ofMinutes(2)).toString());
+        workers.addObject().put("id", 4).put("name", "desktop").putNull("lastSeenAt");
+
+        String html = renderer.render(OutboxKind.WORKER_PAIRING, payload).html();
+
+        assertTrue(html.contains("ABCD2345"), html);
+        assertTrue(html.contains("dispatch worker pair https://team.example.com ABCD2345"), html);
+        assertTrue(html.contains("#3"), html);
+        assertTrue(html.contains("ann-laptop"), html);
+        assertTrue(html.contains("#4"), html);
+    }
+
+    @Test
+    void aTaskWaitingForItsRequestersComputerSaysSo() {
+        String html = renderer.render(OutboxKind.WORKER_WAITING, Json.object().put("taskId", 7)).html();
+
+        assertTrue(html.contains("#7"), html);
+        assertEquals(html, renderer.render(OutboxKind.WORKER_WAITING, Json.object().put("taskId", 7)).html());
     }
 
     @Test
@@ -681,6 +708,14 @@ class RendererTest {
                 payload.putArray("projects").addObject().put("name", "crm").putNull("alias");
                 yield payload;
             }
+            case WORKER_PAIRING -> {
+                ObjectNode payload = Json.object().put("personal", false).put("code", "ABCD2345").put("minutes", 10)
+                        .put("url", "https://team.example.com");
+                payload.putArray("workers").addObject().put("id", 3).put("name", "ann-laptop").putNull("lastSeenAt");
+                yield payload;
+            }
+            case WORKER_REVOKED -> Json.object().put("workerId", 3).put("found", true);
+            case WORKER_WAITING -> Json.object().put("taskId", 7);
         };
     }
 }

@@ -25,6 +25,8 @@ import dispatch.store.Database;
 import dispatch.store.Kv;
 import dispatch.store.Outbox;
 import dispatch.store.Tx;
+import dispatch.store.Workers;
+import dispatch.worker.WorkerKeys;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,7 +48,8 @@ public final class UpdateHandler {
     /** Messages about a task's outcome; a reply to one is a follow-up (ADR 0006). */
     private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
-    private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "retry", "projects", "help", "start");
+    private static final Set<String> COMMANDS =
+            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "projects", "help", "start");
 
     private final Database db;
     private final TaskService tasks;
@@ -59,10 +62,23 @@ public final class UpdateHandler {
     private final String botUsername;
     private final Clock clock;
     private final Runnable wakeOutbox;
+    private final WorkerKeys workers;
+    private final String workerUrl;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox) {
+        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null);
+    }
+
+    /**
+     * @param redactor  masks messages this handler edits directly, as the outbox sender does for everything it sends
+     * @param workers   null in personal mode, where a member has nothing to pair
+     * @param workerUrl the URL members' computers reach this machine on; null in personal mode
+     */
+    public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
+                         Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
+                         WorkerKeys workers, String workerUrl) {
         this.db = db;
         this.tasks = tasks;
         this.membership = membership;
@@ -74,10 +90,18 @@ public final class UpdateHandler {
         this.botUsername = botUsername;
         this.clock = clock;
         this.wakeOutbox = wakeOutbox;
+        this.workers = workers;
+        this.workerUrl = workerUrl;
     }
 
     public void handle(JsonNode update) {
         long updateId = update.path("update_id").asLong();
+        if (update.has("message") && needsWorkerKeys(update.get("message"))) {
+            // WorkerKeys manages its own transaction (it is also called from the worker HTTP server), so it cannot run
+            // nested inside the update's transaction below; this is the one command shape that needs it.
+            handleWorkerKeysCommand(update.get("message"), updateId);
+            return;
+        }
         db.transaction(tx -> {
             if (update.has("message")) {
                 onMessage(tx, update.get("message"));
@@ -86,6 +110,70 @@ public final class UpdateHandler {
             } else if (update.has("my_chat_member")) {
                 onMembershipChange(tx, update.get("my_chat_member"));
             }
+            Kv.put(tx, OFFSET_KEY, Long.toString(updateId + 1));
+        });
+    }
+
+    /** True only for a member's own private /worker command while this instance runs in team mode. */
+    private boolean needsWorkerKeys(JsonNode message) {
+        if (workers == null) {
+            return false;
+        }
+        JsonNode from = message.path("from");
+        if (!isPrivateChatOf(message.path("chat"), from) || !from.has("id")) {
+            return false;
+        }
+        if (!groups.isMember(Refs.user(from.get("id").asLong()))) {
+            return false;
+        }
+        return isWorkerCommand(message);
+    }
+
+    /**
+     * /worker outside the update's own transaction: the pairing code or revoke runs first (WorkerKeys' own transaction),
+     * then a short transaction records the outbox message and advances the offset, exactly as {@link #handle} does for
+     * every other update.
+     */
+    private void handleWorkerKeysCommand(JsonNode message, long updateId) {
+        JsonNode from = message.path("from");
+        long chatId = message.path("chat").path("id").asLong();
+        Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
+        Long thread = message.path("is_topic_message").asBoolean(false) && message.has("message_thread_id")
+                ? message.get("message_thread_id").asLong()
+                : null;
+        String origin = Refs.message(chatId, message.path("message_id").asLong(), thread);
+        String chatRef = Refs.chat(chatId);
+        String args = Command.parse(message).map(Command::args).orElse("");
+
+        OutboxKind kind;
+        ObjectNode payload;
+        String[] words = args.strip().split("\\s+");
+        if (words.length >= 2 && words[0].equals("revoke")) {
+            long workerId;
+            try {
+                workerId = Long.parseLong(words[1]);
+            } catch (NumberFormatException e) {
+                workerId = -1;
+            }
+            boolean found = workerId > 0 && workers.revoke(workerId, who.ref(), groups.isAdmin(who.ref()));
+            kind = OutboxKind.WORKER_REVOKED;
+            payload = Json.object().put("workerId", workerId).put("found", found);
+        } else {
+            payload = Json.object().put("personal", false)
+                    .put("code", workers.newCode(who))
+                    .put("minutes", (int) WorkerKeys.CODE_LIFETIME.toMinutes())
+                    .put("url", workerUrl);
+            ArrayNode list = payload.putArray("workers");
+            for (Workers.Paired paired : workers.of(who.ref())) {
+                ObjectNode item = list.addObject().put("id", paired.id()).put("name", paired.name());
+                item.put("lastSeenAt", paired.lastSeenAt() == null ? null : paired.lastSeenAt().toString());
+            }
+            kind = OutboxKind.WORKER_PAIRING;
+        }
+        OutboxKind sentKind = kind;
+        ObjectNode sentPayload = payload;
+        db.transaction(tx -> {
+            enqueue(tx, sentKind, chatRef, origin, sentPayload);
             Kv.put(tx, OFFSET_KEY, Long.toString(updateId + 1));
         });
     }
@@ -110,6 +198,11 @@ public final class UpdateHandler {
         }
         if (privateChat && groups.isAdmin(Refs.user(from.get("id").asLong())) && isCancelCommand(message)) {
             // An admin outside every group still cancels through the normal path (ADR 0020); TaskService.cancel allows it.
+            onChatMessage(tx, message, true);
+            return;
+        }
+        if (privateChat && isWorkerCommand(message)) {
+            // Someone who is not a member still gets a plain refusal from /worker, not a join prompt or silence.
             onChatMessage(tx, message, true);
             return;
         }
@@ -138,6 +231,10 @@ public final class UpdateHandler {
 
     private boolean isCancelCommand(JsonNode message) {
         return Command.parse(message).filter(command -> command.name().equals("cancel") && command.addressedTo(botUsername)).isPresent();
+    }
+
+    private boolean isWorkerCommand(JsonNode message) {
+        return Command.parse(message).filter(command -> command.name().equals("worker") && command.addressedTo(botUsername)).isPresent();
     }
 
     /** A message in the team group, or in a member's private chat with the bot, from someone with a user id. */
@@ -209,6 +306,13 @@ public final class UpdateHandler {
                 taskId(command.args()).ifPresentOrElse(
                         id -> tasks.retry(tx, who, id, origin, chatRef),
                         () -> help(tx, visible, origin, chatRef, true));
+            }
+            case "worker" -> {
+                if (!privateChat) {
+                    privateOnly(tx, chatRef, origin);
+                    return;
+                }
+                worker(tx, who, origin, chatRef);
             }
             case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
@@ -511,6 +615,19 @@ public final class UpdateHandler {
                 .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias())
                         .put("baseBranch", project.baseBranch()).put("unavailable", projects.unavailableReason(project).orElse(null)));
         enqueue(tx, OutboxKind.PROJECTS, chatRef, origin, payload);
+    }
+
+    /**
+     * /worker for anyone not routed to {@link #handleWorkerKeysCommand}: someone who is not a member (refused), or this
+     * instance runs in personal mode (nothing to pair). A member in team mode never reaches here; {@link #handle} sends
+     * that case to {@link #handleWorkerKeysCommand} instead, since WorkerKeys needs its own transaction.
+     */
+    private void worker(Tx tx, Requester who, String origin, String chatRef) {
+        if (!groups.isMember(who.ref())) {
+            enqueue(tx, OutboxKind.NOT_ALLOWED, chatRef, origin, Json.object().put("name", who.name()));
+            return;
+        }
+        enqueue(tx, OutboxKind.WORKER_PAIRING, chatRef, origin, Json.object().put("personal", true));
     }
 
     private void enqueue(Tx tx, OutboxKind kind, String chatRef, String origin, ObjectNode payload) {

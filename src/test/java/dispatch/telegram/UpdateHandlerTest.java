@@ -42,6 +42,8 @@ class UpdateHandlerTest {
 
     private static final long GROUP = -1001234567890L;
     private static final long MOBILE_GROUP = -1009876543210L;
+    private static final String BOT = FakeTelegram.BOT_USERNAME;
+    private static final dispatch.domain.Requester BOLD = new dispatch.domain.Requester("telegram:100", "Bold");
 
     @TempDir
     Path dir;
@@ -55,6 +57,11 @@ class UpdateHandlerTest {
     private TaskService tasks;
     private final List<Long> splitsStarted = new java.util.concurrent.CopyOnWriteArrayList<>();
     private UpdateHandler handler;
+    private Membership membership;
+    private Groups groups;
+    private Projects projects;
+    private BotApi api;
+    private dispatch.Redactor redactor;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -66,17 +73,24 @@ class UpdateHandlerTest {
                 "claude-code", null, null, List.of(), null, null, null);
         Config.Project life = new Config.Project("life", null, "https://github.com/acme/life.git", null, "master",
                 "claude-code", null, null, List.of(), null, null, null);
-        Projects projects = new Projects(List.of(alm, life), project -> Optional.empty());
-        Groups groups = new Groups(List.of(
+        projects = new Projects(List.of(alm, life), project -> Optional.empty());
+        groups = new Groups(List.of(
                 new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
                         List.of("autoland-management")),
                 new Config.Group("mobile", MOBILE_GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
                         List.of("life"))));
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { }, false, splitsStarted::add);
         transitions = new RunTransitions(db, clock, () -> { });
-        BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
-        handler = new UpdateHandler(db, tasks, new Membership(groups, UpdateHandlerTest::noJoins, clock, () -> { }), groups, projects, api,
-                renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME, clock, () -> { });
+        api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
+        membership = new Membership(groups, UpdateHandlerTest::noJoins, clock, () -> { });
+        redactor = dispatch.Redactor.patternsOnly();
+        handler = new UpdateHandler(db, tasks, membership, groups, projects, api,
+                renderer, redactor, FakeTelegram.BOT_USERNAME, clock, () -> { });
+    }
+
+    private UpdateHandler handlerWithWorkers(dispatch.worker.WorkerKeys keys) {
+        return new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
+                () -> { }, keys, "https://team.example.com");
     }
 
     @AfterEach
@@ -790,6 +804,52 @@ class UpdateHandlerTest {
         assertTrue(renderer.render(dispatch.domain.OutboxKind.HELP, payload).html().contains("@" + FakeTelegram.BOT_USERNAME));
     }
 
+    @Test
+    void workerGivesTheMemberAPairingCodeAndListsTheirComputers() {
+        dispatch.worker.WorkerKeys keys = new dispatch.worker.WorkerKeys(db, clock);
+        long existing = keys.pair(keys.newCode(BOLD), "ann-laptop").orElseThrow().workerId();
+        handlerWithWorkers(keys).handle(privateCommand(1, 100, "Bold", "/worker"));
+
+        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'WORKER_PAIRING'").get("payload"));
+        assertEquals(8, payload.get("code").asText().length());
+        assertEquals("https://team.example.com", payload.get("url").asText());
+        assertEquals(existing, payload.get("workers").get(0).get("id").asLong());
+        assertEquals("ann-laptop", payload.get("workers").get(0).get("name").asText());
+    }
+
+    @Test
+    void workerRevokeTakesOneComputerAwayAndOnlyItsOwnerOrAnAdminMay() {
+        dispatch.worker.WorkerKeys keys = new dispatch.worker.WorkerKeys(db, clock);
+        dispatch.worker.WorkerKeys.NewKey bold = keys.pair(keys.newCode(BOLD), "ann-laptop").orElseThrow();
+        UpdateHandler handler = handlerWithWorkers(keys);
+
+        handler.handle(privateCommand(1, 200, "Ali", "/worker revoke " + bold.workerId()));
+        assertTrue(keys.authenticate(bold.key()).isPresent(), "another member cannot revoke it");
+        assertEquals("false", Json.read(row("SELECT payload FROM outbox WHERE kind = 'WORKER_REVOKED'").get("payload"))
+                .get("found").asText());
+
+        handler.handle(privateCommand(2, 100, "Bold", "/worker revoke " + bold.workerId()));
+        assertTrue(keys.authenticate(bold.key()).isEmpty());
+    }
+
+    @Test
+    void workerIsRefusedToSomeoneWhoIsNotAMember() {
+        handlerWithWorkers(new dispatch.worker.WorkerKeys(db, clock)).handle(privateCommand(1, 999, "Stranger", "/worker"));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_PAIRING'").get("n"));
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'NOT_ALLOWED'").get("n"));
+        assertEquals("0", row("SELECT count(*) AS n FROM pairing_code").get("n"), "no code is even made");
+    }
+
+    @Test
+    void workerInAPersonalDispatchSaysThereIsNothingToPair() {
+        handler.handle(privateCommand(1, 100, "Bold", "/worker"));
+
+        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'WORKER_PAIRING'").get("payload"));
+        assertTrue(payload.get("personal").asBoolean(), payload.toString());
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"), "and it is not taken for a task");
+    }
+
     private long taskAwaitingApproval() {
         return taskAwaitingApproval(List.of());
     }
@@ -835,6 +895,11 @@ class UpdateHandlerTest {
                  "chat":{"id":%d,"title":"Team","type":"%s"},"date":1789640000,"text":%s%s%s}}"""
                 .formatted(updateId, messageId, fromId, firstName, firstName.toLowerCase(), chatId, chatType,
                         Json.MAPPER.valueToTree(text), entities, reply));
+    }
+
+    /** A command in the sender's own private chat with the bot. */
+    static JsonNode privateCommand(long updateId, long fromId, String firstName, String text) {
+        return message(updateId, updateId, fromId, firstName, fromId, "private", text, null);
     }
 
     /** A message written inside a topic of the sender's private chat with the bot. */
