@@ -28,6 +28,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Joining a shared bot | People who write to a team's bot ask to join; `telegram.admins` approve them per group in Telegram, and the config is updated without a restart | 0015 |
 | Setup | One-line install, an arrow-key `dispatch init` for a personal or a team bot, and a per-user background service on each OS | 0016 |
 | Agent sessions | A task has a planning session (the plan and its corrections) and a building session, which execution starts from the approved plan | 0017 |
+| Setup and management in a browser | `dispatch ui`, a separate process on 127.0.0.1 with a one-time link | 0018 |
 
 Also decided without an ADR:
 - Only members of a configured group act, for their groups' projects, in their own private chat with the bot; groups get announcements and read-only reports.
@@ -97,12 +98,13 @@ projects                   wherever each project's path points; Dispatch adds wo
 |---|---|
 | `Main`, `App` | `Main` validates config and installs the shutdown hook. `App` wires everything explicitly: it migrates the DB, checks the bot token (`getMe`, which also says whether the bot has topics in private chats), runs `Recovery`, fails splits a previous process left running, registers the command menus (group, private chats), starts cloning missing repos in the background, and starts the poller, scheduler, outbox, draft-expiry and sweeper threads. A loop that dies unexpectedly is fatal. |
 | `config` | YAML + env loading into records. Startup fails naming the invalid field. |
-| `cli` | The `dispatch` command: `init` (the setup wizard, on a JLine terminal), `project add`, `check`, `service install/start/stop/status/uninstall` (systemd user unit, launchd agent, Task Scheduler task), and `run` (with `--log-file` for services). Per-OS default locations; the secrets file beside the config is merged under the process environment. `install.sh` and `install.ps1` build and install it. |
+| `cli` | The `dispatch` command: `init` (the setup wizard, on a JLine terminal), `project add`, `check`, `service install/start/stop/status/uninstall` (systemd user unit, launchd agent, Task Scheduler task), and `run` (with `--log-file` for services). Per-OS default locations; the secrets file beside the config is merged under the process environment. `install.sh` and `install.ps1` download the release jar and launcher, or build them from source, and install them. |
 | `store` | SQLite access and migrations (`PRAGMA user_version`); conditional updates. One connection behind a lock. |
 | `core` | `TaskService`: the channel-neutral commands `draft / split / create / approve / reject / correct / followUp / retry / cancel / status / history / timeline / stats`. `Scheduler` picks runs; `RunExecutor` drives one run; `Splitter` runs splits beside them; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
 | `agent` | `Agent` interface and `ClaudeCodeAgent` (CLI subprocess + stream-json parser). Tests run the real adapter against a fake `claude` shell script that replays recorded output. `CodexAgent` comes later. |
 | `workspace` | Clone, fetch, worktree add/remove/recreate, `copyFiles`, commit, push, `gh pr create`, delivering a failed delivery again. |
 | `telegram` | Bot API client (`java.net.http` + Jackson, including file downloads for attachments), `Poller`, `UpdateHandler` (parses updates, calls `TaskService`), `OutboxSender`, status edits, `messages_mn.properties`. |
+| `ui` | `UiServer` (JDK HttpServer, loopback only), `UiAuth` (one-time link, session cookie, Host and Origin checks), `OverviewApi` (version, paths, service status, `Checks`), and the React + Ant Design page in `ui/`, bundled into the jar by the `ui` profile. |
 
 `core` never imports `telegram`. A second messenger would be a new package that calls `TaskService` and renders the same outbox rows.
 

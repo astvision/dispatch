@@ -37,8 +37,16 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 
 ## Installing
 
-- `install.sh` and `install.ps1` build Dispatch from source over HTTPS (or through the authenticated GitHub CLI while the repository is private). Read a script before piping it into a shell if you do not trust the source.
+- `install.sh` and `install.ps1` download the release jar and launcher over HTTPS (or through the authenticated GitHub CLI while the repository is private), and verify their SHA-256 checksum before installing them. They build Dispatch from source instead when there is no release, when `DISPATCH_FROM_SOURCE=1` is set, or when run from a checkout; a source build without Node has no web UI. Read a script before piping it into a shell if you do not trust the source.
 - The background service (ADR 0016) runs as the user who installed it, with the PATH setup ran with, and logs to `dispatch.log` in the owner-only state directory.
+
+## The web UI
+
+`dispatch ui` listens only on 127.0.0.1; reach a server's through `ssh -L`. Each start prints a new link with a one-time
+token that gives a single browser a session and then stops working, and restarting `dispatch ui` ends every session.
+Requests with another Host (DNS rebinding) or, for changes, another Origin are refused. The bot token never reaches the
+browser. Whoever has the link or a session acts as you, with what you may do in a shell: don't paste the link where
+others see it, and stop `dispatch ui` when you are done.
 
 ## State on disk
 

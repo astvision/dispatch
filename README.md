@@ -20,13 +20,20 @@ Requires JDK 25+ and git. The Maven wrapper downloads Maven itself.
 ./mvnw verify                       # tests, then target/dispatch-0.1.0.jar
 ```
 
+With the web UI (needs Node):
+
+```sh
+(cd ui && npm ci && npm run build) && ./mvnw -Pui verify
+```
+
 ## Get started (macOS, Windows, Linux)
 
 Dispatch runs on your own machine, with a bot for just you or one your team shares (ADR 0014–0016). It runs as you: the agent can read what you can, and whoever controls the bot's admin accounts or its token can make it act as you.
 
 **You need** Java 25 or later, git, Claude Code (run `claude` once to log in), and the GitHub CLI logged in with `gh auth login` for pull requests.
 
-**1. Install** with one command. It builds Dispatch and puts `dispatch` on your PATH:
+**1. Install** with one command. It downloads the latest release (or builds Dispatch from source when there is none) and
+puts `dispatch` on your PATH. `DISPATCH_FROM_SOURCE=1` builds from source instead:
 
 ```sh
 # macOS, Linux
@@ -64,6 +71,7 @@ dispatch check                                   # config, bot token, claude, pr
 dispatch service status                          # also: start, stop, install, uninstall
 dispatch project add ~/work/crm --effort high    # add another clone, then: dispatch service stop && dispatch service start
 dispatch run                                     # run in this terminal instead of the background
+dispatch ui                                      # the overview in your browser
 ```
 
 The service is a systemd user service on Linux, a launchd agent on macOS and a Task Scheduler task on Windows. It starts at login and restarts after a failure. On Linux, it keeps running after you log out only once lingering is on; `dispatch service status` says so.
@@ -84,6 +92,21 @@ Every planning and execution run reads the project's `CLAUDE.md` (or `.claude/CL
 - conventions a change must follow, and what not to touch
 
 `dispatch check` names the projects that have none.
+
+### Manage it in the browser
+
+`dispatch ui` shows Dispatch's version and files, whether the background service runs, and everything `dispatch check`
+finds, with what to do about it. It prints a link and opens it in your browser; the link works once, and Ctrl+C stops the
+page. Setting up and changing projects, people and settings in the browser come next.
+
+On a server, from your own computer:
+
+```sh
+ssh -L 7878:localhost:7878 you@server    # then, on the server:
+dispatch ui --no-browser                 # and open the link it prints on your computer
+```
+
+The page listens only on the machine it runs on. Anyone with its link can act as you, like a shell: see SECURITY.md.
 
 ## Set up a team instance with systemd (Linux server)
 
