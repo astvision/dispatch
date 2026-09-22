@@ -47,14 +47,17 @@ public final class Checks {
 
     /** @param onEach sees each finding as soon as it is known, so a slow check does not hold back the ones before it */
     public List<Finding> run(Path configFile, Map<String, String> processEnvironment, Consumer<Finding> onEach) {
-        Run run = new Run(onEach);
         RunCommand.Prepared prepared;
         try {
             prepared = RunCommand.prepare(configFile, processEnvironment);
         } catch (CliException | ConfigException e) {
-            run.add(Level.FAIL, "config", "config: " + Redactor.fromEnvironment(processEnvironment).redact(e.getMessage()));
-            return run.findings;
+            Run failed = new Run(onEach, Redactor.fromEnvironment(processEnvironment));
+            failed.add(Level.FAIL, "config", "config: " + e.getMessage());
+            return failed.findings;
         }
+        // The merged environment includes the secrets file, so tokens findings quote (e.g. a repo URL's userinfo,
+        // or a check command's own output) are masked too, not only the ones already known from processEnvironment.
+        Run run = new Run(onEach, Redactor.fromEnvironment(prepared.environment()));
         run.add(Level.OK, "config", "config " + configFile);
         Config config = prepared.config();
         checkBot(run, config.secrets().telegramBotToken());
@@ -169,18 +172,20 @@ public final class Checks {
         }
     }
 
-    /** One run's findings, passed on as they come. */
+    /** One run's findings, passed on as they come; every message is redacted before it is kept or handed to onEach. */
     private static final class Run {
 
         private final List<Finding> findings = new ArrayList<>();
         private final Consumer<Finding> onEach;
+        private final Redactor redactor;
 
-        Run(Consumer<Finding> onEach) {
+        Run(Consumer<Finding> onEach, Redactor redactor) {
             this.onEach = onEach;
+            this.redactor = redactor;
         }
 
         void add(Level level, String area, String message) {
-            Finding finding = new Finding(level, area, message);
+            Finding finding = new Finding(level, area, redactor.redact(message));
             findings.add(finding);
             onEach.accept(finding);
         }

@@ -24,6 +24,8 @@ class ChecksTest {
 
     // Split, so secret scanners never see a token-shaped literal in this file.
     private static final String TOKEN = "123456789" + ":AAH-fake-token-for-tests-only-0123456789";
+    // Split for the same reason; this one goes in a repo: URL's userinfo, not a config secret.
+    private static final String REPO_CREDENTIAL = "x-access-token:" + "fake-repo-credential-for-tests-0123456789";
     private static final String JAVA = ProcessHandle.current().info().command().orElseThrow();
 
     @TempDir
@@ -60,6 +62,28 @@ class ChecksTest {
         assertTrue(findings.stream().anyMatch(f -> f.area().equals("gh") && f.level() == Checks.Level.WARN), findings.toString());
         assertFalse(Checks.failed(findings), "warnings are not failures");
         assertFalse(findings.toString().contains(TOKEN));
+    }
+
+    @Test
+    void aRepoUrlsCredentialsNeverAppearInTheNotClonedYetFinding() throws IOException {
+        writeConfig();
+        Files.writeString(config, Files.readString(config)
+                .replace("    path: '" + quoted(repos.repo("alm")) + "'\n",
+                        // ssh, not https: the config loader itself already rejects an http(s) repo URL with credentials.
+                        "    repo: 'ssh://" + REPO_CREDENTIAL + "@example.com/alm.git'\n"));
+        try (var files = Files.walk(repos.repo("alm"))) {
+            files.sorted(java.util.Comparator.reverseOrder()).map(Path::toFile).forEach(file -> {
+                file.setWritable(true);
+                file.delete();
+            });
+        }
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        Checks.Finding project = findings.stream().filter(f -> f.area().equals("project alm")).findFirst()
+                .orElseThrow(() -> new AssertionError(findings.toString()));
+        assertTrue(project.message().contains("not cloned yet"), project.message());
+        assertFalse(project.message().contains(REPO_CREDENTIAL), project.message());
     }
 
     @Test
