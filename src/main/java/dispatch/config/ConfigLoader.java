@@ -234,11 +234,10 @@ public final class ConfigLoader {
      * (spec: Configuration). A personal Dispatch needs none and runs its jobs in this process.
      */
     private static Config.Workers validateWorkers(Config.Workers workers, Config.Telegram telegram, List<String> errors) {
-        boolean team = telegram.groups().stream().anyMatch(group -> group.chatId() != null);
         if (workers == null) {
-            if (team) {
-                errors.add("workers: required when more than one member is configured; each member's tasks run on their own "
-                        + "computer (publicUrl and port, see deploy/example.yaml)");
+            if (Config.isTeam(telegram)) {
+                errors.add("workers: required once a group has a chat; each member's tasks then run on their own computer "
+                        + "(publicUrl and port, see deploy/example.yaml)");
             }
             return null;
         }

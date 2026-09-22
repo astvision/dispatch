@@ -29,6 +29,11 @@ public record Config(
      * (ADR 0020). A personal bot has no group chat (ADR 0014), so its runs happen in this process.
      */
     public boolean isTeam() {
+        return isTeam(telegram);
+    }
+
+    /** Same check as {@link #isTeam()}, usable before a {@code Config} exists to ask it, e.g. while validating one. */
+    public static boolean isTeam(Telegram telegram) {
         return telegram.groups().stream().anyMatch(group -> group.chatId() != null);
     }
 

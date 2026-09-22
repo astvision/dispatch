@@ -342,7 +342,7 @@ class ConfigLoaderTest {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigLoader.load(write(VALID.replace(WORKERS_BLOCK, "")), ENV));
 
-        assertTrue(error.getMessage().contains("workers: required when more than one member is configured"), error.getMessage());
+        assertTrue(error.getMessage().contains("workers: required once a group has a chat"), error.getMessage());
     }
 
     @Test
