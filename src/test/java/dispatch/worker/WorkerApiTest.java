@@ -27,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -255,6 +256,63 @@ class WorkerApiTest {
             }
             assertTrue(elapsedMs < 5000,
                     "held the request thread for " + elapsedMs + "ms instead of refusing at the read deadline");
+        }
+    }
+
+    @Test
+    void anOversizedBodyThatNeverFinishesStillFreesTheConnectionAndTheServerStaysUp() throws Exception {
+        // body()'s own bounded reads (MAX_BODY+1, then an 8 KiB drain) consume at most 73,729 bytes before throwing
+        // 413, and that 413 is written and flushed before this exchange is ever closed — so it always arrives
+        // quickly, fix or no fix, and reading only it would prove nothing. What actually depends on the fix is what
+        // happens on this connection AFTER that: with a Content-Length far beyond what body() ever reads, and
+        // nothing else sent, the JDK request stream is still short of EOF, so finishing this exchange means
+        // HttpExchange.close()'s own drain (LeftOverInputStream, a plain blocking read with no timeout of its own)
+        // has to run — and neither side is going to send anything else or close first, so without closeBounded that
+        // drain (and this connection) hangs until something external intervenes. This test's own client-side
+        // SO_TIMEOUT is that intervention: short enough that an unbounded close() fails this test with a
+        // SocketTimeoutException instead of silently passing.
+        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, Duration.ofMillis(500))) {
+            String key = pair(BOLD, "ann-laptop");
+            byte[] oversized = new byte[80_000];
+            Arrays.fill(oversized, (byte) 'y');
+            String head = "POST " + WorkerApi.PROJECTS + " HTTP/1.1\r\n"
+                    + "Host: 127.0.0.1:" + impatient.port() + "\r\n"
+                    + "Authorization: Bearer " + key + "\r\n"
+                    + "Content-Type: application/json\r\n"
+                    + "Content-Length: " + (10 * 1024 * 1024) + "\r\n\r\n";
+            long elapsedMs;
+            try (Socket socket = new Socket("127.0.0.1", impatient.port())) {
+                socket.setSoTimeout(5000);
+                OutputStream out = socket.getOutputStream();
+                out.write(head.getBytes(StandardCharsets.US_ASCII));
+                out.write(oversized); // declares 10 MB; sends 80,000 and stops. The other ~9.9 MB never arrive.
+                out.flush();
+
+                // The 413: sent before any close is attempted, so this always returns quickly on its own.
+                byte[] first = new byte[8192];
+                int n1 = socket.getInputStream().read(first);
+                assertTrue(n1 > 0 && new String(first, 0, n1, StandardCharsets.UTF_8).contains("413"),
+                        "expected the 413 first: " + (n1 > 0 ? new String(first, 0, n1, StandardCharsets.UTF_8) : "<eof>"));
+
+                // What the fix actually protects: reading past the response, on the same still-open connection,
+                // must not hang. A -1 (the server closed it) or bytes from a served pipelined request are both a
+                // clean end; only a held-forever read (caught by this test's own SO_TIMEOUT, above) is the bug.
+                long start = System.nanoTime();
+                byte[] second = new byte[8192];
+                socket.getInputStream().read(second);
+                elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            }
+            assertTrue(elapsedMs < 5000,
+                    "held the connection for " + elapsedMs + "ms instead of freeing it at the close deadline");
+
+            // The server itself is unaffected by the stalled connection above: a fresh request against the same
+            // instance, on its own socket, is still served normally.
+            HttpResponse<String> healthCheck = http.send(HttpRequest.newBuilder(
+                            URI.create("http://127.0.0.1:" + impatient.port() + WorkerApi.PROJECTS))
+                            .header("Authorization", "Bearer " + key)
+                            .POST(HttpRequest.BodyPublishers.ofString("{}")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, healthCheck.statusCode());
         }
     }
 

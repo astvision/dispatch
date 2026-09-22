@@ -126,7 +126,7 @@ public final class WorkerApi implements AutoCloseable {
     }
 
     private void handle(HttpExchange exchange) throws IOException {
-        try (exchange) {
+        try {
             try {
                 respond(exchange);
             } catch (ApiException e) {
@@ -138,6 +138,10 @@ public final class WorkerApi implements AutoCloseable {
                 Log.error("worker_api.failed", e, "path", exchange.getRequestURI().getPath());
                 json(exchange, 500, error("internal", "something went wrong on the team machine"));
             }
+        } finally {
+            // Not try-with-resources: HttpExchange.close() itself is the other unbounded read in this class (see
+            // closeBounded), and the response above is already written and flushed by the time this runs either way.
+            closeBounded(exchange);
         }
     }
 
@@ -182,8 +186,10 @@ public final class WorkerApi implements AutoCloseable {
 
     private ObjectNode pair(JsonNode body) {
         String code = body.path("code").asText("");
-        // Cleaned once, here, at the boundary: WorkerKeys.pair cleans again internally (idempotent) and never sees a
-        // name that could still make it throw IllegalArgumentException out of this unauthenticated route.
+        // Cleaned here, once, before the emptiness/length check below; WorkerKeys.pair's own boundName cleans the
+        // (already-clean) name again — TelegramNames.clean is idempotent, so that costs nothing — and keeps its own
+        // blank check too, but that check can no longer fire from this caller: a name this route accepts is never
+        // blank once cleaned, which is the one thing that check rejects. Validated once, here; cleaned twice.
         String name = TelegramNames.clean(body.path("name").asText(""));
         if (name.isEmpty() || name.length() > MAX_NAME_LENGTH) {
             throw new ApiException(400, "invalid", "name: required, at most 40 characters");
@@ -268,19 +274,69 @@ public final class WorkerApi implements AutoCloseable {
         }
     }
 
+    /**
+     * Closes {@code exchange} under the same deadline as {@link #readBounded}, as a backstop for any path that
+     * reaches here without having gone through {@link #send}: normally {@code send} itself already closes (or, on
+     * a timeout, tears down) this exchange's streams, since writing a response is what triggers the JDK's own
+     * drain (see {@link #send}'s doc) — so by the time this runs, {@code exchange.close()} is ordinarily a fast
+     * no-op finding everything already closed.
+     */
+    private void closeBounded(HttpExchange exchange) {
+        Future<?> closing = bodyReads.submit(exchange::close);
+        try {
+            closing.get(bodyReadTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            closing.cancel(true);
+        } catch (ExecutionException e) {
+            // HttpExchange.close() does not declare a checked exception and swallows IOException internally on its
+            // own; nothing more to do here even if some other RuntimeException escaped it.
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            closing.cancel(true);
+        }
+    }
+
     static String error(String code, String message) {
         return Json.write(Map.of("error", code, "message", message));
     }
 
-    static void json(HttpExchange exchange, int status, String body) throws IOException {
+    private void json(HttpExchange exchange, int status, String body) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
         send(exchange, status, body.getBytes(StandardCharsets.UTF_8));
     }
 
-    static void send(HttpExchange exchange, int status, byte[] body) throws IOException {
-        exchange.sendResponseHeaders(status, body.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(body);
+    /**
+     * Sends the response, bounded by the same deadline as {@link #readBounded}. Writing it is not itself slow, but
+     * closing the response's {@code OutputStream} is what the JDK uses as the signal that the exchange is done —
+     * {@code FixedLengthOutputStream.close} (and its chunked/undefined-length siblings) reflexively closes the
+     * *request* stream too, which is exactly {@link #readBounded}'s problem again: a declared {@code Content-Length}
+     * this class never fully read (an oversized body past {@link #MAX_BODY}+{@link #DRAIN_BYTES}, say) leaves that
+     * close needing to drain the rest with the same untimed blocking read. Bounding this whole call, not just the
+     * read side, is what actually keeps a client that stalls after tripping a 413 from holding this thread forever:
+     * the response bytes above are already written before a timeout here can matter, so cutting the close off at
+     * the deadline (the same interrupt-closes-the-channel mechanism as {@link #readBounded}) only costs the
+     * connection's reuse, never the response the client already received.
+     */
+    private void send(HttpExchange exchange, int status, byte[] body) throws IOException {
+        Future<?> sending = bodyReads.submit(() -> {
+            exchange.sendResponseHeaders(status, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+            return null;
+        });
+        try {
+            sending.get(bodyReadTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            sending.cancel(true);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof IOException io) {
+                throw io;
+            }
+            throw new IllegalStateException("writing the response failed", e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            sending.cancel(true);
         }
     }
 }
