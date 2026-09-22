@@ -37,27 +37,26 @@ final class Folders {
             throw new CliException(dir + " is not a folder");
         }
         List<Entry> folders = new ArrayList<>();
-        boolean truncated = false;
         try (DirectoryStream<Path> children = Files.newDirectoryStream(dir, Files::isDirectory)) {
             for (Path child : children) {
                 String name = child.getFileName().toString();
                 if (name.startsWith(".")) {
                     continue;
                 }
-                if (folders.size() == MAX_ENTRIES) {
-                    truncated = true;
-                    break;
-                }
                 folders.add(new Entry(name, child.toString(), Files.exists(child.resolve(".git"))));
             }
         } catch (AccessDeniedException e) {
             throw new CliException("cannot open " + dir + ": permission denied");
+        } catch (java.nio.file.DirectoryIteratorException e) {
+            throw new CliException("cannot open " + dir + ": " + e.getCause().getMessage());
         } catch (IOException e) {
             throw new CliException("cannot open " + dir + ": " + e.getMessage());
         }
         folders.sort(Comparator.comparing(entry -> entry.name().toLowerCase(Locale.ROOT)));
+        boolean truncated = folders.size() > MAX_ENTRIES;
+        List<Entry> result = truncated ? folders.subList(0, MAX_ENTRIES) : folders;
         Path parent = dir.getParent();
-        return new Listing(dir.toString(), parent == null ? null : parent.toString(), List.copyOf(folders), truncated);
+        return new Listing(dir.toString(), parent == null ? null : parent.toString(), List.copyOf(result), truncated);
     }
 
     private static Path folder(String requested, Path home) {
