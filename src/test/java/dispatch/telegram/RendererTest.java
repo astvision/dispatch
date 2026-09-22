@@ -376,6 +376,21 @@ class RendererTest {
     }
 
     @Test
+    void aQueuedRunWaitingForItsComputerSaysSoOnItsStatusLine() {
+        ObjectNode payload = Json.object();
+        payload.putArray("running");
+        payload.putArray("awaitingApproval");
+        payload.putArray("mine");
+        payload.putArray("queued").addObject().put("taskId", 7).put("project", "alm")
+                .put("title", "Fix the login timeout").put("kind", "PLAN").put("priority", "NORMAL")
+                .put("queuedAt", Instant.now().toString()).put("waitingForWorker", true);
+
+        String html = renderer.render(OutboxKind.STATUS, payload).html();
+
+        assertTrue(html.contains(messages.getString("status.waitingForWorker")), html);
+    }
+
+    @Test
     void statusWithNothingGoingOnSaysSo() {
         ObjectNode payload = Json.object();
         payload.putArray("running");

@@ -432,6 +432,7 @@ public final class Renderer {
             for (JsonNode run : queued) {
                 blocks.add(icon(run) + format("status.queuedLine", taskId(run), escape(run.path("project").asText()),
                         text("kind." + run.path("kind").asText()), age(Instant.parse(run.path("queuedAt").asText())))
+                        + (run.path("waitingForWorker").asBoolean() ? " · " + text("status.waitingForWorker") : "")
                         + "\n   " + escapeWithin(run.path("title").asText(), TITLE_LIMIT));
             }
         }

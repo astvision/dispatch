@@ -27,6 +27,7 @@ import dispatch.store.Outbox;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
+import dispatch.store.Workers;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -60,22 +61,26 @@ public final class TaskService {
     private final Runnable wakeOutbox;
     private final boolean taskTopics;
     private final LongConsumer startSplit;
+    /** Team mode: a task runs on its requester's own computer, so it waits when none of theirs is connected. */
+    private final boolean requiresWorker;
 
     /** Without topics or splitting: for tests that need neither. */
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
                        Runnable wakeOutbox) {
         this(groups, projects, activeRuns, clock, wakeScheduler, wakeOutbox, false,
-                draftId -> Log.warn("split.not_wired", "draft", draftId));
+                draftId -> Log.warn("split.not_wired", "draft", draftId), false);
     }
 
     /**
-     * @param taskTopics the channel can give each task its own topic in the requester's private chat
-     * @param startSplit starts splitting a draft's message in the background once ✂️ was pressed (ADR 0013)
+     * @param taskTopics     the channel can give each task its own topic in the requester's private chat
+     * @param startSplit     starts splitting a draft's message in the background once ✂️ was pressed (ADR 0013)
+     * @param requiresWorker team mode: a task runs on its requester's own computer (W-3)
      */
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
-                       Runnable wakeOutbox, boolean taskTopics, LongConsumer startSplit) {
+                       Runnable wakeOutbox, boolean taskTopics, LongConsumer startSplit, boolean requiresWorker) {
         this.taskTopics = taskTopics;
         this.startSplit = startSplit;
+        this.requiresWorker = requiresWorker;
         this.groups = groups;
         this.projects = projects;
         this.activeRuns = activeRuns;
@@ -358,6 +363,10 @@ public final class TaskService {
         if (groupChat.isPresent()) {
             enqueue(tx, id, OutboxKind.TASK_QUEUED, groupChat.get(), null, Json.object().put("taskId", id).put("project", project.name())
                     .put("requester", who.name()).put("priority", priority.name()).put("title", title(description)), now);
+        }
+        if (requiresWorker && !Workers.hasConnected(tx, who.ref(), now.minus(Workers.SEEN_WITHIN))) {
+            // Said once, when the task is given; /status keeps showing it until a computer connects.
+            enqueue(tx, id, OutboxKind.WORKER_WAITING, who.ref(), null, Json.object().put("taskId", id), now);
         }
         tx.afterCommit(wakeScheduler);
         tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "priority", priority,
@@ -747,6 +756,11 @@ public final class TaskService {
                 }
             } else {
                 item.put("queuedAt", text(run.queuedAt()));
+                Task queuedTask = active.get(run.taskId());
+                if (requiresWorker && queuedTask != null
+                        && !Workers.hasConnected(tx, queuedTask.requester().ref(), clock.instant().minus(Workers.SEEN_WITHIN))) {
+                    item.put("waitingForWorker", true);
+                }
             }
         }
         ArrayNode awaiting = payload.putArray("awaitingApproval");

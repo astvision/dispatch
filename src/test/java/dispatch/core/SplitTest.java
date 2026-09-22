@@ -66,7 +66,7 @@ class SplitTest {
                 new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold")), List.of("autoland-management", "crm")),
                 new Config.Group("mobile", -300L, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
                         List.of("life"))));
-        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { }, false, started::add);
+        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { }, false, started::add, false);
         splitter = new Splitter(db, tasks, agent, dir.resolve("splits"), clock, Duration.ofSeconds(5));
     }
 

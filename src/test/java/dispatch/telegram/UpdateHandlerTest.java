@@ -79,7 +79,7 @@ class UpdateHandlerTest {
                         List.of("autoland-management")),
                 new Config.Group("mobile", MOBILE_GROUP, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
                         List.of("life"))));
-        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { }, false, splitsStarted::add);
+        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { }, false, splitsStarted::add, false);
         transitions = new RunTransitions(db, clock, () -> { });
         api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
         membership = new Membership(groups, UpdateHandlerTest::noJoins, clock, () -> { });

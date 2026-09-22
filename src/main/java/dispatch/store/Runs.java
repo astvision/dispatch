@@ -58,18 +58,39 @@ public final class Runs {
                 run.requestedBy().name(), now);
     }
 
+    public static Optional<ClaimedRun> claimNext(Tx tx, int maxConcurrentRuns, Instant now) {
+        return claimNext(tx, maxConcurrentRuns, now, null);
+    }
+
     /**
      * Claims the most urgent queued run that may start now, the oldest among equals: fewer than {@code maxConcurrentRuns}
      * runs are active, and an execution-type run also needs its project to have no other execution running (builds and
      * tests of the same project can clash on ports and test databases). Planning runs only need a free slot. A run that
      * cannot start yet never holds back the ones after it.
+     *
+     * @param workerSeenSince in team mode, a run starts only when one of its requester's computers reported since then —
+     *                        and, once the task has a worktree, only that computer; null in personal mode, where the run
+     *                        happens in this process
      */
-    public static Optional<ClaimedRun> claimNext(Tx tx, int maxConcurrentRuns, Instant now) {
+    public static Optional<ClaimedRun> claimNext(Tx tx, int maxConcurrentRuns, Instant now, Instant workerSeenSince) {
         int running = tx.one("SELECT count(*) AS n FROM run WHERE status = ?", row -> row.intValue("n"), RunStatus.RUNNING)
                 .orElse(0);
         if (running >= maxConcurrentRuns) {
             return Optional.empty();
         }
+        String workerGate = workerSeenSince == null ? "" : """
+                          AND EXISTS (SELECT 1 FROM worker w
+                                      WHERE w.member_ref = t.requester_ref AND w.revoked_at IS NULL
+                                        AND w.last_seen_at > ?
+                                        AND (t.worker_id IS NULL OR t.worker_id = w.id))
+                """;
+        List<Object> params = new ArrayList<>(List.of(RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE,
+                RunKind.DELIVER));
+        if (workerSeenSince != null) {
+            params.add(workerSeenSince);
+        }
+        params.add(Priority.URGENT);
+        params.add(Priority.NORMAL);
         Optional<ClaimedRun> next = tx.one("""
                         SELECT r.task_id, r.seq, r.kind
                         FROM run r JOIN task t ON t.id = r.task_id
@@ -77,10 +98,11 @@ public final class Runs {
                           AND (r.kind = ? OR NOT EXISTS (
                                 SELECT 1 FROM run busy JOIN task busy_task ON busy_task.id = busy.task_id
                                 WHERE busy.status = ? AND busy.kind IN (?, ?) AND busy_task.project = t.project))
+                        """ + workerGate + """
                         ORDER BY CASE t.priority WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END, r.queued_at, r.task_id, r.seq
                         LIMIT 1""",
                 row -> new ClaimedRun(row.longValue("task_id"), row.intValue("seq"), row.enumValue("kind", RunKind.class)),
-                RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE, RunKind.DELIVER, Priority.URGENT, Priority.NORMAL);
+                params.toArray());
         next.ifPresent(run -> {
             tx.update("UPDATE run SET status = ?, started_at = ? WHERE task_id = ? AND seq = ? AND status = ?",
                     RunStatus.RUNNING, now, run.taskId(), run.seq(), RunStatus.QUEUED);

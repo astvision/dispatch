@@ -20,8 +20,10 @@ import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
 import dispatch.store.Database;
 import dispatch.store.Runs;
+import dispatch.store.Workers;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
+import dispatch.worker.WorkerKeys;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -29,6 +31,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,6 +59,7 @@ class TaskLifecycleTest {
     private final AtomicInteger schedulerWakes = new AtomicInteger();
     private final AtomicInteger outboxWakes = new AtomicInteger();
     private Projects projects;
+    private Groups groups;
     private TaskService tasks;
     private RunTransitions transitions;
 
@@ -73,7 +77,7 @@ class TaskLifecycleTest {
                 "claude-code", null, null, List.of(), null, null, null);
         projects = new Projects(List.of(alm, crm, life),
                 project -> project.name().equals("crm") ? Optional.of("repos/crm is not cloned") : Optional.empty());
-        Groups groups = new Groups(List.of(
+        groups = new Groups(List.of(
                 new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
                         List.of("autoland-management", "crm")),
                 new Config.Group("mobile", -300L, List.of(new Config.Member(300, "Sara")), List.of("life"))));
@@ -131,6 +135,29 @@ class TaskLifecycleTest {
 
         assertEquals(1, schedulerWakes.get());
         assertEquals(1, outboxWakes.get());
+    }
+
+    @Test
+    void aTaskGivenWhileNoComputerIsConnectedTellsItsRequesterOnce() {
+        tasks = teamTaskService();
+
+        long id = create(BOLD, "alm", "Fix login timeout", "95");
+
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_WAITING' AND task_id = ?", id).get("n"));
+        JsonNode status = tasksStatusPayload();
+        assertTrue(status.get("queued").get(0).get("waitingForWorker").asBoolean(), status.toString());
+    }
+
+    @Test
+    void aTaskGivenWithAConnectedComputerSaysNothingAboutWaiting() {
+        tasks = teamTaskService();
+        WorkerKeys keys = new WorkerKeys(db, clock);
+        long worker = keys.pair(keys.newCode(BOLD), "ann-laptop").orElseThrow().workerId();
+        db.transaction(tx -> Workers.touch(tx, worker, clock.instant()));
+
+        long id = create(BOLD, "alm", "Fix login timeout", "96");
+
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_WAITING' AND task_id = ?", id).get("n"));
     }
 
     @Test
@@ -706,6 +733,16 @@ class TaskLifecycleTest {
         assertEquals(taskMessage, message.get("reply_to_ref"));
         assertEquals(CHAT, message.get("fallback_chat_ref"));
         assertNull(message.get("fallback_reply_to_ref"), "the group has no message of the task to reply to");
+    }
+
+    private TaskService teamTaskService() {
+        return new TaskService(groups, projects, activeRuns, clock, schedulerWakes::incrementAndGet, outboxWakes::incrementAndGet,
+                false, draftId -> { }, true);
+    }
+
+    private JsonNode tasksStatusPayload() {
+        // The fixture's alm project is named "autoland-management"; "alm" is only its alias (ADR: project key vs. name).
+        return db.transactionReturning(tx -> tasks.statusPayload(tx, Set.of("autoland-management"), BOLD.ref()));
     }
 
     private long create(Requester who, String project, String text, String messageId) {
