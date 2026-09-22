@@ -255,6 +255,20 @@ class ManageApiTest {
     }
 
     @Test
+    void aNoOpSaveDoesNotTouchTheBackupAndSaysNoRestartIsNeeded() throws Exception {
+        Files.writeString(dir.resolve("dispatch.yaml.bak"), "sentinel: previous backup\n");
+
+        JsonNode saved = call("/api/manage/people/admin", "{\"version\":\"" + version() + "\",\"id\":100,\"admin\":true}");
+
+        assertTrue(saved.path("saved").asBoolean(), saved.toString());
+        assertFalse(saved.path("restartNeeded").asBoolean(), "Bold is already admin: nothing actually changed: " + saved);
+        assertEquals(sha256(original), saved.path("version").asText(), "the text, and so its version, is unchanged");
+        assertEquals(original, Files.readString(config), "nothing changed on disk");
+        assertEquals("sentinel: previous backup\n", Files.readString(dir.resolve("dispatch.yaml.bak")),
+                "the real previous backup must not be lost to a save that changed nothing");
+    }
+
+    @Test
     void peopleAreRenamedMadeAdminAndRemoved() throws Exception {
         call("/api/manage/people/rename", "{\"version\":\"" + version() + "\",\"id\":222,\"name\":\"Ali Ba'ba\"}");
         call("/api/manage/people/admin", "{\"version\":\"" + version() + "\",\"id\":222,\"admin\":true}");

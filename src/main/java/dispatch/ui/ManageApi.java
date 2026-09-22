@@ -394,6 +394,7 @@ public final class ManageApi {
         String sent = SetupApi.text(body, "version");
         Map<String, String> environment = SecretsFile.environment(configFile, processEnvironment);
         AtomicReference<String> edited = new AtomicReference<>();
+        AtomicReference<Boolean> changed = new AtomicReference<>();
         try {
             ConfigFile.edit(configFile, environment, text -> {
                 byte[] currentBytes = text.getBytes(StandardCharsets.UTF_8);
@@ -407,6 +408,14 @@ public final class ManageApi {
                 } catch (ConfigException e) {
                     throw new CliException(e.getMessage());
                 }
+                // A change function that answers the text unchanged (e.g. setAdmin to the state it already has) is
+                // still validated below, but the file and dispatch.yaml.bak must stay untouched: overwriting the
+                // backup here would replace the real previous version with a copy of what is already on disk.
+                if (result.equals(text)) {
+                    edited.set(result);
+                    changed.set(false);
+                    return result;
+                }
                 try {
                     // Validated here, before dispatch.yaml.bak is touched: a save that fails validation must leave the
                     // backup alone too, not just the config file. ConfigFile.edit validates it again on its own before
@@ -416,13 +425,14 @@ public final class ManageApi {
                     throw new CliException(e.getMessage());
                 }
                 edited.set(result);
+                changed.set(true);
                 backup(currentBytes);
                 return result;
             });
         } catch (ConfigException | UncheckedIOException e) {
             throw new CliException(e.getMessage());
         }
-        return new Saved(true, true, version(edited.get().getBytes(StandardCharsets.UTF_8)));
+        return new Saved(true, changed.get(), version(edited.get().getBytes(StandardCharsets.UTF_8)));
     }
 
     /** The previous text, kept as dispatch.yaml.bak with the config's own permissions (spec: Saving). */

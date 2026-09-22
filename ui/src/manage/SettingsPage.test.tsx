@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import * as api from "../api";
-import { saved, teamConfig } from "./fixtures";
+import { saved, savedNoRestart, teamConfig } from "./fixtures";
 import SettingsPage from "./SettingsPage";
 
 // The real module, with the calls this file answers itself; ApiError stays the real class.
@@ -24,6 +24,17 @@ test("saving sends every setting with the version it was read at, then says to r
   expect(await screen.findByText("Saved. Restart to apply")).toBeInTheDocument();
   expect(save).toHaveBeenCalledWith("v1", { ...teamConfig.settings, authorName: "Dispatch (backend)" });
   expect(screen.getByRole("button", { name: "Restart now" })).toBeInTheDocument();
+});
+
+test("a save that changed nothing does not say to restart", async () => {
+  vi.mocked(api.getConfig).mockResolvedValue(teamConfig);
+  vi.mocked(api.saveSettings).mockResolvedValue(savedNoRestart);
+
+  render(<SettingsPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+  await vi.waitFor(() => expect(api.saveSettings).toHaveBeenCalled());
+  expect(screen.queryByText("Saved. Restart to apply")).not.toBeInTheDocument();
 });
 
 test("a config changed on disk is explained and can be reloaded", async () => {

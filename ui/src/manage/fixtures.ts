@@ -24,3 +24,6 @@ export const teamConfig: ConfigView = {
 };
 
 export const saved = { saved: true, restartNeeded: true, version: "v2" };
+
+/** A save that changed nothing (e.g. setting an admin to the state they already have): no restart is needed. */
+export const savedNoRestart = { saved: true, restartNeeded: false, version: "v1" };

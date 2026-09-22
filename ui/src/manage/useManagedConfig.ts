@@ -29,8 +29,8 @@ export function useManagedConfig() {
     setSaving(true);
     setSaveError(null);
     try {
-      await call(config.version);
-      setSaved(true);
+      const result = await call(config.version);
+      setSaved(result.restartNeeded);
       await reload();
       return true;
     } catch (e) {
