@@ -386,7 +386,7 @@ public final class SetupApi {
         if (value.isMissingNode() || value.isNull()) {
             return null;
         }
-        if (!value.isIntegralNumber() || value.asInt() < 1) {
+        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.asInt() < 1) {
             throw new CliException("maxConcurrentRuns must be a whole number, at least 1");
         }
         return value.asInt();

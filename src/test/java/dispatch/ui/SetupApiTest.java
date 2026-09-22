@@ -349,6 +349,22 @@ class SetupApiTest {
     }
 
     @Test
+    void maxConcurrentRunsThatOverflowsAnIntIsRefused() throws Exception {
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+        String project = "{\"folder\":\"" + json(repos.repo("alm").toString()) + "\",\"name\":\"alm\",\"baseBranch\":\"main\"}";
+
+        CliException refused = assertThrows(CliException.class, () -> call("/api/setup/write",
+                "{\"claude\":\"claude\",\"authorName\":\"a\",\"authorEmail\":\"a@example.com\",\"projects\":[" + project
+                        + "],\"advanced\":{\"maxConcurrentRuns\":99999999999}}"));
+
+        assertEquals("maxConcurrentRuns must be a whole number, at least 1", refused.getMessage());
+        assertFalse(Files.exists(config));
+    }
+
+    @Test
     void theAdvancedSectionReachesTheConfig() throws Exception {
         call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
         telegram.pushUpdate(start(1, 100, "Bold"));
