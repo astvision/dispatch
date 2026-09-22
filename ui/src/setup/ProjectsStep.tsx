@@ -1,6 +1,7 @@
-import { Alert, Button, Card, Form, Input, Select, Space, Table, Typography } from "antd";
+import { Alert, Button, Card, Collapse, Form, Input, Select, Space, Table, Typography } from "antd";
 import { useState } from "react";
-import { probeProject, type Effort, type Model, type ProjectChoice, type ProjectView } from "../api";
+import { probeProject, type Effort, type Model, type PhaseChoice, type ProjectChoice, type ProjectView } from "../api";
+import { PHASE_EFFORTS, PHASE_MODELS } from "../options";
 import { useAction } from "../useAction";
 import FolderBrowser from "./FolderBrowser";
 import type { Draft } from "./SetupPage";
@@ -12,6 +13,16 @@ const EFFORTS: { value: Effort | null; label: string }[] = [
   { value: null, label: "Claude Code's default" }, { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
   { value: "high", label: "High" }, { value: "xhigh", label: "Extra high" }, { value: "max", label: "Max" },
 ];
+
+/** The Advanced section of one project: closed and empty unless someone opens it. */
+interface Extra {
+  alias: string;
+  plan: PhaseChoice;
+  execute: PhaseChoice;
+}
+
+const NO_EXTRA: Extra = { alias: "", plan: { model: null, effort: null }, execute: { model: null, effort: null } };
+const chosen = (phase: PhaseChoice) => (phase.model === null && phase.effort === null ? null : phase);
 
 interface Props {
   draft: Draft;
@@ -25,6 +36,7 @@ export default function ProjectsStep({ draft, update, next, back }: Props) {
   const [probe, setProbe] = useState<ProjectView | null>(null);
   const [choice, setChoice] = useState<ProjectChoice | null>(null);
   const [duplicate, setDuplicate] = useState(false);
+  const [extra, setExtra] = useState<Extra>(NO_EXTRA);
   const { busy, error, run } = useAction();
 
   const pick = async (folder: string) => {
@@ -40,7 +52,14 @@ export default function ProjectsStep({ draft, update, next, back }: Props) {
       setDuplicate(true);
       return;
     }
-    update({ projects: [...draft.projects, { ...choice, name: choice.name.trim(), baseBranch: choice.baseBranch.trim() }] });
+    const alias = extra.alias.trim();
+    const plan = chosen(extra.plan);
+    const execute = chosen(extra.execute);
+    update({ projects: [...draft.projects, {
+      ...choice, name: choice.name.trim(), baseBranch: choice.baseBranch.trim(),
+      ...(alias ? { alias } : {}), ...(plan ? { plan } : {}), ...(execute ? { execute } : {}),
+    }] });
+    setExtra(NO_EXTRA);
     setProbe(null);
     setChoice(null);
     setDuplicate(false);
@@ -81,6 +100,28 @@ export default function ProjectsStep({ draft, update, next, back }: Props) {
             <Form.Item label="Effort">
               <Select aria-label="Effort" value={choice.effort} options={EFFORTS} onChange={(effort) => setChoice({ ...choice, effort })} />
             </Form.Item>
+            <Collapse size="small" style={{ marginBottom: 16 }} items={[{ key: "advanced", label: "Advanced", children: (
+              <>
+                <Form.Item label="Alias" htmlFor="project-alias" extra="A short name to use in tasks">
+                  <Input id="project-alias" value={extra.alias} onChange={(e) => setExtra({ ...extra, alias: e.target.value })} />
+                </Form.Item>
+                <Form.Item label="Planning model">
+                  <Select aria-label="Planning model" value={extra.plan.model} options={PHASE_MODELS}
+                          onChange={(model) => setExtra({ ...extra, plan: { ...extra.plan, model } })} />
+                </Form.Item>
+                <Form.Item label="Planning effort">
+                  <Select aria-label="Planning effort" value={extra.plan.effort} options={PHASE_EFFORTS}
+                          onChange={(effort) => setExtra({ ...extra, plan: { ...extra.plan, effort } })} />
+                </Form.Item>
+                <Form.Item label="Execution model">
+                  <Select aria-label="Execution model" value={extra.execute.model} options={PHASE_MODELS}
+                          onChange={(model) => setExtra({ ...extra, execute: { ...extra.execute, model } })} />
+                </Form.Item>
+                <Form.Item label="Execution effort">
+                  <Select aria-label="Execution effort" value={extra.execute.effort} options={PHASE_EFFORTS}
+                          onChange={(effort) => setExtra({ ...extra, execute: { ...extra.execute, effort } })} />
+                </Form.Item>
+              </>) }]} />
             {duplicate && <Alert type="error" showIcon message="You already added a project with this name." style={{ marginBottom: 12 }} />}
             <Space>
               <Button onClick={() => { setProbe(null); setChoice(null); }}>Cancel</Button>

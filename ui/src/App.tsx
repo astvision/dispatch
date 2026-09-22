@@ -1,4 +1,5 @@
 import { Layout, Menu, Result, Spin, Typography } from "antd";
+import LogsPage from "./manage/LogsPage";
 import PeoplePage from "./manage/PeoplePage";
 import ProjectsPage from "./manage/ProjectsPage";
 import SettingsPage from "./manage/SettingsPage";
@@ -12,6 +13,7 @@ const PAGES = [
   { key: "/projects", label: "Projects" },
   { key: "/people", label: "People" },
   { key: "/settings", label: "Settings" },
+  { key: "/logs", label: "Logs" },
 ];
 
 function Page({ path }: { path: string }) {
@@ -22,6 +24,8 @@ function Page({ path }: { path: string }) {
       return <PeoplePage />;
     case "/settings":
       return <SettingsPage />;
+    case "/logs":
+      return <LogsPage />;
     default:
       return <OverviewPage />;
   }

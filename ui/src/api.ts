@@ -120,12 +120,27 @@ export interface PhaseChoice {
   effort: Effort | null;
 }
 
+/** alias, plan and execute come from the Advanced section and are left out when it is not used. */
 export interface ProjectChoice {
   folder: string;
   name: string;
   baseBranch: string;
   model: Model | null;
   effort: Effort | null;
+  alias?: string;
+  plan?: PhaseChoice;
+  execute?: PhaseChoice;
+}
+
+/** Setup's Advanced answers for the whole instance; each one left out keeps its default. */
+export interface SetupAdvanced {
+  planTimeout?: string;
+  planBudgetUsd?: number;
+  executeTimeout?: string;
+  executeBudgetUsd?: number;
+  maxConcurrentRuns?: number;
+  stateDir?: string;
+  ghCommand?: string;
 }
 
 export interface SetupPayload {
@@ -134,6 +149,7 @@ export interface SetupPayload {
   authorName: string;
   authorEmail: string;
   projects: ProjectChoice[];
+  advanced?: SetupAdvanced;
 }
 
 export interface Written {

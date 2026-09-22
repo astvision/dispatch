@@ -2,7 +2,9 @@ import { CheckCircleTwoTone, CloseCircleTwoTone, ExclamationCircleTwoTone } from
 import { Alert, Button, Card, Descriptions, Empty, List, Result, Space, Spin, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 import type { Finding, ServiceView } from "./api";
+import { RestartStatus } from "./RestartNotice";
 import { useOverview } from "./useOverview";
+import { useRestart } from "./useRestart";
 
 const levelIcon: Record<Finding["level"], ReactNode> = {
   OK: <CheckCircleTwoTone twoToneColor="#52c41a" aria-label="ok" />,
@@ -17,6 +19,7 @@ function ServiceTag({ service }: { service: ServiceView }) {
 
 export default function OverviewPage() {
   const { overview, error, loading, reload } = useOverview();
+  const restarting = useRestart();
 
   if (loading && !overview) {
     return (
@@ -65,6 +68,17 @@ export default function OverviewPage() {
         {overview.service.notes.map((note) => (
           <Alert key={note} type="warning" showIcon message={note} />
         ))}
+        {overview.service.installed ? (
+          <Button loading={restarting.phase === "restarting"} style={{ marginTop: 12 }}
+                  onClick={() => void restarting.restart().then(() => reload())}>Restart</Button>
+        ) : overview.configured && (
+          <Typography.Paragraph type="secondary">
+            Dispatch does not run as a background service here: to restart it, stop it and start it again where it runs.
+          </Typography.Paragraph>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <RestartStatus phase={restarting.phase} error={restarting.error} lines={restarting.lines} />
+        </div>
       </Card>
       <Card title="Checks" extra={<Button loading={loading} onClick={() => void reload()}>Check again</Button>}>
         <List
