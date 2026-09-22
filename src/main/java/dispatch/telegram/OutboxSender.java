@@ -20,8 +20,8 @@ import java.util.Set;
 
 /**
  * Delivers outbox messages one at a time (ADR 0010). Transient failures are retried with logged, bounded backoff. A
- * private message Telegram refuses goes to its fallback in the group (ADR 0011); other permanent failures and anything
- * older than a day are marked FAILED and logged, never dropped silently.
+ * private message Telegram refuses goes to a content-free notice in the group instead (ADR 0011, 0020); other permanent
+ * failures and anything older than a day are marked FAILED and logged, never dropped silently.
  */
 public final class OutboxSender implements Runnable {
 

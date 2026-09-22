@@ -108,6 +108,11 @@ public final class UpdateHandler {
             onChatMessage(tx, message, true);
             return;
         }
+        if (privateChat && groups.isAdmin(Refs.user(from.get("id").asLong())) && isCancelCommand(message)) {
+            // An admin outside every group still cancels through the normal path (ADR 0020); TaskService.cancel allows it.
+            onChatMessage(tx, message, true);
+            return;
+        }
         if (privateChat && !groups.admins().isEmpty()) {
             // Someone new writes to a shared bot: they ask to join, and the admins decide (ADR 0015).
             Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
@@ -129,6 +134,10 @@ public final class UpdateHandler {
         if (from.has("id")) {
             onChatMessage(tx, message, false);
         }
+    }
+
+    private boolean isCancelCommand(JsonNode message) {
+        return Command.parse(message).filter(command -> command.name().equals("cancel") && command.addressedTo(botUsername)).isPresent();
     }
 
     /** A message in the team group, or in a member's private chat with the bot, from someone with a user id. */
@@ -177,9 +186,12 @@ public final class UpdateHandler {
                 giveTask(tx, who, command.args(), message, origin);
             }
             case "status" -> tasks.status(tx, visible, privateChat ? who.ref() : null, origin, chatRef);
-            case "history" -> taskId(command.args()).ifPresentOrElse(
-                    id -> tasks.timeline(tx, visible, id, origin, chatRef),
-                    () -> tasks.history(tx, visible, origin, chatRef));
+            case "history" -> {
+                String viewer = privateChat ? who.ref() : null;
+                taskId(command.args()).ifPresentOrElse(
+                        id -> tasks.timeline(tx, visible, viewer, id, origin, chatRef),
+                        () -> tasks.history(tx, visible, viewer, origin, chatRef));
+            }
             case "cancel" -> {
                 if (!privateChat) {
                     privateOnly(tx, chatRef, origin);

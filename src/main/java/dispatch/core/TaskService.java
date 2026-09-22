@@ -413,7 +413,7 @@ public final class TaskService {
             return ApproveResult.NOT_FOUND;
         }
         Task task = found.get();
-        if (!task.requester().ref().equals(who.ref())) {
+        if (!isRequester(task, who)) {
             tx.afterCommit(() -> Log.info("task.approve_not_requester", "task", taskId, "requester", who.ref()));
             return ApproveResult.NOT_REQUESTER;
         }
@@ -453,14 +453,13 @@ public final class TaskService {
             notAllowed(tx, who, originRef, chatRef, now);
             return CorrectResult.NOT_ALLOWED;
         }
+        Task task = Tasks.find(tx, taskId).orElseThrow(() -> new IllegalStateException("task " + taskId + " does not exist"));
+        if (!isRequester(task, who)) {
+            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef, notRequester(task), now);
+            return CorrectResult.REFUSED;
+        }
         if (text == null || text.isBlank()) {
             return CorrectResult.EMPTY;
-        }
-        Task task = Tasks.find(tx, taskId).orElseThrow(() -> new IllegalStateException("task " + taskId + " does not exist"));
-        if (!task.requester().ref().equals(who.ref())) {
-            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef, Json.object().put("taskId", taskId)
-                    .put("reason", "requester").put("requester", task.requester().name()), now);
-            return CorrectResult.REFUSED;
         }
         if (task.phase() != Phase.AWAITING_APPROVAL) {
             enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef,
@@ -506,7 +505,7 @@ public final class TaskService {
             return RejectResult.NOT_FOUND;
         }
         Task task = found.get();
-        if (!task.requester().ref().equals(who.ref())) {
+        if (!isRequester(task, who)) {
             tx.afterCommit(() -> Log.info("task.reject_not_requester", "task", taskId, "requester", who.ref()));
             return RejectResult.NOT_REQUESTER;
         }
@@ -538,7 +537,7 @@ public final class TaskService {
             return PriorityResult.NOT_FOUND;
         }
         Task task = found.get();
-        if (!task.requester().ref().equals(who.ref())) {
+        if (!isRequester(task, who)) {
             return PriorityResult.NOT_REQUESTER;
         }
         if (!task.phase().isActive()) {
@@ -558,21 +557,26 @@ public final class TaskService {
     }
 
     /**
-     * Cancels an active task of the member's groups, or one they requested; a running agent is stopped after commit and its
-     * run ends as CANCELLED. Another group's task is answered as not found, so its existence does not leak.
+     * Cancels the member's own task; an admin may cancel any task, even outside their own groups. A running agent is
+     * stopped after commit and its run ends as CANCELLED. Another group's task is answered as not found, so its existence
+     * does not leak, unless the caller is an admin.
      */
     public CancelResult cancel(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
-        if (!groups.isMember(who.ref())) {
+        if (!groups.isMember(who.ref()) && !groups.isAdmin(who.ref())) {
             notAllowed(tx, who, originRef, chatRef, now);
             return CancelResult.NOT_ALLOWED;
         }
-        Optional<Task> found = visibleTask(tx, who, taskId);
+        Optional<Task> found = groups.isAdmin(who.ref()) ? Tasks.find(tx, taskId) : visibleTask(tx, who, taskId);
         if (found.isEmpty()) {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
             return CancelResult.NOT_FOUND;
         }
         Task task = found.get();
+        if (!isRequester(task, who) && !groups.isAdmin(who.ref())) {
+            enqueue(tx, taskId, OutboxKind.CANCEL_REFUSED, chatRef, originRef, notRequester(task), now);
+            return CancelResult.REFUSED;
+        }
         if (!task.phase().isActive() || !Tasks.changePhase(tx, taskId, task.phase(), Phase.CANCELLED, now)) {
             enqueue(tx, taskId, OutboxKind.CANCEL_REFUSED, chatRef, originRef,
                     Json.object().put("taskId", taskId).put("phase", task.phase().name()), now);
@@ -593,8 +597,8 @@ public final class TaskService {
 
     /**
      * Repeats just the failed step of a failed task (ADR 0008): a failed plan is planned again, a failed execution continues
-     * its building session, and a failed delivery is delivered again without the agent. Any member of the task's group may
-     * retry it, like cancelling; another group's task is answered as not found.
+     * its building session, and a failed delivery is delivered again without the agent. Only the requester may retry it;
+     * another group's task is answered as not found.
      */
     public RetryResult retry(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
@@ -608,6 +612,10 @@ public final class TaskService {
             return RetryResult.NOT_FOUND;
         }
         Task task = found.get();
+        if (!isRequester(task, who)) {
+            enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef, notRequester(task), now);
+            return RetryResult.REFUSED;
+        }
         Optional<Run> failed = Runs.latest(tx, taskId).filter(run -> run.status() == RunStatus.FAILED);
         if (task.phase() != Phase.FAILED || failed.isEmpty()) {
             enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef,
@@ -645,9 +653,9 @@ public final class TaskService {
     }
 
     /**
-     * A member's reply to a finished task's result: it runs at once in the task's building session and branch, without a
-     * new plan, because the reply is itself the instruction (ADR 0006). Only a task that got as far as execution can be
-     * followed up; one that is still active is refused, as its current run would not see the reply.
+     * The requester's reply to a finished task's result: it runs at once in the task's building session and branch,
+     * without a new plan, because the reply is itself the instruction (ADR 0006). Only a task that got as far as
+     * execution can be followed up; one that is still active is refused, as its current run would not see the reply.
      *
      * @param originRef channel reference of the reply, which the answer goes under
      */
@@ -662,10 +670,14 @@ public final class TaskService {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
             return FollowUpResult.NOT_FOUND;
         }
+        Task task = found.get();
+        if (!isRequester(task, who)) {
+            enqueue(tx, taskId, OutboxKind.FOLLOW_UP_REFUSED, chatRef, originRef, notRequester(task), now);
+            return FollowUpResult.REFUSED;
+        }
         if (text == null || text.isBlank()) {
             return FollowUpResult.EMPTY;
         }
-        Task task = found.get();
         boolean finished = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED;
         boolean executed = Runs.agentStartedBefore(tx, taskId, RunKind.EXECUTE, Integer.MAX_VALUE);
         if (!finished || !executed || !Tasks.changePhase(tx, taskId, task.phase(), Phase.EXECUTING, now)) {
@@ -686,6 +698,20 @@ public final class TaskService {
     private Optional<Task> visibleTask(Tx tx, Requester who, long taskId) {
         return Tasks.find(tx, taskId).filter(task ->
                 task.requester().ref().equals(who.ref()) || groups.isMemberOfProjectGroup(who.ref(), task.project()));
+    }
+
+    private static boolean isRequester(Task task, Requester who) {
+        return task.requester().ref().equals(who.ref());
+    }
+
+    /** Whether {@code viewerRef} gave the task; a group chat (null viewer) owns nothing, so it sees headlines only (ADR 0020). */
+    private static boolean ownedBy(Task task, String viewerRef) {
+        return task != null && viewerRef != null && task.requester().ref().equals(viewerRef);
+    }
+
+    /** Why a member may see a task but not act on it: it is someone else's (ADR 0020). */
+    private static ObjectNode notRequester(Task task) {
+        return Json.object().put("taskId", task.id()).put("reason", "requester").put("requester", task.requester().name());
     }
 
     /**
@@ -715,8 +741,10 @@ public final class TaskService {
                     .put("title", run.title()).put("kind", run.kind().name()).put("priority", priority(active.get(run.taskId())));
             if (isRunning) {
                 item.put("startedAt", text(run.startedAt()));
-                activeRuns.activity(run.taskId()).ifPresent(activity ->
-                        item.put("steps", activity.steps()).put("lastAction", activity.lastAction()));
+                if (ownedBy(active.get(run.taskId()), viewerRef)) {
+                    activeRuns.activity(run.taskId()).ifPresent(activity ->
+                            item.put("steps", activity.steps()).put("lastAction", activity.lastAction()));
+                }
             } else {
                 item.put("queuedAt", text(run.queuedAt()));
             }
@@ -733,14 +761,17 @@ public final class TaskService {
         return payload;
     }
 
-    /** Posts the most recently finished tasks of {@code visibleProjects}, newest first, with their total cost. */
-    public void history(Tx tx, Set<String> visibleProjects, String originRef, String chatRef) {
+    /**
+     * Posts the most recently finished tasks of {@code visibleProjects}, newest first; the total cost is shown only on
+     * the viewer's own tasks, everyone else's carry just the headline (ADR 0020).
+     */
+    public void history(Tx tx, Set<String> visibleProjects, String viewerRef, String originRef, String chatRef) {
         List<Task> finished = Tasks.finished(tx, visibleProjects, HISTORY_SIZE);
         Map<Long, BigDecimal> costs = Runs.costs(tx, finished.stream().map(Task::id).toList());
         ObjectNode payload = Json.object();
         ArrayNode listed = payload.putArray("tasks");
         for (Task task : finished) {
-            BigDecimal cost = costs.get(task.id());
+            BigDecimal cost = ownedBy(task, viewerRef) ? costs.get(task.id()) : null;
             listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                     .put("phase", task.phase().name()).put("priority", task.priority().name())
                     .put("requester", task.requester().name()).put("createdAt", text(task.createdAt())).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
@@ -749,8 +780,11 @@ public final class TaskService {
         enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, payload, clock.instant());
     }
 
-    /** Posts one task's timeline: its runs in order, how it ended, and what it cost. Tasks outside {@code visibleProjects} are not found. */
-    public void timeline(Tx tx, Set<String> visibleProjects, long taskId, String originRef, String chatRef) {
+    /**
+     * Posts one task's timeline: its runs in order, how it ended, and what it cost. Tasks outside {@code visibleProjects}
+     * are not found. Someone else's task stops at the headline: no runs, no cost (ADR 0020).
+     */
+    public void timeline(Tx tx, Set<String> visibleProjects, String viewerRef, long taskId, String originRef, String chatRef) {
         Optional<Task> found = Tasks.find(tx, taskId).filter(task -> visibleProjects.contains(task.project()));
         if (found.isEmpty()) {
             enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), clock.instant());
@@ -762,6 +796,11 @@ public final class TaskService {
                 .put("prUrl", task.prUrl())
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
                 .put("completedAt", text(task.completedAt()));
+        if (!ownedBy(task, viewerRef)) {
+            payload.put("headline", true).putNull("costUsd");
+            enqueue(tx, null, OutboxKind.TASK_TIMELINE, chatRef, originRef, payload, clock.instant());
+            return;
+        }
         ArrayNode runs = payload.putArray("runs");
         BigDecimal total = null;
         for (Run run : Runs.forTask(tx, taskId)) {
@@ -791,7 +830,8 @@ public final class TaskService {
     }
 
     /**
-     * Statistics of tasks given in {@code period} ("week": the last 7 days, "month": since the 1st, "all").
+     * Statistics of tasks given in {@code period} ("week": the last 7 days, "month": since the 1st, "all"). Outside the
+     * viewer's own "me" view, cost is dropped from the summary and shown per person only on the viewer's own row (ADR 0020).
      *
      * @param viewerRef  the member asking in their private chat; null in a group chat, which has no "me" view
      * @param groupNames the groups whose tasks the viewer may count
@@ -825,7 +865,11 @@ public final class TaskService {
         ObjectNode payload = Json.object().put("view", view).put("period", period).put("canViewMe", viewerRef != null);
         groupNames.forEach(payload.putArray("groups")::add);
         payload.set("summary", Statistics.summary(given, runs));
-        payload.set("people", view.equals("people") ? Statistics.people(given, runs) : Json.MAPPER.createArrayNode());
+        if (!view.equals("me")) {
+            // A group's total holds other members' costs (ADR 0020).
+            ((ObjectNode) payload.get("summary")).putNull("costUsd").putNull("averageCostUsd");
+        }
+        payload.set("people", view.equals("people") ? Statistics.people(given, runs, viewerRef) : Json.MAPPER.createArrayNode());
         return Optional.of(payload);
     }
 

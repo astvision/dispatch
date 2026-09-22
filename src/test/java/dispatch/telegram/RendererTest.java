@@ -293,6 +293,20 @@ class RendererTest {
     }
 
     @Test
+    void cancelRetryAndFollowUpRefuseNonRequestersToo() {
+        String cancel = renderer.render(OutboxKind.CANCEL_REFUSED,
+                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
+        String retry = renderer.render(OutboxKind.RETRY_REFUSED,
+                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
+        String followUp = renderer.render(OutboxKind.FOLLOW_UP_REFUSED,
+                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
+
+        assertTrue(cancel.contains("#7") && cancel.contains("Bold"), cancel);
+        assertTrue(retry.contains("#7") && retry.contains("Bold"), retry);
+        assertTrue(followUp.contains("#7") && followUp.contains("Bold"), followUp);
+    }
+
+    @Test
     void statusShowsRunningWorkWithTheAgentsLatestActionThenQueuedAndAwaiting() {
         String html = renderer.render(OutboxKind.STATUS, statusPayload()).html();
 
@@ -358,6 +372,16 @@ class RendererTest {
     }
 
     @Test
+    void historyTaskWithoutCostShowsNoCostSeparator() {
+        String html = renderer.render(OutboxKind.HISTORY, historyPayload()).html();
+
+        int date = html.indexOf("09-16 10:00");
+        assertTrue(date >= 0, html);
+        assertEquals("", html.substring(date + "09-16 10:00".length(), html.indexOf('\n', date)),
+                "no cost shown for a task with costUsd null: " + html);
+    }
+
+    @Test
     void emptyHistorySaysSo() {
         ObjectNode payload = Json.object();
         payload.putArray("tasks");
@@ -383,6 +407,18 @@ class RendererTest {
         assertEquals(List.of(new Renderer.Button(messages.getString("stats.period.week"), "stats:week:me"),
                 new Renderer.Button("✓ " + messages.getString("stats.period.month"), "stats:month:me"),
                 new Renderer.Button(messages.getString("stats.period.all"), "stats:all:me")), keyboard.get(2));
+    }
+
+    @Test
+    void statsWithoutCostShowNoCostFigures() {
+        ObjectNode payload = statsPayload("group:backend");
+        ((ObjectNode) payload.get("summary")).putNull("costUsd").putNull("averageCostUsd");
+        payload.putArray("people").addObject().put("name", "Ali").put("tasks", 2).put("completed", 1).putNull("costUsd");
+
+        String html = renderer.render(OutboxKind.STATS, payload).html();
+
+        assertFalse(html.contains("$"), html);
+        assertTrue(html.contains("Ali") && html.contains("2 даалгавар"), html);
     }
 
     @Test
@@ -426,6 +462,19 @@ class RendererTest {
     }
 
     @Test
+    void timelineOfSomeoneElsesTaskShowsOnlyTheHeadlineWithNoRunsOrTotal() {
+        ObjectNode payload = timelinePayload().put("headline", true).putNull("costUsd");
+
+        String html = renderer.render(OutboxKind.TASK_TIMELINE, payload).html();
+
+        assertTrue(html.contains("<b>#2</b> life · Bold"), html);
+        assertTrue(html.contains("✅") && html.contains("https://github.com/acme/life/pull/1"), html);
+        assertFalse(html.contains("10:00 📋"), "someone else's runs are not shown: " + html);
+        String totalPrefix = messages.getString("timeline.total").substring(0, messages.getString("timeline.total").indexOf('{'));
+        assertFalse(html.contains(totalPrefix), "someone else's cost is not shown: " + html);
+    }
+
+    @Test
     void timelineOfAFailedRunNamesTheReason() {
         ObjectNode payload = timelinePayload().put("phase", "FAILED").put("failureReason", "AGENT").putNull("prUrl");
         ((ObjectNode) payload.get("runs").get(2)).put("status", "FAILED").put("failureReason", "AGENT");
@@ -460,23 +509,23 @@ class RendererTest {
     }
 
     @Test
-    void messageThatFellBackToTheGroupAsksTheRequesterToPressStart() {
-        String html = renderer.render(OutboxKind.TASK_QUEUED, samplePayload(OutboxKind.TASK_QUEUED), true).html();
+    void aPrivateMessageThatFellBackToTheGroupShowsNoneOfItsContent() {
+        ObjectNode plan = Json.object().put("taskId", 42).put("planSeq", 1).put("project", "alm")
+                .put("costUsd", "0.10").put("durationSeconds", 5);
+        plan.putObject("plan").put("understanding", "Rotate the signing key in secrets.env").putArray("steps").add("Edit secrets.env");
+        ObjectNode completed = Json.object().put("taskId", 43).put("project", "alm")
+                .put("prUrl", "https://github.com/acme/alm/pull/9").put("filesChanged", 1)
+                .put("summary", "Changed the password check");
 
-        assertTrue(html.contains("@dispatch_backend_bot"), html);
-        assertTrue(html.contains("Start"), html);
-    }
-
-    @Test
-    void longestCompletionStillFitsWithTheStartHint() {
-        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 3,
-                java.util.Collections.nCopies(9, "Bash: " + "<&>".repeat(80)));
-        payload.put("summary", "<&>".repeat(3000)).put("project", "p".repeat(100));
-
-        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload, true).html();
-
-        assertTrue(html.length() <= 4096, "message limit, got " + html.length());
-        assertTrue(html.contains("Start"), "the hint survives");
+        for (var message : List.of(renderer.render(OutboxKind.PLAN_READY, plan, true),
+                renderer.render(OutboxKind.TASK_COMPLETED, completed, true))) {
+            assertFalse(message.html().contains("secrets.env"), message.html());
+            assertFalse(message.html().contains("password"), message.html());
+            assertFalse(message.html().contains("pull/9"), message.html());
+            assertTrue(message.keyboard().isEmpty(), "no Approve button in the group");
+            assertNull(message.document());
+            assertTrue(message.html().contains("dispatch_backend_bot"), message.html());
+        }
     }
 
     private static ObjectNode planPayload(List<String> steps, List<String> questions) {

@@ -132,9 +132,27 @@ class StatsTest {
         assertEquals("Sara", people.get(0).get("name").asText());
         assertEquals(2, people.get(0).get("tasks").asInt());
         assertEquals(0, people.get(0).get("completed").asInt());
-        assertEquals("0.10", people.get(0).get("costUsd").asText());
+        assertTrue(people.get(0).get("costUsd").isNull(), "Sara's cost, seen by Bold");
         assertEquals("Ali", people.get(1).get("name").asText());
         assertEquals(1, people.get(1).get("completed").asInt());
+    }
+
+    @Test
+    void costIsShownOnlyForTheViewersOwnTasks() {
+        delivered(ALI, "alm", Duration.ofMinutes(5), false, "0.20", "0.30");
+        delivered(BOLD, "alm", Duration.ofMinutes(5), false, "0.10", "0.10");
+
+        JsonNode group = payload(BOLD.ref(), BOLDS_GROUPS, "group:backend", "all");
+        JsonNode people = payload(BOLD.ref(), BOLDS_GROUPS, "people", "all").get("people");
+        JsonNode mine = payload(BOLD.ref(), BOLDS_GROUPS, "me", "all");
+
+        assertEquals(2, group.get("summary").get("tasks").asInt());
+        assertTrue(group.get("summary").get("costUsd").isNull(), "the group's total includes Ali's cost");
+        assertTrue(group.get("summary").get("averageCostUsd").isNull());
+        for (JsonNode person : people) {
+            assertEquals(person.get("name").asText().equals("Bold"), !person.get("costUsd").isNull(), person.toString());
+        }
+        assertEquals("0.20", mine.get("summary").get("costUsd").asText());
     }
 
     @Test

@@ -265,6 +265,33 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void adminOutsideEveryGroupCancelsPrivatelyInsteadOfBeingAskedToJoin() {
+        Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null, "main",
+                "claude-code", null, null, List.of(), null, null, null);
+        Projects projects = new Projects(List.of(alm), project -> Optional.empty());
+        Groups adminGroups = new Groups(new Config.Telegram(List.of(999L),
+                List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold")), List.of("autoland-management")))));
+        TaskService adminTasks = new TaskService(adminGroups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
+        BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
+        UpdateHandler adminHandler = new UpdateHandler(db, adminTasks, new Membership(adminGroups, UpdateHandlerTest::noJoins, clock, () -> { }),
+                adminGroups, projects, api, renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME, clock, () -> { });
+        String origin = "telegram:100/" + System.nanoTime();
+        db.transaction(tx -> adminTasks.create(tx, new dispatch.domain.Requester("telegram:100", "Bold"), "alm", "Fix it",
+                dispatch.domain.Priority.NORMAL, origin));
+        long id = Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+
+        adminHandler.handle(message(700, 70, 999, "Root", 999L, "private", "/cancel " + id, null));
+
+        assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("0", row("SELECT count(*) AS n FROM join_request").get("n"), "the admin's own cancel never becomes a join request");
+
+        // A non-admin non-member sending the same command still only gets to ask for access, as before this fix.
+        adminHandler.handle(message(701, 71, 777, "Eve", 777L, "private", "/cancel " + id, null));
+
+        assertEquals("1", row("SELECT count(*) AS n FROM join_request").get("n"), "a non-admin stranger's /cancel still routes to the join flow");
+    }
+
+    @Test
     void draftButtonOfSomeoneElsesMessageIsRefused() throws Exception {
         handler.handle(message(505, 13, 100, "Bold", 100L, "private", "Fix the login timeout", null));
         long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
@@ -459,7 +486,7 @@ class UpdateHandlerTest {
         long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));
         db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/1100", clock.instant()));
 
-        handler.handle(message(545, 45, 200, "Ali", GROUP, "supergroup", "Also log the value", botMessage(1100)));
+        handler.handle(message(545, 45, 100, "Bold", GROUP, "supergroup", "Also log the value", botMessage(1100)));
 
         assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
         Map<String, String> followUp = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", taskId);
@@ -471,6 +498,27 @@ class UpdateHandlerTest {
         handler.handle(topicMessage(546, 105, 100, "Bold", 55, "and the tablet too"));
 
         assertEquals("and the tablet too", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 4", taskId).get("instruction"));
+    }
+
+    @Test
+    void groupMemberReplyingToAnotherMembersOutcomeIsRefusedAsNotTheRequester() {
+        long taskId = taskAwaitingApproval(List.of());
+        db.transaction(tx -> tasks.approve(tx, new dispatch.domain.Requester("telegram:100", "Bold"), taskId, 1));
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        db.transaction(tx -> tx.update("UPDATE run SET pid = 1 WHERE task_id = ? AND seq = ?", run.taskId(), run.seq()));
+        transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", null, 3, List.of(),
+                null, null, null), List.of("README.md"), "https://github.com/acme/alm/pull/1");
+        long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/1100", clock.instant()));
+        String runsBefore = row("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId).get("n");
+
+        // Ali is in the same group as Bold, the requester, but did not give this task.
+        handler.handle(message(550, 50, 200, "Ali", GROUP, "supergroup", "Nice work, also log the value", botMessage(1100)));
+
+        Map<String, String> refused = row("SELECT * FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/50");
+        assertEquals("FOLLOW_UP_REFUSED", refused.get("kind"));
+        assertEquals("requester", Json.read(refused.get("payload")).get("reason").asText());
+        assertEquals(runsBefore, row("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId).get("n"), "no new run for a refused follow-up");
     }
 
     @Test

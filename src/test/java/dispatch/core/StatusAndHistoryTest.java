@@ -64,7 +64,7 @@ class StatusAndHistoryTest {
                 List.of(), null, null, null);
         activeRuns = new ActiveRuns();
         Groups groups = new Groups(List.of(
-                new Config.Group("mobile", -100L, List.of(new Config.Member(100, "Bold")), List.of("life")),
+                new Config.Group("mobile", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("life")),
                 new Config.Group("backend", -200L, List.of(new Config.Member(200, "Ali")), List.of("alm"))));
         tasks = new TaskService(groups, new Projects(List.of(life, alm), p -> Optional.empty()), activeRuns, clock, () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { });
@@ -88,10 +88,10 @@ class StatusAndHistoryTest {
         clock.advance(Duration.ofMinutes(4));
 
         db.transaction(tx -> tasks.changePriority(tx, BOLD, queued, Priority.URGENT));
-        db.transaction(tx -> tasks.status(tx, LIFE, null, CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.status(tx, LIFE, BOLD.ref(), "telegram:100/99", "telegram:100"));
 
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'STATUS'");
-        assertEquals(CHAT + "/99", message.get("reply_to_ref"));
+        assertEquals("telegram:100/99", message.get("reply_to_ref"));
         JsonNode payload = Json.read(message.get("payload"));
         assertEquals(1, payload.get("running").size());
         JsonNode run = payload.get("running").get(0);
@@ -106,7 +106,7 @@ class StatusAndHistoryTest {
         assertEquals("URGENT", payload.get("queued").get(0).get("priority").asText());
         assertEquals("NORMAL", run.get("priority").asText());
         assertEquals("NORMAL", payload.get("awaitingApproval").get(0).get("priority").asText());
-        assertEquals(0, payload.get("mine").size(), "no priority buttons in a group chat");
+        assertEquals(3, payload.get("mine").size());
         assertEquals("2026-09-17T10:02:00Z", payload.get("queued").get(0).get("queuedAt").asText());
         JsonNode plan = payload.get("awaitingApproval").get(0);
         assertEquals(awaiting, plan.get("taskId").asLong());
@@ -131,7 +131,7 @@ class StatusAndHistoryTest {
         long completed = completed("Add make help", "40");
         create("Still planning", "41");
 
-        db.transaction(tx -> tasks.history(tx, LIFE, CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.history(tx, LIFE, BOLD.ref(), CHAT + "/99", CHAT));
 
         JsonNode listed = Json.read(row("SELECT payload FROM outbox WHERE kind = 'HISTORY'").get("payload")).get("tasks");
         assertEquals(10, listed.size());
@@ -159,7 +159,7 @@ class StatusAndHistoryTest {
         clock.advance(Duration.ofSeconds(62));
         transitions.completed(id, 3, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
 
-        db.transaction(tx -> tasks.timeline(tx, LIFE, id, CHAT + "/52", CHAT));
+        db.transaction(tx -> tasks.timeline(tx, LIFE, BOLD.ref(), id, CHAT + "/52", CHAT));
 
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'TASK_TIMELINE'");
         assertEquals(CHAT + "/52", message.get("reply_to_ref"));
@@ -186,7 +186,7 @@ class StatusAndHistoryTest {
 
     @Test
     void timelineOfAnUnknownTaskSaysItWasNotFound() {
-        db.transaction(tx -> tasks.timeline(tx, LIFE, 999, CHAT + "/60", CHAT));
+        db.transaction(tx -> tasks.timeline(tx, LIFE, null, 999, CHAT + "/60", CHAT));
 
         Map<String, String> message = row("SELECT * FROM outbox");
         assertEquals("TASK_NOT_FOUND", message.get("kind"));
@@ -202,8 +202,8 @@ class StatusAndHistoryTest {
         long mine = create("Mobile work", "71");
 
         db.transaction(tx -> tasks.status(tx, LIFE, null, CHAT + "/72", CHAT));
-        db.transaction(tx -> tasks.history(tx, LIFE, CHAT + "/73", CHAT));
-        db.transaction(tx -> tasks.timeline(tx, LIFE, other, CHAT + "/74", CHAT));
+        db.transaction(tx -> tasks.history(tx, LIFE, null, CHAT + "/73", CHAT));
+        db.transaction(tx -> tasks.timeline(tx, LIFE, null, other, CHAT + "/74", CHAT));
 
         JsonNode status = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/72").get("payload"));
         assertEquals(1, status.get("queued").size());
@@ -235,12 +235,61 @@ class StatusAndHistoryTest {
         long id = completed("Add make help", "83");
         db.transaction(tx -> tx.update("UPDATE task SET priority = 'LOW' WHERE id = ?", id));
 
-        db.transaction(tx -> tasks.history(tx, LIFE, CHAT + "/84", CHAT));
+        db.transaction(tx -> tasks.history(tx, LIFE, null, CHAT + "/84", CHAT));
 
         JsonNode listed = Json.read(row("SELECT payload FROM outbox WHERE kind = 'HISTORY'").get("payload")).get("tasks").get(0);
         assertEquals("LOW", listed.get("priority").asText());
         assertEquals("Bold", listed.get("requester").asText());
         assertEquals("2026-09-17T10:05:00Z", listed.get("createdAt").asText());
+    }
+
+    @Test
+    void anotherMembersTaskShowsOnlyItsHeadline() {
+        long alis = createFor(ALI, "life", "Ali's work", "90");
+        claim();
+        activeRuns.register(alis, 1).attach(new ActivityHandle(new AgentActivity(3, "Bash: cat secrets")));
+        long done = completedFor(ALI, "Ali's finished work", "91");
+
+        db.transaction(tx -> tasks.status(tx, LIFE, BOLD.ref(), "telegram:100/92", "telegram:100"));
+        db.transaction(tx -> tasks.history(tx, LIFE, BOLD.ref(), "telegram:100/93", "telegram:100"));
+        db.transaction(tx -> tasks.timeline(tx, LIFE, BOLD.ref(), done, "telegram:100/94", "telegram:100"));
+        db.transaction(tx -> tasks.status(tx, LIFE, null, CHAT + "/95", CHAT));
+
+        JsonNode running = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:100/92").get("payload"))
+                .get("running").get(0);
+        assertEquals(alis, running.get("taskId").asLong());
+        assertEquals("Ali's work", running.get("title").asText());
+        assertTrue(running.path("lastAction").isMissingNode(), "the agent's actions are Ali's");
+        assertTrue(running.path("steps").isMissingNode());
+        JsonNode listed = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:100/93").get("payload"))
+                .get("tasks").get(0);
+        assertEquals("https://github.com/acme/life/pull/1", listed.get("prUrl").asText(), "the PR link is part of the headline");
+        assertTrue(listed.get("costUsd").isNull(), "cost is Ali's");
+        JsonNode timeline = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:100/94").get("payload"));
+        assertTrue(timeline.get("headline").asBoolean());
+        assertEquals("COMPLETED", timeline.get("phase").asText());
+        assertEquals("Ali", timeline.get("requester").asText());
+        assertTrue(timeline.path("runs").isMissingNode(), "corrections and runs are Ali's");
+        assertTrue(timeline.get("costUsd").isNull());
+        JsonNode group = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/95").get("payload"));
+        assertTrue(group.get("running").get(0).path("lastAction").isMissingNode(), "a group chat sees headlines only");
+    }
+
+    @Test
+    void theRequesterStillSeesTheirOwnTaskInFull() {
+        long mine = create("My work", "96");
+        claim();
+        activeRuns.register(mine, 1).attach(new ActivityHandle(new AgentActivity(2, "Read README.md")));
+
+        db.transaction(tx -> tasks.status(tx, LIFE, BOLD.ref(), "telegram:100/97", "telegram:100"));
+        db.transaction(tx -> tasks.timeline(tx, LIFE, BOLD.ref(), mine, "telegram:100/98", "telegram:100"));
+
+        JsonNode running = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:100/97").get("payload"))
+                .get("running").get(0);
+        assertEquals("Read README.md", running.get("lastAction").asText());
+        JsonNode timeline = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:100/98").get("payload"));
+        assertTrue(timeline.path("headline").isMissingNode() || !timeline.get("headline").asBoolean());
+        assertEquals(1, timeline.get("runs").size());
     }
 
     private long createFor(Requester who, String project, String text, String messageId) {
@@ -264,10 +313,14 @@ class StatusAndHistoryTest {
     }
 
     private long completed(String text, String messageId) {
-        long id = create(text, messageId);
+        return completedFor(BOLD, text, messageId);
+    }
+
+    private long completedFor(Requester who, String text, String messageId) {
+        long id = createFor(who, "life", text, messageId);
         claim();
         transitions.planSucceeded(id, 1, PLAN, result("0.16"));
-        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+        db.transaction(tx -> tasks.approve(tx, who, id, 1));
         claim();
         transitions.completed(id, 2, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
         return id;

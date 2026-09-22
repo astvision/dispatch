@@ -48,7 +48,6 @@ import org.junit.jupiter.api.io.TempDir;
 class RunExecutorTest {
 
     private static final Requester BOLD = new Requester("telegram:100", "Bold");
-    private static final Requester ALI = new Requester("telegram:200", "Ali");
     private static final String CHAT = "telegram:-100";
 
     @TempDir
@@ -358,7 +357,7 @@ class RunExecutorTest {
         runNext();
         assertFailed(id, "AGENT", "fatal: model overloaded");
 
-        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, ALI, id, CHAT + "/300", CHAT)));
+        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
         runNext();
 
         Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
@@ -368,7 +367,7 @@ class RunExecutorTest {
         Map<String, String> retry = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", id);
         assertEquals("EXECUTE", retry.get("kind"));
         assertEquals("RETRY", retry.get("cause"));
-        assertEquals("Ali", retry.get("requested_by_name"));
+        assertEquals("Bold", retry.get("requested_by_name"));
         Path worktree = repos.stateDir.resolve("worktrees/" + id);
         List<String> args = Files.readAllLines(worktree.resolve("fake-claude.args"));
         assertEquals(task.get("build_session_id"), valueAfter(args, "--resume"));
@@ -436,7 +435,7 @@ class RunExecutorTest {
         String baseSha = row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha");
 
         assertEquals(FollowUpResult.QUEUED, db.transactionReturning(tx ->
-                tasks.followUp(tx, ALI, id, "Also log the timeout value", CHAT + "/400", CHAT)));
+                tasks.followUp(tx, BOLD, id, "Also log the timeout value", CHAT + "/400", CHAT)));
         runNext();
 
         Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
@@ -448,7 +447,7 @@ class RunExecutorTest {
         Path worktree = repos.stateDir.resolve("worktrees/" + id);
         assertEquals(task.get("build_session_id"), valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--resume"));
         String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
-        assertTrue(prompt.contains("Ali replied") && prompt.contains("Also log the timeout value"), prompt);
+        assertTrue(prompt.contains("Bold replied") && prompt.contains("Also log the timeout value"), prompt);
         assertEquals("2", origin("rev-list", "--count", baseSha + "..refs/heads/dispatch/" + id), "one commit per run, on the same branch");
         String ghCalls = Files.readString(worktree.resolve("fake-gh.args"));
         assertEquals(1, ghCalls.split("pr\ncreate", -1).length - 1, "the pull request is opened once: " + ghCalls);

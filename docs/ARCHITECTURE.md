@@ -29,6 +29,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Setup | One-line install, an arrow-key `dispatch init` for a personal or a team bot, and a per-user background service on each OS | 0016 |
 | Agent sessions | A task has a planning session (the plan and its corrections) and a building session, which execution starts from the approved plan | 0017 |
 | Setup and management in a browser | `dispatch ui`, a separate process on 127.0.0.1 with a one-time link | 0018 |
+| Task privacy | Another member's task shows only its headline; only the requester acts on it, except cancel, which an admin may also do; a private message Telegram refuses falls back to a content-free group notice | 0020 |
 
 Also decided without an ADR:
 - Only members of a configured group act, for their groups' projects, in their own private chat with the bot; groups get announcements and read-only reports.
@@ -153,7 +154,7 @@ A transition that loses a race updates 0 rows and is logged.
 
 ## Flows
 
-**Messages (ADR 0011, 0012).** Tasks are given in the member's private chat with the bot. The project's group gets a one-line announcement (who, project, priority, title). The plan, the execution notice and the full result or failure go to the requester privately, under the message that gave the task. The group gets a one-line outcome: done with the PR link or "no changes", failed with the reason, rejected, or cancelled. If Telegram refuses a private message permanently (the requester blocked the bot), the outbox re-addresses it to the group with a hint to press Start. A group message replies to a task's message only if the task was given in that group, so it never lands on an unrelated message with the same id.
+**Messages (ADR 0011, 0012).** Tasks are given in the member's private chat with the bot. The project's group gets a one-line announcement (who, project, priority, title). The plan, the execution notice and the full result or failure go to the requester privately, under the message that gave the task. The group gets a one-line outcome: done with the PR link or "no changes", failed with the reason, rejected, or cancelled. If Telegram refuses a private message permanently (the requester blocked the bot), the outbox re-addresses it to the group as a content-free notice — the task number and a hint to open the bot and press Start, not the plan, result or failure itself (ADR 0011, 0020). A group message replies to a task's message only if the task was given in that group, so it never lands on an unrelated message with the same id.
 
 **Give a task (draft).**
 1. A member writes the task in their private chat, forwards a message there, or sends `/task [project] [text]` (the first word counts as the project only if it is one of theirs; a replied-to message becomes the text). Anything written privately that is neither a command nor a reply to a plan is a task.
@@ -202,9 +203,9 @@ A transition that loses a race updates 0 rows and is logged.
 
 The task becomes COMPLETED with PR link, files changed, cost, duration and any denied actions. With no changes it is COMPLETED with "no changes" and nothing is pushed.
 
-**Follow-up** (the requester or any member of the project's group). A reply to a COMPLETED/FAILED task's result, in the private chat or to the group's outcome line, or a message in a finished task's topic, queues an EXECUTE run immediately in the building session and branch. Its delivery adds one commit to the same pull request. Replies while the task is active are refused with its phase; a task that never reached execution is refused with a pointer to `/retry`.
+**Follow-up** (the requester only; ADR 0020). A reply to a COMPLETED/FAILED task's result, in the private chat or to the group's outcome line, or a message in a finished task's topic, queues an EXECUTE run immediately in the building session and branch. Its delivery adds one commit to the same pull request. A reply from another member is refused as not the requester; replies while the task is active are refused with its phase; a task that never reached execution is refused with a pointer to `/retry`.
 
-**Retry** (`/retry <id>`, privately, by the requester or any member of the project's group; FAILED only) repeats just the failed run, as the same kind:
+**Retry** (`/retry <id>`, privately, by the requester only; ADR 0020; FAILED only) repeats just the failed run, as the same kind:
 - a PLAN run: planned again with the same instruction (the task or the correction);
 - an EXECUTE run: continued in the building session with the same instruction and a note on how the previous run ended (reason and detail);
 - a `DELIVERY` failure, or a failed DELIVER run: a DELIVER run commits what the pushed branch lacks as one commit (folding a commit that was made but not pushed), pushes, and opens the pull request if there is none. No agent runs; the commit message is the failed run's summary.
@@ -215,13 +216,13 @@ A session is resumed only if an earlier run of that phase started its agent: a p
 
 **Priority** (by the requester only, while the task is active): buttons under a private `/status` change it; the report is redrawn in place and the change is recorded in `task_event`.
 
-**Cancel** (the requester or any member of the project's group, privately). A queued run is dropped. A running run gets SIGTERM on its process tree, then a 10 s grace period, then SIGKILL. The task becomes CANCELLED and nothing is delivered. The group is told; a cancel sent privately is also answered there.
+**Cancel** (the requester or an admin, privately; an admin may cancel any task, even one outside their own groups; ADR 0020). A queued run is dropped. A running run gets SIGTERM on its process tree, then a 10 s grace period, then SIGKILL. The task becomes CANCELLED and nothing is delivered. The group is told; a cancel sent privately is also answered there.
 
-**Status, history and stats** (a group chat sees its own projects, a member privately those of all their groups; another group's task is answered as not found):
-- `/status`: running runs with priority, elapsed time and the agent's step count and latest action (read live from its stream), then queued runs, then plans awaiting approval. Privately, a row of priority buttons per own active task.
-- `/history`: the ten most recently finished tasks with outcome, priority, who gave them and when, PR link or failure reason, and total cost.
-- `/history <id>`: the task's timeline. Each run shows its time, duration and cost; corrections show their text and executions who approved them. It ends with the outcome and total cost. Times use the server's time zone (`TZ`).
-- `/stats`: tasks given in the last 7 days, this month or all time. The numbers are tasks by outcome, pull requests, total and average cost, median time from task to PR, and the share of tasks that reached execution with their first plan. The views are "me" (privately), each visible group, and per person; buttons redraw the message in place.
+**Status, history and stats** (a group chat sees its own projects, a member privately those of all their groups; another group's task is answered as not found). For a task that is not the viewer's own, these show only its headline — who, project, title, priority, state and PR link — never its plan, the agent's actions or its cost (ADR 0020). A group chat has no viewer, so it always sees headlines only:
+- `/status`: running runs with priority and elapsed time, then queued runs, then plans awaiting approval; the agent's step count and latest action (read live from its stream) appear only for the viewer's own running tasks. Privately, a row of priority buttons per own active task.
+- `/history`: the ten most recently finished tasks with outcome, priority, who gave them and when, and PR link or failure reason; total cost appears only on the viewer's own tasks.
+- `/history <id>`: for the viewer's own task, the full timeline — each run's time, duration and cost, corrections with their text, and who approved each execution — ending with the outcome and total cost. For another member's task it shows only the header and outcome: no runs, no cost. Times use the server's time zone (`TZ`).
+- `/stats`: tasks given in the last 7 days, this month or all time. The numbers are tasks by outcome, pull requests, median time from task to PR, and the share of tasks that reached execution with their first plan; total and average cost are shown only in the viewer's own "me" view, dropped from a group's and the people view's summary. The views are "me" (privately), each visible group, and per person; buttons redraw the message in place. The people view shows cost only on the viewer's own row.
 
 ## Telegram boundary
 
@@ -415,7 +416,7 @@ Tests throughout: unit tests for transitions and scheduler rules; end-to-end tes
 5. Every bot message except live status edits goes through the outbox, including "queued" acks and "not allowed" replies.
 6. Approve/Reject buttons carry the plan's run seq, so buttons on a superseded plan are refused.
 7. `copyFiles` entries must be git-ignored, otherwise setup fails.
-8. Only the requester approves, corrects or rejects their plan (ADR 0011). Any member may cancel or retry any task.
+8. Only the requester approves, corrects, rejects, reprioritizes, follows up on or retries their task (ADR 0011, 0020). The requester or an admin may cancel it.
 9. A task's title is the first line of its description, cut at 80 chars; no summarizing.
 10. The plan field is `findings`, not `cause`, so it also fits feature tasks.
 11. SQLite is accessed through one connection behind a lock.

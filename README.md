@@ -186,7 +186,7 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 | **Reject** on the plan | Closes the task |
 | reply to the result, or write in a finished task's topic | A follow-up: the agent continues in the same session, and one more commit goes to the same pull request |
 | `/retry N` | Repeats task N's failed step: a failed plan is planned again, a failed execution continues, a failed delivery is only delivered again |
-| `/status` | What is running (with the agent's latest action), queued and awaiting approval in your groups, with buttons to change your tasks' priority |
+| `/status` | What is running (with the agent's latest action on your own tasks), queued and awaiting approval in your groups, with buttons to change your tasks' priority |
 | `/history`, `/history N` | The last 10 finished tasks with who gave them and when; task N's timeline |
 | `/stats` | Your numbers, each group's and per person, for 7 days, this month or all time |
 | `/cancel N` | Cancels task N |
@@ -196,7 +196,7 @@ Each plan and result ends with the model that answered, the cost and the duratio
 
 **In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot`, `/stats@bot` and `/projects@bot` there cover that group's projects. Replying to an outcome line there is a follow-up too. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
 
-Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject or reprioritize their task; any member of the project's group can cancel, retry or follow up on it. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
+Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject, reprioritize, follow up on or retry their task; the requester or an admin can cancel it. Other members see only a task's headline: who, project, title, priority, state and pull request, not its plan, the agent's actions or its cost. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
 
 ## Run from a checkout
 

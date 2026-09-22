@@ -67,14 +67,19 @@ public final class Renderer {
         return render(kind, payload, false);
     }
 
-    /** @param fellBack the message was meant for a private chat and goes to the group instead, with a Start hint */
+    /**
+     * @param fellBack the message was meant for a private chat Telegram refused; the group gets a content-free notice
+     *                 instead (ADR 0020), never {@code kind}'s actual rendering
+     */
     public Rendered render(OutboxKind kind, JsonNode payload, boolean fellBack) {
-        String hint = fellBack ? format("fallback.hint", escape(botUsername)) : null;
-        if (kind == OutboxKind.PLAN_READY) {
-            // The hint has to count towards the length that decides between a message and a document.
-            return plan(payload, hint);
+        if (fellBack) {
+            // Meant for the requester's private chat: the group learns only that it could not be delivered (ADR 0020).
+            return plain(format("fallback.private", taskId(payload), escape(botUsername)));
         }
-        Rendered rendered = switch (kind) {
+        if (kind == OutboxKind.PLAN_READY) {
+            return plan(payload);
+        }
+        return switch (kind) {
             case TASK_QUEUED -> plain(format("task.queued", taskId(payload), escape(payload.path("project").asText()),
                     escape(payload.path("requester").asText()), icon(payload).strip(),
                     escapeWithin(payload.path("title").asText(), TITLE_LIMIT)));
@@ -106,14 +111,20 @@ public final class Renderer {
             case TASK_TIMELINE -> timeline(payload);
             case STATS -> stats(payload);
             case TASK_NOT_FOUND -> plain(format("task.notFound", taskId(payload)));
-            case CANCEL_REFUSED -> plain(format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case CANCEL_REFUSED -> plain(payload.path("reason").asText().equals("requester")
+                    ? format("task.cancelNotRequester", taskId(payload), escape(payload.path("requester").asText()))
+                    : format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
             case RETRY_QUEUED -> plain(format("task.retryQueued", taskId(payload), escape(payload.path("by").asText()),
                     text("kind." + payload.path("kind").asText())));
-            case RETRY_REFUSED -> plain(format("task.retryRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case RETRY_REFUSED -> plain(payload.path("reason").asText().equals("requester")
+                    ? format("task.retryNotRequester", taskId(payload), escape(payload.path("requester").asText()))
+                    : format("task.retryRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
             case FOLLOW_UP_QUEUED -> plain(format("task.followUpQueued", taskId(payload), escape(payload.path("by").asText())));
-            case FOLLOW_UP_REFUSED -> plain(payload.path("reason").asText().equals("notExecuted")
-                    ? format("task.followUpNotExecuted", taskId(payload))
-                    : format("task.followUpRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case FOLLOW_UP_REFUSED -> plain(switch (payload.path("reason").asText()) {
+                case "notExecuted" -> format("task.followUpNotExecuted", taskId(payload));
+                case "requester" -> format("task.followUpNotRequester", taskId(payload), escape(payload.path("requester").asText()));
+                default -> format("task.followUpRefused", taskId(payload), text("phase." + payload.path("phase").asText()));
+            });
             case NOT_ALLOWED -> plain(format("member.notAllowed", escape(payload.path("name").asText())));
             case UNKNOWN_PROJECT -> plain(format("project.unknown", escape(payload.path("given").asText()),
                     projectList(payload.path("projects"))));
@@ -130,7 +141,6 @@ public final class Renderer {
             case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
             case JOIN_DENIED -> plain(text("join.denied"));
         };
-        return hint == null ? rendered : new Rendered(rendered.html() + "\n\n" + hint, rendered.keyboard(), rendered.document());
     }
 
     /**
@@ -275,8 +285,7 @@ public final class Renderer {
         return project.hasNonNull("alias") ? project.get("alias").asText() : project.path("name").asText();
     }
 
-    /** @param hint the Start hint of a message that fell back to the group, null otherwise */
-    private Rendered plan(JsonNode payload, String hint) {
+    private Rendered plan(JsonNode payload) {
         String taskId = taskId(payload);
         JsonNode plan = payload.path("plan");
         String planRef = taskId + ":" + payload.path("planSeq").asInt();
@@ -301,12 +310,11 @@ public final class Renderer {
         }
         html.append("\n<i>").append(modelPrefix(payload)).append(format("plan.footer", money(payload.path("costUsd")),
                 duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload));
-        String withHint = hint == null ? "" : "\n\n" + hint;
 
-        if (html.length() + withHint.length() <= MESSAGE_LIMIT) {
-            return new Rendered(html + withHint, buttons, null);
+        if (html.length() <= MESSAGE_LIMIT) {
+            return new Rendered(html.toString(), buttons, null);
         }
-        String caption = truncate(title + "\n" + text("plan.document") + withHint, CAPTION_LIMIT);
+        String caption = truncate(title + "\n" + text("plan.document"), CAPTION_LIMIT);
         return new Rendered(caption, buttons, new Document("plan-" + taskId + ".md", markdown(payload)));
     }
 
@@ -428,9 +436,12 @@ public final class Renderer {
         for (JsonNode task : tasks) {
             String phase = task.path("phase").asText();
             String icons = (OUTCOME_ICONS.getOrDefault(phase, "•") + " " + icon(task)).strip();
-            StringBuilder block = new StringBuilder("\n").append(format("history.line", icons, taskId(task),
-                    escape(task.path("project").asText()), escape(task.path("requester").asText()),
-                    shortDateTime(task.path("createdAt").asText()), money(task.path("costUsd"))))
+            String line = task.hasNonNull("costUsd")
+                    ? format("history.line", icons, taskId(task), escape(task.path("project").asText()),
+                            escape(task.path("requester").asText()), shortDateTime(task.path("createdAt").asText()), money(task.path("costUsd")))
+                    : format("history.lineNoCost", icons, taskId(task), escape(task.path("project").asText()),
+                            escape(task.path("requester").asText()), shortDateTime(task.path("createdAt").asText()));
+            StringBuilder block = new StringBuilder("\n").append(line)
                     .append("\n").append(escapeWithin(task.path("title").asText(), TITLE_LIMIT));
             if (task.hasNonNull("prUrl")) {
                 block.append("\n").append(escape(task.path("prUrl").asText()));
@@ -460,8 +471,10 @@ public final class Renderer {
             html.append("\n\n").append(format("stats.tasks", summary.path("tasks").asInt(), summary.path("completed").asInt(),
                     summary.path("failed").asInt(), summary.path("rejected").asInt(), summary.path("cancelled").asInt(),
                     summary.path("active").asInt()));
-            html.append("\n").append(format("stats.pullRequests", summary.path("pullRequests").asInt(), money(summary.path("costUsd")),
-                    money(summary.path("averageCostUsd"))));
+            html.append("\n").append(summary.hasNonNull("costUsd")
+                    ? format("stats.pullRequests", summary.path("pullRequests").asInt(), money(summary.path("costUsd")),
+                            money(summary.path("averageCostUsd")))
+                    : format("stats.pullRequestsNoCost", summary.path("pullRequests").asInt()));
             if (summary.hasNonNull("medianMinutesToPr")) {
                 html.append("\n").append(format("stats.timeToPr", duration(Duration.ofMinutes(summary.path("medianMinutesToPr").asLong()))));
             }
@@ -472,8 +485,11 @@ public final class Renderer {
         List<String> blocks = new ArrayList<>(List.of(html.toString()));
         for (JsonNode person : payload.path("people")) {
             String separator = blocks.size() == 1 ? "\n" : "";
-            blocks.add(separator + format("stats.person", escape(person.path("name").asText()), person.path("tasks").asInt(),
-                    person.path("completed").asInt(), money(person.path("costUsd"))));
+            blocks.add(separator + (person.hasNonNull("costUsd")
+                    ? format("stats.person", escape(person.path("name").asText()), person.path("tasks").asInt(),
+                            person.path("completed").asInt(), money(person.path("costUsd")))
+                    : format("stats.personNoCost", escape(person.path("name").asText()), person.path("tasks").asInt(),
+                            person.path("completed").asInt())));
         }
 
         List<Button> views = new ArrayList<>();
@@ -507,6 +523,11 @@ public final class Renderer {
                 escape(payload.path("requester").asText()))
                 + "\n" + escapeWithin(payload.path("title").asText(), TITLE_LIMIT)
                 + "\n" + format("timeline.created", dateTime(payload.path("createdAt").asText())) + "\n");
+        if (payload.path("headline").asBoolean()) {
+            // Someone else's task: its runs and cost are theirs (ADR 0020).
+            blocks.add("\n" + outcome(payload));
+            return plain(joinWithin(blocks, "\n"));
+        }
         for (JsonNode run : payload.path("runs")) {
             blocks.add(time(run.path("queuedAt").asText()) + " " + runHeadline(run) + runResult(run));
         }
