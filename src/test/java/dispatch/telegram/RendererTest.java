@@ -509,23 +509,23 @@ class RendererTest {
     }
 
     @Test
-    void messageThatFellBackToTheGroupAsksTheRequesterToPressStart() {
-        String html = renderer.render(OutboxKind.TASK_QUEUED, samplePayload(OutboxKind.TASK_QUEUED), true).html();
+    void aPrivateMessageThatFellBackToTheGroupShowsNoneOfItsContent() {
+        ObjectNode plan = Json.object().put("taskId", 42).put("planSeq", 1).put("project", "alm")
+                .put("costUsd", "0.10").put("durationSeconds", 5);
+        plan.putObject("plan").put("understanding", "Rotate the signing key in secrets.env").putArray("steps").add("Edit secrets.env");
+        ObjectNode completed = Json.object().put("taskId", 43).put("project", "alm")
+                .put("prUrl", "https://github.com/acme/alm/pull/9").put("filesChanged", 1)
+                .put("summary", "Changed the password check");
 
-        assertTrue(html.contains("@dispatch_backend_bot"), html);
-        assertTrue(html.contains("Start"), html);
-    }
-
-    @Test
-    void longestCompletionStillFitsWithTheStartHint() {
-        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 3,
-                java.util.Collections.nCopies(9, "Bash: " + "<&>".repeat(80)));
-        payload.put("summary", "<&>".repeat(3000)).put("project", "p".repeat(100));
-
-        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload, true).html();
-
-        assertTrue(html.length() <= 4096, "message limit, got " + html.length());
-        assertTrue(html.contains("Start"), "the hint survives");
+        for (var message : List.of(renderer.render(OutboxKind.PLAN_READY, plan, true),
+                renderer.render(OutboxKind.TASK_COMPLETED, completed, true))) {
+            assertFalse(message.html().contains("secrets.env"), message.html());
+            assertFalse(message.html().contains("password"), message.html());
+            assertFalse(message.html().contains("pull/9"), message.html());
+            assertTrue(message.keyboard().isEmpty(), "no Approve button in the group");
+            assertNull(message.document());
+            assertTrue(message.html().contains("dispatch_backend_bot"), message.html());
+        }
     }
 
     private static ObjectNode planPayload(List<String> steps, List<String> questions) {

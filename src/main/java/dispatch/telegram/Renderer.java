@@ -67,14 +67,19 @@ public final class Renderer {
         return render(kind, payload, false);
     }
 
-    /** @param fellBack the message was meant for a private chat and goes to the group instead, with a Start hint */
+    /**
+     * @param fellBack the message was meant for a private chat Telegram refused; the group gets a content-free notice
+     *                 instead (ADR 0020), never {@code kind}'s actual rendering
+     */
     public Rendered render(OutboxKind kind, JsonNode payload, boolean fellBack) {
-        String hint = fellBack ? format("fallback.hint", escape(botUsername)) : null;
-        if (kind == OutboxKind.PLAN_READY) {
-            // The hint has to count towards the length that decides between a message and a document.
-            return plan(payload, hint);
+        if (fellBack) {
+            // Meant for the requester's private chat: the group learns only that it could not be delivered (ADR 0020).
+            return plain(format("fallback.private", taskId(payload), escape(botUsername)));
         }
-        Rendered rendered = switch (kind) {
+        if (kind == OutboxKind.PLAN_READY) {
+            return plan(payload);
+        }
+        return switch (kind) {
             case TASK_QUEUED -> plain(format("task.queued", taskId(payload), escape(payload.path("project").asText()),
                     escape(payload.path("requester").asText()), icon(payload).strip(),
                     escapeWithin(payload.path("title").asText(), TITLE_LIMIT)));
@@ -136,7 +141,6 @@ public final class Renderer {
             case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
             case JOIN_DENIED -> plain(text("join.denied"));
         };
-        return hint == null ? rendered : new Rendered(rendered.html() + "\n\n" + hint, rendered.keyboard(), rendered.document());
     }
 
     /**
@@ -281,8 +285,7 @@ public final class Renderer {
         return project.hasNonNull("alias") ? project.get("alias").asText() : project.path("name").asText();
     }
 
-    /** @param hint the Start hint of a message that fell back to the group, null otherwise */
-    private Rendered plan(JsonNode payload, String hint) {
+    private Rendered plan(JsonNode payload) {
         String taskId = taskId(payload);
         JsonNode plan = payload.path("plan");
         String planRef = taskId + ":" + payload.path("planSeq").asInt();
@@ -307,12 +310,11 @@ public final class Renderer {
         }
         html.append("\n<i>").append(modelPrefix(payload)).append(format("plan.footer", money(payload.path("costUsd")),
                 duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload));
-        String withHint = hint == null ? "" : "\n\n" + hint;
 
-        if (html.length() + withHint.length() <= MESSAGE_LIMIT) {
-            return new Rendered(html + withHint, buttons, null);
+        if (html.length() <= MESSAGE_LIMIT) {
+            return new Rendered(html.toString(), buttons, null);
         }
-        String caption = truncate(title + "\n" + text("plan.document") + withHint, CAPTION_LIMIT);
+        String caption = truncate(title + "\n" + text("plan.document"), CAPTION_LIMIT);
         return new Rendered(caption, buttons, new Document("plan-" + taskId + ".md", markdown(payload)));
     }
 

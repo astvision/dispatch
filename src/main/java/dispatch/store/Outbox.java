@@ -65,9 +65,10 @@ public final class Outbox {
     }
 
     /**
-     * A task message for its requester's private chat, under the message that gave the task, falling back to the task's
-     * group (ADR 0011, 0012). The requester reference addresses the private chat: for Telegram, a private chat's id is the
-     * user's id. A reply target is set only in the chat that holds the message, so a reply never lands on an unrelated one.
+     * A task message for its requester's private chat, under the message that gave the task, falling back to a
+     * content-free notice in the task's group if Telegram refuses it (ADR 0011, 0012, 0020). The requester reference
+     * addresses the private chat: for Telegram, a private chat's id is the user's id. A reply target is set only in the
+     * chat that holds the message, so a reply never lands on an unrelated one.
      */
     public static long enqueueForRequester(Tx tx, Task task, OutboxKind kind, JsonNode payload, Instant now) {
         if (!task.hasGroupChat()) {
