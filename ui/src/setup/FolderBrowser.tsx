@@ -1,5 +1,5 @@
 import { FolderOutlined } from "@ant-design/icons";
-import { Alert, Button, List, Space, Tag, Typography } from "antd";
+import { Alert, Button, Input, List, Space, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 import { listFolders, type FolderListing } from "../api";
 import { useAction } from "../useAction";
@@ -7,11 +7,15 @@ import { useAction } from "../useAction";
 /** Folders on the machine that runs Dispatch; the browser may be on another computer. */
 export default function FolderBrowser({ onPick }: { onPick: (folder: string) => void }) {
   const [listing, setListing] = useState<FolderListing | null>(null);
+  const [typedPath, setTypedPath] = useState("");
   const { busy, error, run } = useAction();
 
   const open = async (path: string | null) => {
     const found = await run(() => listFolders(path));
-    if (found) setListing(found);
+    if (found) {
+      setListing(found);
+      setTypedPath(found.path);
+    }
   };
 
   useEffect(() => {
@@ -22,6 +26,13 @@ export default function FolderBrowser({ onPick }: { onPick: (folder: string) => 
 
   return (
     <Space orientation="vertical" style={{ width: "100%" }}>
+      <label>
+        <Typography.Text>Folder</Typography.Text>
+        <Space.Compact style={{ width: "100%" }}>
+          <Input aria-label="Folder" value={typedPath} onChange={(e) => setTypedPath(e.target.value)} />
+          <Button onClick={() => void open(typedPath)} disabled={busy}>Go</Button>
+        </Space.Compact>
+      </label>
       {listing && (
         <Space wrap>
           <Button disabled={!listing.parent || busy} onClick={() => void open(listing.parent)}>Up</Button>

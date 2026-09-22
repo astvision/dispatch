@@ -65,9 +65,13 @@ final class Folders {
         }
         String text = requested.strip();
         try {
-            Path given = text.equals("~") || text.startsWith("~/") || text.startsWith("~\\")
-                    ? Path.of(home + text.substring(1)) : Path.of(text);
-            return given.toAbsolutePath().normalize();
+            if (text.equals("~") || text.startsWith("~/") || text.startsWith("~\\")) {
+                return Path.of(home + text.substring(1)).toAbsolutePath().normalize();
+            }
+            Path given = Path.of(text);
+            // A relative path is the browser's home-relative listing (e.g. typed from a folder name shown there),
+            // not the server process's own working directory, which the page never shows.
+            return (given.isAbsolute() ? given : home.resolve(given)).toAbsolutePath().normalize();
         } catch (InvalidPathException e) {
             throw new CliException(text + " is not a folder");
         }

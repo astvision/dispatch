@@ -34,3 +34,22 @@ test("a clone picked in the folder browser becomes a project", async () => {
   }));
   expect(screen.queryByRole("button", { name: "Use notes" })).not.toBeInTheDocument();
 });
+
+test("typing a path and clicking Go lists it", async () => {
+  vi.mocked(api.listFolders).mockImplementation((path) =>
+    Promise.resolve(
+      path === "/mnt/d/work"
+        ? { path: "/mnt/d/work", parent: "/mnt/d", truncated: false, folders: [{ name: "crm", path: "/mnt/d/work/crm", gitClone: true }] }
+        : { path: "/home/bold", parent: "/home", truncated: false, folders: [] },
+    ));
+
+  render(<ProjectsStep draft={draft} update={vi.fn()} next={vi.fn()} back={vi.fn()} />);
+  expect(await screen.findByText("/home/bold")).toBeInTheDocument();
+  expect(screen.getByLabelText("Folder")).toHaveValue("/home/bold");
+
+  fireEvent.change(screen.getByLabelText("Folder"), { target: { value: "/mnt/d/work" } });
+  fireEvent.click(screen.getByRole("button", { name: "Go" }));
+
+  expect(await screen.findByText("/mnt/d/work")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Use crm" })).toBeInTheDocument();
+});

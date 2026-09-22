@@ -45,6 +45,15 @@ class FoldersTest {
     }
 
     @Test
+    void aRelativeRequestedPathResolvesAgainstHomeNotTheWorkingDirectory() throws IOException {
+        Files.createDirectories(home.resolve("work/crm"));
+
+        Folders.Listing listing = Folders.list("work/crm", home);
+
+        assertEquals(home.resolve("work/crm").toString(), listing.path());
+    }
+
+    @Test
     void aVeryLargeFolderIsCutShort() throws IOException {
         for (int i = 0; i < Folders.MAX_ENTRIES + 5; i++) {
             Files.createDirectories(home.resolve(String.format("d%04d", i)));
