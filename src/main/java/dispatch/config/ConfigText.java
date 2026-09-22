@@ -70,7 +70,7 @@ public final class ConfigText {
         return "'" + value.replace("'", "''") + "'";
     }
 
-    private static MappingNode root(String text) {
+    static MappingNode root(String text) {
         try {
             if (new Yaml().compose(new StringReader(text)) instanceof MappingNode top) {
                 return top;
@@ -149,7 +149,7 @@ public final class ConfigText {
      * The line a node's text ends on. A block collection's end mark is where the next token starts, often the next line, so
      * its last value decides.
      */
-    private static int lastLine(Node node) {
+    static int lastLine(Node node) {
         if (node instanceof MappingNode map && map.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !map.getValue().isEmpty()) {
             return lastLine(map.getValue().getLast().getValueNode());
         }
@@ -168,7 +168,7 @@ public final class ConfigText {
     }
 
     /** The text's lines and their start offsets. SnakeYAML counts columns in code points, Java strings in chars. */
-    private static final class Lines {
+    static final class Lines {
 
         final String newline;
         private final String text;
