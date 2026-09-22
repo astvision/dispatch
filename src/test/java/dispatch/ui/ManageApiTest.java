@@ -32,6 +32,7 @@ class ManageApiTest {
 
     // Split, so secret scanners never see a token-shaped literal in this file.
     private static final String TOKEN = "123456789" + ":AAH-fake-token-for-tests-only-0123456789";
+    private static final String CUSTOM_SECRET = "my-secret-" + "custom-value-not-matching-pattern";
     private static final String TEAM = """
             # Our team's Dispatch
             team: acme
@@ -357,28 +358,28 @@ class ManageApiTest {
     @Test
     void aCutExactlyAtALineBoundaryIsNotDiscarded() throws IOException {
         Path log = dir.resolve("boundary.log");
-        // Create a file where a cut lands exactly after a '\n'
-        int lineSize = "ts=2026-09-22T10:00:00.000Z level=INFO event=tick 999\n".length();
-        int numLines = (ManageApi.TAIL_BYTES / lineSize) + 2;
+        // Deterministic: every line is exactly 1024 bytes (1023 chars + '\n')
+        // TAIL_BYTES = 1024 * 1024, so 1024 lines = 1 MiB exactly
+        // Write 1024 + 10 lines, so the cut lands exactly after line 1024's '\n'
+        int lineSize = 1024;
+        int numLines = (ManageApi.TAIL_BYTES / lineSize) + 10;
         StringBuilder text = new StringBuilder();
         for (int i = 0; i < numLines; i++) {
-            text.append(String.format("ts=2026-09-22T10:00:00.000Z level=INFO event=tick %03d\n", i));
+            // Start with line index; pad to lineSize - 1 with 'a', then add '\n'
+            String line = String.format("ts=x level=INFO event=line.%08d ", i);
+            while (line.length() < lineSize - 1) {
+                line += 'a';
+            }
+            text.append(line).append('\n');
         }
         Files.writeString(log, text);
 
-        long fileSize = Files.size(log);
-        long cutPoint = fileSize - ManageApi.TAIL_BYTES;
+        List<String> result = ManageApi.tail(log, 2000, null, null);
 
-        // Find if cut is at a line boundary
-        byte[] allBytes = Files.readAllBytes(log);
-        boolean cutAtBoundary = cutPoint > 0 && cutPoint < fileSize && allBytes[(int)cutPoint - 1] == '\n';
-
-        if (cutAtBoundary) {
-            List<String> result = ManageApi.tail(log, 2000, null, null);
-            assertTrue(result.size() > 0, "should have at least one line from after the boundary");
-            assertTrue(result.get(0).startsWith("ts=2026-09-22T10:00:00.000Z"),
-                    "first line should be complete, not truncated: " + result.get(0));
-        }
+        // The first returned line should be from line index 10 (the first complete line in the window)
+        assertTrue(result.size() > 0, "should have at least one line in the window");
+        assertTrue(result.get(0).contains("line.00000010"),
+                "first line in window should be line 10, not a mid-line fragment: " + result.get(0));
     }
 
     @Test
@@ -414,7 +415,7 @@ class ManageApiTest {
     @Test
     void customSecretsInFileAreRedacted() throws Exception {
         Path secretFile = dir.resolve("dispatch.env");
-        Files.writeString(secretFile, "GH_TOKEN=my-secret-custom-value-not-matching-pattern\n");
+        Files.writeString(secretFile, "GH_TOKEN=" + CUSTOM_SECRET + "\n");
         // Set proper permissions so SecretsFile doesn't reject it
         try {
             Files.setPosixFilePermissions(secretFile, PosixFilePermissions.fromString("rw-------"));
@@ -424,11 +425,11 @@ class ManageApiTest {
 
         Path log = dir.resolve("state/dispatch.log");
         Files.createDirectories(log.getParent());
-        Files.writeString(log, "ts=2026-09-22T10:00:00.000Z level=INFO event=app.started token=my-secret-custom-value-not-matching-pattern\n");
+        Files.writeString(log, "ts=2026-09-22T10:00:00.000Z level=INFO event=app.started token=" + CUSTOM_SECRET + "\n");
 
         JsonNode logs = call("/api/manage/logs", "{}");
 
-        assertFalse(logs.path("lines").get(0).asText().contains("my-secret-custom-value-not-matching-pattern"),
+        assertFalse(logs.path("lines").get(0).asText().contains(CUSTOM_SECRET),
                 "custom secret should be redacted: " + logs.path("lines").get(0).asText());
         assertTrue(logs.path("lines").get(0).asText().contains("[redacted]"), "should contain redaction marker");
     }
