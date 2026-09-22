@@ -165,6 +165,16 @@ public final class Tasks {
         tx.update("UPDATE task SET worktree = ?, base_sha = ?, updated_at = ? WHERE id = ?", worktree, baseSha, now, id);
     }
 
+    /** The computer that made this task's worktree: every later run of the task goes back to it. */
+    public static void recordWorker(Tx tx, long id, long workerId, Instant now) {
+        tx.update("UPDATE task SET worker_id = ?, updated_at = ? WHERE id = ?", workerId, now, id);
+    }
+
+    public static Optional<Long> workerOf(Tx tx, long id) {
+        return tx.one("SELECT worker_id FROM task WHERE id = ?", row -> row.longOrNull("worker_id"), id)
+                .filter(workerId -> workerId != null);
+    }
+
     private static Task map(Row row) throws java.sql.SQLException {
         return new Task(
                 row.longValue("id"),
