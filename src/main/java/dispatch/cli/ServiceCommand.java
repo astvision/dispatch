@@ -1,19 +1,14 @@
 package dispatch.cli;
 
 import dispatch.config.ConfigException;
-import dispatch.workspace.Git;
-import dispatch.workspace.WorkspaceException;
 import java.io.UncheckedIOException;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.Map;
 
 /** `dispatch service install | start | stop | status | uninstall` (ADR 0016). */
 public final class ServiceCommand {
-
-    private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(60);
 
     private final Terminal terminal;
     private final Service service;
@@ -28,19 +23,7 @@ public final class ServiceCommand {
 
     /** The service for this OS and user, run with this process's Java and jar. */
     public static ServiceCommand forThisMachine(Terminal terminal) {
-        Path home = Path.of(System.getProperty("user.home"));
-        String os = System.getProperty("os.name");
-        String user = os.startsWith("Windows") && System.getenv("USERDOMAIN") != null
-                ? System.getenv("USERDOMAIN") + "\\" + System.getProperty("user.name")
-                : System.getProperty("user.name");
-        Service.Commands commands = commandLine -> {
-            try {
-                return Git.runProcess(commandLine, home, null, COMMAND_TIMEOUT, String.join(" ", commandLine));
-            } catch (WorkspaceException e) {
-                return new Git.Result(127, "", e.getMessage());
-            }
-        };
-        return new ServiceCommand(terminal, Service.forOs(os, home, commands, user), runningJar());
+        return new ServiceCommand(terminal, Service.forThisMachine(), runningJar());
     }
 
     public int run(Cli.Service options, Map<String, String> processEnvironment) {
