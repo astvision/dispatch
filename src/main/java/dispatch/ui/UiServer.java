@@ -78,39 +78,51 @@ public final class UiServer implements AutoCloseable {
 
     private void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
-            exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
-            exchange.getResponseHeaders().set("X-Frame-Options", "DENY");
-            exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
-            if (!auth.hostAllowed(exchange.getRequestHeaders().getFirst("Host"))) {
-                text(exchange, 403, "Open Dispatch through the link dispatch ui printed.");
-                return;
+            try {
+                respond(exchange);
+            } catch (RuntimeException e) {
+                // Last-resort safety net: without this, the JDK HttpServer drops the connection silently (TRACE-level
+                // log only) and the person staring at a blank browser tab has nothing to go on.
+                System.err.println("dispatch ui: " + exchange.getRequestURI() + " failed");
+                e.printStackTrace();
+                json(exchange, 500, error("internal", "something went wrong; the terminal running dispatch ui shows what"));
             }
-            String path = exchange.getRequestURI().getPath();
-            Optional<String> token = queryValue(exchange.getRequestURI().getRawQuery(), "t");
-            if (path.equals("/") && token.isPresent()) {
-                login(exchange, token.get());
-                return;
-            }
-            boolean api = path.startsWith("/api/");
-            if (!auth.hasSession(exchange.getRequestHeaders().getFirst("Cookie"))) {
-                if (api) {
-                    json(exchange, 401, error("session", "this page's session ended; restart dispatch ui and open the link it prints"));
-                } else {
-                    text(exchange, 401, "Open Dispatch through the link dispatch ui printed. Each link works once; restart dispatch ui for a new one.");
-                }
-                return;
-            }
-            String method = exchange.getRequestMethod();
-            boolean reading = method.equals("GET") || method.equals("HEAD");
-            if (!reading && !auth.originAllowed(exchange.getRequestHeaders().getFirst("Origin"))) {
-                json(exchange, 403, error("origin", "this request did not come from the Dispatch page"));
-                return;
-            }
+        }
+    }
+
+    private void respond(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+        exchange.getResponseHeaders().set("X-Frame-Options", "DENY");
+        exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
+        if (!auth.hostAllowed(exchange.getRequestHeaders().getFirst("Host"))) {
+            text(exchange, 403, "Open Dispatch through the link dispatch ui printed.");
+            return;
+        }
+        String path = exchange.getRequestURI().getPath();
+        Optional<String> token = queryValue(exchange.getRequestURI().getRawQuery(), "t");
+        if (path.equals("/") && token.isPresent()) {
+            login(exchange, token.get());
+            return;
+        }
+        boolean api = path.startsWith("/api/");
+        if (!auth.hasSession(exchange.getRequestHeaders().getFirst("Cookie"))) {
             if (api) {
-                api(exchange, path, reading);
+                json(exchange, 401, error("session", "this page's session ended; restart dispatch ui and open the link it prints"));
             } else {
-                page(exchange, path);
+                text(exchange, 401, "Open Dispatch through the link dispatch ui printed. Each link works once; restart dispatch ui for a new one.");
             }
+            return;
+        }
+        String method = exchange.getRequestMethod();
+        boolean reading = method.equals("GET") || method.equals("HEAD");
+        if (!reading && !auth.originAllowed(exchange.getRequestHeaders().getFirst("Origin"))) {
+            json(exchange, 403, error("origin", "this request did not come from the Dispatch page"));
+            return;
+        }
+        if (api) {
+            api(exchange, path, reading);
+        } else {
+            page(exchange, path);
         }
     }
 
@@ -135,19 +147,20 @@ public final class UiServer implements AutoCloseable {
             json(exchange, 405, error("method", path + " only answers GET"));
             return;
         }
-        Object result;
+        String body;
         try {
-            result = route.get();
+            body = Json.write(route.get());
         } catch (CliException e) {
             json(exchange, 400, error("invalid", e.getMessage()));
             return;
         } catch (RuntimeException e) {
+            // Covers both a route that throws and a result Jackson can't serialize (e.g. an empty bean).
             System.err.println("dispatch ui: " + path + " failed");
             e.printStackTrace();
             json(exchange, 500, error("internal", "something went wrong; the terminal running dispatch ui shows what"));
             return;
         }
-        json(exchange, 200, Json.write(result));
+        json(exchange, 200, body);
     }
 
     private void page(HttpExchange exchange, String path) throws IOException {
@@ -155,26 +168,30 @@ public final class UiServer implements AutoCloseable {
             text(exchange, 404, "not found");
             return;
         }
-        String file = path.equals("/") ? "/index.html" : path;
+        String file = fileFor(path);
         InputStream content = UiServer.class.getResourceAsStream(resourceRoot + file);
-        if (content == null && !lastSegment(path).contains(".")) {
-            // A client-side route such as /projects: the app decides what to show.
-            file = "/index.html";
-            content = UiServer.class.getResourceAsStream(resourceRoot + file);
-        }
         if (content == null) {
             text(exchange, 404, "not found");
             return;
         }
-        String servedFile = file;
         try (InputStream toClose = content) {
             byte[] bytes = toClose.readAllBytes();
-            String extension = servedFile.substring(servedFile.lastIndexOf('.'));
+            String extension = file.substring(file.lastIndexOf('.'));
             exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPES.getOrDefault(extension, "application/octet-stream"));
             // Vite names assets by their content, so they may be cached; index.html must not be.
-            exchange.getResponseHeaders().set("Cache-Control", servedFile.startsWith("/assets/") ? "max-age=31536000, immutable" : "no-store");
+            exchange.getResponseHeaders().set("Cache-Control", file.startsWith("/assets/") ? "max-age=31536000, immutable" : "no-store");
             send(exchange, 200, bytes);
         }
+    }
+
+    /**
+     * A path whose last segment has no extension is either a client-side route (e.g. /projects) or a directory
+     * (e.g. /assets, /assets/); either way the app decides what to show, and we never try to open it as a classpath
+     * resource: {@code getResourceAsStream} on a directory entry can return a non-null, non-file stream (or throw,
+     * depending on how the classes are packaged), which is not a page to serve.
+     */
+    private static String fileFor(String path) {
+        return lastSegment(path).contains(".") ? path : "/index.html";
     }
 
     private static String error(String code, String message) {

@@ -31,7 +31,8 @@ class UiServerTest {
                 "/api/ping", () -> Map.of("ok", true),
                 "/api/refused", () -> {
                     throw new CliException("no config at x; create one with: dispatch init");
-                }));
+                },
+                "/api/broken", Object::new));
     }
 
     @AfterEach
@@ -123,6 +124,40 @@ class UiServerTest {
         assertEquals("text/javascript; charset=utf-8", script.headers().firstValue("Content-Type").orElseThrow());
         assertEquals(404, get(path("/assets/missing.js"), cookie).statusCode());
         assertEquals(404, get(path("/assets/..%2F..%2Fpersonal.yaml"), cookie).statusCode());
+    }
+
+    @Test
+    void aRouteThatCannotBeSerializedAnswers500() throws Exception {
+        String cookie = login();
+
+        HttpResponse<String> response = get(path("/api/broken"), cookie);
+
+        assertEquals(500, response.statusCode());
+        assertTrue(response.body().contains("\"error\":\"internal\""), response.body());
+    }
+
+    @Test
+    void aDirectoryPathAnswersInsteadOfResettingTheConnection() throws Exception {
+        String cookie = login();
+
+        HttpResponse<String> assets = get(path("/assets"), cookie);
+        HttpResponse<String> assetsSlash = get(path("/assets/"), cookie);
+
+        assertTrue(assets.statusCode() == 404 || assets.statusCode() == 200, "GET /assets: " + assets.statusCode());
+        assertTrue(assetsSlash.statusCode() == 404 || assetsSlash.statusCode() == 200, "GET /assets/: " + assetsSlash.statusCode());
+    }
+
+    /**
+     * java.net.URI (used by HttpClient) refuses to build a URI with a malformed percent-escape at all, and
+     * com.sun.net.httpserver.HttpServer itself rejects one in the request line before dispatching to any context
+     * handler, with its own 400 page. So this is written over a raw socket and checks that the connection completes
+     * normally rather than being reset; UiServer's own query-decoding never actually sees malformed input.
+     */
+    @Test
+    void aMalformedPercentEscapeNeverReachesTheHandler() throws Exception {
+        String status = rawStatusLine("GET /?t=%zz HTTP/1.1\r\nHost: 127.0.0.1:" + server.port() + "\r\nConnection: close\r\n\r\n");
+
+        assertTrue(status.contains(" 400 "), status);
     }
 
     @Test
