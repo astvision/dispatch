@@ -4,6 +4,7 @@ import dispatch.Log;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Workers;
+import dispatch.telegram.TelegramNames;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -31,6 +32,8 @@ public final class WorkerKeys {
     /** No I, O, 0 or 1: the member reads this code off one screen and types it on another. */
     private static final char[] CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".toCharArray();
     private static final int KEY_BYTES = 32;
+    /** How long a worker's name may run before /worker's list gets unreadable; matches ConfigLoader's group-name cap. */
+    private static final int MAX_NAME_LENGTH = 40;
 
     private final Database db;
     private final Clock clock;
@@ -71,25 +74,48 @@ public final class WorkerKeys {
         }
     }
 
-    /** Exchanges a pairing code for a new key; empty when the code is unknown, used or older than ten minutes. */
+    /**
+     * Exchanges a pairing code for a new key; empty when the code is unknown, used or older than ten minutes. Consuming
+     * the code and creating the worker happen in one transaction, so a failed insert never burns a code the member
+     * could otherwise retry.
+     *
+     * @throws IllegalArgumentException when {@code name} is blank once cleaned of control characters
+     */
     public Optional<NewKey> pair(String code, String name) {
         if (code == null || code.isBlank()) {
             return Optional.empty();
         }
+        String boundedName = boundName(name);
         Instant now = clock.instant();
         // Upper case in ROOT: the alphabet is ASCII, and a member may well type the code back in lower case.
-        String normalized = code.strip().toUpperCase(Locale.ROOT);
-        Optional<Requester> member = db.transactionReturning(tx -> Workers.useCode(tx, sha256(normalized), now));
-        if (member.isEmpty()) {
+        String codeSha256 = sha256(code.strip().toUpperCase(Locale.ROOT));
+        Optional<NewKey> paired = db.transactionReturning(tx -> {
+            Optional<Requester> member = Workers.useCode(tx, codeSha256, now);
+            if (member.isEmpty()) {
+                return Optional.empty();
+            }
+            byte[] secret = new byte[KEY_BYTES];
+            random.nextBytes(secret);
+            String key = Base64.getUrlEncoder().withoutPadding().encodeToString(secret);
+            long id = Workers.insert(tx, member.get().ref(), boundedName, sha256(key), now);
+            return Optional.of(new NewKey(id, member.get().ref(), key));
+        });
+        if (paired.isEmpty()) {
             Log.warn("worker.pairing_refused", "reason", "unknown, used or expired code");
-            return Optional.empty();
+        } else {
+            NewKey newKey = paired.get();
+            Log.info("worker.paired", "worker", newKey.workerId(), "member", newKey.memberRef(), "name", boundedName);
         }
-        byte[] secret = new byte[KEY_BYTES];
-        random.nextBytes(secret);
-        String key = Base64.getUrlEncoder().withoutPadding().encodeToString(secret);
-        long id = db.transactionReturning(tx -> Workers.insert(tx, member.get().ref(), name, sha256(key), now));
-        Log.info("worker.paired", "worker", id, "member", member.get().ref(), "name", name);
-        return Optional.of(new NewKey(id, member.get().ref(), key));
+        return paired;
+    }
+
+    /** @throws IllegalArgumentException when {@code name} is blank once cleaned */
+    private static String boundName(String name) {
+        String cleaned = TelegramNames.clean(name == null ? "" : name);
+        if (cleaned.isEmpty()) {
+            throw new IllegalArgumentException("a worker's name cannot be blank");
+        }
+        return cleaned.length() > MAX_NAME_LENGTH ? cleaned.substring(0, MAX_NAME_LENGTH) : cleaned;
     }
 
     /**
@@ -122,9 +148,14 @@ public final class WorkerKeys {
         return revoked;
     }
 
-    /** Someone taken out of the config takes their computers' access with them. */
-    public void revokeWorkersOfFormerMembers(Set<String> memberRefs) {
-        int revoked = db.transactionReturning(tx -> Workers.revokeMembersExcept(tx, memberRefs, clock.instant()));
+    /**
+     * Someone taken out of the config takes their computers' access with them.
+     *
+     * @param currentMembers every member the config still names; an empty set means nobody is a member any more, so
+     *                       every worker is revoked
+     */
+    public void revokeWorkersOfEveryoneExcept(Set<String> currentMembers) {
+        int revoked = db.transactionReturning(tx -> Workers.revokeMembersExcept(tx, currentMembers, clock.instant()));
         if (revoked > 0) {
             Log.warn("worker.revoked_former_members", "workers", revoked);
         }

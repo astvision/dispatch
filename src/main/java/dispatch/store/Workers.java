@@ -51,10 +51,13 @@ public final class Workers {
         return tx.update("UPDATE worker SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", now, id) == 1;
     }
 
-    /** Revokes every worker of someone who is no longer a member; {@code memberRefs} is never empty in a valid config. */
+    /**
+     * Revokes every worker of someone not in {@code memberRefs}. An empty set means nobody is a member any more, so
+     * every active worker is revoked.
+     */
     public static int revokeMembersExcept(Tx tx, Set<String> memberRefs, Instant now) {
         if (memberRefs.isEmpty()) {
-            return 0;
+            return tx.update("UPDATE worker SET revoked_at = ? WHERE revoked_at IS NULL", now);
         }
         Object[] params = new Object[memberRefs.size() + 1];
         params[0] = now;

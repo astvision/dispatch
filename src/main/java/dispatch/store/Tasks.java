@@ -171,8 +171,7 @@ public final class Tasks {
     }
 
     public static Optional<Long> workerOf(Tx tx, long id) {
-        return tx.one("SELECT worker_id FROM task WHERE id = ?", row -> row.longOrNull("worker_id"), id)
-                .filter(workerId -> workerId != null);
+        return tx.one("SELECT worker_id FROM task WHERE id = ?", row -> row.longOrNull("worker_id"), id);
     }
 
     private static Task map(Row row) throws java.sql.SQLException {

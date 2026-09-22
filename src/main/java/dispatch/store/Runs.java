@@ -178,7 +178,6 @@ public final class Runs {
     public static OptionalInt latestSucceededPlanSeq(Tx tx, long taskId) {
         return tx.one("SELECT max(seq) AS seq FROM run WHERE task_id = ? AND kind = ? AND status = ?",
                         row -> row.intOrNull("seq"), taskId, RunKind.PLAN, RunStatus.SUCCEEDED)
-                .filter(seq -> seq != null)
                 .map(OptionalInt::of)
                 .orElse(OptionalInt.empty());
     }

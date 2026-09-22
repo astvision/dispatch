@@ -51,12 +51,18 @@ public final class Tx {
         return one("SELECT last_insert_rowid() AS id", row -> row.longValue("id")).orElseThrow();
     }
 
+    /**
+     * The single matching row, or empty when there is none. A mapped {@code null} (a nullable column, or an aggregate
+     * over zero rows) is a present row whose value is null, not "no row" — this returns {@code Optional.empty()} for
+     * both, since the caller only ever wants "is there a value", and {@code Optional} cannot hold a null to tell them
+     * apart anyway.
+     */
     public <T> Optional<T> one(String sql, RowMapper<T> mapper, Object... params) {
         List<T> rows = list(sql, mapper, params);
         if (rows.size() > 1) {
             throw new IllegalStateException("expected at most one row, got " + rows.size() + ": " + sql);
         }
-        return rows.stream().findFirst();
+        return rows.isEmpty() ? Optional.empty() : Optional.ofNullable(rows.get(0));
     }
 
     public <T> List<T> list(String sql, RowMapper<T> mapper, Object... params) {

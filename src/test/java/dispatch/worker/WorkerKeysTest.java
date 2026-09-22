@@ -3,6 +3,7 @@ package dispatch.worker;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.domain.Requester;
@@ -78,8 +79,8 @@ class WorkerKeysTest {
         String codeRow = SqlRows.single(dbFile, "SELECT * FROM pairing_code LIMIT 1").toString();
         assertFalse(workerRow.contains(paired.key()), workerRow);
         assertFalse(codeRow.contains(code), codeRow);
-        assertEquals(64, SqlRows.single(dbFile, "SELECT key_sha256 FROM worker WHERE id = ?", paired.workerId())
-                .get("key_sha256").length(), "a SHA-256 in lowercase hex");
+        String hash = SqlRows.single(dbFile, "SELECT key_sha256 FROM worker WHERE id = ?", paired.workerId()).get("key_sha256");
+        assertTrue(hash.matches("[0-9a-f]{64}"), "a SHA-256 in lowercase hex: " + hash);
     }
 
     @Test
@@ -124,10 +125,35 @@ class WorkerKeysTest {
         WorkerKeys.NewKey bold = keys.pair(keys.newCode(BOLD), "bold-laptop").orElseThrow();
         WorkerKeys.NewKey ali = keys.pair(keys.newCode(ALI), "ali-laptop").orElseThrow();
 
-        keys.revokeWorkersOfFormerMembers(Set.of(BOLD.ref()));
+        keys.revokeWorkersOfEveryoneExcept(Set.of(BOLD.ref()));
 
         assertTrue(keys.authenticate(bold.key()).isPresent());
         assertTrue(keys.authenticate(ali.key()).isEmpty(), "Ali is no longer a member");
+    }
+
+    @Test
+    void noCurrentMembersRevokesEveryWorker() {
+        WorkerKeys.NewKey bold = keys.pair(keys.newCode(BOLD), "bold-laptop").orElseThrow();
+
+        keys.revokeWorkersOfEveryoneExcept(Set.of());
+
+        assertTrue(keys.authenticate(bold.key()).isEmpty(), "nobody is a member, so nobody may have a worker");
+    }
+
+    @Test
+    void aBlankNameIsRefusedRatherThanStored() {
+        String code = keys.newCode(BOLD);
+
+        assertThrows(IllegalArgumentException.class, () -> keys.pair(code, "   "));
+    }
+
+    @Test
+    void aNameIsCleanedAndCappedAtFortyCharacters() {
+        keys.pair(keys.newCode(BOLD), "ann\u0007's laptop" + "x".repeat(50));
+
+        String storedName = keys.of(BOLD.ref()).getFirst().name();
+        assertEquals(40, storedName.length(), storedName);
+        assertFalse(storedName.contains("\u0007"), storedName);
     }
 
     @Test

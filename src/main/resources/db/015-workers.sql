@@ -24,3 +24,4 @@ CREATE TABLE pairing_code (
 
 -- A task's worktree and agent session live on one computer, so every later run of it goes back to that worker.
 ALTER TABLE task ADD COLUMN worker_id INTEGER REFERENCES worker (id);
+CREATE INDEX task_worker ON task (worker_id);
