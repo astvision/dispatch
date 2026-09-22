@@ -5,6 +5,7 @@ import dispatch.cli.CliException;
 import dispatch.cli.ProjectAddCommand;
 import dispatch.cli.ProjectProbe;
 import dispatch.cli.RunCommand;
+import dispatch.cli.SecretsFile;
 import dispatch.cli.Service;
 import dispatch.config.Config;
 import dispatch.config.ConfigEdit;
@@ -29,8 +30,10 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 /**
  * The management pages' API (spec: Pages (UI-3a)): the config as the pages show it, and saves of settings, projects and
@@ -41,6 +44,8 @@ import java.util.function.Function;
 public final class ManageApi {
 
     static final String CHANGED = "the config changed on disk since this page loaded it; reload to see the change";
+    /** Claude Code accepts both short names (opus) and full model ids (claude-opus-5); only the shape is checked here. */
+    private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._-]{1,100}");
 
     public record Phase(String model, String effort) {
     }
@@ -144,7 +149,7 @@ public final class ManageApi {
         String name = SetupApi.text(body, "name");
         String baseBranch = SetupApi.text(body, "baseBranch");
         String alias = SetupApi.optionalText(body, "alias");
-        String model = SetupApi.optionalText(body, "model");
+        String model = modelId(body, "model");
         String effort = SetupApi.choice(body, "effort", SetupApi.EFFORTS);
         Config.PhaseSettings plan = phaseSettings(body.path("plan"));
         Config.PhaseSettings execute = phaseSettings(body.path("execute"));
@@ -162,7 +167,7 @@ public final class ManageApi {
         String name = SetupApi.text(body, "name");
         String baseBranch = SetupApi.text(body, "baseBranch");
         String alias = SetupApi.optionalText(body, "alias");
-        String model = SetupApi.optionalText(body, "model");
+        String model = modelId(body, "model");
         String effort = SetupApi.choice(body, "effort", SetupApi.EFFORTS);
         Config.PhaseSettings plan = phaseSettings(body.path("plan"));
         Config.PhaseSettings execute = phaseSettings(body.path("execute"));
@@ -230,7 +235,7 @@ public final class ManageApi {
                     .anyMatch(other -> other != group && other.members().stream().anyMatch(candidate -> candidate.id() == id));
             String edited = ConfigEdit.remove(text, members(groupName).item("id", String.valueOf(id)));
             if (admins.contains(id) && !memberElsewhere) {
-                if (admins.size() == 1) {
+                if (realAdminCount(config) == 1) {
                     throw new CliException(member.name() + " is the team's only admin; make someone else admin first");
                 }
                 edited = ConfigEdit.remove(edited, At.of("telegram", "admins").value(String.valueOf(id)));
@@ -257,34 +262,60 @@ public final class ManageApi {
             if (admin) {
                 return ConfigEdit.append(text, At.of("telegram", "admins"), String.valueOf(id));
             }
-            if (admins.size() == 1) {
+            if (realAdminCount(config) == 1) {
                 throw new CliException(member.name() + " is the team's only admin; make someone else admin first");
             }
             return ConfigEdit.remove(text, At.of("telegram", "admins").value(String.valueOf(id)));
         });
     }
 
-    /** One save at a time: the version check, the edit, dispatch.yaml.bak, then the validated replace. */
-    private synchronized Saved save(JsonNode body, BiFunction<String, Config, String> edit) {
+    /** Admins who actually belong to a group; an id in telegram.admins with no matching member is not a real admin. */
+    private static long realAdminCount(Config config) {
+        List<Long> memberIds = config.telegram().groups().stream().flatMap(group -> group.members().stream())
+                .map(Config.Member::id).toList();
+        return config.telegram().admins().stream().filter(memberIds::contains).count();
+    }
+
+    /**
+     * The version check, the edit, dispatch.yaml.bak, then the validated replace, all inside {@link ConfigFile#edit}'s
+     * lock: it reads the file fresh under that lock, so a member the running service adds (or another save) between this
+     * page loading and this call can never be silently overwritten. The version check, the {@code config} the edit
+     * functions read from, and dispatch.yaml.bak all work from the exact text the lock handed us, never a second read of
+     * the file.
+     */
+    private Saved save(JsonNode body, BiFunction<String, Config, String> edit) {
         String sent = SetupApi.text(body, "version");
-        byte[] current = read();
-        if (!version(current).equals(sent)) {
-            throw new ApiException(409, "changed", CHANGED);
-        }
-        RunCommand.Prepared prepared = prepare();
-        String edited;
+        Map<String, String> environment = SecretsFile.environment(configFile, processEnvironment);
+        AtomicReference<String> edited = new AtomicReference<>();
         try {
-            edited = edit.apply(new String(current, StandardCharsets.UTF_8), prepared.config());
-        } catch (ConfigException e) {
-            throw new CliException(e.getMessage());
-        }
-        backup(current);
-        try {
-            ConfigFile.replace(configFile, edited, prepared.environment());
+            ConfigFile.edit(configFile, environment, text -> {
+                byte[] currentBytes = text.getBytes(StandardCharsets.UTF_8);
+                if (!version(currentBytes).equals(sent)) {
+                    throw new ApiException(409, "changed", CHANGED);
+                }
+                Config config = ConfigFile.parse(configFile, text, environment);
+                String result;
+                try {
+                    result = edit.apply(text, config);
+                } catch (ConfigException e) {
+                    throw new CliException(e.getMessage());
+                }
+                try {
+                    // Validated here, before dispatch.yaml.bak is touched: a save that fails validation must leave the
+                    // backup alone too, not just the config file. ConfigFile.edit validates it again on its own before
+                    // the atomic move; that second pass is what actually decides what lands on disk.
+                    ConfigFile.parse(configFile, result, environment);
+                } catch (ConfigException e) {
+                    throw new CliException(e.getMessage());
+                }
+                edited.set(result);
+                backup(currentBytes);
+                return result;
+            });
         } catch (ConfigException | UncheckedIOException e) {
             throw new CliException(e.getMessage());
         }
-        return new Saved(true, true, version(read()));
+        return new Saved(true, true, version(edited.get().getBytes(StandardCharsets.UTF_8)));
     }
 
     /** The previous text, kept as dispatch.yaml.bak with the config's own permissions (spec: Saving). */
@@ -361,9 +392,18 @@ public final class ManageApi {
     }
 
     private static Config.PhaseSettings phaseSettings(JsonNode settings) {
-        String model = SetupApi.optionalText(settings, "model");
+        String model = modelId(settings, "model");
         String effort = SetupApi.choice(settings, "effort", SetupApi.EFFORTS);
         return model == null && effort == null ? null : new Config.PhaseSettings(model, effort);
+    }
+
+    /** A model name (opus) or a full model id (claude-opus-5); every name Claude Code accepts is plain and short. */
+    private static String modelId(JsonNode body, String field) {
+        String value = SetupApi.optionalText(body, field);
+        if (value != null && !MODEL_ID.matcher(value).matches()) {
+            throw new CliException("model: use a model name like opus or a model id like claude-opus-5");
+        }
+        return value;
     }
 
     private static Phase view(Config.PhaseSettings settings) {

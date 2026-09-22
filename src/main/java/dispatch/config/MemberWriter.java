@@ -1,8 +1,5 @@
 package dispatch.config;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -16,25 +13,18 @@ public interface MemberWriter {
      */
     Config.Telegram add(String group, Config.Member member);
 
-    /** Edits the config file in place and validates it before replacing it, as dispatch project add does. */
+    /**
+     * Edits the config file in place and validates it before replacing it, as dispatch project add does.
+     * {@link ConfigFile#edit} holds a lock around the read, the presence check and the write, so a member the running
+     * service is adding here can never be lost to a concurrent {@code dispatch project add} or a management-page save.
+     */
     static MemberWriter file(Path configFile, Map<String, String> environment) {
-        Object lock = new Object();
-        return (group, member) -> {
-            synchronized (lock) {
-                Config current = ConfigLoader.load(configFile, environment);
-                boolean present = current.telegram().groups().stream()
-                        .anyMatch(candidate -> candidate.name().equals(group)
-                                && candidate.members().stream().anyMatch(existing -> existing.id() == member.id()));
-                if (present) {
-                    return current.telegram();
-                }
-                try {
-                    String edited = ConfigText.addMember(Files.readString(configFile), group, member.id(), member.name());
-                    return ConfigFile.replace(configFile, edited, environment).telegram();
-                } catch (IOException e) {
-                    throw new UncheckedIOException("cannot read " + configFile + ": " + e.getMessage(), e);
-                }
-            }
-        };
+        return (group, member) -> ConfigFile.edit(configFile, environment, current -> {
+            Config config = ConfigFile.parse(configFile, current, environment);
+            boolean present = config.telegram().groups().stream()
+                    .anyMatch(candidate -> candidate.name().equals(group)
+                            && candidate.members().stream().anyMatch(existing -> existing.id() == member.id()));
+            return present ? current : ConfigText.addMember(current, group, member.id(), member.name());
+        }).telegram();
     }
 }

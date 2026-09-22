@@ -155,6 +155,7 @@ class ManageApiTest {
         assertTrue(refused.getMessage().contains("scheduler.maxConcurrentRuns: required, at least 1"), refused.getMessage());
         assertTrue(refused.getMessage().contains(config.toString()), "names the config, not a draft: " + refused.getMessage());
         assertArrayEquals(before, Files.readAllBytes(config));
+        assertFalse(Files.exists(dir.resolve("dispatch.yaml.bak")), "a save that fails validation must not touch the backup either");
     }
 
     @Test
@@ -191,6 +192,28 @@ class ManageApiTest {
                     plan:
                       model: fable
                 """), Files.readString(config));
+    }
+
+    @Test
+    void aModelWithASpaceOrAQuoteIsRefused() throws Exception {
+        CliException spaced = assertThrows(CliException.class, () -> call("/api/manage/projects/edit", """
+                {"version":"%s","name":"crm","baseBranch":"main","alias":null,"model":"claude opus","effort":null,
+                 "plan":null,"execute":null}""".formatted(version())));
+        CliException quoted = assertThrows(CliException.class, () -> call("/api/manage/projects/edit", """
+                {"version":"%s","name":"crm","baseBranch":"main","alias":null,"model":"opus'","effort":null,
+                 "plan":null,"execute":null}""".formatted(version())));
+
+        assertEquals("model: use a model name like opus or a model id like claude-opus-5", spaced.getMessage());
+        assertEquals("model: use a model name like opus or a model id like claude-opus-5", quoted.getMessage());
+    }
+
+    @Test
+    void aFullModelIdIsAccepted() throws Exception {
+        call("/api/manage/projects/edit", """
+                {"version":"%s","name":"crm","baseBranch":"main","alias":null,"model":"claude-opus-5","effort":null,
+                 "plan":null,"execute":null}""".formatted(version()));
+
+        assertEquals("claude-opus-5", load().projects().get(1).model());
     }
 
     @Test
@@ -244,6 +267,19 @@ class ManageApiTest {
         assertEquals("Bold is the team's only admin; make someone else admin first", lastAdmin.getMessage());
         assertEquals("Bold is the team's only admin; make someone else admin first", onlyAdminLeaving.getMessage());
         assertEquals("Bold is the only member of group acme, and a group needs one", lastMember.getMessage());
+    }
+
+    @Test
+    void anAdminIdWithNoMatchingMemberDoesNotCountAsASecondAdmin() throws Exception {
+        Files.writeString(config, original.replace("    - 100\n", "    - 100\n    - 999\n"));
+
+        CliException demoteRefused = assertThrows(CliException.class,
+                () -> call("/api/manage/people/admin", "{\"version\":\"" + version() + "\",\"id\":100,\"admin\":false}"));
+        CliException removeRefused = assertThrows(CliException.class,
+                () -> call("/api/manage/people/remove", "{\"version\":\"" + version() + "\",\"group\":\"acme\",\"id\":100}"));
+
+        assertEquals("Bold is the team's only admin; make someone else admin first", demoteRefused.getMessage());
+        assertEquals("Bold is the team's only admin; make someone else admin first", removeRefused.getMessage());
     }
 
     @Test
