@@ -166,7 +166,8 @@ public final class RemoteWorkers implements Worker {
             if (now.isBefore(offer.leaseUntil)) {
                 return;
             }
-            Log.warn("worker.lease_expired", "task", offer.job.taskId(), "run", offer.job.seq(), "worker", offer.takenBy);
+            Log.warn("worker.lease_expired", "task", offer.job.taskId(), "run", offer.job.seq(), "worker", offer.takenBy,
+                    "member", offer.memberRef);
             offer.leaseUntil = now;
             offer.takenBy = null;
             offer.expired = true;

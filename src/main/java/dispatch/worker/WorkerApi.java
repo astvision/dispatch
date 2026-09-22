@@ -33,12 +33,15 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Where members' computers reach this machine: a second HTTP server on 127.0.0.1:&lt;workers.port&gt;, behind the owner's
@@ -68,6 +71,13 @@ public final class WorkerApi implements AutoCloseable {
     private static final Duration DEFAULT_BODY_READ_TIMEOUT = Duration.ofSeconds(10);
     /** A small, bounded drain of an oversized body: enough for the client to see the 413, not a megabyte. */
     private static final int DRAIN_BYTES = 8 * 1024;
+    /**
+     * How many requests one worker key may have running at once. A long {@code /next} poll parks a thread and a
+     * socket for up to 25 s, and an attachment fetch holds one for as long as the download takes, so this is what
+     * keeps a buggy or hostile worker from piling up an unbounded number of either. Package-visible so
+     * {@code WorkerProtocolTest} can size its own flood past it without duplicating the number.
+     */
+    static final int MAX_IN_FLIGHT_PER_WORKER = 4;
     private static final String WRONG_KEY =
             "this worker key is not valid any more: run dispatch worker pair again with a new code from /worker";
 
@@ -80,6 +90,7 @@ public final class WorkerApi implements AutoCloseable {
     private final Set<String> hosts;
     private final Duration bodyReadTimeout;
     private final ExecutorService bodyReads;
+    private final Map<Long, AtomicInteger> inFlightByWorker = new ConcurrentHashMap<>();
 
     private WorkerApi(HttpServer server, Config config, Groups groups, WorkerKeys keys, RemoteWorkers workers,
                       AttachmentSource attachments, Duration bodyReadTimeout) {
@@ -184,7 +195,31 @@ public final class WorkerApi implements AutoCloseable {
             return;
         }
         Workers.Paired worker = authenticate(exchange);
-        route(exchange, path, worker, body);
+        withInFlightLimit(worker, () -> route(exchange, path, worker, body));
+    }
+
+    @FunctionalInterface
+    private interface RouteAction {
+        void run() throws IOException, InterruptedException;
+    }
+
+    /**
+     * Bounds how many requests one worker key may have running at once (see {@link #MAX_IN_FLIGHT_PER_WORKER}). The
+     * count is reserved before {@code action} runs and released once it returns or throws, so a request refused here
+     * never touches {@code workers} or {@code attachments} at all.
+     */
+    private void withInFlightLimit(Workers.Paired worker, RouteAction action) throws IOException, InterruptedException {
+        AtomicInteger inFlight = inFlightByWorker.computeIfAbsent(worker.id(), id -> new AtomicInteger());
+        if (inFlight.incrementAndGet() > MAX_IN_FLIGHT_PER_WORKER) {
+            inFlight.decrementAndGet();
+            throw new ApiException(429, "too_many_requests",
+                    "this worker already has " + MAX_IN_FLIGHT_PER_WORKER + " requests running; wait for one to finish");
+        }
+        try {
+            action.run();
+        } finally {
+            inFlight.decrementAndGet();
+        }
     }
 
     private void route(HttpExchange exchange, String path, Workers.Paired worker, JsonNode body) throws IOException,
@@ -203,41 +238,62 @@ public final class WorkerApi implements AutoCloseable {
             }
             case PROGRESS -> {
                 boolean cancel = workers.progress(worker, new RemoteWorkers.Progress(
-                        required(body, "taskId").asLong(), required(body, "seq").asInt(),
+                        requiredLong(body, "taskId"), requiredInt(body, "seq"),
                         text(body, "worktree"), text(body, "baseSha"), body.path("agentStarted").asBoolean(false),
-                        body.hasNonNull("steps") ? body.get("steps").asInt() : null, text(body, "lastAction")));
+                        optionalInt(body, "steps"), text(body, "lastAction")));
                 json(exchange, 200, Json.write(Json.object().put("cancel", cancel)));
             }
             case RESULT -> {
-                JobResult result = Json.MAPPER.treeToValue(required(body, "result"), JobResult.class);
-                workers.result(worker, required(body, "taskId").asLong(), required(body, "seq").asInt(), result);
+                JobResult result = readJobResult(required(body, "result"));
+                workers.result(worker, requiredLong(body, "taskId"), requiredInt(body, "seq"), result);
                 json(exchange, 200, Json.write(Json.object().put("ok", true)));
             }
-            case ATTACHMENT -> attachment(exchange, worker, required(body, "taskId").asLong(), required(body, "fileRef").asText());
+            case ATTACHMENT -> attachment(exchange, worker, requiredLong(body, "taskId"), required(body, "fileRef").asText());
             default -> throw new ApiException(404, "not_found", "no such worker API: " + path);
         }
     }
 
     /**
      * One of the leased job's files, fetched from the channel and streamed straight through. The team machine writes it
-     * owner-only while it is in flight and deletes it whatever happens: the bytes belong to the requester.
+     * owner-only while it is in flight, under a name unique to this request (two concurrent fetches of the same file
+     * must not race one's delete against the other's read), and deletes it whatever happens: the bytes belong to the
+     * requester.
      */
     private void attachment(HttpExchange exchange, Workers.Paired worker, long taskId, String fileRef) throws IOException {
         Job job = workers.leased(worker, taskId);
         Attachment file = job.attachments().stream().filter(candidate -> candidate.fileRef().equals(fileRef)).findFirst()
                 .orElseThrow(() -> new ApiException(404, "not_found", "task " + taskId + " has no such file"));
-        Path dir = config.stateDir().resolve("outgoing");
-        OwnerOnly.createDirectories(dir);
-        Path copy = dir.resolve(taskId + "-" + WorkerKeys.sha256(file.fileRef()).substring(0, 16));
+        Path copy = config.stateDir().resolve("outgoing")
+                .resolve(taskId + "-" + WorkerKeys.sha256(file.fileRef()).substring(0, 16) + "-" + UUID.randomUUID());
+        byte[] bytes;
         try {
+            OwnerOnly.createDirectories(copy.getParent());
             attachments.download(file.fileRef(), copy);
-            byte[] bytes = Files.readAllBytes(copy);
-            exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
-            send(exchange, 200, bytes);
-        } catch (RuntimeException e) {
-            throw new ApiException(404, "not_found", "cannot fetch " + file.name() + ": " + e.getMessage());
+            // Checked before buffering, not just relied on from Attachment.size (which the channel may not have
+            // reported): N concurrent fetches must not be able to hold N x an unbounded file size in heap.
+            long size = Files.size(copy);
+            if (size > Attachment.MAX_BYTES) {
+                throw new IllegalStateException(
+                        "downloaded " + size + " bytes, more than the " + Attachment.MAX_BYTES + "-byte limit");
+            }
+            bytes = Files.readAllBytes(copy);
+        } catch (IOException | RuntimeException e) {
+            // The real cause can carry the download URL (a bot-token query parameter, for a Telegram-backed source):
+            // logged here, on the team machine, never echoed back to the worker that asked.
+            Log.error("worker_api.attachment_failed", e, "task", taskId, "worker", worker.id());
+            throw new ApiException(500, "internal", "something went wrong fetching this file on the team machine");
         } finally {
             Files.deleteIfExists(copy);
+        }
+        exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
+        send(exchange, 200, bytes);
+    }
+
+    private static JobResult readJobResult(JsonNode node) {
+        try {
+            return Json.MAPPER.treeToValue(node, JobResult.class);
+        } catch (JsonProcessingException e) {
+            throw new ApiException(400, "invalid", "result: not a JobResult");
         }
     }
 
@@ -246,6 +302,34 @@ public final class WorkerApi implements AutoCloseable {
             throw new ApiException(400, "invalid", field + ": required");
         }
         return body.get(field);
+    }
+
+    private static long requiredLong(JsonNode body, String field) {
+        JsonNode value = required(body, field);
+        if (!value.isIntegralNumber()) {
+            throw new ApiException(400, "invalid", field + ": must be a whole number");
+        }
+        return value.asLong();
+    }
+
+    private static int requiredInt(JsonNode body, String field) {
+        JsonNode value = required(body, field);
+        if (!value.isIntegralNumber()) {
+            throw new ApiException(400, "invalid", field + ": must be a whole number");
+        }
+        return value.asInt();
+    }
+
+    /** As {@link #requiredInt}, but absent (rather than merely non-numeric) is a valid, meaningful {@code null}. */
+    private static Integer optionalInt(JsonNode body, String field) {
+        if (!body.hasNonNull(field)) {
+            return null;
+        }
+        JsonNode value = body.get(field);
+        if (!value.isIntegralNumber()) {
+            throw new ApiException(400, "invalid", field + ": must be a whole number");
+        }
+        return value.asInt();
     }
 
     private static String text(JsonNode body, String field) {

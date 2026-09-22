@@ -51,7 +51,7 @@ A job is one run: a plan, an execution, a follow-up or a delivery retry, the uni
 
 All requests are `POST` with JSON and `Authorization: Bearer <worker key>`.
 
-1. `/api/worker/next`: a long poll of up to 25 s. Answers `{}` or a job: task number, run number and kind; project name, base branch and repo; model, effort, timeout and budget; session id and whether to resume; the finished prompt; the attachments to fetch.
+1. `/api/worker/next`: a long poll of up to 25 s. Answers `{"job": null}` or `{"job": <job>}`: task number, run number and kind; project name, base branch and repo; model, effort, timeout and budget; session id and whether to resume; the finished prompt; the attachments to fetch.
 2. `/api/worker/progress` every 10 s while a job runs: the agent's latest action (for the requester's `/status`). It renews the lease and answers `{"cancel": true}` when the run was cancelled.
 3. `/api/worker/attachment`: fetches one of the job's attachments; the team machine deletes its copy after the result.
 4. `/api/worker/result`: the outcome: plan text or result summary, PR URL, cost, turns, model, duration; or the failure reason and detail.
