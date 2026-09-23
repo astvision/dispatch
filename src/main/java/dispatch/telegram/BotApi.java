@@ -152,17 +152,6 @@ public final class BotApi {
         setMyCommands(Json.object().put("type", "all_private_chats"), commands);
     }
 
-    /**
-     * Makes one private chat's menu button the command list, which is what it is by default. The Mini App is opened
-     * from /manage instead: Telegram's menu button is either the commands or a web app, and taking the commands away
-     * costs more than the shortcut is worth (ADR 0019).
-     */
-    public void setCommandsMenuButton(long chatId) {
-        ObjectNode body = Json.object().put("chat_id", chatId);
-        body.putObject("menu_button").put("type", "commands");
-        call("setChatMenuButton", body, requestTimeout);
-    }
-
     private void setMyCommands(ObjectNode scope, List<BotCommand> commands) {
         ObjectNode body = Json.object();
         ArrayNode listed = body.putArray("commands");

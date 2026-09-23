@@ -180,6 +180,31 @@ class ChecksTest {
         }
     }
 
+    /** The case the owner most needs told: Dispatch is up, but the tunnel in front of it is not forwarding. */
+    @Test
+    void aMiniAppWhosePublicUrlDoesNotReachItWarnsAboutTheTunnel() throws Exception {
+        HttpServer dispatchLike = stubWorkerApi();
+        try {
+            int port = dispatchLike.getAddress().getPort();
+            int unreachable = freePort();
+            writeConfig();
+            Files.writeString(config, Files.readString(config)
+                    + "\nminiApp:\n  publicUrl: 'http://127.0.0.1:" + unreachable + "'\n  port: " + port + "\n");
+
+            List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+            Checks.Finding warning = findings.stream()
+                    .filter(finding -> finding.area().equals("miniApp") && finding.level() == Checks.Level.WARN)
+                    .findFirst().orElseThrow(() -> new AssertionError(findings.toString()));
+            assertTrue(warning.message().contains("http://127.0.0.1:" + unreachable), warning.message());
+            assertTrue(warning.message().contains("tunnel or reverse proxy"), warning.message());
+            assertTrue(warning.message().contains("127.0.0.1:" + port), warning.message());
+            assertFalse(Checks.failed(findings), "a tunnel that is not up yet is a warning, not a failure");
+        } finally {
+            dispatchLike.stop(0);
+        }
+    }
+
     @Test
     void aRunningTeamMachineRecognisesItsOwnWorkerApiAndItsPublicUrl() throws Exception {
         HttpServer dispatchLike = stubWorkerApi();

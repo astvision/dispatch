@@ -161,7 +161,6 @@ public final class App {
 
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
         registerCommandMenus(api, renderer, groups, config.miniApp() != null);
-        restoreCommandMenuButtons(api, groups);
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
         UpdateHandler handler = new UpdateHandler(db, tasks, new Membership(groups, members, clock, outboxSignal::wake), groups, projects,
                 api, renderer, redactor, botUsername, clock, outboxSignal::wake, workerKeys,
@@ -272,26 +271,6 @@ public final class App {
     private static java.util.Set<String> memberRefs(Groups groups) {
         return groups.all().stream().flatMap(group -> group.members().stream())
                 .map(member -> "telegram:" + member.id()).collect(java.util.stream.Collectors.toSet());
-    }
-
-    /**
-     * Puts each member's chat menu button back to the command list.
-     *
-     * <p>An earlier build made it a "Manage" Web App button, which was a mistake: Telegram's menu button is either the
-     * commands or a web app, never both, so it took the command list away. The Mini App is opened from /manage
-     * instead. Telegram keeps a per-chat button until it is changed, so this undoes it rather than merely stopping;
-     * it is idempotent and costs one call per member at start.
-     */
-    private static void restoreCommandMenuButtons(BotApi api, Groups groups) {
-        for (Config.Group group : groups.all()) {
-            for (Config.Member member : group.members()) {
-                try {
-                    api.setCommandsMenuButton(member.id());
-                } catch (TelegramException e) {
-                    Log.warn("telegram.menu_button_failed", "member", member.id(), "error", e.getMessage());
-                }
-            }
-        }
     }
 
     /** Best effort: a group's menu fails while the bot is not yet in it, and works again on the next start. */
