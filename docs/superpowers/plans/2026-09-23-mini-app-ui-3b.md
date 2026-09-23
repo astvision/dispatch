@@ -58,10 +58,15 @@ Type: Feature
 - Telegram's `initData` is a URL-encoded query string whose `user` field is JSON — Task 3 verifies against Telegram's own documented example data, so a wrong assumption fails there, before anything depends on it.
 - A member's private chat id equals their user id, as `setChatMenuButton` is called with it in Task 8. This already holds everywhere Dispatch sends a private message (`dispatch/telegram/Refs.java`).
 
+## Deviations
+
+- Task 2 (tactical): the plan had every existing route's lambda gain a `Caller` parameter. `ManageApi.routes()` and `SetupApi.routes()` keep their `Function<JsonNode, Object>` shape instead, and `UiRoutes.anyCaller` lifts them at registration — which is also where the admin gate goes. Same single route concept inside `UiServer`, no churn in the two APIs or their tests. Files unchanged from the task's list except that `src/main/java/dispatch/ui/ManageApi.java` and `src/main/java/dispatch/ui/SetupApi.java` were not modified after all.
+- Task 2 (tactical): `Auth.mayLoadPages` returns `Optional<String>` and is named `pageRefusal`, so the refusal carries its own message instead of leaving `UiAuth`'s text stranded in `UiServer`. `UiServer.start` also takes an `IntFunction<Auth>` rather than an `Auth`, because an authentication names the port it belongs to and port 0 is only resolved by binding.
+
 ## Progress Tracking
 
-- [ ] Task 1: the `miniApp` config block
-- [ ] Task 2: `UiServer` takes its authentication and hands routes the caller
+- [x] Task 1: the `miniApp` config block
+- [x] Task 2: `UiServer` takes its authentication and hands routes the caller
 - [ ] Task 3: `TelegramAuth`
 - [ ] Task 4: task payloads and `TasksApi`
 - [ ] Task 5: the Mini App server in `dispatch run`

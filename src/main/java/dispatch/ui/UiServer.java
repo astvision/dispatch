@@ -16,14 +16,60 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executors;
+import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.function.Supplier;
+import java.util.function.IntFunction;
 
 /**
  * The web UI's HTTP server, on 127.0.0.1 only (ADR 0018). It checks every request with {@link UiAuth}, answers the API
  * routes with JSON and serves the bundled pages from the classpath.
  */
 public final class UiServer implements AutoCloseable {
+
+    /**
+     * Who is asking. {@code dispatch ui} has one: whoever opened the one-time link, who already acts as the owner in a
+     * shell. The Mini App has one per member, named by Telegram's signed launch data.
+     *
+     * @param ref   channel-neutral, e.g. "telegram:100", or "local" for {@code dispatch ui}
+     * @param admin whether they may change the setup; see {@link dispatch.core.Groups#isAdmin}
+     */
+    public record Caller(String ref, String name, boolean admin) {
+    }
+
+    /**
+     * How a server decides whether a request may be answered, and as whom. {@link UiAuth} is the one-time link and
+     * session cookie of {@code dispatch ui}; the Mini App's is Telegram's signature on every request.
+     */
+    public interface Auth {
+
+        /** Against DNS rebinding: a page on another site that resolves its name here still sends its own Host. */
+        boolean hostAllowed(String host);
+
+        /** The headers every response of this server carries, the frame policy among them. */
+        void headers(HttpExchange exchange);
+
+        /** A login step of this authentication's own, e.g. redeeming a one-time link; true when it answered. */
+        default boolean login(HttpExchange exchange) throws IOException {
+            return false;
+        }
+
+        /**
+         * Empty when this request may be served the bundled page and its assets; otherwise the plain-text refusal.
+         *
+         * <p>The page is a separate question from {@link #caller}: Telegram's launch data lives in the URL fragment,
+         * which a browser never sends, so the Mini App's first request cannot prove anything — the script that reads
+         * the fragment has not run yet. The bundle is static and reaches no route on its own.
+         */
+        Optional<String> pageRefusal(HttpExchange exchange);
+
+        /** Who is asking an /api/ route; throws {@link ApiException} to refuse. */
+        Caller caller(HttpExchange exchange);
+
+        /** The link that gets a browser in, when this authentication has one. */
+        default Optional<URI> entryUri() {
+            return Optional.empty();
+        }
+    }
 
     private static final Map<String, String> CONTENT_TYPES = Map.of(
             ".html", "text/html; charset=utf-8",
@@ -37,34 +83,46 @@ public final class UiServer implements AutoCloseable {
     private static final int MAX_BODY = 64 * 1024;
 
     private final HttpServer server;
-    private final UiAuth auth;
+    private final Auth auth;
     private final String resourceRoot;
-    private final Map<String, Supplier<Object>> getRoutes;
-    private final Map<String, Function<JsonNode, Object>> postRoutes;
+    private final Map<String, Function<Caller, Object>> getRoutes;
+    private final Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes;
 
-    private UiServer(HttpServer server, String resourceRoot, Map<String, Supplier<Object>> getRoutes,
-                     Map<String, Function<JsonNode, Object>> postRoutes) {
+    private UiServer(HttpServer server, Auth auth, String resourceRoot, Map<String, Function<Caller, Object>> getRoutes,
+                     Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes) {
         this.server = server;
-        this.auth = new UiAuth(server.getAddress().getPort());
+        this.auth = auth;
         this.resourceRoot = resourceRoot;
         this.getRoutes = Map.copyOf(getRoutes);
         this.postRoutes = Map.copyOf(postRoutes);
     }
 
     /**
+     * The one-time-link server of {@code dispatch ui}.
+     *
      * @param port         0 for any free port
      * @param resourceRoot the classpath folder of the bundled pages, e.g. "/ui"
      * @param getRoutes    API paths, e.g. "/api/overview", and what they answer as JSON
      */
-    public static UiServer start(int port, String resourceRoot, Map<String, Supplier<Object>> getRoutes) throws IOException {
+    public static UiServer start(int port, String resourceRoot, Map<String, Function<Caller, Object>> getRoutes) throws IOException {
         return start(port, resourceRoot, getRoutes, Map.of());
     }
 
     /** @param postRoutes API paths that change something, and what they answer, given the request's JSON body */
-    public static UiServer start(int port, String resourceRoot, Map<String, Supplier<Object>> getRoutes,
-                                 Map<String, Function<JsonNode, Object>> postRoutes) throws IOException {
+    public static UiServer start(int port, String resourceRoot, Map<String, Function<Caller, Object>> getRoutes,
+                                 Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes) throws IOException {
+        return start(port, resourceRoot, UiAuth::new, getRoutes, postRoutes);
+    }
+
+    /**
+     * @param auth the authentication this server checks every request with, built once the port is known: an
+     *             authentication has to name the host and port it belongs to, and port 0 is only resolved by binding
+     */
+    public static UiServer start(int port, String resourceRoot, IntFunction<Auth> auth,
+                                 Map<String, Function<Caller, Object>> getRoutes,
+                                 Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes) throws IOException {
         HttpServer http = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 0);
-        UiServer ui = new UiServer(http, resourceRoot, getRoutes, postRoutes);
+        UiServer ui = new UiServer(http, auth.apply(http.getAddress().getPort()), resourceRoot, getRoutes, postRoutes);
         http.createContext("/", ui::handle);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         http.start();
@@ -80,8 +138,9 @@ public final class UiServer implements AutoCloseable {
         return server.getAddress().getPort();
     }
 
+    /** @throws IllegalStateException when this server's authentication has no link to hand out (the Mini App's) */
     public URI loginUri() {
-        return URI.create("http://127.0.0.1:" + port() + "/?t=" + auth.token());
+        return auth.entryUri().orElseThrow(() -> new IllegalStateException("this server has no login link"));
     }
 
     @Override
@@ -105,54 +164,39 @@ public final class UiServer implements AutoCloseable {
 
     private void respond(HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
-        exchange.getResponseHeaders().set("X-Frame-Options", "DENY");
         exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
+        auth.headers(exchange);
         if (!auth.hostAllowed(exchange.getRequestHeaders().getFirst("Host"))) {
             text(exchange, 403, "Open Dispatch through the link dispatch ui printed.");
             return;
         }
-        String path = exchange.getRequestURI().getPath();
-        Optional<String> token = queryValue(exchange.getRequestURI().getRawQuery(), "t");
-        if (path.equals("/") && token.isPresent()) {
-            login(exchange, token.get());
+        if (auth.login(exchange)) {
             return;
         }
-        boolean api = path.startsWith("/api/");
-        if (!auth.hasSession(exchange.getRequestHeaders().getFirst("Cookie"))) {
-            if (api) {
-                json(exchange, 401, error("session", "this page's session ended; restart dispatch ui and open the link it prints"));
+        String path = exchange.getRequestURI().getPath();
+        if (!path.startsWith("/api/")) {
+            Optional<String> refusal = auth.pageRefusal(exchange);
+            if (refusal.isPresent()) {
+                text(exchange, 401, refusal.get());
             } else {
-                text(exchange, 401, "Open Dispatch through the link dispatch ui printed. Each link works once; restart dispatch ui for a new one.");
+                page(exchange, path);
             }
             return;
         }
+        Caller caller;
+        try {
+            caller = auth.caller(exchange);
+        } catch (ApiException e) {
+            json(exchange, e.status(), error(e.code(), e.getMessage()));
+            return;
+        }
         String method = exchange.getRequestMethod();
-        boolean reading = method.equals("GET") || method.equals("HEAD");
-        if (!reading && !auth.originAllowed(exchange.getRequestHeaders().getFirst("Origin"))) {
-            json(exchange, 403, error("origin", "this request did not come from the Dispatch page"));
-            return;
-        }
-        if (api) {
-            api(exchange, path, reading);
-        } else {
-            page(exchange, path);
-        }
+        api(exchange, path, method.equals("GET") || method.equals("HEAD"), caller);
     }
 
-    private void login(HttpExchange exchange, String token) throws IOException {
-        Optional<String> session = auth.redeem(token);
-        if (session.isEmpty()) {
-            text(exchange, 401, "This link was used already or is wrong. Restart dispatch ui for a new one.");
-            return;
-        }
-        exchange.getResponseHeaders().set("Set-Cookie", auth.cookieName() + "=" + session.get() + "; HttpOnly; SameSite=Strict; Path=/");
-        exchange.getResponseHeaders().set("Location", "/");
-        exchange.sendResponseHeaders(302, -1);
-    }
-
-    private void api(HttpExchange exchange, String path, boolean reading) throws IOException {
-        Supplier<Object> getRoute = getRoutes.get(path);
-        Function<JsonNode, Object> postRoute = postRoutes.get(path);
+    private void api(HttpExchange exchange, String path, boolean reading, Caller caller) throws IOException {
+        Function<Caller, Object> getRoute = getRoutes.get(path);
+        BiFunction<Caller, JsonNode, Object> postRoute = postRoutes.get(path);
         if (getRoute == null && postRoute == null) {
             json(exchange, 404, error("not_found", "no such API: " + path));
             return;
@@ -179,7 +223,7 @@ public final class UiServer implements AutoCloseable {
         }
         String answer;
         try {
-            answer = Json.write(reading ? getRoute.get() : postRoute.apply(body));
+            answer = Json.write(reading ? getRoute.apply(caller) : postRoute.apply(caller, body));
         } catch (ApiException e) {
             json(exchange, e.status(), error(e.code(), e.getMessage()));
             return;
@@ -250,19 +294,6 @@ public final class UiServer implements AutoCloseable {
                 out.write(body);
             }
         }
-    }
-
-    private static Optional<String> queryValue(String rawQuery, String name) {
-        if (rawQuery == null) {
-            return Optional.empty();
-        }
-        for (String pair : rawQuery.split("&")) {
-            String[] nameValue = pair.split("=", 2);
-            if (nameValue.length == 2 && nameValue[0].equals(name)) {
-                return Optional.of(java.net.URLDecoder.decode(nameValue[1], StandardCharsets.UTF_8));
-            }
-        }
-        return Optional.empty();
     }
 
     private static String lastSegment(String path) {
