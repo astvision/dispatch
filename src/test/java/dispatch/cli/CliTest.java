@@ -107,12 +107,30 @@ class CliTest {
 
     @Test
     void workerNeedsAKnownSubcommandAndItsArguments() {
-        assertEquals("worker needs one of: pair, run",
+        assertEquals("worker needs one of: init, pair, run, service",
                 assertThrows(CliException.class, () -> parse("worker")).getMessage());
         assertEquals("worker pair needs the team URL and the code from /worker",
                 assertThrows(CliException.class, () -> parse("worker", "pair", "https://team.example.com")).getMessage());
         assertEquals("unknown command 'worker restart'",
                 assertThrows(CliException.class, () -> parse("worker", "restart")).getMessage());
+    }
+
+    @Test
+    void workerInitRunAndServiceAreParsed() {
+        Locations defaults = new Locations(Path.of("/home/ann/.config/dispatch/dispatch.yaml"), Path.of("/state"));
+
+        assertEquals(new Cli.WorkerInit(Path.of("/home/ann/.config/dispatch/worker.yaml"), false),
+                Cli.parse(new String[] {"worker", "init"}, defaults));
+        assertEquals(new Cli.WorkerInit(Path.of("/tmp/w.yaml"), true),
+                Cli.parse(new String[] {"worker", "init", "--config", "/tmp/w.yaml", "--force"}, defaults));
+        assertEquals(new Cli.WorkerRun(Path.of("/home/ann/.config/dispatch/worker.yaml"), Path.of("/tmp/w.log")),
+                Cli.parse(new String[] {"worker", "run", "--log-file", "/tmp/w.log"}, defaults));
+        assertEquals(new Cli.WorkerService(Path.of("/home/ann/.config/dispatch/worker.yaml"), "install"),
+                Cli.parse(new String[] {"worker", "service", "install"}, defaults));
+        assertTrue(assertThrows(CliException.class, () -> Cli.parse(new String[] {"worker", "service"}, defaults))
+                .getMessage().contains("worker service needs one of"));
+        assertTrue(assertThrows(CliException.class, () -> Cli.parse(new String[] {"worker", "nope"}, defaults))
+                .getMessage().contains("unknown command 'worker nope'"));
     }
 
     private static Cli.Invocation parse(String... args) {

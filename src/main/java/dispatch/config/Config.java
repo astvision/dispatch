@@ -26,7 +26,7 @@ public record Config(
 
     /**
      * A team: its groups announce to a group chat, so tasks belong to different people and run on their own computers
-     * (ADR 0020). A personal bot has no group chat (ADR 0014), so its runs happen in this process.
+     * (ADR 0021). A personal bot has no group chat (ADR 0014), so its runs happen in this process.
      */
     public boolean isTeam() {
         return isTeam(telegram);

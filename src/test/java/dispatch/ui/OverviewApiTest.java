@@ -88,6 +88,11 @@ class OverviewApiTest {
     private record StubService(boolean installed, boolean running, String detail) implements Service {
 
         @Override
+        public Service.Kind kind() {
+            return Service.Kind.DISPATCH;
+        }
+
+        @Override
         public String describe() {
             return "stub service";
         }

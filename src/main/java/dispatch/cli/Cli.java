@@ -21,7 +21,8 @@ public final class Cli {
     private Cli() {
     }
 
-    public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Ui, WorkerPair, WorkerRun, Help {
+    public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Ui, WorkerInit, WorkerPair,
+            WorkerRun, WorkerService, Help {
     }
 
     /** @param logFile where output goes instead of the terminal, as a background service runs it; null for the terminal */
@@ -55,11 +56,20 @@ public final class Cli {
                              String group) implements Invocation {
     }
 
+    /** @param force replaces an existing worker.yaml and pairs this computer again */
+    public record WorkerInit(Path workerFile, boolean force) implements Invocation {
+    }
+
     /** @param name what the member's /worker list calls this computer; this machine's host name when not given */
     public record WorkerPair(Path workerFile, String url, String code, String name) implements Invocation {
     }
 
-    public record WorkerRun(Path workerFile) implements Invocation {
+    /** @param logFile where output goes instead of the terminal, as the dispatch-worker service runs it; null for the terminal */
+    public record WorkerRun(Path workerFile, Path logFile) implements Invocation {
+    }
+
+    /** @param action one of install, start, stop, status, uninstall */
+    public record WorkerService(Path workerFile, String action) implements Invocation {
     }
 
     public record Help() implements Invocation {
@@ -82,10 +92,15 @@ public final class Cli {
                            add a git clone on this machine as a project
                   ui [--port 7878] [--no-browser]
                            manage Dispatch in your browser; on a server: ssh -L 7878:localhost:7878 SERVER
+                  worker init
+                           set your computer up for your team's bot: pair it, map its
+                           projects to your clones, and keep it running in the background
                   worker pair URL CODE [--name NAME]
                            connect this computer to a team; CODE comes from /worker in the bot
                   worker run
                            run your own tasks on this computer
+                  worker service install|start|stop|status|uninstall
+                           keep your worker running in the background
                   help     show this help
 
                 FILE defaults to %s
@@ -150,9 +165,13 @@ public final class Cli {
             }
             case "worker" -> {
                 if (arguments.positional().isEmpty()) {
-                    throw new CliException("worker needs one of: pair, run");
+                    throw new CliException("worker needs one of: init, pair, run, service");
                 }
                 yield switch (arguments.positional().getFirst()) {
+                    case "init" -> {
+                        arguments.allow(1, Set.of("config", "force"));
+                        yield new WorkerInit(arguments.workerFile(defaults), arguments.switches().contains("force"));
+                    }
                     case "pair" -> {
                         if (arguments.positional().size() < 3) {
                             throw new CliException("worker pair needs the team URL and the code from /worker");
@@ -162,8 +181,16 @@ public final class Cli {
                                 arguments.positional().get(2), arguments.values().getOrDefault("name", hostName()));
                     }
                     case "run" -> {
-                        arguments.allow(1, Set.of("config"));
-                        yield new WorkerRun(arguments.workerFile(defaults));
+                        arguments.allow(1, Set.of("config", "log-file"));
+                        yield new WorkerRun(arguments.workerFile(defaults), arguments.values().containsKey("log-file")
+                                ? Path.of(arguments.values().get("log-file")) : null);
+                    }
+                    case "service" -> {
+                        if (arguments.positional().size() < 2 || !SERVICE_ACTIONS.contains(arguments.positional().get(1))) {
+                            throw new CliException("worker service needs one of: " + String.join(", ", SERVICE_ACTIONS));
+                        }
+                        arguments.allow(2, Set.of("config"));
+                        yield new WorkerService(arguments.workerFile(defaults), arguments.positional().get(1));
                     }
                     default -> throw new CliException("unknown command 'worker " + arguments.positional().getFirst() + "'");
                 };
@@ -173,7 +200,7 @@ public final class Cli {
     }
 
     /** A name the member will recognise in /worker; anything the machine cannot tell us becomes "worker". */
-    private static String hostName() {
+    public static String hostName() {
         try {
             String host = InetAddress.getLocalHost().getHostName().replaceAll("[^A-Za-z0-9._-]", "-");
             return host.isBlank() ? "worker" : host.substring(0, Math.min(40, host.length()));

@@ -196,7 +196,7 @@ class TeamWorkersTest {
         Delivery delivery = new Delivery(git, new Gh(gh.toString(), null, Duration.ofSeconds(30)), setup.authorName(),
                 setup.authorEmail());
         WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery, Redactor.patternsOnly(),
-                new ActiveRuns());
+                new ActiveRuns(), Duration.ofMillis(200));
         loops.add(loop);
         loopThreads.add(Thread.ofVirtual().name("worker-" + name).start(loop));
     }

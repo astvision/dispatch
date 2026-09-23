@@ -64,6 +64,17 @@ public final class WorkerApi implements AutoCloseable {
     public static final String RESULT = "/api/worker/result";
     public static final String PROJECTS = "/api/worker/projects";
 
+    /**
+     * {@code base} (any trailing slash removed) plus {@code path}, one of this class's own route constants. Both
+     * {@link dispatch.cli.Checks} (probing {@code workers.publicUrl}) and {@link WorkerClient} (every request a
+     * worker sends) build a route this same way, so a trailing slash in the configured URL is harmless instead of
+     * doubling up into a path nothing serves, and a reverse proxy's own sub-path (e.g. {@code https://host/dispatch})
+     * is kept instead of silently dropped, as {@code URI.resolve} would drop it for an absolute path like these.
+     */
+    public static URI url(String base, String path) {
+        return URI.create((base.endsWith("/") ? base.substring(0, base.length() - 1) : base) + path);
+    }
+
     private static final int MAX_BODY = 64 * 1024;
     /** Matches {@code WorkerKeys}' own cap, so a name this route accepts is never rejected again once cleaned there. */
     private static final int MAX_NAME_LENGTH = 40;
@@ -142,9 +153,16 @@ public final class WorkerApi implements AutoCloseable {
      * — three rejections deep, surfacing as {@code worker_api.failed}, the same event a genuine 500 uses, on every
      * ordinary shutdown with a poll in flight. {@code shutdownNow()} still runs, but only as a backstop for whatever
      * did not drain in time.
+     *
+     * <p>A parked {@code /next} is woken through {@link RemoteWorkers#stopPolling} before that wait, so it answers
+     * rather than being cut off — which is what makes a shutdown quiet for production's 25 s poll and not only for a
+     * test's short one.
      */
     @Override
     public void close() {
+        // First: a poll parked in RemoteWorkers is waiting on that class's lock, not on this server, so stop(1) below
+        // would only cut its socket. Woken here, it answers {"job": null} and the exchange ends normally.
+        workers.stopPolling();
         server.stop(1);
         bodyReads.shutdown();
         try {

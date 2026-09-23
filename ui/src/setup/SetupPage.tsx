@@ -1,6 +1,6 @@
 import { Button, Card, Result, Spin, Steps, Typography } from "antd";
 import { useState } from "react";
-import type { ProjectChoice, SetupAdvanced } from "../api";
+import type { ProjectChoice, SetupAdvanced, WorkersChoice } from "../api";
 import { useSetupState } from "../useSetupState";
 import BotStep from "./BotStep";
 import ClaudeStep from "./ClaudeStep";
@@ -17,6 +17,8 @@ export interface Draft {
   authorName: string;
   authorEmail: string;
   teamName: string;
+  /** A team with a group chat: where its members' computers reach this machine. */
+  workers?: WorkersChoice;
   /** The Advanced section's instance answers; left out when it is not used. */
   advanced?: SetupAdvanced;
 }

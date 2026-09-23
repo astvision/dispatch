@@ -4,10 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sun.net.httpserver.HttpServer;
 import dispatch.telegram.BotApi;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.GitFixture;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -95,6 +98,131 @@ class ChecksTest {
         assertEquals("config", findings.getFirst().area());
         assertTrue(findings.getFirst().message().contains("dispatch init"), findings.toString());
         assertTrue(Checks.failed(findings));
+    }
+
+    @Test
+    void teamModeWarnsRatherThanFailsWhenClaudeCannotRun() throws IOException {
+        // ADR 0021: no task's agent ever runs on the team machine, but splitting a message with ✂️ still does, so a
+        // missing claude there is worth a warning, not a failure that would also flip dispatch check's exit code.
+        int port = freePort();
+        writeConfig();
+        Files.writeString(config, Files.readString(config)
+                .replace("command: '" + JAVA.replace("'", "''") + "'", "command: 'dispatch-test-missing-claude-binary'")
+                .replace("    - name: bold\n", "    - name: bold\n      chatId: -1001234567890\n")
+                + "\nworkers:\n  publicUrl: 'http://127.0.0.1:" + port + "'\n  port: " + port + "\n");
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        Checks.Finding claude = findings.stream().filter(f -> f.area().equals("claude-code")).findFirst()
+                .orElseThrow(() -> new AssertionError(findings.toString()));
+        assertEquals(Checks.Level.WARN, claude.level(), findings.toString());
+        assertTrue(claude.message().contains("splitting a message"), claude.message());
+        assertFalse(Checks.failed(findings), findings.toString());
+    }
+
+    @Test
+    void aTeamMachineChecksItsWorkerPortAndAsksForNoGh() throws IOException {
+        int free = freePort();
+        writeTeamConfig(free);
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "gh",
+                "gh: not needed here; members' computers make the pull requests")), findings.toString());
+        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "workers",
+                "workers: nothing listens on 127.0.0.1:" + free + " yet; it starts with dispatch run")),
+                findings.toString());
+        assertFalse(Checks.failed(findings), findings.toString());
+    }
+
+    @Test
+    void aRunningTeamMachineRecognisesItsOwnWorkerApiAndItsPublicUrl() throws Exception {
+        HttpServer dispatchLike = stubWorkerApi();
+        try {
+            writeTeamConfig(dispatchLike.getAddress().getPort());
+
+            List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+            int port = dispatchLike.getAddress().getPort();
+            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "workers",
+                    "workers: 127.0.0.1:" + port + " answers as this Dispatch")), findings.toString());
+            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "workers",
+                    "workers: http://127.0.0.1:" + port + " reaches this Dispatch")), findings.toString());
+        } finally {
+            dispatchLike.stop(0);
+        }
+    }
+
+    @Test
+    void aTrailingSlashInThePublicUrlIsHarmless() throws Exception {
+        HttpServer dispatchLike = stubWorkerApi();
+        try {
+            int port = dispatchLike.getAddress().getPort();
+            writeTeamConfig(port, "http://127.0.0.1:" + port + "/");
+
+            List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "workers",
+                    "workers: http://127.0.0.1:" + port + "/ reaches this Dispatch")), findings.toString());
+        } finally {
+            dispatchLike.stop(0);
+        }
+    }
+
+    @Test
+    void somethingElseOnTheWorkerPortIsAWarning() throws Exception {
+        HttpServer other = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        other.createContext("/", exchange -> {
+            exchange.sendResponseHeaders(200, 2);
+            try (java.io.OutputStream out = exchange.getResponseBody()) {
+                out.write("hi".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        });
+        other.start();
+        try {
+            writeTeamConfig(other.getAddress().getPort());
+
+            List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+            assertTrue(findings.contains(new Checks.Finding(Checks.Level.WARN, "workers",
+                    "workers: something other than Dispatch answers on 127.0.0.1:" + other.getAddress().getPort()
+                            + "; stop it or set another workers.port")), findings.toString());
+        } finally {
+            other.stop(0);
+        }
+    }
+
+    /** personal.yaml with a group chat, which makes it a team, and the workers block a team then needs. */
+    private void writeTeamConfig(int port) throws IOException {
+        writeTeamConfig(port, "http://127.0.0.1:" + port);
+    }
+
+    private void writeTeamConfig(int port, String publicUrl) throws IOException {
+        writeConfig();
+        Files.writeString(config, Files.readString(config)
+                .replace("    - name: bold\n", "    - name: bold\n      chatId: -1001234567890\n")
+                + "\nworkers:\n  publicUrl: '" + publicUrl + "'\n  port: " + port + "\n");
+    }
+
+    /** What Dispatch answers an unauthenticated worker request; nothing else answers exactly this. */
+    private static HttpServer stubWorkerApi() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        server.createContext("/api/worker/projects", exchange -> {
+            byte[] body = "{\"error\":\"unauthorized\",\"message\":\"no\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(401, body.length);
+            try (java.io.OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+        return server;
+    }
+
+    private static int freePort() throws IOException {
+        try (java.net.ServerSocket socket = new java.net.ServerSocket(0, 0, InetAddress.getByName("127.0.0.1"))) {
+            return socket.getLocalPort();
+        }
     }
 
     private Checks checks() {

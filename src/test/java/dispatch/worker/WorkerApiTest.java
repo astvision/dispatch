@@ -2,11 +2,14 @@ package dispatch.worker;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
+import dispatch.core.ActiveRuns;
+import dispatch.store.Workers;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -83,6 +86,20 @@ class WorkerApiTest extends WorkerApiFixture {
                 "a revoked key and an unknown one answer alike, so nobody can probe which keys existed");
         assertTrue(revoked.body().contains("dispatch worker pair"), revoked.body());
         assertEquals(200, post(WorkerApi.PROJECTS, stranger, "{}").statusCode(), "Ali's computer is untouched");
+    }
+
+    @Test
+    void closingTheServerEndsItsPollsAndHandsOutNoMoreJobs() throws Exception {
+        pair();
+        Workers.Paired bold = db.transactionReturning(tx -> Workers.ofMember(tx, BOLD.ref())).getFirst();
+        offer(planJob());
+
+        api.close();
+
+        assertTrue(remote.next(bold).isEmpty(), "a stopped server hands out no more jobs");
+        // Let the offer's own thread finish, as App.stop does, so this test leaves nothing parked.
+        control.stop(ActiveRuns.StopReason.INTERRUPTED);
+        assertNotNull(awaitResult());
     }
 
     @Test

@@ -223,7 +223,7 @@ public final class InitCommand {
         return result;
     }
 
-    /** Where teammates' computers reach this one, once there is a group to announce to (ADR 0020): their tasks run there. */
+    /** Where teammates' computers reach this one, once there is a group to announce to (ADR 0021): their tasks run there. */
     private Config.Workers workers() {
         terminal.say("Each teammate's tasks run on their own computer; it must reach this one through a tunnel or reverse proxy.");
         String publicUrl = required("Public URL (e.g. https://team.example.com)", null);

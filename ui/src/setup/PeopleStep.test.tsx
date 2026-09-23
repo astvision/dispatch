@@ -121,3 +121,39 @@ test("an answer that fails can be tried again, dropping the candidate and pollin
   await vi.waitFor(() => expect(nextPerson).toHaveBeenCalledTimes(2));
   expect(screen.queryByText("Is Bold you?")).not.toBeInTheDocument();
 });
+
+test("a team with a group is asked where members' computers reach this machine", async () => {
+  vi.mocked(api.nextPerson).mockReturnValue(new Promise(() => {}));
+  vi.mocked(api.nextGroup).mockResolvedValue({ group: { id: -100, title: "Backend" } });
+  const update = vi.fn();
+  const next = vi.fn();
+  const team = { ...state, team: true, members: [{ id: 100, name: "Bold Bat" }] };
+
+  render(<PeopleStep {...props} state={team} update={update} next={next} refresh={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Done adding teammates" }));
+
+  expect(await screen.findByText("Group: Backend")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Public URL"), { target: { value: " https://team.example.com " } });
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+  expect(update).toHaveBeenCalledWith({
+    teamName: "Backend",
+    workers: { publicUrl: "https://team.example.com", port: 7880 },
+  });
+  expect(next).toHaveBeenCalled();
+});
+
+test("a public URL that is not https keeps the team from moving on", async () => {
+  vi.mocked(api.nextPerson).mockReturnValue(new Promise(() => {}));
+  vi.mocked(api.nextGroup).mockResolvedValue({ group: { id: -100, title: "Backend" } });
+  const next = vi.fn();
+  const team = { ...state, team: true, members: [{ id: 100, name: "Bold Bat" }] };
+
+  render(<PeopleStep {...props} state={team} next={next} refresh={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Done adding teammates" }));
+  fireEvent.change(await screen.findByLabelText("Public URL"), { target: { value: "team.example.com" } });
+
+  expect(screen.getByText(/https:\/\//)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  expect(next).not.toHaveBeenCalled();
+});

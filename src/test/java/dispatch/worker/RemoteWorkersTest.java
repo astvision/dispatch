@@ -36,6 +36,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -220,6 +221,25 @@ class RemoteWorkersTest {
         assertEquals(403, refusedProgress.status());
         remote.result(ann, id, 1, JobResult.cancelled(null));
         assertTrue(run.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");
+    }
+
+    @Test
+    void stopPollingEndsAParkedLongPollAtOnceInsteadOfHoldingItForTwentyFiveSeconds() throws Exception {
+        RemoteWorkers production = new RemoteWorkers(db, clock, () -> { }, RemoteWorkers.LONG_POLL, Duration.ofMillis(2));
+        Workers.Paired bold = new Workers.Paired(1, BOLD.ref(), "ann-laptop", "sha", clock.instant(), clock.instant());
+        CompletableFuture<Optional<Job>> parked = CompletableFuture.supplyAsync(() -> {
+            try {
+                return production.next(bold);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+        });
+
+        production.stopPolling();
+
+        // Without the wake this waits out the whole 25 s poll and times out here.
+        assertTrue(parked.get(5, TimeUnit.SECONDS).isEmpty());
     }
 
     @Test

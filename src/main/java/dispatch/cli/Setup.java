@@ -66,7 +66,7 @@ public final class Setup {
      * @param team    the team's name, as the config and the state directory use it
      * @param shared  a team's bot (admins, a group chat) rather than a personal one
      * @param chat    null for none
-     * @param workers null unless there is a chat: a team's tasks run on members' own computers (ADR 0020)
+     * @param workers null unless there is a chat: a team's tasks run on members' own computers (ADR 0021)
      */
     public record Answers(String team, boolean shared, List<Config.Member> members, Chat chat, Config.Workers workers, String claude,
                           List<ProjectAddCommand.Project> projects, String authorName, String authorEmail, Advanced advanced) {
@@ -208,6 +208,16 @@ public final class Setup {
             return result.exitCode() == 0 ? result.stdout().strip().lines().findFirst() : Optional.empty();
         } catch (WorkspaceException e) {
             return Optional.empty();
+        }
+    }
+
+    /** Whether the GitHub CLI can make pull requests here: {@code gh auth status} exits 0. */
+    public static boolean ghLoggedIn(String command) {
+        try {
+            return Git.runProcess(List.of(command, "auth", "status"), Path.of(System.getProperty("user.home")), null,
+                    COMMAND_TIMEOUT, command + " auth status").exitCode() == 0;
+        } catch (WorkspaceException e) {
+            return false;
         }
     }
 

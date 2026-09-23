@@ -25,6 +25,11 @@ public final class WorkerConfigLoader {
     private WorkerConfigLoader() {
     }
 
+    /** The same name rule this loader enforces, so a wizard can reject a bad name before it is ever written to disk. */
+    static boolean isValidName(String name) {
+        return name != null && NAME.matcher(name).matches();
+    }
+
     /** The YAML file's shape; the key is never in it — it lives in worker.env. */
     record WorkerFile(String team, String name, Integer maxConcurrentRuns, String claudeCommand, String ghCommand,
                       String stateDir, Map<String, Project> projects) {
@@ -39,7 +44,7 @@ public final class WorkerConfigLoader {
         if (raw.team() == null || !ConfigLoader.isWorkerUrl(raw.team())) {
             errors.add("team: must start with https:// (plain http only for 127.0.0.1), got '" + raw.team() + "'");
         }
-        if (raw.name() == null || !NAME.matcher(raw.name()).matches()) {
+        if (!isValidName(raw.name())) {
             errors.add("name: required; letters, digits, '.', '_' and '-', at most 40 characters");
         }
         // No upper bound here: WorkerClient bounds every request this computer sends at once to

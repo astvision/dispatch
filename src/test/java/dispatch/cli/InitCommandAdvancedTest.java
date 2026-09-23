@@ -10,6 +10,7 @@ import dispatch.config.ConfigLoader;
 import dispatch.telegram.BotApi;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.GitFixture;
+import dispatch.testing.ScriptedTerminal;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.http.HttpClient;
@@ -136,6 +137,11 @@ class InitCommandAdvancedTest {
     }
 
     private static final class NoService implements Service {
+
+        @Override
+        public Kind kind() {
+            return Kind.DISPATCH;
+        }
 
         @Override
         public String describe() {

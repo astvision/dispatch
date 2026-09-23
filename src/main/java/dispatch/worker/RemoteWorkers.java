@@ -51,6 +51,8 @@ public final class RemoteWorkers implements Worker {
     private final Duration tick;
     private final Object lock = new Object();
     private final List<Offer> offers = new ArrayList<>();
+    /** Set by {@link #stopPolling}: no more jobs go out and every parked poll answers "nothing" at once. */
+    private boolean closed;
 
     /** @param wakeScheduler called when a worker asks for work, so a run queued while it was away starts at once */
     public RemoteWorkers(Database db, Clock clock, Runnable wakeScheduler) {
@@ -184,6 +186,20 @@ public final class RemoteWorkers implements Worker {
     }
 
     /**
+     * Ends every parked {@code /api/worker/next} now and refuses to hand out any more jobs. {@link WorkerApi#close}
+     * calls this before it stops its server: a poll parked in {@link #awaitMatch} is waiting on this class's own lock,
+     * so nothing else can end that wait cleanly, and without it the poll keeps its thread and socket for the rest of
+     * its 25 s — well past the one second {@code HttpServer.stop} waits — and shutdown ends by tearing the request
+     * down instead of answering it.
+     */
+    public void stopPolling() {
+        synchronized (lock) {
+            closed = true;
+            lock.notifyAll();
+        }
+    }
+
+    /**
      * The next job for {@code worker}, waiting up to this instance's long-poll bound. A job is this worker's when its
      * requester is the worker's member and either the task has no computer yet or this is that computer.
      */
@@ -204,6 +220,9 @@ public final class RemoteWorkers implements Worker {
         long deadlineNanos = System.nanoTime() + longPoll.toNanos();
         synchronized (lock) {
             while (true) {
+                if (closed) {
+                    return null;
+                }
                 Optional<Offer> match = offers.stream().filter(offer -> matches(offer, worker)).findFirst();
                 if (match.isPresent()) {
                     Offer offer = match.get();
@@ -328,9 +347,10 @@ public final class RemoteWorkers implements Worker {
             offer.takenBy = null;
             offer.expired = true;
         }
-        // held() validated and the mutation above happened in the same lock acquisition, so a concurrent givenUp() can
-        // no longer see this offer as still open — but it may already have completed the future first; complete()'s
-        // own return value is the tie-breaker, not a second read of state that could itself be stale.
+        // held() refused an already-expired offer under the same lock acquisition that set expired above, so no
+        // givenUp() can have completed this future first: complete() returns false only if that invariant is ever
+        // broken, and this branch is the guard that turns such a break into a 409 the worker can act on rather than
+        // a silently dropped result.
         if (!offer.answer.complete(result)) {
             throw new ApiException(409, "lease_expired",
                     "this run's lease has expired; keep its worktree, the member can retry it");

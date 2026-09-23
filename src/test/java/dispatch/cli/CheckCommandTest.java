@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dispatch.telegram.BotApi;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.GitFixture;
+import dispatch.testing.ScriptedTerminal;
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
@@ -125,6 +126,19 @@ class CheckCommandTest {
         assertTrue(withoutOne.contains("WARN project alm: no CLAUDE.md on origin/main"),
                 "agents work in worktrees of origin/main, which an uncommitted file never reaches: " + withoutOne);
         assertFalse(withOne.contains("CLAUDE.md"), withOne);
+    }
+
+    @Test
+    void aComputerWithOnlyAWorkerYamlIsNotToldToRunDispatchInit() throws IOException {
+        Files.writeString(config.resolveSibling("worker.yaml"),
+                "team: 'https://team.example.invalid'\nname: 'ann-laptop'\n");
+
+        int exit = check();
+
+        assertEquals(1, exit, terminal.output());
+        assertFalse(terminal.output().contains("create one with: dispatch init"), terminal.output());
+        assertTrue(terminal.output().contains("worker: ann-laptop"), terminal.output());
+        assertTrue(terminal.output().contains("FAIL pairing: no worker key"), terminal.output());
     }
 
     @Test

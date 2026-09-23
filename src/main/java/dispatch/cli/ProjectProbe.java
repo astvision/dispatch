@@ -58,6 +58,27 @@ public record ProjectProbe(Path folder, String defaultName, String originUrl, bo
         return name.isEmpty() ? "project" : name;
     }
 
+    /**
+     * Whether two git URLs name the same repository: {@code git@github.com:acme/alm.git},
+     * {@code https://github.com/acme/alm} and {@code ssh://git@github.com/acme/alm.git/} all match. Compared on host
+     * and path only, because the transport, a user name in the URL and a trailing {@code .git} are the member's own
+     * choice, not a different repository.
+     */
+    public static boolean sameRepo(String a, String b) {
+        return a != null && b != null && !a.isBlank() && key(a).equals(key(b));
+    }
+
+    private static String key(String url) {
+        String rest = url.strip().toLowerCase(java.util.Locale.ROOT).replaceFirst("^[a-z0-9+.-]+://", "");
+        int at = rest.indexOf('@');
+        if (at >= 0) {
+            rest = rest.substring(at + 1);
+        }
+        // scp syntax: host:owner/name -> host/owner/name; a :port stays a separator too, which is harmless here.
+        rest = rest.replaceFirst(":", "/");
+        return rest.replaceFirst("\\.git$", "").replaceFirst("/+$", "");
+    }
+
     public static Path expandHome(Path given) {
         String text = given.toString();
         if (text.equals("~") || text.startsWith("~/") || text.startsWith("~\\")) {

@@ -24,6 +24,7 @@ export default function SummaryStep({ state, draft, back, onDone }: Props) {
       authorName: draft.authorName,
       authorEmail: draft.authorEmail,
       projects: draft.projects,
+      ...(draft.workers ? { workers: draft.workers } : {}),
       ...(draft.advanced ? { advanced: draft.advanced } : {}),
     }));
     if (result) setWritten(result);
@@ -59,6 +60,9 @@ export default function SummaryStep({ state, draft, back, onDone }: Props) {
         <Descriptions.Item label="People">{state.members.map((m) => `${m.name} (${m.id})`).join(", ")}</Descriptions.Item>
         {state.team && <Descriptions.Item label="Group">{state.group?.title ?? "none"}</Descriptions.Item>}
         {state.team && <Descriptions.Item label="Team name">{draft.teamName}</Descriptions.Item>}
+        {state.team && draft.workers && (
+          <Descriptions.Item label="Workers">{`${draft.workers.publicUrl} (port ${draft.workers.port})`}</Descriptions.Item>
+        )}
         <Descriptions.Item label="Projects">
           {draft.projects.map((p) => `${p.name} (${[p.baseBranch, p.model, p.effort].filter(Boolean).join(", ")})`).join(", ")}
         </Descriptions.Item>

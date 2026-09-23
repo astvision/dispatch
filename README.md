@@ -3,7 +3,7 @@
 Dispatch takes development tasks that members write to its Telegram bot and has Claude Code plan them in a git worktree. Once the requester approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance and bot can serve several groups, each with its own members and projects.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M3g.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Reply to a result to follow up on it, `/retry` a failed step, and send screenshots or files with a task for the agent to read. `CodexAgent` comes next.
+- Status: **M4.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Reply to a result to follow up on it, `/retry` a failed step, and send screenshots or files with a task for the agent to read. In a team, each member's tasks run on their own computer (`dispatch worker init`, `dispatch worker run`; ADR 0021). `CodexAgent` comes next.
 
 ## Security
 
@@ -91,7 +91,27 @@ One machine runs the team's bot, with clones of the team's projects: a small ser
 - **Joining later:** someone new opens the bot and writes to it. The bot's admins (you, after `init`) get their name with a button per group and **Deny**. Allowing adds them to the config and they can give tasks at once, no restart needed. After a Deny, a person can ask again a day later.
 - **Admins:** `telegram.admins` in the config lists the Telegram user ids of the people who decide.
 - **Config:** plain YAML you may edit by hand; `dispatch check` validates it. Per project: `path` (the clone), `baseBranch`, and optionally `model` and `effort` (`low`, `medium`, `high`, `xhigh` or `max`), for both phases or per phase: `plan: { model: opus, effort: high }` or `execute: { model: sonnet }`. Dispatch works in its own worktrees under the state directory and only adds `dispatch/<task>` branches to the clone.
-- **Workers:** once a group has a chat, each member's tasks run on their own computer, not this machine's: `workers.publicUrl` and `workers.port` are then required (`dispatch init` writes them; see `deploy/example.yaml`). **Upgrading an existing team config:** add a `workers` block before starting this version, or Dispatch refuses to start.
+- **Workers:** once a group has a chat, each member's tasks run on their own computer, not this machine's: `workers.publicUrl` and `workers.port` are then required (`dispatch init` and `dispatch ui` both ask for them; see `deploy/example.yaml`). Dispatch listens only on `127.0.0.1:<port>`; publish `publicUrl` in front of it with a tunnel, a reverse proxy or a private network. This machine needs no `claude` for tasks and no `gh` at all — only members' computers do. **Upgrading an existing team config:** add a `workers` block before starting this version, or Dispatch refuses to start. Send `/worker` in the bot's private chat for a pairing code, and again to list or revoke your computers.
+
+### Your own computer in a team
+
+Your tasks run where your Claude Code login, your clones and your `gh` are: on your own machine. Once:
+
+```sh
+dispatch worker init      # asks for the team URL and a code from /worker, then sets everything up
+```
+
+It pairs this computer, fetches the projects your team has for you, maps each one to a clone you already have (or clones it), asks for a model and effort per project if you want your own, checks `claude --version` and `gh auth status`, writes `worker.yaml` and an owner-only `worker.env`, and offers to keep it running in the background. After that:
+
+```sh
+dispatch check                    # the whole computer: pairing, the team, claude, gh, each project's clone
+dispatch worker run               # run in this terminal instead of the background
+dispatch worker service status    # install | start | stop | status | uninstall
+```
+
+Tasks you give the bot wait until this computer is connected, and continue on it after a restart. Nothing of your code, your Claude sessions or your credentials reaches the team machine — see SECURITY.md. Worktrees of tasks nothing has touched for a week are removed here automatically; anything with uncommitted changes or unpushed commits is kept. A removed worktree's git-ignored content (build output, a copied `.env`) goes with it.
+
+Two `dispatch worker run` processes must never share one state directory: a second one refuses to start while the first holds it, because otherwise each would treat the other's live agents as orphans left over from a crash and kill them. If you installed the background service (`dispatch worker init` offers this), stop it first (`dispatch worker service stop`) before running `dispatch worker run` by hand.
 
 ### Help the agent: CLAUDE.md
 

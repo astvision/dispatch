@@ -1,5 +1,7 @@
-package dispatch.cli;
+package dispatch.testing;
 
+import dispatch.cli.CliException;
+import dispatch.cli.Terminal;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -10,12 +12,12 @@ import java.util.function.Supplier;
  * A terminal that answers from a script and records what was shown. An answer for {@link #choose} is an option's label, for
  * {@link #confirm} "y" or "n"; a blank answer takes the default. When the script runs out, input has ended.
  */
-final class ScriptedTerminal implements Terminal {
+public final class ScriptedTerminal implements Terminal {
 
-    final List<String> shown = new ArrayList<>();
+    public final List<String> shown = new ArrayList<>();
     private final Deque<String> answers;
 
-    ScriptedTerminal(String... answers) {
+    public ScriptedTerminal(String... answers) {
         this.answers = new ArrayDeque<>(List.of(answers));
     }
 
@@ -81,7 +83,7 @@ final class ScriptedTerminal implements Terminal {
         return work.get();
     }
 
-    String output() {
+    public String output() {
         return String.join("\n", shown);
     }
 

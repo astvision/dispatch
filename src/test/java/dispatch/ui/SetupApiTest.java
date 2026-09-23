@@ -3,6 +3,7 @@ package dispatch.ui;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -195,20 +196,59 @@ class SetupApiTest {
     }
 
     @Test
-    void writeRefusesATeamSetupEarlyBeforeAnythingIsWritten() throws Exception {
+    void aTeamSetupIsWrittenWithItsGroupAndItsWorkersBlock() throws Exception {
         call("/api/setup/team", "{\"team\":true}");
         call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
-        telegram.pushUpdate(start(1, 100, "Bold"));
-        call("/api/setup/people/next", "{}");
-        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
-        String writeBody = "{\"teamName\":\"backend\",\"claude\":\"" + json(JAVA) + "\",\"authorName\":\"a\",\"authorEmail\":\"a@example.com\","
-                + "\"projects\":[{\"folder\":\"" + json(repos.repo("alm").toString()) + "\",\"name\":\"alm\",\"baseBranch\":\"main\"}]}";
+        confirmTwoTeamMembers();
+        telegram.pushUpdate(botAddedTo(3, -1001234567890L, "Backend"));
+        call("/api/setup/group/next", "{}");
 
-        CliException refused = assertThrows(CliException.class, () -> call("/api/setup/write", writeBody));
+        call("/api/setup/write", teamWrite("{\"publicUrl\":\"https://team.example.com\",\"port\":7880}"));
 
-        assertTrue(refused.getMessage().contains("dispatch init"), refused.getMessage());
+        Config written = ConfigLoader.load(config, Map.of("TELEGRAM_BOT_TOKEN", TOKEN));
+        assertTrue(written.isTeam(), "a team config, with its group's chat");
+        assertEquals(-1001234567890L, written.telegram().groups().getFirst().chatId());
+        assertEquals("https://team.example.com", written.workers().publicUrl());
+        assertEquals(7880, written.workers().port());
+        assertEquals("backend", written.team(), "the page's team name, not the first member's");
+    }
+
+    @Test
+    void aTeamWithAGroupNeedsAUsableWorkersBlock() throws Exception {
+        call("/api/setup/team", "{\"team\":true}");
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        confirmTwoTeamMembers();
+        telegram.pushUpdate(botAddedTo(3, -1001234567890L, "Backend"));
+        call("/api/setup/group/next", "{}");
+
+        CliException missing = assertThrows(CliException.class, () -> call("/api/setup/write", teamWrite(null)));
+        CliException wrong = assertThrows(CliException.class,
+                () -> call("/api/setup/write", teamWrite("{\"publicUrl\":\"http://team.example.com\",\"port\":7880}")));
+
+        assertTrue(missing.getMessage().contains("workers.publicUrl is needed"), missing.getMessage());
+        assertTrue(wrong.getMessage().contains("must start with https://"), wrong.getMessage());
         assertFalse(Files.exists(config), "nothing was written");
         assertFalse(Files.exists(SecretsFile.beside(config)), "not even the secrets file");
+    }
+
+    @Test
+    void aTeamWithoutAGroupNeedsNoWorkersBlock() throws Exception {
+        call("/api/setup/team", "{\"team\":true}");
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        confirmTwoTeamMembers();
+
+        call("/api/setup/write", teamWrite(null));
+
+        Config written = ConfigLoader.load(config, Map.of("TELEGRAM_BOT_TOKEN", TOKEN));
+        assertNull(written.workers(), "no group chat, so nothing runs on members' computers yet");
+    }
+
+    /** @param workers the JSON of the workers block, or null to leave it out */
+    private String teamWrite(String workers) {
+        return "{\"teamName\":\"backend\",\"claude\":\"" + json(JAVA) + "\",\"authorName\":\"a\","
+                + "\"authorEmail\":\"a@example.com\"," + (workers == null ? "" : "\"workers\":" + workers + ",")
+                + "\"projects\":[{\"folder\":\"" + json(repos.repo("alm").toString())
+                + "\",\"name\":\"alm\",\"baseBranch\":\"main\"}]}";
     }
 
     private void confirmTwoTeamMembers() throws Exception {
@@ -473,6 +513,11 @@ class SetupApiTest {
     private static final class StubService implements Service {
 
         Service.Spec installed;
+
+        @Override
+        public Service.Kind kind() {
+            return Service.Kind.DISPATCH;
+        }
 
         @Override
         public String describe() {

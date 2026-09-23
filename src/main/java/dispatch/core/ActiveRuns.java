@@ -52,6 +52,11 @@ public final class ActiveRuns {
         return run == null ? Optional.empty() : run.activity();
     }
 
+    /** Whether a run of this task is being carried right now in this process. */
+    public boolean isActive(long taskId) {
+        return byTask.containsKey(taskId);
+    }
+
     public void stopAll(StopReason reason) {
         closedWith = reason;
         byTask.values().forEach(run -> run.stop(reason));

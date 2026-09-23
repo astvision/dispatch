@@ -54,19 +54,93 @@ public interface Service {
 
     void uninstall();
 
+    /** What a Kind's service is. */
+    Kind kind();
+
+    /**
+     * What a service definition runs: the team's Dispatch (`dispatch run`), or a member's own computer working on
+     * their tasks (`dispatch worker run`, ADR 0021). The two differ only in their name, their description and the
+     * arguments they pass, so one writer per OS produces both.
+     */
+    enum Kind {
+        DISPATCH("dispatch.service", "io.dispatch.agent", "Dispatch", "Dispatch", "dispatch.log", "dispatch service",
+                List.of("run")),
+        WORKER("dispatch-worker.service", "io.dispatch.worker", "DispatchWorker", "Dispatch worker",
+                "dispatch-worker.log", "dispatch worker service", List.of("worker", "run"));
+
+        private final String systemdUnit;
+        private final String launchdLabel;
+        private final String windowsTask;
+        private final String label;
+        private final String logName;
+        private final String manageCommand;
+        private final List<String> command;
+
+        Kind(String systemdUnit, String launchdLabel, String windowsTask, String label, String logName,
+             String manageCommand, List<String> command) {
+            this.systemdUnit = systemdUnit;
+            this.launchdLabel = launchdLabel;
+            this.windowsTask = windowsTask;
+            this.label = label;
+            this.logName = logName;
+            this.manageCommand = manageCommand;
+            this.command = command;
+        }
+
+        public String systemdUnit() {
+            return systemdUnit;
+        }
+
+        public String launchdLabel() {
+            return launchdLabel;
+        }
+
+        public String windowsTask() {
+            return windowsTask;
+        }
+
+        /** What it is called in a sentence, e.g. "Dispatch worker runs in the background as …". */
+        public String label() {
+            return label;
+        }
+
+        public String logName() {
+            return logName;
+        }
+
+        /** The command that manages it, for the line setup prints. */
+        public String manageCommand() {
+            return manageCommand;
+        }
+
+        /** The dispatch arguments before --config and --log-file. */
+        public List<String> command() {
+            return command;
+        }
+    }
+
     /** @param user the current user: a login name, or DOMAIN\name on Windows */
     static Service forOs(String osName, Path home, Commands commands, String user) {
+        return forOs(osName, home, commands, user, Kind.DISPATCH);
+    }
+
+    static Service forOs(String osName, Path home, Commands commands, String user, Kind kind) {
         if (osName.startsWith("Windows")) {
-            return new WindowsTaskService(commands, user);
+            return new WindowsTaskService(commands, user, kind);
         }
         if (osName.startsWith("Mac")) {
-            return new LaunchdService(home, commands);
+            return new LaunchdService(home, commands, kind);
         }
-        return new SystemdService(home, commands, user);
+        return new SystemdService(home, commands, user, kind);
     }
 
     /** The service for this OS and user, as `dispatch service` and the web UI manage it. */
     static Service forThisMachine() {
+        return forThisMachine(Kind.DISPATCH);
+    }
+
+    /** @param kind DISPATCH for the team's own instance, WORKER for this computer's `dispatch worker run` */
+    static Service forThisMachine(Kind kind) {
         Path home = Path.of(System.getProperty("user.home"));
         String os = System.getProperty("os.name");
         String user = os.startsWith("Windows") && System.getenv("USERDOMAIN") != null
@@ -79,7 +153,7 @@ public interface Service {
                 return new Git.Result(127, "", e.getMessage());
             }
         };
-        return forOs(os, home, commands, user);
+        return forOs(os, home, commands, user, kind);
     }
 
     /** Runs a service tool; a failure becomes a {@link CliException} with the tool's own words. */
