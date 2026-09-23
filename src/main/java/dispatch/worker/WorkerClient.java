@@ -18,8 +18,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Semaphore;
 
-/** This computer's side of the protocol: one HTTP call per route, with the worker key on every one but pairing. */
-public final class WorkerClient {
+/**
+ * This computer's side of the protocol: one HTTP call per route, with the worker key on every one but pairing.
+ *
+ * <p>Not {@code final}: {@code WorkerLoopTest} subclasses it to make one call fail on demand, which is the only seam
+ * that can pin {@code WorkerLoop.report}'s retry behaviour without a live team machine that can be told to misbehave.
+ */
+public class WorkerClient {
 
     /** The long poll answers within 25 s; the read timeout only has to be longer than that. */
     private static final Duration POLL_TIMEOUT = Duration.ofSeconds(40);
@@ -33,9 +38,15 @@ public final class WorkerClient {
      * long {@code next()} poll — a worker running several jobs at once can otherwise have that poll, each job's 10 s
      * progress tick, an attachment fetch and a result post all outstanding together, well past the limit. This bounds
      * this instance's own outgoing requests to the same number, so a call past it simply waits its turn locally
-     * instead of ever being refused with 429.
+     * instead of ever being refused with 429 — reachable anyway in a narrow race (this permit releases once the
+     * response body is read; the server decrements its own count only after its handler returns), which every caller
+     * already treats as transient.
+     *
+     * <p>Fair: {@link #attachment} holds its permit for a whole download, so with several concurrent runs an unfair
+     * semaphore could let a burst of attachment fetches repeatedly cut ahead of a run's own 10 s progress tick toward
+     * its 60 s lease, expiring a healthy run's lease as a side effect of someone else's file.
      */
-    private final Semaphore inFlight = new Semaphore(WorkerApi.MAX_IN_FLIGHT_PER_WORKER);
+    private final Semaphore inFlight = new Semaphore(WorkerApi.MAX_IN_FLIGHT_PER_WORKER, true);
 
     public WorkerClient(HttpClient http, URI team, String key) {
         this.http = http;
@@ -56,6 +67,25 @@ public final class WorkerClient {
 
         LeaseExpiredException(String message) {
             super(message);
+        }
+    }
+
+    /**
+     * A status no retry can fix: the request itself was wrong (400) or this computer no longer holds this run at all
+     * (403 {@code not_your_run}) — unlike a 409, where the lease merely expired, or a 5xx or a network failure, which
+     * might clear up on its own.
+     */
+    public static final class RejectedException extends RuntimeException {
+
+        private final int status;
+
+        RejectedException(int status, String message) {
+            super(message);
+            this.status = status;
+        }
+
+        public int status() {
+            return status;
         }
     }
 
@@ -179,6 +209,9 @@ public final class WorkerClient {
         throw switch (answer.statusCode()) {
             case 401 -> new RevokedException(message);
             case 409 -> new LeaseExpiredException(message);
+            // 400 invalid: the request itself was malformed, never fixed by sending the identical bytes again. 403
+            // not_your_run: a different computer holds this run's lease now; also never fixed by asking again.
+            case 400, 403 -> new RejectedException(answer.statusCode(), message);
             default -> new IllegalStateException("the team machine answered " + answer.statusCode() + ": " + message);
         };
     }

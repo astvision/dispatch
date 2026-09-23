@@ -116,6 +116,12 @@ public final class WorkerLoop implements Runnable {
      */
     public void stop() {
         stopped = true;
+        int inProgress = running.get();
+        if (inProgress > 0) {
+            // This can take a while (see STOP_TIMEOUT's own math): said once, up front, so a member watching the
+            // terminal knows why it has not returned yet, rather than wondering if Ctrl+C did anything at all.
+            Log.info("worker.stopping", "runs_still_reporting", inProgress);
+        }
         activeRuns.stopAll(ActiveRuns.StopReason.INTERRUPTED);
         try {
             if (!activeRuns.awaitIdle(STOP_TIMEOUT)) {
@@ -236,8 +242,10 @@ public final class WorkerLoop implements Runnable {
 
     /**
      * Sends the job's result, retrying a transient failure up to {@link #RESULT_RETRY_BACKOFF}'s length more times so
-     * one network blip does not throw away a run that already succeeded (possibly already delivered). A 409 and a
-     * revoked key are not retried: neither can ever succeed, and both already have a real cause logged elsewhere.
+     * one network blip does not throw away a run that already succeeded (possibly already delivered). Not retried: a
+     * revoked key (can never succeed), a {@link WorkerClient.RejectedException} (400/403 — the request itself was
+     * wrong, or this computer no longer holds the run; identical bytes fail identically), or a 409 (the lease is
+     * already gone either way; see the comment below on what that means on a retry specifically).
      */
     private void report(Job job, JobResult result) {
         for (int attempt = 0; ; attempt++) {
@@ -245,9 +253,18 @@ public final class WorkerLoop implements Runnable {
                 client.result(job.taskId(), job.seq(), result);
                 return;
             } catch (WorkerClient.LeaseExpiredException e) {
-                Log.warn("worker.result_refused", "task", job.taskId(), "run", job.seq(), "detail", e.getMessage());
+                if (attempt > 0) {
+                    // Reaching here on a retry almost always means the *previous* attempt's request was received and
+                    // recorded and only its response was lost in transit — not that this result was rejected: the team
+                    // machine closes an offer as soon as a result lands, so a genuinely late arrival (the lease expired
+                    // on its own, nobody ever posted) would have hit this exact branch on attempt 0 already instead.
+                    Log.warn("worker.result_already_recorded", "task", job.taskId(), "run", job.seq(), "attempt", attempt + 1,
+                            "detail", e.getMessage());
+                } else {
+                    Log.warn("worker.result_refused", "task", job.taskId(), "run", job.seq(), "detail", e.getMessage());
+                }
                 return;
-            } catch (WorkerClient.RevokedException e) {
+            } catch (WorkerClient.RevokedException | WorkerClient.RejectedException e) {
                 Log.error("worker.result_not_sent", e, "task", job.taskId(), "run", job.seq());
                 return;
             } catch (RuntimeException e) {

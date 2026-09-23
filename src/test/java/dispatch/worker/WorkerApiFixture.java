@@ -191,21 +191,32 @@ abstract class WorkerApiFixture {
 
     /** Pairs {@code name} with Bold and starts a real {@link WorkerLoop}, wired to this fixture's server, on a virtual thread. */
     void startLoop(String name, Path clonePath) throws Exception {
-        startLoop(name, Map.of("alm", new WorkerConfig.Project(clonePath.toString(), null, null)));
+        startLoop(name, Map.of("alm", new WorkerConfig.Project(clonePath.toString(), null, null)), WorkerClient::new);
+    }
+
+    /** As {@link #startLoop(String, Path)}, but with a {@link WorkerClient} this test controls, e.g. one call failing on demand. */
+    void startLoop(String name, Path clonePath, ClientFactory clientFactory) throws Exception {
+        startLoop(name, Map.of("alm", new WorkerConfig.Project(clonePath.toString(), null, null)), clientFactory);
     }
 
     /** As {@link #startLoop}, but the member never added "alm" to worker.yaml: this computer cannot run it. */
     void startLoopWithoutProjects(String name) throws Exception {
-        startLoop(name, Map.of());
+        startLoop(name, Map.of(), WorkerClient::new);
     }
 
-    private void startLoop(String name, Map<String, WorkerConfig.Project> projects) throws Exception {
+    /** How {@link #startLoop} builds this test's {@link WorkerClient}; {@code WorkerClient::new} is the ordinary one. */
+    @FunctionalInterface
+    interface ClientFactory {
+        WorkerClient create(HttpClient http, URI team, String key);
+    }
+
+    private void startLoop(String name, Map<String, WorkerConfig.Project> projects, ClientFactory clientFactory) throws Exception {
         String key = pair(BOLD, name);
         Path bin = Files.createDirectories(workerStateDir(name).resolve("bin"));
         URI team = URI.create("http://127.0.0.1:" + api.port());
         WorkerConfig workerConfig = new WorkerConfig(team.toString(), name, 1, FakeClaude.install(bin).toString(),
                 FakeGh.install(bin).toString(), workerStateDir(name), projects);
-        WorkerClient client = new WorkerClient(http, team, key);
+        WorkerClient client = clientFactory.create(http, team, key);
         Git git = new Git("git", null, Duration.ofSeconds(30));
         Workspaces workspaces = new Workspaces(workerConfig.stateDir(), git);
         Delivery delivery = new Delivery(git, new Gh(workerConfig.ghCommand(), null, Duration.ofSeconds(30)),

@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.core.JobResult;
 import dispatch.domain.FailureReason;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -59,5 +61,44 @@ class WorkerLoopTest extends WorkerApiFixture {
         control.stop(dispatch.core.ActiveRuns.StopReason.CANCELLED);
 
         assertEquals(JobResult.Outcome.CANCELLED, awaitResult().outcome());
+    }
+
+    @Test
+    void aResultPostThatFailsOnceIsRetriedAndDelivered() throws Exception {
+        AtomicInteger resultCalls = new AtomicInteger();
+        startLoop("ann-laptop", repos.repo("alm"), (http, team, key) -> new WorkerClient(http, team, key) {
+            @Override
+            public void result(long taskId, int seq, JobResult result) {
+                if (resultCalls.getAndIncrement() == 0) {
+                    throw new IllegalStateException("simulated: the team machine did not answer this time");
+                }
+                super.result(taskId, seq, result);
+            }
+        });
+
+        offer(planJob());
+
+        JobResult result = awaitResult();
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), "the retried post must still land");
+        assertEquals(2, resultCalls.get(), "one failed attempt, then the one that delivered");
+    }
+
+    @Test
+    void aLeaseExpiredResultIsNeverRetried() throws Exception {
+        AtomicInteger resultCalls = new AtomicInteger();
+        startLoop("ann-laptop", repos.repo("alm"), (http, team, key) -> new WorkerClient(http, team, key) {
+            @Override
+            public void result(long taskId, int seq, JobResult result) {
+                resultCalls.incrementAndGet();
+                throw new WorkerClient.LeaseExpiredException("simulated: this run's lease already expired");
+            }
+        });
+
+        offer(planJob());
+        // No retry means this settles almost at once; a wrongly-retried post would still be asleep in its first 2 s
+        // backoff when this checks, so waiting past it is enough to tell the two apart without polling for an absence.
+        Thread.sleep(Duration.ofSeconds(3).toMillis());
+
+        assertEquals(1, resultCalls.get(), "a 409 must not be retried: the lease is already gone, not transient");
     }
 }

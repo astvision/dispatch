@@ -49,8 +49,10 @@ public final class WorkerCommand {
         try {
             // A worker machine never runs `dispatch init`, so ~/.config/dispatch (or wherever --config points) usually
             // does not exist yet; without this, the code the member was just given is burned for nothing (SecretsFile.write
-            // creates the file itself, but not its parent directory).
-            OwnerOnly.createDirectories(options.workerFile().getParent());
+            // creates the file itself, but not its parent directory). toAbsolutePath() first: a bare "--config worker.yaml"
+            // has no parent as given, and getParent() on it would NPE past this try's IOException catch, burning the code
+            // just the same.
+            OwnerOnly.createDirectories(options.workerFile().toAbsolutePath().getParent());
             Map<String, String> values = new LinkedHashMap<>(Files.exists(env) ? SecretsFile.read(env) : Map.of());
             values.put(KEY_VARIABLE, paired.key());
             SecretsFile.write(env, values);
