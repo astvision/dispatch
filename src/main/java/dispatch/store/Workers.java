@@ -1,10 +1,13 @@
 package dispatch.store;
 
 import dispatch.domain.Requester;
+import dispatch.worker.Readiness;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -99,6 +102,59 @@ public final class Workers {
 
     public static int deleteExpiredCodes(Tx tx, Instant now) {
         return tx.update("DELETE FROM pairing_code WHERE expires_at <= ?", now);
+    }
+
+    /** Replaces this worker's whole report: a computer that was fixed must not stay broken here. */
+    public static void saveReadiness(Tx tx, long workerId, Readiness readiness, Instant now) {
+        tx.update("UPDATE worker SET claude_ok = ?, claude_detail = ?, gh_ok = ?, gh_detail = ?, readiness_at = ? WHERE id = ?",
+                readiness.claude().ok() ? 1 : 0, readiness.claude().detail(),
+                readiness.gh().ok() ? 1 : 0, readiness.gh().detail(), now, workerId);
+        tx.update("DELETE FROM worker_project WHERE worker_id = ?", workerId);
+        readiness.projects().forEach((project, check) ->
+                tx.update("INSERT INTO worker_project (worker_id, project, ok, detail) VALUES (?, ?, ?, ?)",
+                        workerId, project, check.ok() ? 1 : 0, check.detail()));
+    }
+
+    /** Never null: a worker that reported nothing counts as ready (see {@link Readiness#READY}). */
+    public static Readiness readiness(Tx tx, long workerId) {
+        Optional<Readiness> base = tx.one(
+                "SELECT claude_ok, claude_detail, gh_ok, gh_detail FROM worker WHERE id = ? AND claude_ok IS NOT NULL",
+                row -> new Readiness(new Readiness.Check(row.intValue("claude_ok") == 1, row.string("claude_detail")),
+                        new Readiness.Check(row.intValue("gh_ok") == 1, row.string("gh_detail")), Map.of()),
+                workerId);
+        if (base.isEmpty()) {
+            return Readiness.READY;
+        }
+        Map<String, Readiness.Check> projects = new LinkedHashMap<>();
+        for (Map.Entry<String, Readiness.Check> project : tx.list(
+                "SELECT project, ok, detail FROM worker_project WHERE worker_id = ?",
+                row -> Map.entry(row.string("project"), new Readiness.Check(row.intValue("ok") == 1, row.string("detail"))),
+                workerId)) {
+            projects.put(project.getKey(), project.getValue());
+        }
+        return new Readiness(base.get().claude(), base.get().gh(), projects);
+    }
+
+    /**
+     * The best report among {@code memberRef}'s live, unrevoked workers: a member with one broken laptop and one
+     * working desktop is not reported as stuck. Prefers a worker whose report holds no blocker; if every worker is
+     * broken, returns any one of their reports; if the member has no worker at all, returns {@link Readiness#READY}.
+     */
+    public static Readiness readinessOfMember(Tx tx, String memberRef) {
+        Readiness bestSoFar = Readiness.READY;
+        for (Paired worker : ofMember(tx, memberRef)) {
+            Readiness report = readiness(tx, worker.id());
+            if (hasNoBlocker(report)) {
+                return report;
+            }
+            bestSoFar = report;
+        }
+        return bestSoFar;
+    }
+
+    private static boolean hasNoBlocker(Readiness readiness) {
+        return readiness.claude().ok() && readiness.gh().ok()
+                && readiness.projects().values().stream().allMatch(Readiness.Check::ok);
     }
 
     private static Paired map(Row row) throws SQLException {
