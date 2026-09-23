@@ -610,7 +610,10 @@ Inside the existing `seenSince` branch, alongside the `last_seen_at` condition:
            AND w.last_seen_at >= :seenSince
            -- NULL claude_ok means the worker reported nothing, which counts as ready.
            AND (w.claude_ok IS NULL OR w.claude_ok = 1)
-           AND (w.gh_ok IS NULL OR w.gh_ok = 1 OR r.kind = 'PLAN')
+           -- Stated the same way round as Readiness.blocker: gh holds ONLY the kinds that deliver. `RunKind` has a
+           -- fourth value, SPLIT, which is never stored as a run — listing what gh blocks, rather than what it
+           -- does not, keeps this agreeing with the Java if that ever changes.
+           AND (w.gh_ok IS NULL OR w.gh_ok = 1 OR r.kind NOT IN ('EXECUTE', 'DELIVER'))
            AND NOT EXISTS (SELECT 1 FROM worker_project p
                             WHERE p.worker_id = w.id AND p.project = t.project AND p.ok = 0))
 ```
