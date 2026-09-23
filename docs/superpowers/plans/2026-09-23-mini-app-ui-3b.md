@@ -61,6 +61,8 @@ Type: Feature
 ## Deviations
 
 - Task 2 (tactical): the plan had every existing route's lambda gain a `Caller` parameter. `ManageApi.routes()` and `SetupApi.routes()` keep their `Function<JsonNode, Object>` shape instead, and `UiRoutes.anyCaller` lifts them at registration — which is also where the admin gate goes. Same single route concept inside `UiServer`, no churn in the two APIs or their tests. Files unchanged from the task's list except that `src/main/java/dispatch/ui/ManageApi.java` and `src/main/java/dispatch/ui/SetupApi.java` were not modified after all.
+- Task 5 (tactical): the wiring lives in a new `src/main/java/dispatch/ui/MiniApp.java` rather than inline in `App.start`, which keeps `App` to a field, a start and a close beside `WorkerApi`'s. `App.start` takes the config file path, so `Main`, `AppTest` and `TeamWorkersTest` pass it.
+- Task 5 (tactical): `MiniAppServerTest` picks a free port and writes it into the config, because `miniApp.port: 0` is refused by Task 1's validation — 0 is a test's shorthand, not something a person would write.
 - Task 4 (tactical): `statusPayload` and `historyPayload` gained a `mine` flag per task, and the active ones a `requester` name. The plan had "me" scope filtering the built payload by requester, but a running or queued item carried no requester at all, and filtering by name would confuse two members who share a first name. `src/main/java/dispatch/core/TaskService.java` was already in the task's `Files:`.
 - Task 4 (tactical): `retry`'s refusal is coded `cannot_retry`, not `not_yours`. `TaskService.retry` answers `REFUSED` both for "not your task" and for "it has not failed", and does not say which, so a `not_yours` message would tell a requester something untrue about their own task. The message names both reasons.
 - Task 4 (tactical): the DoD line about retrying by the requester is covered as the boundary "an admin may cancel anybody's task but never retry it". Retrying for real needs a task in `FAILED` with a failed run, which `TaskLifecycleTest` already exercises end to end; rebuilding that state here would test `TaskService`, not this API.
@@ -75,7 +77,7 @@ Type: Feature
 - [x] Task 2: `UiServer` takes its authentication and hands routes the caller
 - [x] Task 3: `TelegramAuth`
 - [x] Task 4: task payloads and `TasksApi`
-- [ ] Task 5: the Mini App server in `dispatch run`
+- [x] Task 5: the Mini App server in `dispatch run`
 - [ ] Task 6: the frontend's Telegram transport, theme and shell
 - [ ] Task 7: the task pages
 - [ ] Task 8: the Manage button and `/manage`

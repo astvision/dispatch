@@ -83,6 +83,7 @@ class AppTest {
     @Test
     void taskGivenPrivatelyBecomesAPrivatePlanThatTheRequesterRejects() throws Exception {
         app = start();
+        assertEquals(0, app.miniAppPort(), "no miniApp block, so nothing extra listens and the bot is as it was");
         JsonNode groupMenu = telegram.awaitRequest("setMyCommands", WAIT).json();
         assertEquals(GROUP, groupMenu.get("scope").get("chat_id").asLong());
         assertFalse(groupMenu.get("commands").toString().contains("\"task\""), groupMenu.toString());
@@ -282,7 +283,8 @@ class AppTest {
 
     private App start(MemberWriter members) {
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(60));
-        return App.start(config, members, api, FakeClaude.environment(), Clock.systemUTC(), fatalErrors::add);
+        return App.start(config, dir.resolve("dispatch.yaml"), members, api, FakeClaude.environment(), Clock.systemUTC(),
+                fatalErrors::add);
     }
 
     /** The next sendMessage call whose text contains {@code fragment}; earlier calls are skipped. */
