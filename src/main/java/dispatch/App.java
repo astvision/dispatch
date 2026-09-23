@@ -91,7 +91,9 @@ public final class App {
         Delivery delivery = new Delivery(git, new Gh(config.delivery().ghCommand(), config.secrets().ghToken(), Duration.ofMinutes(2)),
                 config.delivery().authorName(), config.delivery().authorEmail());
         Redactor redactor = Redactor.fromEnvironment(environment);
-        workspaces.createDirectories().ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
+        // Team mode never runs an agent or holds a worktree here; each member's own computer does (ADR 0020).
+        (config.workers() == null ? workspaces.createDirectories() : workspaces.createTeamDirectories())
+                .ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
         Database db = Database.open(stateDir.resolve("dispatch.db"));
         db.migrate();
         com.fasterxml.jackson.databind.JsonNode me = api.getMe();

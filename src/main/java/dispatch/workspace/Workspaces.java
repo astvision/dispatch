@@ -51,8 +51,22 @@ public final class Workspaces {
      * state directory itself is open to other users; group access, as systemd's StateDirectoryMode=0750 gives, is fine.
      */
     public Optional<String> createDirectories() {
+        return createDirectories(List.of("repos", "worktrees", "runs", "splits", "attachments"));
+    }
+
+    /**
+     * As {@link #createDirectories()}, but only what a team's own machine still needs when {@code workers} means it never
+     * runs an agent or holds a worktree itself: its own clones (for project availability checks) and splits, which still
+     * run here regardless of mode (ADR 0013). No worktrees/, runs/ or attachments/ — those belong to whichever computer
+     * actually runs the agent.
+     */
+    public Optional<String> createTeamDirectories() {
+        return createDirectories(List.of("repos", "splits"));
+    }
+
+    private Optional<String> createDirectories(List<String> subdirs) {
         try {
-            for (String sub : List.of("repos", "worktrees", "runs", "splits", "attachments")) {
+            for (String sub : subdirs) {
                 OwnerOnly.createDirectories(stateDir.resolve(sub));
             }
             return OwnerOnly.othersAccess(stateDir).map(permissions -> "state directory " + stateDir
