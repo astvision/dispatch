@@ -56,3 +56,17 @@ test("the Advanced answers are written too", async () => {
 
   await vi.waitFor(() => expect(write).toHaveBeenCalledWith(expect.objectContaining({ advanced: { maxConcurrentRuns: 3 } })));
 });
+
+test("a team's summary shows the workers block and sends it", async () => {
+  const write = vi.mocked(api.writeSetup).mockResolvedValue({ configFile: "/x/dispatch.yaml", secretsFile: "/x/dispatch.env" });
+  const teamDraft = { ...draft, teamName: "backend", workers: { publicUrl: "https://team.example.com", port: 7880 } };
+
+  render(<SummaryStep state={{ ...state, team: true }} draft={teamDraft} back={vi.fn()} onDone={vi.fn()} />);
+
+  expect(screen.getByText("https://team.example.com (port 7880)")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Write this setup" }));
+
+  await vi.waitFor(() => expect(write).toHaveBeenCalledWith(expect.objectContaining({
+    teamName: "backend", workers: { publicUrl: "https://team.example.com", port: 7880 },
+  })));
+});

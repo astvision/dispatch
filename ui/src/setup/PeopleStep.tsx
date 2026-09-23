@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Input, List, QRCode, Space, Spin, Typography } from "antd";
+import { Alert, Button, Card, Input, InputNumber, List, QRCode, Space, Spin, Typography } from "antd";
 import { useCallback, useState } from "react";
 import { answerPerson, nextGroup, nextPerson, stopService, type SetupState } from "../api";
 import { useAction } from "../useAction";
@@ -31,6 +31,11 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
   const firstName = you?.name.split(/\s+/)[0]?.toLowerCase() ?? "";
   const groupTitle = group.found?.title ?? state.group?.title;
   const teamName = draft.teamName || (groupTitle ?? (firstName ? `${firstName}-team` : ""));
+  const [publicUrl, setPublicUrl] = useState(draft.workers?.publicUrl ?? "");
+  const [port, setPort] = useState(draft.workers?.port ?? 7880);
+  // A group chat is what makes this a team whose members run their own tasks (ADR 0021); without one, nothing here.
+  const needsWorkers = state.team && !!groupTitle;
+  const urlOk = /^https:\/\/\S+$/.test(publicUrl.trim()) || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(publicUrl.trim());
 
   const answer = async (accept: boolean) => {
     if (!person.found) return;
@@ -128,6 +133,26 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
           {!groupTitle && <Button onClick={() => setPhase("done")}>No group</Button>}
         </Space>
       )}
+      {needsWorkers && (
+        <Space orientation="vertical" style={{ width: "100%" }}>
+          <Typography.Paragraph type="secondary">
+            Each teammate's tasks run on their own computer, which reaches this one through your tunnel or reverse proxy.
+          </Typography.Paragraph>
+          <label>
+            <Typography.Text>Public URL</Typography.Text>
+            <Input value={publicUrl} placeholder="https://team.example.com" aria-label="Public URL"
+                   onChange={(e) => setPublicUrl(e.target.value)} />
+          </label>
+          {publicUrl.trim() !== "" && !urlOk && (
+            <Typography.Text type="danger">Use an https:// URL (or http://127.0.0.1 for a local test).</Typography.Text>
+          )}
+          <label>
+            <Typography.Text>Port</Typography.Text>
+            <InputNumber min={1} max={65535} value={port} aria-label="Port"
+                         onChange={(value) => setPort(value ?? 7880)} />
+          </label>
+        </Space>
+      )}
       {state.team && you && (
         <label>
           <Typography.Text>Team name</Typography.Text>
@@ -137,8 +162,16 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
 
       <Space>
         <Button onClick={back}>Back</Button>
-        <Button type="primary" disabled={!you || (state.team && !teamName.trim())}
-                onClick={() => { if (state.team) update({ teamName: teamName.trim() }); next(); }}>
+        <Button type="primary" disabled={!you || (state.team && !teamName.trim()) || (needsWorkers && !urlOk)}
+                onClick={() => {
+                  if (state.team) {
+                    update({
+                      teamName: teamName.trim(),
+                      ...(needsWorkers ? { workers: { publicUrl: publicUrl.trim(), port } } : {}),
+                    });
+                  }
+                  next();
+                }}>
           Next
         </Button>
       </Space>

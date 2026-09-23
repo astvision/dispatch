@@ -11,6 +11,7 @@ import dispatch.cli.ServiceCommand;
 import dispatch.cli.Setup;
 import dispatch.config.Config;
 import dispatch.config.ConfigException;
+import dispatch.config.ConfigLoader;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
@@ -283,17 +284,14 @@ public final class SetupApi {
                     // teammates added while this was a team setup.
                     throw new CliException(PERSONAL_BOT_ONE_MEMBER);
                 }
-                // SHORTCUT: the web setup page has no workers step yet, so it cannot render a valid team config
-                // (ConfigLoader now requires `workers` once a group has a chat) — refused here, clearly and before
-                // anything is written, rather than deep inside Setup.write's own validation with a config-file-shaped
-                // message. Remove once the page gets its own team/worker onboarding (dispatch init already has it).
-                if (team) {
-                    throw new CliException("dispatch ui cannot set up a team yet: run dispatch init instead, "
-                            + "which also asks for the workers block a team needs");
-                }
                 List<ProjectAddCommand.Project> projects = projects(body.path("projects"));
-                String name = Setup.teamName(members.getFirst().name().split("\\s+")[0]);
-                Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), null, null,
+                // A team names itself; a personal bot is named after its only member, as dispatch init does.
+                String name = Setup.teamName(team ? text(body, "teamName")
+                        : members.getFirst().name().split("\\s+")[0]);
+                // Only a group chat makes this a team config, and only then does ConfigLoader want workers: without
+                // one, nobody announces and nothing runs on a member's computer yet (ADR 0021).
+                Config.Workers workers = team && chat != null ? workers(body.path("workers")) : null;
+                Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), team ? chat : null, workers,
                         text(body, "claude"), projects, text(body, "authorName"), text(body, "authorEmail"),
                         advanced(body.path("advanced")));
                 String yaml;
@@ -355,6 +353,26 @@ public final class SetupApi {
         String model = choice(settings, "model", MODELS);
         String effort = choice(settings, "effort", EFFORTS);
         return model == null && effort == null ? null : new Config.PhaseSettings(model, effort);
+    }
+
+    /**
+     * Where members' computers reach this machine (ADR 0021). Checked here, with the page's own words, rather than
+     * left to the config loader's file-shaped message after the file is already being written.
+     */
+    private static Config.Workers workers(JsonNode body) {
+        String publicUrl = optionalText(body, "publicUrl");
+        if (publicUrl == null) {
+            throw new CliException("workers.publicUrl is needed: the https URL your teammates' computers reach this "
+                    + "machine on, through your tunnel or reverse proxy");
+        }
+        if (!ConfigLoader.isWorkerUrl(publicUrl)) {
+            throw new CliException("workers.publicUrl must start with https:// (plain http only for 127.0.0.1)");
+        }
+        JsonNode port = body.path("port");
+        if (!port.isIntegralNumber() || port.asInt() < 1 || port.asInt() > 65535) {
+            throw new CliException("workers.port must be a whole number from 1 to 65535");
+        }
+        return new Config.Workers(publicUrl, port.asInt());
     }
 
     /** The Advanced section's instance answers; each one left out keeps its default. */

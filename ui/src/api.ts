@@ -143,12 +143,19 @@ export interface SetupAdvanced {
   ghCommand?: string;
 }
 
+/** Where members' computers reach the team machine; only a team with a group chat needs it. */
+export interface WorkersChoice {
+  publicUrl: string;
+  port: number;
+}
+
 export interface SetupPayload {
   teamName: string | null;
   claude: string;
   authorName: string;
   authorEmail: string;
   projects: ProjectChoice[];
+  workers?: WorkersChoice;
   advanced?: SetupAdvanced;
 }
 
