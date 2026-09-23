@@ -161,6 +161,7 @@ class ClaudeCodeAgentTest {
         String env = Files.readString(workdir.resolve("fake-claude.env"));
         assertFalse(env.contains("TELEGRAM_BOT_TOKEN"), env);
         assertFalse(env.contains("GH_TOKEN"), env);
+        assertFalse(env.contains("DISPATCH_WORKER_KEY"), env);
         assertTrue(env.contains("ANTHROPIC_API_KEY=sk-ant-test"), env);
     }
 

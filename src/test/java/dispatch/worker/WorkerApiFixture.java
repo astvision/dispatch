@@ -81,7 +81,11 @@ abstract class WorkerApiFixture {
     final AtomicReference<JobResult> reported = new AtomicReference<>();
     /** What the default {@link #offer}'s {@link JobEvents} learned: {@link WorkerLoopTest} checks what reached this machine. */
     final AtomicReference<String> recordedWorktree = new AtomicReference<>();
+    /** Set as soon as the agent starts, whoever's pid it is; {@link #awaitAgentStarted} waits on this, not on the pid check below. */
+    final AtomicBoolean started = new AtomicBoolean();
     final AtomicBoolean agentStartedWithoutAPid = new AtomicBoolean();
+    /** Real wall-clock progress interval for a test's {@link WorkerLoop}, short enough that a cancel test need not wait 10 s. */
+    static final Duration TEST_PROGRESS = Duration.ofMillis(200);
     /** A real origin, seed clone and Dispatch-owned "alm" clone; {@link WorkerLoopTest} points a worker's own clone at it. */
     GitFixture repos;
     private final List<WorkerLoop> loops = new ArrayList<>();
@@ -167,6 +171,7 @@ abstract class WorkerApiFixture {
             @Override
             public void agentStarted(Long pid, Instant processStart) {
                 agentStartedWithoutAPid.set(pid == null);
+                started.set(true);
             }
         };
     }
@@ -208,7 +213,7 @@ abstract class WorkerApiFixture {
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(workerConfig.claudeCommand(), FakeClaude.environment(), Duration.ofSeconds(1)));
         WorkerLoop loop = new WorkerLoop(workerConfig, client, agents, workspaces, delivery, Redactor.patternsOnly(),
-                new ActiveRuns());
+                new ActiveRuns(), TEST_PROGRESS);
         loops.add(loop);
         Thread.ofVirtual().name("worker-loop-" + name).start(loop);
     }
@@ -237,7 +242,7 @@ abstract class WorkerApiFixture {
     /** Waits for the worker's progress to report that its agent started. */
     void awaitAgentStarted() {
         Instant deadline = Instant.now().plusSeconds(30);
-        while (!agentStartedWithoutAPid.get()) {
+        while (!started.get()) {
             if (Instant.now().isAfter(deadline)) {
                 throw new AssertionError("the agent never started");
             }

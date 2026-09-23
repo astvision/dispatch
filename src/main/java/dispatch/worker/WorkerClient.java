@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Semaphore;
 
 /** This computer's side of the protocol: one HTTP call per route, with the worker key on every one but pairing. */
 public final class WorkerClient {
@@ -27,6 +28,14 @@ public final class WorkerClient {
     private final HttpClient http;
     private final URI team;
     private final String key;
+    /**
+     * The server counts every authenticated request against {@link WorkerApi#MAX_IN_FLIGHT_PER_WORKER}, including the
+     * long {@code next()} poll — a worker running several jobs at once can otherwise have that poll, each job's 10 s
+     * progress tick, an attachment fetch and a result post all outstanding together, well past the limit. This bounds
+     * this instance's own outgoing requests to the same number, so a call past it simply waits its turn locally
+     * instead of ever being refused with 429.
+     */
+    private final Semaphore inFlight = new Semaphore(WorkerApi.MAX_IN_FLIGHT_PER_WORKER);
 
     public WorkerClient(HttpClient http, URI team, String key) {
         this.http = http;
@@ -107,6 +116,7 @@ public final class WorkerClient {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(
                         Json.write(Map.of("taskId", taskId, "fileRef", fileRef))))).build();
+        acquireSlot();
         try {
             HttpResponse<Path> answer = http.send(request, HttpResponse.BodyHandlers.ofFile(target,
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING));
@@ -118,12 +128,30 @@ public final class WorkerClient {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("interrupted while fetching a file", e);
+        } finally {
+            inFlight.release();
         }
     }
 
     private JsonNode call(String path, String body, Duration timeout) {
-        return send(http, authorized(HttpRequest.newBuilder(team.resolve(path)).timeout(timeout)
-                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body))));
+        HttpRequest.Builder request = authorized(HttpRequest.newBuilder(team.resolve(path)).timeout(timeout)
+                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)));
+        acquireSlot();
+        try {
+            return send(http, request);
+        } finally {
+            inFlight.release();
+        }
+    }
+
+    /** Blocks until one of this instance's {@link WorkerApi#MAX_IN_FLIGHT_PER_WORKER} slots is free. */
+    private void acquireSlot() {
+        try {
+            inFlight.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while waiting for a free connection to the team machine", e);
+        }
     }
 
     private HttpRequest.Builder authorized(HttpRequest.Builder request) {
@@ -143,12 +171,23 @@ public final class WorkerClient {
         if (answer.statusCode() == 200) {
             return Json.read(answer.body());
         }
-        JsonNode error = Json.read(answer.body());
-        String message = error.path("message").asText(answer.body());
+        // The status decides what kind of failure this is; the body is read only for its message and, unlike the
+        // JSON this class writes itself, is untrusted — a public https team URL behind a reverse proxy can answer a
+        // 401 or 409 with that proxy's own HTML error page instead of Dispatch's JSON, and that must not stop the
+        // status code from being recognised as what it is.
+        String message = errorMessage(answer.body());
         throw switch (answer.statusCode()) {
             case 401 -> new RevokedException(message);
             case 409 -> new LeaseExpiredException(message);
             default -> new IllegalStateException("the team machine answered " + answer.statusCode() + ": " + message);
         };
+    }
+
+    private static String errorMessage(String body) {
+        try {
+            return Json.read(body).path("message").asText(body);
+        } catch (RuntimeException e) {
+            return body;
+        }
     }
 }

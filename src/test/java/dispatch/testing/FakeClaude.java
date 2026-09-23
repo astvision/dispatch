@@ -35,6 +35,7 @@ public final class FakeClaude {
         env.put("ANTHROPIC_API_KEY", "sk-ant-test");
         env.put("TELEGRAM_BOT_TOKEN", "123:telegram-secret");
         env.put("GH_TOKEN", "github_pat_secret");
+        env.put("DISPATCH_WORKER_KEY", "worker-key-secret-value");
         return env;
     }
 

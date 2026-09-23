@@ -13,6 +13,7 @@ import dispatch.workspace.Delivery;
 import dispatch.workspace.Workspaces;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,8 +28,21 @@ public final class WorkerLoop implements Runnable {
     /** The spec's progress interval: also how soon a cancel reaches the agent. */
     public static final Duration PROGRESS = Duration.ofSeconds(10);
     private static final Duration RETRY_AFTER_ERROR = Duration.ofSeconds(5);
-    /** How long {@link #stop} waits for an in-flight run to report before returning, as {@code App.stop} does (ADR 0008). */
-    private static final Duration STOP_TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * Backoff before each retry after {@link #report}'s first attempt fails for a reason that might clear up on its own
+     * (the team machine unreachable, a timeout, a 429): up to 3 retries, so a computed result is not thrown away on one
+     * transient failure. Not used for a 409 (the lease is already gone; a retry cannot change that) or a revoked key
+     * (no retry will ever succeed).
+     */
+    private static final List<Duration> RESULT_RETRY_BACKOFF =
+            List.of(Duration.ofSeconds(2), Duration.ofSeconds(5), Duration.ofSeconds(10));
+    /**
+     * How long {@link #stop} waits for an in-flight run to report before returning, as {@code App.stop} does (ADR 0008).
+     * Above {@link #report}'s own worst case: up to 4 attempts (the first plus {@link #RESULT_RETRY_BACKOFF}'s 3
+     * retries) at {@code WorkerClient}'s 30 s call timeout each, plus the 17 s of backoff between them — 137 s — with
+     * margin.
+     */
+    private static final Duration STOP_TIMEOUT = Duration.ofSeconds(150);
 
     private final WorkerConfig config;
     private final WorkerClient client;
@@ -38,11 +52,18 @@ public final class WorkerLoop implements Runnable {
     private final Redactor redactor;
     private final ActiveRuns activeRuns;
     private final LocalAgents agents;
+    private final Duration progressInterval;
     private final AtomicInteger running = new AtomicInteger();
     private volatile boolean stopped;
 
     public WorkerLoop(WorkerConfig config, WorkerClient client, Map<String, Agent> agentsByType, Workspaces workspaces,
                       Delivery delivery, Redactor redactor, ActiveRuns activeRuns) {
+        this(config, client, agentsByType, workspaces, delivery, redactor, activeRuns, PROGRESS);
+    }
+
+    /** @param progressInterval overrides {@link #PROGRESS}; a real wall-clock duration, so a test need not pay a real 10 s wait per tick. */
+    WorkerLoop(WorkerConfig config, WorkerClient client, Map<String, Agent> agentsByType, Workspaces workspaces,
+              Delivery delivery, Redactor redactor, ActiveRuns activeRuns, Duration progressInterval) {
         this.config = config;
         this.client = client;
         this.agentsByType = Map.copyOf(agentsByType);
@@ -51,6 +72,7 @@ public final class WorkerLoop implements Runnable {
         this.redactor = redactor;
         this.activeRuns = activeRuns;
         this.agents = new LocalAgents(config.stateDir());
+        this.progressInterval = progressInterval;
     }
 
     /** One runner per job, so its attachment source knows which task's files it may fetch. */
@@ -154,13 +176,23 @@ public final class WorkerLoop implements Runnable {
                 job.deliverySummary()));
     }
 
-    /** The two store writes the team machine cannot wait for, sent the moment they happen. */
+    /**
+     * The two store writes the team machine cannot wait for, sent the moment they happen — best-effort, like the 10 s
+     * ticker: {@link JobRunner} calls these from inside {@code runAgent}, before {@code control.attach(handle)} runs, so
+     * an exception here would leave this run's handle never attached and its process reachable by neither a cancel nor
+     * {@link ActiveRuns#stopAll}, while {@link #carry}'s {@code finally} still calls {@link LocalAgents#forget} — orphaning
+     * the agent from both this run's cancel path and the next start's {@link LocalAgents#killOrphans}.
+     */
     private JobEvents events(Job job) {
         return new JobEvents() {
 
             @Override
             public void worktreeCreated(String worktree, String baseSha) {
-                client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), worktree, baseSha, false, null, null));
+                try {
+                    client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), worktree, baseSha, false, null, null));
+                } catch (RuntimeException e) {
+                    Log.warn("worker.progress_failed", "task", job.taskId(), "error", e.getMessage());
+                }
             }
 
             @Override
@@ -168,16 +200,20 @@ public final class WorkerLoop implements Runnable {
                 if (pid != null) {
                     agents.record(job.taskId(), job.seq(), pid, processStart);
                 }
-                client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, true, null, null));
+                try {
+                    client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, true, null, null));
+                } catch (RuntimeException e) {
+                    Log.warn("worker.progress_failed", "task", job.taskId(), "error", e.getMessage());
+                }
             }
         };
     }
 
-    /** Every 10 s: what the agent is doing, and whatever the team machine answers about a cancel. */
+    /** Every {@link #progressInterval}: what the agent is doing, and whatever the team machine answers about a cancel. */
     private void tick(Job job, ActiveRuns.ActiveRun control) {
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                Thread.sleep(PROGRESS);
+                Thread.sleep(progressInterval);
                 var activity = activeRuns.activity(job.taskId());
                 boolean cancel = client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, false,
                         activity.map(a -> a.steps()).orElse(null), activity.map(a -> a.lastAction()).orElse(null)));
@@ -198,13 +234,31 @@ public final class WorkerLoop implements Runnable {
         }
     }
 
+    /**
+     * Sends the job's result, retrying a transient failure up to {@link #RESULT_RETRY_BACKOFF}'s length more times so
+     * one network blip does not throw away a run that already succeeded (possibly already delivered). A 409 and a
+     * revoked key are not retried: neither can ever succeed, and both already have a real cause logged elsewhere.
+     */
     private void report(Job job, JobResult result) {
-        try {
-            client.result(job.taskId(), job.seq(), result);
-        } catch (WorkerClient.LeaseExpiredException e) {
-            Log.warn("worker.result_refused", "task", job.taskId(), "run", job.seq(), "detail", e.getMessage());
-        } catch (RuntimeException e) {
-            Log.error("worker.result_not_sent", e, "task", job.taskId(), "run", job.seq());
+        for (int attempt = 0; ; attempt++) {
+            try {
+                client.result(job.taskId(), job.seq(), result);
+                return;
+            } catch (WorkerClient.LeaseExpiredException e) {
+                Log.warn("worker.result_refused", "task", job.taskId(), "run", job.seq(), "detail", e.getMessage());
+                return;
+            } catch (WorkerClient.RevokedException e) {
+                Log.error("worker.result_not_sent", e, "task", job.taskId(), "run", job.seq());
+                return;
+            } catch (RuntimeException e) {
+                if (attempt >= RESULT_RETRY_BACKOFF.size()) {
+                    Log.error("worker.result_not_sent", e, "task", job.taskId(), "run", job.seq());
+                    return;
+                }
+                Log.warn("worker.result_retry", "task", job.taskId(), "run", job.seq(), "attempt", attempt + 1,
+                        "error", e.getMessage());
+                sleep(RESULT_RETRY_BACKOFF.get(attempt));
+            }
         }
     }
 

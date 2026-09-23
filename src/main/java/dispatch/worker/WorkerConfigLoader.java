@@ -21,12 +21,6 @@ public final class WorkerConfigLoader {
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .build();
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9._-]{1,40}");
-    /**
-     * Each active run keeps roughly one request in flight for its progress tick; the next()-poll, an attachment fetch
-     * and a result post each add one more, briefly. Staying at most this many below {@link WorkerApi#MAX_IN_FLIGHT_PER_WORKER}
-     * leaves that headroom, so a worker run at its configured limit is never the one that trips the server's 429.
-     */
-    static final int MAX_RECOMMENDED_CONCURRENT_RUNS = WorkerApi.MAX_IN_FLIGHT_PER_WORKER - 1;
 
     private WorkerConfigLoader() {
     }
@@ -48,15 +42,17 @@ public final class WorkerConfigLoader {
         if (raw.name() == null || !NAME.matcher(raw.name()).matches()) {
             errors.add("name: required; letters, digits, '.', '_' and '-', at most 40 characters");
         }
+        // No upper bound here: WorkerClient bounds every request this computer sends at once to
+        // WorkerApi.MAX_IN_FLIGHT_PER_WORKER structurally (a Semaphore around call() and attachment()), whatever this is
+        // set to, so this number only trades local resource use (parallel agent processes) against throughput.
         int concurrent = raw.maxConcurrentRuns() == null ? 1 : raw.maxConcurrentRuns();
         if (concurrent < 1) {
             errors.add("maxConcurrentRuns: at least 1");
-        } else if (concurrent > MAX_RECOMMENDED_CONCURRENT_RUNS) {
-            errors.add("maxConcurrentRuns: at most " + MAX_RECOMMENDED_CONCURRENT_RUNS
-                    + "; each run's progress, attachment and result calls share the team machine's "
-                    + WorkerApi.MAX_IN_FLIGHT_PER_WORKER + "-requests-in-flight limit per worker");
         }
-        Path stateDir = raw.stateDir() == null ? Locations.current().stateDir() : Path.of(raw.stateDir());
+        // Never the same directory a personal `dispatch run` on this machine would use: same worktrees/runs/attachments
+        // layout, keyed by task ids from a different database, and a second `dispatch worker run` would kill the
+        // first's agents as "orphans" at startup.
+        Path stateDir = raw.stateDir() == null ? Locations.current().stateDir().resolve("worker") : Path.of(raw.stateDir());
         if (!stateDir.isAbsolute()) {
             errors.add("stateDir: must be an absolute path, got '" + raw.stateDir() + "'");
         }
@@ -78,7 +74,14 @@ public final class WorkerConfigLoader {
 
     private static WorkerFile read(Path file) {
         try {
-            return YAML.readValue(file.toFile(), WorkerFile.class);
+            WorkerFile raw = YAML.readValue(file.toFile(), WorkerFile.class);
+            // An empty file, or one that is only "null" or comments, parses to a null document rather than throwing —
+            // without this, every raw.xxx() below throws NullPointerException instead of the clear error this loader
+            // otherwise guarantees.
+            if (raw == null) {
+                throw new ConfigException(file + " is empty; it needs at least team and name (run dispatch worker pair)");
+            }
+            return raw;
         } catch (JsonProcessingException e) {
             throw new ConfigException(file + ": " + e.getOriginalMessage());
         } catch (IOException e) {

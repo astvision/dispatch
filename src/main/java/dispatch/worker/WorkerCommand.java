@@ -47,6 +47,10 @@ public final class WorkerCommand {
         }
         Path env = SecretsFile.beside(options.workerFile());
         try {
+            // A worker machine never runs `dispatch init`, so ~/.config/dispatch (or wherever --config points) usually
+            // does not exist yet; without this, the code the member was just given is burned for nothing (SecretsFile.write
+            // creates the file itself, but not its parent directory).
+            OwnerOnly.createDirectories(options.workerFile().getParent());
             Map<String, String> values = new LinkedHashMap<>(Files.exists(env) ? SecretsFile.read(env) : Map.of());
             values.put(KEY_VARIABLE, paired.key());
             SecretsFile.write(env, values);

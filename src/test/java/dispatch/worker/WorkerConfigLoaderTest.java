@@ -70,16 +70,36 @@ class WorkerConfigLoaderTest {
     }
 
     @Test
-    void maxConcurrentRunsIsCappedSoAWorkerCanNeverSpinOn429() throws Exception {
-        Path file = write("""
+    void aHighMaxConcurrentRunsIsAccepted() throws Exception {
+        // WorkerClient, not this validation, is what keeps this worker's requests to the team machine within its
+        // limit; this number only trades this computer's own resource use against throughput.
+        WorkerConfig config = WorkerConfigLoader.load(write("""
                 team: https://team.example.com
                 name: ann-laptop
-                maxConcurrentRuns: 4
-                """);
+                maxConcurrentRuns: 20
+                """));
+
+        assertEquals(20, config.maxConcurrentRuns());
+    }
+
+    @Test
+    void theDefaultStateDirIsNotWhereAPersonalDispatchRunsOnThisMachine() throws Exception {
+        WorkerConfig config = WorkerConfigLoader.load(write("""
+                team: https://team.example.com
+                name: ann-laptop
+                """));
+
+        assertEquals("worker", config.stateDir().getFileName().toString());
+        assertTrue(config.stateDir().isAbsolute(), config.stateDir().toString());
+    }
+
+    @Test
+    void anEmptyFileIsAClearErrorNotACrash() throws Exception {
+        Path file = write("");
 
         ConfigException error = assertThrows(ConfigException.class, () -> WorkerConfigLoader.load(file));
 
-        assertTrue(error.getMessage().contains("maxConcurrentRuns: at most 3"), error.getMessage());
+        assertTrue(error.getMessage().contains(file.toString()), error.getMessage());
     }
 
     private Path write(String yaml) throws Exception {

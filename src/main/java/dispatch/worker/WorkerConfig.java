@@ -10,7 +10,10 @@ import java.util.Map;
  *
  * @param team              the team's URL, as {@code dispatch worker pair} was given it
  * @param name              what the member's /worker list calls this computer
- * @param maxConcurrentRuns how many of this member's runs this computer works on at once
+ * @param maxConcurrentRuns how many of this member's runs this computer works on at once — trades this machine's own
+ *                          resource use (parallel agent processes) against throughput; it does not bound how many
+ *                          requests this computer sends the team machine at once, which {@link WorkerClient} caps on
+ *                          its own regardless of this number
  * @param claudeCommand     the member's own Claude Code, which runs with the member's own login
  * @param ghCommand         the member's own GitHub CLI
  * @param stateDir          where this computer keeps its worktrees, run logs and attachments
