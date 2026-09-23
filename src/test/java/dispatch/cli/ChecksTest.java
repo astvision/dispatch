@@ -136,6 +136,51 @@ class ChecksTest {
     }
 
     @Test
+    void theMiniAppIsReportedOffUnlessItIsConfigured() throws IOException {
+        writeConfig();
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "miniApp",
+                "miniApp: off; nothing is served to Telegram and the bot shows no Manage button")), findings.toString());
+        assertFalse(Checks.failed(findings), findings.toString());
+    }
+
+    @Test
+    void aConfiguredMiniAppIsCheckedOnItsPortAndItsPublicUrl() throws Exception {
+        int free = freePort();
+        writeConfig();
+        Files.writeString(config, Files.readString(config)
+                + "\nminiApp:\n  publicUrl: 'http://127.0.0.1:" + free + "'\n  port: " + free + "\n");
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "miniApp",
+                "miniApp: nothing listens on 127.0.0.1:" + free + " yet; it starts with dispatch run")), findings.toString());
+        assertFalse(Checks.failed(findings), findings.toString());
+    }
+
+    @Test
+    void aRunningMiniAppIsRecognisedOnItsPortAndItsPublicUrl() throws Exception {
+        HttpServer dispatchLike = stubWorkerApi();
+        try {
+            int port = dispatchLike.getAddress().getPort();
+            writeConfig();
+            Files.writeString(config, Files.readString(config)
+                    + "\nminiApp:\n  publicUrl: 'http://127.0.0.1:" + port + "'\n  port: " + port + "\n");
+
+            List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "miniApp",
+                    "miniApp: 127.0.0.1:" + port + " answers as this Dispatch")), findings.toString());
+            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "miniApp",
+                    "miniApp: http://127.0.0.1:" + port + " reaches this Dispatch")), findings.toString());
+        } finally {
+            dispatchLike.stop(0);
+        }
+    }
+
+    @Test
     void aRunningTeamMachineRecognisesItsOwnWorkerApiAndItsPublicUrl() throws Exception {
         HttpServer dispatchLike = stubWorkerApi();
         try {
@@ -205,16 +250,19 @@ class ChecksTest {
     }
 
     /** What Dispatch answers an unauthenticated worker request; nothing else answers exactly this. */
+    /** Both of Dispatch's own refusals to an unsigned request: the worker API's, and the Mini App's. */
     private static HttpServer stubWorkerApi() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
-        server.createContext("/api/worker/projects", exchange -> {
+        com.sun.net.httpserver.HttpHandler unauthorized = exchange -> {
             byte[] body = "{\"error\":\"unauthorized\",\"message\":\"no\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(401, body.length);
             try (java.io.OutputStream out = exchange.getResponseBody()) {
                 out.write(body);
             }
-        });
+        };
+        server.createContext("/api/worker/projects", unauthorized);
+        server.createContext("/api/me", unauthorized);
         server.start();
         return server;
     }

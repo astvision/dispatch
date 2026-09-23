@@ -85,7 +85,7 @@ Type: Feature
 - [x] Task 6: the frontend's Telegram transport, theme and shell
 - [x] Task 7: the task pages
 - [x] Task 8: the Manage button and `/manage`
-- [ ] Task 9: `dispatch check`, ADR 0019 and the docs
+- [x] Task 9: `dispatch check`, ADR 0019 and the docs
 - [ ] Task 10: the live run from a phone
 
 ## Implementation Tasks

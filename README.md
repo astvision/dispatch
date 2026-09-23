@@ -148,6 +148,26 @@ dispatch ui --no-browser                 # and open the link it prints on your c
 The tunnel's local and remote ports must match (as above): the page only accepts requests for its own port. The page
 listens only on the machine it runs on. Anyone with its link can act as you, like a shell: see SECURITY.md.
 
+### Manage it from Telegram
+
+The same pages open inside Telegram, from the bot's **Manage** menu button or `/manage`, so members follow their tasks
+from a phone. It is **off unless you turn it on**, and turning it on puts a shell-equivalent API on the internet: read
+[SECURITY.md](SECURITY.md) first.
+
+Publish one `https://` address that forwards to a local port — a Cloudflare Tunnel, a Tailscale Funnel or a reverse
+proxy with a domain — and add it to `dispatch.yaml`:
+
+```yaml
+miniApp:
+  publicUrl: https://dispatch.example.com   # your tunnel or reverse proxy
+  port: 7879                                # Dispatch listens on 127.0.0.1:<port>; the tunnel forwards to it
+```
+
+Restart Dispatch, and `dispatch check` will say whether the port answers and whether your URL reaches it. A member gets
+their own tasks, with **Cancel** and **Retry**; an admin also gets every task of their groups and the management pages
+above. Another member's task shows only its headline. Plans are still approved, corrected and rejected in the chat, and
+Dispatch is still set up with `dispatch init` or `dispatch ui` — never from Telegram.
+
 ## Set up a team instance with systemd (Linux server)
 
 For a dedicated server with an OS user per team, run Dispatch as a system service instead. The examples use the instance `backend`.

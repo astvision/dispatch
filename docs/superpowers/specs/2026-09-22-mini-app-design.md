@@ -1,6 +1,6 @@
 # Dispatch management pages and the Telegram Mini App
 
-Status: approved design, 2026-09-22. Extends `2026-09-22-web-ui-design.md`, whose milestone UI-3 this splits into UI-3a and UI-3b. Next: implementation plan for UI-3a.
+Status: delivered, 2026-09-23. Extends `2026-09-22-web-ui-design.md`, whose milestone UI-3 this splits into UI-3a and UI-3b; both are built.
 
 ## Goal
 
@@ -127,4 +127,4 @@ As in the web UI spec (JSON errors, messages for people). Mini App additions: 40
 | Milestone | Delivers | Done when |
 |---|---|---|
 | UI-3a | Advanced setup (both setups); `ManageApi` and the pages: Projects, People, Settings, Logs, Restart and the save flow, in `dispatch ui`; Playwright | `InitCommandTest` passes; Playwright passes; saving keeps `.bak` and refuses a config changed on disk; a live run edits a real config |
-| UI-3b | `miniApp` config, the server in `dispatch run`, `TelegramAuth` with member and admin roles, My tasks and admin Tasks with Cancel and Retry, the Manage menu button and `/manage`, theme and phone layout, `dispatch check`, ADR 0019, docs | The auth and role tests pass; a live run opens the pages from a phone through a tunnel as an admin and as a member |
+| UI-3b (delivered) | `miniApp` config, the server in `dispatch run`, `TelegramAuth` with member and admin roles, My tasks and admin Tasks with Cancel and Retry, the Manage menu button and `/manage`, theme and phone layout, `dispatch check`, ADR 0019, docs | The auth and role tests pass; a live run opens the pages from a phone through a tunnel as an admin and as a member |

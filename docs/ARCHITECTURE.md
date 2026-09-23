@@ -29,6 +29,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Setup | One-line install, an arrow-key `dispatch init` for a personal or a team bot, and a per-user background service on each OS | 0016 |
 | Agent sessions | A task has a planning session (the plan and its corrections) and a building session, which execution starts from the approved plan | 0017 |
 | Setup and management in a browser | `dispatch ui`, a separate process on 127.0.0.1 with a one-time link | 0018 |
+| Management from a phone | An opt-in Telegram Mini App served by `dispatch run`, authenticated by Telegram's signed launch data | 0019 |
 | Task privacy | Another member's task shows only its headline; only the requester acts on it, except cancel, which an admin may also do; a private message Telegram refuses falls back to a content-free group notice | 0020 |
 
 Also decided without an ADR:
@@ -411,6 +412,8 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 
 `workers` is required once any group has a `chatId`: each member's tasks then run on their own computer (`dispatch worker run`), reached at `publicUrl` behind the owner's tunnel or reverse proxy, on `port` (127.0.0.1 only). A personal bot needs neither setting; its jobs run in this process. **Upgrading an existing team config:** add a `workers` block (see `deploy/example.yaml`) before starting this version — Dispatch refuses to start, and `dispatch check` reports it, once a group has a chat but no `workers` block. A member sets their computer up with `dispatch worker init` and keeps it running as the `dispatch-worker` service (ADR 0021); `dispatch check` covers both sides, and the key model is in [SECURITY.md](../SECURITY.md).
 
+`miniApp` is optional everywhere and off when it is left out: with it, `dispatch run` also serves the management pages and members' task pages as a Telegram Mini App on `127.0.0.1:<port>`, behind the owner's tunnel at `publicUrl`, authenticated by Telegram's signed launch data on every request (ADR 0019). Turning it on puts a shell-equivalent API on the internet; [SECURITY.md](../SECURITY.md) says what holds it shut. `dispatch check` reports it either way.
+
 ## Milestones
 
 | | Scope |
@@ -425,6 +428,7 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **M3f** leaner agent runs (built) | A planning and a building session per task (ADR 0017), plans asked for as JSON only, the model that actually answered shown on plans and results with a warning when it isn't the configured one, model and effort per phase, a CLAUDE.md hint in `dispatch check` |
 | **M3g** interaction and ops (built) | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
 | **M4** team workers (built) | Members see only each other's headlines (ADR 0020); the runner split into `Coordinator` and `JobRunner` behind `Worker`; a member's computer pairs with a one-time code and a worker key, and runs their tasks over `RemoteWorkers`/`WorkerApi` with 60 s leases (`dispatch worker pair`, `dispatch worker run`); `dispatch worker init` pairs a computer, maps or clones its projects and installs the `dispatch-worker` service; `dispatch check` covers both the team machine and a member's computer (ADR 0021) |
+| **UI-3b** Telegram Mini App (built) | The `miniApp` config, the pages served by `dispatch run` behind `TelegramAuth` (signature, one-hour freshness, member and admin roles, Host), members' My tasks and admins' Tasks with Cancel and Retry, the Manage menu button and `/manage`, Telegram's theme and a phone layout, `dispatch check` (ADR 0019) |
 | **M5** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
