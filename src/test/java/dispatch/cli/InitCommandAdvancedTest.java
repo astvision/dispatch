@@ -138,6 +138,11 @@ class InitCommandAdvancedTest {
     private static final class NoService implements Service {
 
         @Override
+        public Kind kind() {
+            return Kind.DISPATCH;
+        }
+
+        @Override
         public String describe() {
             return "test service";
         }

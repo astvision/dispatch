@@ -151,6 +151,60 @@ class ServiceTest {
                 "a not-running task still fails /End; restart must still reach /Run");
     }
 
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "a systemd unit only ever holds Linux paths; Windows ones get escaped backslashes")
+    void theWorkerUnitRunsWorkerRunUnderItsOwnName() throws IOException {
+        Path home = dir.resolve("home");
+        Service service = Service.forOs("Linux", home, commands, "ann", Service.Kind.WORKER);
+
+        service.install(new Service.Spec(Path.of("/usr/bin/java"), Path.of("/opt/dispatch.jar"),
+                home.resolve(".config/dispatch/worker.yaml"), home.resolve("state/worker/dispatch-worker.log"),
+                "/usr/bin:/bin", home.resolve("state/worker")));
+
+        String unit = Files.readString(home.resolve(".config/systemd/user/dispatch-worker.service"));
+        assertTrue(unit.contains("Description=Dispatch worker"), unit);
+        assertTrue(unit.contains("-jar \"/opt/dispatch.jar\" worker run --config"), unit);
+        assertTrue(unit.contains("dispatch-worker.log"), unit);
+        assertEquals("systemd user service dispatch-worker.service", service.describe());
+        assertTrue(commands.run.stream().anyMatch(line -> line.contains("enable --now dispatch-worker.service")),
+                commands.run.toString());
+    }
+
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "a systemd unit only ever holds Linux paths; Windows ones get escaped backslashes")
+    void theTeamUnitKeepsItsNameAndArguments() throws IOException {
+        Path home = dir.resolve("home");
+        Service service = Service.forOs("Linux", home, commands, "ann");
+
+        service.install(new Service.Spec(Path.of("/usr/bin/java"), Path.of("/opt/dispatch.jar"),
+                home.resolve(".config/dispatch/dispatch.yaml"), home.resolve("state/dispatch.log"), "/usr/bin:/bin",
+                home.resolve("state")));
+
+        String unit = Files.readString(home.resolve(".config/systemd/user/dispatch.service"));
+        assertTrue(unit.contains("-jar \"/opt/dispatch.jar\" run --config"), unit);
+        assertEquals("systemd user service dispatch.service", service.describe());
+    }
+
+    @Test
+    void theWorkerLaunchdAgentAndWindowsTaskCarryTheWorkerArgumentsToo() throws IOException {
+        Path home = dir.resolve("home");
+        commands.answer("id -u", 0, "501\n");
+        Service launchd = Service.forOs("Mac OS X", home, commands, "ann", Service.Kind.WORKER);
+        launchd.install(new Service.Spec(Path.of("/usr/bin/java"), Path.of("/opt/dispatch.jar"),
+                home.resolve("worker.yaml"), home.resolve("dispatch-worker.log"), "/usr/bin", home));
+
+        String plist = Files.readString(home.resolve("Library/LaunchAgents/io.dispatch.worker.plist"));
+        assertTrue(plist.contains("<string>io.dispatch.worker</string>"), plist);
+        assertTrue(plist.contains("<string>worker</string>\n    <string>run</string>"), plist);
+
+        Recorder schtasks = new Recorder();
+        Service windows = Service.forOs("Windows 11", home, schtasks, "ACME\\ann", Service.Kind.WORKER);
+        windows.install(new Service.Spec(Path.of("C:\\java\\bin\\java.exe"), Path.of("C:\\dispatch.jar"),
+                home.resolve("worker.yaml"), home.resolve("dispatch-worker.log"), "C:\\bin", home));
+
+        assertTrue(schtasks.run.stream().anyMatch(line -> line.contains("/TN DispatchWorker")), schtasks.run.toString());
+    }
+
     private static Service.Spec spec(Path home) {
         return new Service.Spec(JAVA, home.resolve("dispatch/dispatch.jar"), home.resolve(".config/dispatch/dispatch.yaml"),
                 home.resolve("state/dispatch.log"), "/usr/bin:/home/bold/.local/bin", home.resolve("state"));

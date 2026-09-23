@@ -475,6 +475,11 @@ class SetupApiTest {
         Service.Spec installed;
 
         @Override
+        public Service.Kind kind() {
+            return Service.Kind.DISPATCH;
+        }
+
+        @Override
         public String describe() {
             return "stub service";
         }

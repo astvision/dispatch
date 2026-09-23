@@ -6,6 +6,7 @@ import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /** `dispatch service install | start | stop | status | uninstall` (ADR 0016). */
 public final class ServiceCommand {
@@ -27,9 +28,14 @@ public final class ServiceCommand {
     }
 
     public int run(Cli.Service options, Map<String, String> processEnvironment) {
+        return run(options.action(), () -> specFor(jar, options.configFile(), processEnvironment));
+    }
+
+    /** @param spec read only when the action needs it, so status/stop work on a config this process cannot load */
+    public int run(String action, Supplier<Service.Spec> spec) {
         try {
-            switch (options.action()) {
-                case "install" -> install(options.configFile(), processEnvironment);
+            switch (action) {
+                case "install" -> install(spec.get());
                 case "start" -> {
                     service.start();
                     terminal.ok("started " + service.describe());
@@ -43,10 +49,10 @@ public final class ServiceCommand {
                     service.uninstall();
                     terminal.ok("removed " + service.describe());
                 }
-                default -> throw new CliException("unknown service action " + options.action());
+                default -> throw new CliException("unknown service action " + action);
             }
             return 0;
-        } catch (CliException | UncheckedIOException e) {
+        } catch (CliException | ConfigException | UncheckedIOException e) {
             terminal.fail(e.getMessage());
             return 1;
         }
@@ -54,14 +60,17 @@ public final class ServiceCommand {
 
     /** Checks the config and its secrets first, so a service never starts on a setup that cannot run. */
     void install(Path configFile, Map<String, String> processEnvironment) {
-        Service.Spec spec = specFor(jar, configFile, processEnvironment);
+        install(specFor(jar, configFile, processEnvironment));
+    }
+
+    void install(Service.Spec spec) {
         terminal.during("Installing the " + service.describe(), () -> {
             service.install(spec);
             return null;
         });
-        terminal.ok("Dispatch runs in the background as " + service.describe());
+        terminal.ok(service.kind().label() + " runs in the background as " + service.describe());
         terminal.say("  Logs:   " + spec.logFile());
-        terminal.say("  Manage: dispatch service status | stop | start | uninstall");
+        terminal.say("  Manage: " + service.kind().manageCommand() + " status | stop | start | uninstall");
         service.status().notes().forEach(terminal::warn);
     }
 
@@ -88,7 +97,7 @@ public final class ServiceCommand {
         }
     }
 
-    /** What the service runs: this process's Java, {@code jar}, and the config, whose secrets are checked first. */
+    /** What the team's service runs: this process's Java, {@code jar}, and the config, whose secrets are checked first. */
     public static Service.Spec specFor(Path jar, Path configFile, Map<String, String> processEnvironment) {
         RunCommand.Prepared prepared;
         try {
@@ -96,6 +105,15 @@ public final class ServiceCommand {
         } catch (ConfigException e) {
             throw new CliException(e.getMessage());
         }
+        return specFor(jar, configFile, prepared.config().stateDir(), Service.Kind.DISPATCH.logName(), processEnvironment);
+    }
+
+    /**
+     * The same spec without loading a {@code dispatch.yaml}: a worker's config is a {@code worker.yaml}, which its own
+     * caller has already read (see {@code WorkerCommand.workerSpec}).
+     */
+    public static Service.Spec specFor(Path jar, Path configFile, Path stateDir, String logName,
+                                       Map<String, String> processEnvironment) {
         if (jar == null || !Files.isRegularFile(jar)) {
             throw new CliException("the service runs dispatch.jar, but this is not running from it; install Dispatch first");
         }
@@ -103,7 +121,7 @@ public final class ServiceCommand {
                 System.getProperty("os.name"), processEnvironment, Path.of(System.getProperty("user.home")));
         String path = processEnvironment.entrySet().stream().filter(entry -> entry.getKey().equalsIgnoreCase("PATH"))
                 .map(Map.Entry::getValue).findFirst().orElse("");
-        return new Service.Spec(java, jar.toAbsolutePath(), configFile.toAbsolutePath(),
-                prepared.config().stateDir().resolve("dispatch.log"), path, prepared.config().stateDir());
+        return new Service.Spec(java, jar.toAbsolutePath(), configFile.toAbsolutePath(), stateDir.resolve(logName),
+                path, stateDir);
     }
 }

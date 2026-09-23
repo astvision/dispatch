@@ -244,6 +244,11 @@ class InitCommandTest {
         Service.Spec installed;
 
         @Override
+        public Kind kind() {
+            return Kind.DISPATCH;
+        }
+
+        @Override
         public String describe() {
             return "test service";
         }

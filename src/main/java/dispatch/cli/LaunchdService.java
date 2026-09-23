@@ -12,23 +12,32 @@ import java.util.List;
  */
 final class LaunchdService implements Service {
 
-    private static final String LABEL = "io.dispatch.agent";
-
     private final Path plist;
     private final Commands commands;
+    private final Kind kind;
 
-    LaunchdService(Path home, Commands commands) {
-        this.plist = home.resolve("Library").resolve("LaunchAgents").resolve(LABEL + ".plist");
+    LaunchdService(Path home, Commands commands, Kind kind) {
+        this.plist = home.resolve("Library").resolve("LaunchAgents").resolve(kind.launchdLabel() + ".plist");
         this.commands = commands;
+        this.kind = kind;
+    }
+
+    @Override
+    public Kind kind() {
+        return kind;
     }
 
     @Override
     public String describe() {
-        return "launchd agent " + LABEL;
+        return "launchd agent " + kind.launchdLabel();
     }
 
     @Override
     public void install(Spec spec) {
+        StringBuilder arguments = new StringBuilder();
+        for (String argument : kind.command()) {
+            arguments.append("    <string>").append(xml(argument)).append("</string>\n");
+        }
         Service.write(plist, """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -41,8 +50,7 @@ final class LaunchdService implements Service {
                     <string>%s</string>
                     <string>-jar</string>
                     <string>%s</string>
-                    <string>run</string>
-                    <string>--config</string>
+                %s    <string>--config</string>
                     <string>%s</string>
                     <string>--log-file</string>
                     <string>%s</string>
@@ -59,8 +67,9 @@ final class LaunchdService implements Service {
                   <key>ThrottleInterval</key><integer>10</integer>
                 </dict>
                 </plist>
-                """.formatted(LABEL, xml(spec.java()), xml(spec.jar()), xml(spec.configFile()), xml(spec.logFile()), xml(spec.path())));
-        commands.run(List.of("launchctl", "bootout", domain() + "/" + LABEL));
+                """.formatted(kind.launchdLabel(), xml(spec.java()), xml(spec.jar()), arguments,
+                xml(spec.configFile()), xml(spec.logFile()), xml(spec.path())));
+        commands.run(List.of("launchctl", "bootout", domain() + "/" + kind.launchdLabel()));
         Service.required(commands, List.of("launchctl", "bootstrap", domain(), plist.toString()));
     }
 
@@ -71,7 +80,7 @@ final class LaunchdService implements Service {
 
     @Override
     public void stop() {
-        Service.required(commands, List.of("launchctl", "bootout", domain() + "/" + LABEL));
+        Service.required(commands, List.of("launchctl", "bootout", domain() + "/" + kind.launchdLabel()));
     }
 
     /**
@@ -82,7 +91,7 @@ final class LaunchdService implements Service {
      */
     @Override
     public void restart() {
-        if (commands.run(List.of("launchctl", "kickstart", "-k", domain() + "/" + LABEL)).exitCode() != 0) {
+        if (commands.run(List.of("launchctl", "kickstart", "-k", domain() + "/" + kind.launchdLabel())).exitCode() != 0) {
             start();
         }
     }
@@ -92,7 +101,7 @@ final class LaunchdService implements Service {
         if (!Files.exists(plist)) {
             return new Status(false, false, "not installed", List.of());
         }
-        Git.Result printed = commands.run(List.of("launchctl", "print", domain() + "/" + LABEL));
+        Git.Result printed = commands.run(List.of("launchctl", "print", domain() + "/" + kind.launchdLabel()));
         if (printed.exitCode() != 0) {
             return new Status(true, false, "not loaded; start it with: dispatch service start", List.of());
         }
@@ -103,7 +112,7 @@ final class LaunchdService implements Service {
 
     @Override
     public void uninstall() {
-        commands.run(List.of("launchctl", "bootout", domain() + "/" + LABEL));
+        commands.run(List.of("launchctl", "bootout", domain() + "/" + kind.launchdLabel()));
         try {
             Files.deleteIfExists(plist);
         } catch (IOException e) {

@@ -97,6 +97,11 @@ class UiCommandTest {
     private static final class NoService implements Service {
 
         @Override
+        public Service.Kind kind() {
+            return Service.Kind.DISPATCH;
+        }
+
+        @Override
         public String describe() {
             return "no service";
         }
