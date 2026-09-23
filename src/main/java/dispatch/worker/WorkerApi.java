@@ -341,7 +341,7 @@ public final class WorkerApi implements AutoCloseable {
             return Optional.empty();
         }
         Map<String, Readiness.Check> projects = new LinkedHashMap<>();
-        reported.path("projects").fields().forEachRemaining(entry ->
+        reported.path("projects").properties().forEach(entry ->
                 projects.put(entry.getKey(), check(entry.getValue())));
         return Optional.of(new Readiness(check(reported.path("claude")), check(reported.path("gh")), projects));
     }

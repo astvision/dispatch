@@ -2,6 +2,7 @@ package dispatch.worker;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.cli.Checks;
@@ -9,9 +10,12 @@ import dispatch.cli.SecretsFile;
 import dispatch.testing.GitFixture;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 
 /** dispatch check on a member's own computer, against a real WorkerApi. */
 class WorkerChecksTest extends WorkerApiFixture {
@@ -38,6 +42,70 @@ class WorkerChecksTest extends WorkerApiFixture {
                 && f.message().startsWith("pairing: paired with ")), findings.toString());
         assertTrue(findings.stream().anyMatch(f -> f.area().equals("project alm") && f.level() == Checks.Level.OK),
                 findings.toString());
+    }
+
+    /**
+     * {@link WorkerChecks#readiness()} directly: it is the source of truth for every downstream decision and
+     * message in this milestone (ADR 0021), so its mapping — which check lands in which field — needs its own
+     * pin, not just incidental coverage through {@link #aWorkingWorkerPassesAndNamesItsTeamPairingAndProjects}'s
+     * {@code Checks.Finding} assertions.
+     */
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "alwaysSucceeds installs a POSIX shell script")
+    void readinessReportsAHealthyComputer() throws Exception {
+        WorkerConfig config = new WorkerConfig("http://127.0.0.1:" + api.port(), "ann-laptop", 1, JAVA,
+                alwaysSucceeds("gh").toString(), dir,
+                Map.of("alm", new WorkerConfig.Project(repos.repo("alm").toString(), null, null)));
+
+        Readiness readiness = new WorkerChecks(config).readiness();
+
+        assertTrue(readiness.claude().ok());
+        assertNotNull(readiness.claude().detail(), "the version line, so a member can be told which one is too old");
+        assertTrue(readiness.gh().ok());
+        assertTrue(readiness.projects().get("alm").ok());
+    }
+
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "alwaysSucceeds installs a POSIX shell script")
+    void readinessNamesTheCommandWhenClaudeCannotRunAndGhIsUnaffected() throws Exception {
+        String noSuchClaude = dir.resolve("no-such-claude").toString();
+        WorkerConfig config = new WorkerConfig("http://127.0.0.1:" + api.port(), "ann-laptop", 1, noSuchClaude,
+                alwaysSucceeds("gh").toString(), dir, Map.of());
+
+        Readiness readiness = new WorkerChecks(config).readiness();
+
+        assertFalse(readiness.claude().ok());
+        assertTrue(readiness.claude().detail().contains(noSuchClaude), readiness.claude().detail());
+        assertTrue(readiness.gh().ok(), "claude's own failure must not drag gh's field down with it");
+    }
+
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "alwaysSucceeds installs a POSIX shell script")
+    void readinessMarksOnlyTheProjectWithAMissingClone() throws Exception {
+        Path missing = dir.resolve("no-such-clone");
+        WorkerConfig config = new WorkerConfig("http://127.0.0.1:" + api.port(), "ann-laptop", 1, JAVA,
+                alwaysSucceeds("gh").toString(), dir,
+                Map.of("alm", new WorkerConfig.Project(repos.repo("alm").toString(), null, null),
+                        "other", new WorkerConfig.Project(missing.toString(), null, null)));
+
+        Readiness readiness = new WorkerChecks(config).readiness();
+
+        assertTrue(readiness.projects().get("alm").ok(), "the other project must stay ok");
+        assertFalse(readiness.projects().get("other").ok());
+        assertTrue(readiness.projects().get("other").detail().contains(missing.toString()),
+                readiness.projects().get("other").detail());
+    }
+
+    /**
+     * A command that always exits 0, whatever arguments it is called with — an authenticated {@code gh}, without
+     * {@link dispatch.testing.FakeGh}'s own recording (it writes {@code fake-gh.args}/{@code fake-gh.env} into its
+     * working directory, and {@link dispatch.cli.Setup#ghLoggedIn} runs it in this process's real {@code $HOME}).
+     */
+    private Path alwaysSucceeds(String name) throws Exception {
+        Path script = Files.createDirectories(dir.resolve("bin")).resolve(name);
+        Files.writeString(script, "#!/bin/sh\nexit 0\n");
+        Files.setPosixFilePermissions(script, PosixFilePermissions.fromString("rwx------"));
+        return script;
     }
 
     @Test
