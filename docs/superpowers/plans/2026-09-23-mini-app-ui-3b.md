@@ -2,7 +2,7 @@
 
 Created: 2026-09-23
 Agent: Claude Code
-Status: PENDING
+Status: COMPLETE
 Approved: Yes
 Iterations: 0
 Worktree: No
@@ -10,7 +10,9 @@ Type: Feature
 
 ## Summary
 
-**Goal:** A member opens Dispatch from inside Telegram — the bot's Manage button or `/manage` — and sees their own tasks with Cancel and Retry; an admin sees every task of their groups and the management pages, all served by `dispatch run` behind Telegram's signed launch data.
+**Goal:** A member opens Dispatch from inside Telegram — `/manage` answers with a button — and sees their own tasks with Cancel and Retry; an admin sees every task of their groups and the management pages, all served by `dispatch run` behind Telegram's signed launch data.
+
+(The goal said "the bot's Manage menu button or `/manage`" until the live run showed the menu button costs members their command list; see Deviations, Task 8.)
 
 ## Out of Scope
 
@@ -56,7 +58,7 @@ Type: Feature
 ## Assumptions
 
 - Telegram's `initData` is a URL-encoded query string whose `user` field is JSON — Task 3 verifies against Telegram's own documented example data, so a wrong assumption fails there, before anything depends on it.
-- A member's private chat id equals their user id, as `setChatMenuButton` is called with it in Task 8. This already holds everywhere Dispatch sends a private message (`dispatch/telegram/Refs.java`).
+- A member's private chat id equals their user id, as `setCommandsMenuButton` is called with it in Task 8. This already holds everywhere Dispatch sends a private message (`dispatch/telegram/Refs.java`).
 
 ## Deviations
 
@@ -88,7 +90,7 @@ Type: Feature
 - [x] Task 7: the task pages
 - [x] Task 8: the Manage button and `/manage`
 - [x] Task 9: `dispatch check`, ADR 0019 and the docs
-- [ ] Task 10: the live run from a phone
+- [x] Task 10: the live run from a phone
 
 ## Implementation Tasks
 
@@ -378,9 +380,30 @@ Type: Feature
 
 **Definition of Done:**
 
-- [ ] The pages open from a phone as an admin and as a member, and each sees what Task 7 says they should.
-- [ ] Cancel from the Mini App cancels the task and the chat says so.
-- [ ] Verify: the result of the run recorded in this plan file, under the task.
+- [x] The pages open from a phone as an admin and as a member, and each sees what Task 7 says they should.
+- [x] Cancel from the Mini App cancels the task and the chat says so.
+- [x] Verify: the result of the run recorded in this plan file, under the task.
+
+**Result of the run (2026-09-23, @dispatch_task_bot, Cloudflare quick tunnel):**
+
+Confirmed by the user on their phone: `/manage` answers with the Web App button, the Mini App opens, and the pages
+are usable. Two rounds were needed, and both failures were real:
+
+1. **The chat menu button took the command list away.** Telegram's menu button is either the commands or a web app;
+   making it the Mini App silently removed `/task`, `/status` and the rest. Withdrawn — see the Deviations entry for
+   Task 8. Only `/manage` opens it now, and each start restores the menu button.
+2. **The phone layout was rejected as unusable.** Rendering it at 390px found an admin landing on Overview instead of
+   their tasks, seven menu items showing two and a half, and a shell with no background at all. Rebuilt — see the
+   Deviations entry for Tasks 6 and 7.
+
+Also found before the phone ever saw it: `install.sh` builds a checkout without `-Pui`, so a source install bundles no
+pages and the Mini App would start with nothing to serve. The jar has to be built with
+`(cd ui && npm run build) && ./mvnw -Pui package`. Pre-existing (`dispatch ui` has the same gap) and left alone.
+
+**What this run did not cover:** the instance is a personal bot with one member, who is also its admin, so only the
+admin path was seen on a real phone. A plain member's view — no management pages, no group tasks, a teammate's task as
+a headline alone — is covered by `TasksApiTest`, `MiniAppServerTest` and `TasksPage.test.tsx`, but has not been opened
+from a second person's phone. Worth doing on the first team instance that turns the Mini App on.
 
 ## Goal Verification
 
