@@ -379,6 +379,9 @@ delivery:
   authorName: Dispatch (backend)
   authorEmail: dispatch-backend@users.noreply.github.com
   ghCommand: gh                        # optional
+workers:
+  publicUrl: https://team.example.com  # required once a group has a chat: members' own computers reach this machine here
+  port: 7880
 scheduler:  { maxConcurrentRuns: 2 }
 worktrees:  { idleDays: 7 }
 limits:
@@ -401,6 +404,8 @@ projects:
 ```
 
 A group's `chatId` is optional: a personal bot's group has none, and its tasks stay in the requester's private chat (ADR 0014). `telegram.admins` lists who approves people asking to join (ADR 0015); group names are at most 40 characters, so they fit in a button. Changing members or projects requires a restart, which interrupts active runs. Reloading config without a restart can come later.
+
+`workers` is required once any group has a `chatId`: each member's tasks then run on their own computer (`dispatch worker run`), reached at `publicUrl` behind the owner's tunnel or reverse proxy, on `port` (127.0.0.1 only). A personal bot needs neither key; its jobs run in this process. **Upgrading an existing team config:** add a `workers` block (see `deploy/example.yaml`) before starting this version — Dispatch refuses to start, and `dispatch check` reports it, once a group has a chat but no `workers` block. The full worker setup and key model are W-4's.
 
 ## Milestones
 

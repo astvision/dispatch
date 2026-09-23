@@ -91,7 +91,7 @@ public final class App {
         Delivery delivery = new Delivery(git, new Gh(config.delivery().ghCommand(), config.secrets().ghToken(), Duration.ofMinutes(2)),
                 config.delivery().authorName(), config.delivery().authorEmail());
         Redactor redactor = Redactor.fromEnvironment(environment);
-        // Team mode never runs an agent or holds a worktree here; each member's own computer does (ADR 0020).
+        // Team mode never runs a task's agent or holds a worktree here; each member's own computer does (ADR 0020).
         (config.workers() == null ? workspaces.createDirectories() : workspaces.createTeamDirectories())
                 .ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
         Database db = Database.open(stateDir.resolve("dispatch.db"));

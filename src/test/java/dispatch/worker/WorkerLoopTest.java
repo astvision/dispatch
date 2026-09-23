@@ -3,9 +3,12 @@ package dispatch.worker;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dispatch.core.Job;
 import dispatch.core.JobResult;
 import dispatch.domain.FailureReason;
 import java.time.Duration;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
@@ -81,6 +84,44 @@ class WorkerLoopTest extends WorkerApiFixture {
         JobResult result = awaitResult();
         assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), "the retried post must still land");
         assertEquals(2, resultCalls.get(), "one failed attempt, then the one that delivered");
+    }
+
+    @Test
+    void aRevokedKeyStopsTheRunInsteadOfLettingItFinishAndStopsTheLoop() throws Exception {
+        AtomicInteger nextCalls = new AtomicInteger();
+        AtomicInteger progressCalls = new AtomicInteger();
+        AtomicBoolean revoked = new AtomicBoolean();
+        startLoop("ann-laptop", repos.repo("alm"), (http, team, key) -> new WorkerClient(http, team, key) {
+            @Override
+            public Optional<Job> next() {
+                nextCalls.incrementAndGet();
+                return super.next();
+            }
+
+            @Override
+            public boolean progress(RemoteWorkers.Progress progress) {
+                // The first two posts are JobRunner's own worktreeCreated/agentStarted events, not the ticker (see
+                // JobRunner.run): revoking on those would only hit their own best-effort catch, never WorkerLoop.tick.
+                if (progressCalls.incrementAndGet() > 2 && revoked.compareAndSet(false, true)) {
+                    throw new WorkerClient.RevokedException("simulated: this key was revoked mid-run");
+                }
+                return super.progress(progress);
+            }
+        });
+
+        offer(planJob("SCENARIO:sleep"));
+        awaitAgentStarted();
+
+        JobResult result = awaitResult();
+
+        assertEquals(JobResult.Outcome.FAILED, result.outcome(), "a revoked key must stop the run, not let it finish");
+        assertEquals(FailureReason.INTERRUPTED, result.failureReason());
+        int callsOnceRevoked = nextCalls.get();
+        // No sleep-and-hope: the loop itself sets `stopped` before this run's carry() even unregisters (see
+        // WorkerLoop.stop()), so by the time awaitResult() above returned, a further next() would already be
+        // impossible. This waits past one more tick interval purely to make a regression's extra poll visible.
+        Thread.sleep(TEST_PROGRESS.multipliedBy(3).toMillis());
+        assertEquals(callsOnceRevoked, nextCalls.get(), "the poll loop must also stop once the key is revoked");
     }
 
     @Test

@@ -61,6 +61,10 @@ class TeamWorkersTest {
     private final List<Thread> loopThreads = new ArrayList<>();
     /** sendMessage calls seen by {@link #awaitMessageTo} that matched neither its chat nor fragment yet. */
     private final List<JsonNode> pendingSendMessages = new ArrayList<>();
+    /** Each worker's own key, by computer name, so a test can prove another computer's environment never carries it. */
+    private final Map<String, String> workerKeys = new HashMap<>();
+    /** update_id is monotonic on real Telegram; one shared counter keeps every pushed update that way here too. */
+    private long nextUpdateId = 1;
     private FakeTelegram telegram;
     private GitFixture repos;
     private Path claude;
@@ -94,8 +98,11 @@ class TeamWorkersTest {
         startWorker(100, "Bold", "bold-laptop", "BOLD-TOKEN");
         startWorker(200, "Ali", "ali-laptop", "ALI-TOKEN");
 
-        giveTask(10, 100, "Bold", "Fix the login timeout on staging");
-        giveTask(20, 200, "Ali", "Fix the signup timeout on staging");
+        // Bold's execution (not his plan: SCENARIO:exec-busy only changes fake-claude's EXECUTE-mode behaviour, see
+        // fake-claude.sh) hangs with one real tool call reported, so it is still genuinely RUNNING, with real activity
+        // recorded, when Ali's own /status below checks what does and does not cross to her.
+        giveTask(100, "Bold", "SCENARIO:exec-busy Fix the login timeout on staging");
+        giveTask(200, "Ali", "Fix the signup timeout on staging");
 
         JsonNode boldsPlan = awaitMessageTo(100, "The user reports that login");
         JsonNode alisPlan = awaitMessageTo(200, "The user reports that login");
@@ -114,23 +121,39 @@ class TeamWorkersTest {
         assertTrue(Files.readString(worktree("ali-laptop", 2).resolve("fake-claude.env")).contains("ALI-TOKEN"));
         assertFalse(Files.readString(worktree("ali-laptop", 2).resolve("fake-claude.env")).contains("BOLD-TOKEN"),
                 "neither token ever reaches the other member's computer");
+        assertFalse(Files.readString(worktree("ali-laptop", 2).resolve("fake-claude.env")).contains(workerKeys.get("bold-laptop")),
+                "not even the worker key that got Bold's own computer its clone");
 
         Path db = repos.stateDir.resolve("dispatch.db");
         assertEquals("0", SqlRows.single(db, "SELECT count(*) AS n FROM run WHERE pid IS NOT NULL").get("n"),
                 "a remote run records no process on the team machine");
         assertEquals("2", SqlRows.single(db, "SELECT count(DISTINCT worker_id) AS n FROM task").get("n"),
                 "each task belongs to its requester's computer");
+        List<Map<String, String>> planReadyPerChat = SqlRows.query(db,
+                "SELECT chat_ref, count(*) AS n FROM outbox WHERE kind = 'PLAN_READY' GROUP BY chat_ref");
+        assertEquals(2, planReadyPerChat.size(), "one PLAN_READY group per member's own chat: " + planReadyPerChat);
+        planReadyPerChat.forEach(row -> assertEquals("1", row.get("n"), "a plan delivered to more than one chat: " + row));
 
-        telegram.pushUpdate(privateCommand(30, 200, "Ali", "/status"));
+        long boldsPlanMessageId = awaitSentMessageId("PLAN_READY", 100);
+        telegram.pushUpdate(privateCallback(nextUpdateId(), 100, "Bold", "approve:1:1", boldsPlanMessageId));
+        // Bold's own /status, polled until it shows the └ marker, proves his execution is genuinely RUNNING with real
+        // recorded activity by the time Ali's own /status is checked below — not merely queued or already finished,
+        // which is what let this same check pass vacuously before (the running array was empty either way).
+        JsonNode boldsOwnStatus = awaitOwnStatusShowingActivity(100, "Bold");
+        assertTrue(boldsOwnStatus.get("text").asText().contains("Bash:"), boldsOwnStatus.toString());
+
+        telegram.pushUpdate(privateCommand(nextUpdateId(), 200, "Ali", "/status"));
         JsonNode status = awaitMessageTo(200, "#1");
-        assertFalse(status.get("text").asText().contains("Fix the login timeout on staging")
-                && status.get("text").asText().contains("Bash:"), "Ali sees Bold's headline, not his agent's actions");
+        String statusText = status.get("text").asText();
+        assertTrue(statusText.contains("#1"), "Ali sees Bold's task number: " + statusText);
+        assertFalse(statusText.contains("└"), "Ali must not see Bold's agent's own last action: " + statusText);
+        assertFalse(statusText.contains("$"), "Ali must not see a cost figure for a task she does not own: " + statusText);
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 
     @Test
     void aTaskGivenWhileTheComputerIsOffSaysSoAndStartsWhenItConnects() throws Exception {
-        giveTask(10, 100, "Bold", "Fix the login timeout on staging");
+        giveTask(100, "Bold", "Fix the login timeout on staging");
 
         Path db = repos.stateDir.resolve("dispatch.db");
         awaitRow(db, "SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_WAITING' AND task_id = 1", "1");
@@ -144,11 +167,16 @@ class TeamWorkersTest {
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 
+    private long nextUpdateId() {
+        return nextUpdateId++;
+    }
+
     private void startWorker(long memberId, String memberName, String name, String token) throws Exception {
-        telegram.pushUpdate(privateCommand(memberId * 10 + 1, memberId, memberName, "/worker"));
+        telegram.pushUpdate(privateCommand(nextUpdateId(), memberId, memberName, "/worker"));
         String code = codeFrom(awaitMessageTo(memberId, "dispatch worker pair"));
         URI team = URI.create("http://127.0.0.1:" + app.workerPort());
         WorkerClient.Paired paired = WorkerClient.pair(HttpClient.newHttpClient(), team, code, name);
+        workerKeys.put(name, paired.key());
         WorkerClient client = new WorkerClient(HttpClient.newHttpClient(), team, paired.key());
         WorkerClient.Setup setup = client.setup();
 
@@ -198,11 +226,30 @@ class TeamWorkersTest {
         return matcher.group(1);
     }
 
-    private void giveTask(long updateId, long memberId, String name, String text) throws InterruptedException {
-        telegram.pushUpdate(privateText(updateId, memberId, name, text));
+    private void giveTask(long memberId, String name, String text) throws InterruptedException {
+        telegram.pushUpdate(privateText(nextUpdateId(), memberId, name, text));
         long prompt = awaitSentMessageId("DRAFT_PROMPT", memberId);
-        telegram.pushUpdate(privateCallback(updateId + 1, memberId, name, "draft:" + draftId(memberId) + ":prio:NORMAL",
+        telegram.pushUpdate(privateCallback(nextUpdateId(), memberId, name, "draft:" + draftId(memberId) + ":prio:NORMAL",
                 prompt));
+    }
+
+    /**
+     * Retries {@code /status} in {@code memberId}'s own chat until its running block shows the └ marker: this
+     * member's own execution has genuinely reached RUNNING with real recorded activity, not merely claimed or queued.
+     */
+    private JsonNode awaitOwnStatusShowingActivity(long memberId, String name) throws InterruptedException {
+        Instant deadline = Instant.now().plus(WAIT);
+        while (true) {
+            telegram.pushUpdate(privateCommand(nextUpdateId(), memberId, name, "/status"));
+            JsonNode status = awaitMessageTo(memberId, "#1");
+            if (status.get("text").asText().contains("└")) {
+                return status;
+            }
+            if (Instant.now().isAfter(deadline)) {
+                throw new AssertionError("never saw " + name + "'s own agent activity in /status: " + status.get("text").asText());
+            }
+            Thread.sleep(300);
+        }
     }
 
     /**

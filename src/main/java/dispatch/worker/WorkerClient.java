@@ -9,6 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
@@ -151,7 +152,10 @@ public class WorkerClient {
             HttpResponse<Path> answer = http.send(request, HttpResponse.BodyHandlers.ofFile(target,
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING));
             if (answer.statusCode() != 200) {
-                throw new IllegalStateException("the team machine answered " + answer.statusCode());
+                // ofFile wrote the error body (JSON, not the file's bytes) to target: read it for the message, as
+                // call() reads the same shape from its own String body, then remove it — an attachment call must
+                // never leave an error response sitting where the caller expects the file's actual bytes.
+                throw failureFor(answer.statusCode(), errorMessage(readAndDelete(target)));
             }
         } catch (IOException e) {
             throw new IllegalStateException(e.getMessage(), e);
@@ -160,6 +164,16 @@ public class WorkerClient {
             throw new IllegalStateException("interrupted while fetching a file", e);
         } finally {
             inFlight.release();
+        }
+    }
+
+    private static String readAndDelete(Path target) {
+        try {
+            String body = Files.readString(target);
+            Files.deleteIfExists(target);
+            return body;
+        } catch (IOException e) {
+            return "";
         }
     }
 
@@ -205,14 +219,22 @@ public class WorkerClient {
         // JSON this class writes itself, is untrusted — a public https team URL behind a reverse proxy can answer a
         // 401 or 409 with that proxy's own HTML error page instead of Dispatch's JSON, and that must not stop the
         // status code from being recognised as what it is.
-        String message = errorMessage(answer.body());
-        throw switch (answer.statusCode()) {
+        throw failureFor(answer.statusCode(), errorMessage(answer.body()));
+    }
+
+    /**
+     * Maps a non-200 status to the same exception every route answers with, so {@link #attachment}'s own error path
+     * (its body comes from a downloaded file, not a String) tells revoked, lease-expired and rejected apart exactly as
+     * {@link #call} does, rather than folding all of them into one generic failure.
+     */
+    private static RuntimeException failureFor(int status, String message) {
+        return switch (status) {
             case 401 -> new RevokedException(message);
             case 409 -> new LeaseExpiredException(message);
             // 400 invalid: the request itself was malformed, never fixed by sending the identical bytes again. 403
             // not_your_run: a different computer holds this run's lease now; also never fixed by asking again.
-            case 400, 403 -> new RejectedException(answer.statusCode(), message);
-            default -> new IllegalStateException("the team machine answered " + answer.statusCode() + ": " + message);
+            case 400, 403 -> new RejectedException(status, message);
+            default -> new IllegalStateException("the team machine answered " + status + ": " + message);
         };
     }
 

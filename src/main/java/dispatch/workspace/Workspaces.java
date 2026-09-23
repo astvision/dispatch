@@ -56,9 +56,9 @@ public final class Workspaces {
 
     /**
      * As {@link #createDirectories()}, but only what a team's own machine still needs when {@code workers} means it never
-     * runs an agent or holds a worktree itself: its own clones (for project availability checks) and splits, which still
-     * run here regardless of mode (ADR 0013). No worktrees/, runs/ or attachments/ — those belong to whichever computer
-     * actually runs the agent.
+     * runs a task's agent or holds a worktree itself: its own clones (for project availability checks) and splits, whose
+     * own agent still runs here regardless of mode (ADR 0013). No worktrees/, runs/ or attachments/ — those belong to
+     * whichever computer actually runs a task's agent.
      */
     public Optional<String> createTeamDirectories() {
         return createDirectories(List.of("repos", "splits"));

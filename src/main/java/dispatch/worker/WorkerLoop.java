@@ -234,6 +234,14 @@ public final class WorkerLoop implements Runnable {
                 Log.warn("worker.lease_lost", "task", job.taskId(), "run", job.seq(), "detail", e.getMessage());
                 control.stop(ActiveRuns.StopReason.INTERRUPTED);
                 return;
+            } catch (WorkerClient.RevokedException e) {
+                // The key is dead, same as run()'s poll-loop catch below — but with the default maxConcurrentRuns: 1
+                // that loop is not calling next() at all while this run is in flight, so this tick is the only place
+                // that ever learns of the revocation before the agent runs to completion on nobody's behalf.
+                Log.error("worker.key_revoked", null, "task", job.taskId(), "run", job.seq(), "detail", e.getMessage());
+                control.stop(ActiveRuns.StopReason.INTERRUPTED);
+                stop();
+                return;
             } catch (RuntimeException e) {
                 Log.warn("worker.progress_failed", "task", job.taskId(), "error", e.getMessage());
             }

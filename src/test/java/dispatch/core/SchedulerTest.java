@@ -20,6 +20,7 @@ import dispatch.worker.WorkerKeys;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -141,6 +142,42 @@ class SchedulerTest {
         db.transaction(tx -> Workers.touch(tx, first, clock.instant()));
         assertEquals(id, db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(),
                 clock.instant().minus(Workers.SEEN_WITHIN))).orElseThrow().taskId());
+    }
+
+    @Test
+    void aSecondTaskWaitsForCapacityAndIsClaimedOnceTheFirstRunFinishes() {
+        long first = queuedTaskOf("telegram:100");
+        long second = queuedTaskOf("telegram:100");
+        long worker = pair("telegram:100", "ann-laptop");
+        db.transaction(tx -> Workers.touch(tx, worker, clock.instant()));
+
+        assertEquals(first, db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(),
+                clock.instant().minus(Workers.SEEN_WITHIN))).orElseThrow().taskId());
+        assertTrue(db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(),
+                clock.instant().minus(Workers.SEEN_WITHIN))).isEmpty(), "one live worker is already running the first task");
+        assertEquals("QUEUED", SqlRows.single(dbFile, "SELECT status FROM run WHERE task_id = ?", second).get("status"));
+
+        db.transaction(tx -> tx.update("UPDATE run SET status = 'SUCCEEDED' WHERE task_id = ?", first));
+
+        assertEquals(second, db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(),
+                clock.instant().minus(Workers.SEEN_WITHIN))).orElseThrow().taskId(), "the worker is free again");
+    }
+
+    @Test
+    void twoLiveWorkersAllowTwoConcurrentClaimsForTheSameMember() {
+        long first = queuedTaskOf("telegram:100");
+        long second = queuedTaskOf("telegram:100");
+        long workerA = pair("telegram:100", "ann-laptop");
+        long workerB = pair("telegram:100", "ann-desktop");
+        db.transaction(tx -> Workers.touch(tx, workerA, clock.instant()));
+        db.transaction(tx -> Workers.touch(tx, workerB, clock.instant()));
+
+        long claimedFirst = db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(),
+                clock.instant().minus(Workers.SEEN_WITHIN))).orElseThrow().taskId();
+        long claimedSecond = db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(),
+                clock.instant().minus(Workers.SEEN_WITHIN))).orElseThrow().taskId();
+
+        assertEquals(Set.of(first, second), Set.of(claimedFirst, claimedSecond), "two live workers, two concurrent claims");
     }
 
     @Test

@@ -346,8 +346,11 @@ public final class RemoteWorkers implements Worker {
     /** @param seq -1 when the caller does not name a run */
     private Offer held(Workers.Paired worker, long taskId, int seq) {
         synchronized (lock) {
-            Optional<Offer> found = offers.stream().filter(offer -> offer.job.taskId() == taskId).findFirst();
-            if (found.isEmpty() || found.get().expired || found.get().takenBy == null) {
+            // A stale, already-expired offer for this same task can still be in the list (removed only once run()'s
+            // own wait loop returns, a window after givenUp() marks it expired): excluding it here, not just checking
+            // it below, is what stops a re-offered task (its next run) from resolving to that dead offer instead.
+            Optional<Offer> found = offers.stream().filter(offer -> offer.job.taskId() == taskId && !offer.expired).findFirst();
+            if (found.isEmpty() || found.get().takenBy == null) {
                 throw new ApiException(409, "lease_expired",
                         "this run's lease has expired; keep its worktree, the member can retry it");
             }

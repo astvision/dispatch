@@ -283,11 +283,17 @@ public final class SetupApi {
                     // teammates added while this was a team setup.
                     throw new CliException(PERSONAL_BOT_ONE_MEMBER);
                 }
+                // SHORTCUT: the web setup page has no workers step yet, so it cannot render a valid team config
+                // (ConfigLoader now requires `workers` once a group has a chat) — refused here, clearly and before
+                // anything is written, rather than deep inside Setup.write's own validation with a config-file-shaped
+                // message. Remove once the page gets its own team/worker onboarding (dispatch init already has it).
+                if (team) {
+                    throw new CliException("dispatch ui cannot set up a team yet: run dispatch init instead, "
+                            + "which also asks for the workers block a team needs");
+                }
                 List<ProjectAddCommand.Project> projects = projects(body.path("projects"));
-                String name = Setup.teamName(team ? text(body, "teamName") : members.getFirst().name().split("\\s+")[0]);
-                // SHORTCUT: the web setup page has no workers step yet, so a team whose group is found here cannot
-                // yet be written; add one alongside the page's own team/worker onboarding (dispatch init already has it).
-                Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), team ? chat : null, null,
+                String name = Setup.teamName(members.getFirst().name().split("\\s+")[0]);
+                Setup.Answers answers = new Setup.Answers(name, team, List.copyOf(members), null, null,
                         text(body, "claude"), projects, text(body, "authorName"), text(body, "authorEmail"),
                         advanced(body.path("advanced")));
                 String yaml;

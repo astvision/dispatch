@@ -133,10 +133,28 @@ public final class WorkerApi implements AutoCloseable {
         return server.getAddress().getPort();
     }
 
+    /**
+     * Stops accepting new requests and gives an in-flight one — most likely a parked {@code /next} long poll — up to a
+     * second to finish before its socket is torn down (the JDK's own {@code stop(delay)} wait), then lets
+     * {@link #bodyReads} drain whatever body read or response write that request's own handler still had in flight
+     * instead of aborting it outright: a hard {@code shutdownNow()} straight after {@code stop(0)} used to reject that
+     * still-parked handler's own response write, then its 500 fallback's write, then {@link #closeBounded}'s own close
+     * — three rejections deep, surfacing as {@code worker_api.failed}, the same event a genuine 500 uses, on every
+     * ordinary shutdown with a poll in flight. {@code shutdownNow()} still runs, but only as a backstop for whatever
+     * did not drain in time.
+     */
     @Override
     public void close() {
-        server.stop(0);
-        bodyReads.shutdownNow();
+        server.stop(1);
+        bodyReads.shutdown();
+        try {
+            if (!bodyReads.awaitTermination(bodyReadTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                bodyReads.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            bodyReads.shutdownNow();
+        }
     }
 
     /**
@@ -465,16 +483,17 @@ public final class WorkerApi implements AutoCloseable {
     }
 
     /**
-     * Sends the response, bounded by the same deadline as {@link #readBounded}. Writing it is not itself slow, but
-     * closing the response's {@code OutputStream} is what the JDK uses as the signal that the exchange is done —
-     * {@code FixedLengthOutputStream.close} (and its chunked/undefined-length siblings) reflexively closes the
-     * *request* stream too, which is exactly {@link #readBounded}'s problem again: a declared {@code Content-Length}
-     * this class never fully read (an oversized body past {@link #MAX_BODY}+{@link #DRAIN_BYTES}, say) leaves that
-     * close needing to drain the rest with the same untimed blocking read. Bounding this whole call, not just the
-     * read side, is what actually keeps a client that stalls after tripping a 413 from holding this thread forever:
-     * the response bytes above are already written before a timeout here can matter, so cutting the close off at
-     * the deadline (the same interrupt-closes-the-channel mechanism as {@link #readBounded}) only costs the
-     * connection's reuse, never the response the client already received.
+     * Sends the response, bounded by the same deadline as {@link #readBounded}. For the small JSON bodies most routes
+     * send, writing it is not itself slow; closing the response's {@code OutputStream} is what the JDK uses as the
+     * signal that the exchange is done — {@code FixedLengthOutputStream.close} (and its chunked/undefined-length
+     * siblings) reflexively closes the *request* stream too, which is exactly {@link #readBounded}'s problem again: a
+     * declared {@code Content-Length} this class never fully read (an oversized body past {@link #MAX_BODY}+
+     * {@link #DRAIN_BYTES}, say) leaves that close needing to drain the rest with the same untimed blocking read.
+     * Bounding this whole call, not just the read side, is what actually keeps a client that stalls after tripping a
+     * 413 from holding this thread forever. That bound is not free for {@link #attachment}'s own, much larger body: a
+     * slow connection can still be genuinely mid-write when the deadline lands, and cutting the call off there (the
+     * same interrupt-closes-the-channel mechanism as {@link #readBounded}) costs that in-flight response too, not
+     * only the connection's reuse — a truncated download, not a clean refusal.
      */
     private void send(HttpExchange exchange, int status, byte[] body) throws IOException {
         Future<?> sending = bodyReads.submit(() -> {

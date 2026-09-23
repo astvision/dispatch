@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -25,6 +26,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
@@ -209,6 +211,18 @@ class WorkerProtocolTest extends WorkerApiFixture {
             assertEquals("internal", Json.read(answer.body()).get("error").asText());
             assertFalse(answer.body().contains("SECRET-TOKEN"), answer.body());
         }
+    }
+
+    @Test
+    void theClientMapsAnAttachmentFailureLikeAnyOtherCallAndLeavesNoErrorBodyAtTheTarget() throws Exception {
+        String key = pair();
+        offer(job("Implement the approved plan")); // never NEXT'd: nothing is leased yet, so this 409s like PROGRESS/RESULT do
+        WorkerClient client = new WorkerClient(http, URI.create("http://127.0.0.1:" + api.port()), key);
+        Path target = dir.resolve("attachment-target.bin");
+
+        assertThrows(WorkerClient.LeaseExpiredException.class, () -> client.attachment(7, "photo-id", target));
+
+        assertFalse(Files.exists(target), "the error body must not sit where the file's bytes were expected");
     }
 
     @Test
