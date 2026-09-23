@@ -211,6 +211,16 @@ public final class Setup {
         }
     }
 
+    /** Whether the GitHub CLI can make pull requests here: {@code gh auth status} exits 0. */
+    public static boolean ghLoggedIn(String command) {
+        try {
+            return Git.runProcess(List.of(command, "auth", "status"), Path.of(System.getProperty("user.home")), null,
+                    COMMAND_TIMEOUT, command + " auth status").exitCode() == 0;
+        } catch (WorkspaceException e) {
+            return false;
+        }
+    }
+
     public static Optional<Path> findClaude(Map<String, String> env) {
         return Executables.find("claude", System.getProperty("os.name"), env, Path.of(System.getProperty("user.home")));
     }

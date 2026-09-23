@@ -16,6 +16,7 @@ import dispatch.telegram.BotApi;
 import dispatch.ui.UiCommand;
 import dispatch.ui.UiServer;
 import dispatch.worker.WorkerCommand;
+import dispatch.worker.WorkerInitCommand;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -59,8 +60,19 @@ public final class Main {
             case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create).run(check.configFile(), System.getenv()));
             case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(JLineTerminal.system()).run(add, System.getenv()));
             case Cli.Ui ui -> ui(ui, defaults);
+            case Cli.WorkerInit init -> {
+                JLineTerminal terminal = JLineTerminal.system();
+                System.exit(new WorkerInitCommand(terminal, defaults, new ServiceCommand(terminal,
+                        Service.forThisMachine(Service.Kind.WORKER), ServiceCommand.runningJar()))
+                        .run(init, System.getenv()));
+            }
             case Cli.WorkerPair pair -> System.exit(new WorkerCommand(System.out).pair(pair));
-            case Cli.WorkerRun worker -> System.exit(new WorkerCommand(System.out).run(worker, System.getenv()));
+            case Cli.WorkerRun worker -> {
+                redirect(worker.logFile());
+                System.exit(new WorkerCommand(System.out).run(worker, System.getenv()));
+            }
+            case Cli.WorkerService service -> System.exit(WorkerCommand.service(JLineTerminal.system(), service,
+                    System.getenv()));
         }
     }
 
@@ -78,19 +90,7 @@ public final class Main {
     }
 
     private static void run(Path configFile, Path logFile) throws InterruptedException {
-        if (logFile != null) {
-            // A background service has no terminal: everything that would be shown goes to the log file instead.
-            try {
-                Files.createDirectories(logFile.toAbsolutePath().getParent());
-                PrintStream log = new PrintStream(new FileOutputStream(logFile.toFile(), true), true, StandardCharsets.UTF_8);
-                System.setOut(log);
-                System.setErr(log);
-            } catch (IOException e) {
-                System.err.println("cannot write the log file " + logFile + ": " + e.getMessage());
-                System.exit(2);
-                return;
-            }
-        }
+        redirect(logFile);
         RunCommand.Prepared prepared;
         try {
             prepared = RunCommand.prepare(configFile, System.getenv());
@@ -118,5 +118,21 @@ public final class Main {
         }
         Runtime.getRuntime().addShutdownHook(new Thread(app::stop, "dispatch-shutdown"));
         app.join();
+    }
+
+    /** A background service has no terminal: everything that would be shown goes to the log file instead. */
+    private static void redirect(Path logFile) {
+        if (logFile == null) {
+            return;
+        }
+        try {
+            Files.createDirectories(logFile.toAbsolutePath().getParent());
+            PrintStream log = new PrintStream(new FileOutputStream(logFile.toFile(), true), true, StandardCharsets.UTF_8);
+            System.setOut(log);
+            System.setErr(log);
+        } catch (IOException e) {
+            System.err.println("cannot write the log file " + logFile + ": " + e.getMessage());
+            System.exit(2);
+        }
     }
 }

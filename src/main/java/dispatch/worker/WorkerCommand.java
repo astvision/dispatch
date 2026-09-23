@@ -8,6 +8,9 @@ import dispatch.agent.claude.ClaudeCodeAgent;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
 import dispatch.cli.SecretsFile;
+import dispatch.cli.Service;
+import dispatch.cli.ServiceCommand;
+import dispatch.cli.Terminal;
 import dispatch.config.ConfigException;
 import dispatch.core.ActiveRuns;
 import dispatch.workspace.Delivery;
@@ -74,6 +77,20 @@ public final class WorkerCommand {
         out.println("Paired with " + paired.team() + " as " + options.name() + " (#" + paired.workerId() + ").");
         out.println("Add your clones to " + options.workerFile() + ", then run: dispatch worker run");
         return 0;
+    }
+
+    /** What the dispatch-worker service runs: this process's jar, `worker run`, and this worker's own log file. */
+    public static Service.Spec workerSpec(Path workerFile, Map<String, String> environment) {
+        WorkerConfig config = WorkerConfigLoader.load(workerFile);
+        return ServiceCommand.specFor(ServiceCommand.runningJar(), workerFile, config.stateDir(),
+                Service.Kind.WORKER.logName(), environment);
+    }
+
+    /** `dispatch worker service install | start | stop | status | uninstall` (ADR 0016, 0021). */
+    public static int service(Terminal terminal, Cli.WorkerService options, Map<String, String> environment) {
+        ServiceCommand command = new ServiceCommand(terminal, Service.forThisMachine(Service.Kind.WORKER),
+                ServiceCommand.runningJar());
+        return command.run(options.action(), () -> workerSpec(options.workerFile(), environment));
     }
 
     public int run(Cli.WorkerRun options, Map<String, String> environment) throws InterruptedException {

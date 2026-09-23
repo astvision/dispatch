@@ -331,6 +331,11 @@ abstract class WorkerApiFixture {
         return config("http://127.0.0.1:0");
     }
 
+    /** The repo /api/worker/projects reports for alm; a test that maps or clones it overrides this with a real one. */
+    String almRepo() {
+        return "git@github.com:acme/alm.git";
+    }
+
     Config config(String publicUrl) {
         return new Config("backend", dir, new Config.Telegram(List.of(), List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))),
@@ -338,7 +343,7 @@ abstract class WorkerApiFixture {
                 new Config.Limits(new Config.RunLimits(Duration.ofMinutes(30), new BigDecimal("2")),
                         new Config.RunLimits(Duration.ofMinutes(60), new BigDecimal("10"))),
                 Map.of("claude-code", new Config.Agent("claude")),
-                List.of(new Config.Project("alm", null, "git@github.com:acme/alm.git", null, "main", "claude-code", "opus",
+                List.of(new Config.Project("alm", null, almRepo(), null, "main", "claude-code", "opus",
                         "high", List.of(), null, null, null)),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", "gh"),
                 new Config.Workers(publicUrl, 0), new Config.Secrets("token", null));

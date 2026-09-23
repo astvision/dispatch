@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dispatch.config.Config;
 import dispatch.config.ConfigLoader;
 import dispatch.testing.GitFixture;
+import dispatch.testing.ScriptedTerminal;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

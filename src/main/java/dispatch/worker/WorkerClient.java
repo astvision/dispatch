@@ -169,11 +169,16 @@ public class WorkerClient {
 
     private static String readAndDelete(Path target) {
         try {
-            String body = Files.readString(target);
-            Files.deleteIfExists(target);
-            return body;
+            return Files.readString(target);
         } catch (IOException e) {
             return "";
+        } finally {
+            // Whatever happened above, these bytes are an error response sitting where the caller expects a file.
+            try {
+                Files.deleteIfExists(target);
+            } catch (IOException ignored) {
+                // best effort: the attachment already failed, and this cleanup must not replace its message
+            }
         }
     }
 

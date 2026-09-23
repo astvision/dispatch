@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dispatch.telegram.BotApi;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.GitFixture;
+import dispatch.testing.ScriptedTerminal;
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
