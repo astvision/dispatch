@@ -12,7 +12,6 @@ import dispatch.workspace.Git;
 import dispatch.workspace.WorkspaceException;
 import dispatch.workspace.Workspaces;
 import java.io.IOException;
-import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -214,7 +213,7 @@ public final class Checks {
     private Answer probe(String base) {
         HttpResponse<String> answer;
         try {
-            answer = http.send(HttpRequest.newBuilder(URI.create(base + WorkerApi.PROJECTS)).timeout(PROBE_TIMEOUT)
+            answer = http.send(HttpRequest.newBuilder(WorkerApi.url(base, WorkerApi.PROJECTS)).timeout(PROBE_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString());
         } catch (IOException | IllegalArgumentException e) {

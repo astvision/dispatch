@@ -21,8 +21,11 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.nio.channels.FileChannel;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -82,9 +85,20 @@ public final class WorkerCommand {
         return 0;
     }
 
-    /** What the dispatch-worker service runs: this process's jar, `worker run`, and this worker's own log file. */
+    /**
+     * What the dispatch-worker service runs: this process's jar, `worker run`, and this worker's own log file.
+     *
+     * @throws CliException when worker.yaml is invalid, or worker.env holds no key yet — the team side upholds the
+     *                       same invariant for its own service ({@link ServiceCommand#specFor(Path, Path, Map)} via
+     *                       {@link RunCommand#prepare}): a service must never be installed on a setup that cannot
+     *                       start, or it restarts every 10 s forever, failing the same way each time.
+     */
     public static Service.Spec workerSpec(Path workerFile, Map<String, String> environment) {
         WorkerConfig config = WorkerConfigLoader.load(workerFile);
+        Path envFile = SecretsFile.beside(workerFile);
+        if (SecretsFile.environment(workerFile, environment).get(KEY_VARIABLE) == null) {
+            throw new CliException("no worker key in " + envFile + "; run: dispatch worker init");
+        }
         return ServiceCommand.specFor(ServiceCommand.runningJar(), workerFile, config.stateDir(),
                 Service.Kind.WORKER.logName(), environment);
     }
@@ -113,42 +127,101 @@ public final class WorkerCommand {
             return 2;
         }
         Log.useRedactor(Redactor.fromEnvironment(environment));
-        WorkerClient client = new WorkerClient(HttpClient.newHttpClient(), URI.create(config.team()), key);
-        WorkerClient.Setup setup;
-        try {
-            setup = client.setup();
-        } catch (WorkerClient.RevokedException e) {
-            out.println("paired key revoked: pair again with a new code from /worker");
-            return 1;
-        } catch (RuntimeException e) {
-            out.println("cannot reach " + config.team() + ": " + e.getMessage());
-            return 1;
-        }
         Git git = new Git("git", environment.get("GH_TOKEN"), Duration.ofMinutes(5));
         Workspaces workspaces = new Workspaces(config.stateDir(), git);
         workspaces.createDirectories().ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
-        Delivery delivery = new Delivery(git, new Gh(config.ghCommand(), environment.get("GH_TOKEN"), Duration.ofMinutes(2)),
-                setup.authorName(), setup.authorEmail());
-        Map<String, Agent> agents = Map.of("claude-code",
-                new ClaudeCodeAgent(config.claudeCommand(), environment, Duration.ofSeconds(10)));
-        ActiveRuns activeRuns = new ActiveRuns();
-        WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery,
-                Redactor.fromEnvironment(environment), activeRuns);
-        WorkerSweeper sweeper = new WorkerSweeper(config.stateDir(), workspaces, activeRuns, Clock.systemUTC());
-        Thread sweeperThread = Thread.ofVirtual().name("worker-sweeper").start(sweeper);
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+        FileChannel lock;
+        try {
+            lock = lockStateDir(config.stateDir());
+        } catch (CliException e) {
+            out.println(e.getMessage());
+            return 1;
+        }
+        try {
+            WorkerClient client = new WorkerClient(HttpClient.newHttpClient(), URI.create(config.team()), key);
+            WorkerClient.Setup setup;
+            try {
+                setup = client.setup();
+            } catch (WorkerClient.RevokedException e) {
+                out.println("paired key revoked: pair again with a new code from /worker");
+                return 1;
+            } catch (RuntimeException e) {
+                out.println("cannot reach " + config.team() + ": " + e.getMessage());
+                return 1;
+            }
+            Delivery delivery = new Delivery(git, new Gh(config.ghCommand(), environment.get("GH_TOKEN"), Duration.ofMinutes(2)),
+                    setup.authorName(), setup.authorEmail());
+            Map<String, Agent> agents = Map.of("claude-code",
+                    new ClaudeCodeAgent(config.claudeCommand(), environment, Duration.ofSeconds(10)));
+            ActiveRuns activeRuns = new ActiveRuns();
+            WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery,
+                    Redactor.fromEnvironment(environment), activeRuns);
+            WorkerSweeper sweeper = new WorkerSweeper(config.stateDir(), workspaces, activeRuns, Clock.systemUTC());
+            Thread sweeperThread = Thread.ofVirtual().name("worker-sweeper").start(sweeper);
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                sweeper.stop();
+                // Joined here, not left to the code after loop.run() below: on Ctrl+C the JVM can halt as soon as every
+                // shutdown hook returns, without waiting for the main thread to unwind — a removal caught mid `git
+                // worktree remove --force` would leave a half-deleted directory that wedges that task for good.
+                joinQuietly(sweeperThread, SWEEPER_STOP_TIMEOUT);
+                loop.stop();
+            }, "dispatch-worker-shutdown"));
+            out.println("Running " + setup.team() + " tasks on this computer as " + config.name() + ". Ctrl+C to stop.");
+            loop.run();
             sweeper.stop();
-            // Joined here, not left to the code after loop.run() below: on Ctrl+C the JVM can halt as soon as every
-            // shutdown hook returns, without waiting for the main thread to unwind — a removal caught mid `git
-            // worktree remove --force` would leave a half-deleted directory that wedges that task for good.
             joinQuietly(sweeperThread, SWEEPER_STOP_TIMEOUT);
-            loop.stop();
-        }, "dispatch-worker-shutdown"));
-        out.println("Running " + setup.team() + " tasks on this computer as " + config.name() + ". Ctrl+C to stop.");
-        loop.run();
-        sweeper.stop();
-        joinQuietly(sweeperThread, SWEEPER_STOP_TIMEOUT);
-        return 0;
+            return 0;
+        } finally {
+            // Not released on the abrupt Ctrl+C/kill-9 path (the shutdown hook above does not run this far up its own
+            // stack) — the OS drops the advisory lock with the process either way, exactly as ConfigFile.edit's own
+            // .lock relies on.
+            closeQuietly(lock);
+        }
+    }
+
+    /**
+     * Refuses a second {@code dispatch worker run} sharing this state directory: two of them would otherwise kill
+     * each other's agents through {@link LocalAgents#killOrphans} the moment the second one starts. A lock file
+     * beside {@code agents/}, held exclusively for as long as this process runs — the same idea as
+     * {@link dispatch.config.ConfigFile#edit}'s own {@code .lock}, but held for the run's whole lifetime rather than
+     * one edit.
+     */
+    private static FileChannel lockStateDir(Path stateDir) {
+        Path lockFile = stateDir.resolve("agents.lock");
+        FileChannel channel;
+        try {
+            channel = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+        } catch (IOException e) {
+            throw new CliException("cannot lock " + lockFile + ": " + e.getMessage());
+        }
+        try {
+            // A second FileChannel on the same file within THIS process throws OverlappingFileLockException instead
+            // of returning null (file locks are held per JVM, not per channel); a second dispatch process gets null.
+            // Either way, a run already holds this state directory.
+            if (channel.tryLock() == null) {
+                throw heldElsewhere(stateDir, channel);
+            }
+        } catch (OverlappingFileLockException e) {
+            throw heldElsewhere(stateDir, channel);
+        } catch (IOException e) {
+            closeQuietly(channel);
+            throw new CliException("cannot lock " + lockFile + ": " + e.getMessage());
+        }
+        return channel;
+    }
+
+    private static CliException heldElsewhere(Path stateDir, FileChannel channel) {
+        closeQuietly(channel);
+        return new CliException("another dispatch worker run already holds " + stateDir
+                + "; stop it first (dispatch worker service stop, if it runs as the service), then try again");
+    }
+
+    private static void closeQuietly(FileChannel channel) {
+        try {
+            channel.close();
+        } catch (IOException e) {
+            Log.warn("worker.lock_not_closed", "error", e.getMessage());
+        }
     }
 
     private static void joinQuietly(Thread thread, Duration timeout) {

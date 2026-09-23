@@ -488,13 +488,12 @@ public final class WorkerInitCommand {
     }
 
     private void offerService(Path workerFile, Map<String, String> environment) {
-        if (services != null && terminal.confirm("Keep your worker running in the background, also after a restart?", true)) {
-            try {
-                services.run("install", () -> WorkerCommand.workerSpec(workerFile, environment));
-                return;
-            } catch (CliException e) {
-                terminal.warn("the background service could not be installed: " + e.getMessage());
-            }
+        // ServiceCommand.run already catches CliException/ConfigException itself (terminal.fail, return 1) rather
+        // than letting one escape, so a try/catch here around it never fires; the returned status is what a failed
+        // install actually looks like, and skipping it dropped the "Next:" hint below on that path.
+        if (services != null && terminal.confirm("Keep your worker running in the background, also after a restart?", true)
+                && services.run("install", () -> WorkerCommand.workerSpec(workerFile, environment)) == 0) {
+            return;
         }
         terminal.say("");
         terminal.say("Next: dispatch check, then dispatch worker run (or dispatch worker service install).");

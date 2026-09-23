@@ -101,6 +101,26 @@ class ChecksTest {
     }
 
     @Test
+    void teamModeWarnsRatherThanFailsWhenClaudeCannotRun() throws IOException {
+        // ADR 0021: no task's agent ever runs on the team machine, but splitting a message with ✂️ still does, so a
+        // missing claude there is worth a warning, not a failure that would also flip dispatch check's exit code.
+        int port = freePort();
+        writeConfig();
+        Files.writeString(config, Files.readString(config)
+                .replace("command: '" + JAVA.replace("'", "''") + "'", "command: 'dispatch-test-missing-claude-binary'")
+                .replace("    - name: bold\n", "    - name: bold\n      chatId: -1001234567890\n")
+                + "\nworkers:\n  publicUrl: 'http://127.0.0.1:" + port + "'\n  port: " + port + "\n");
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        Checks.Finding claude = findings.stream().filter(f -> f.area().equals("claude-code")).findFirst()
+                .orElseThrow(() -> new AssertionError(findings.toString()));
+        assertEquals(Checks.Level.WARN, claude.level(), findings.toString());
+        assertTrue(claude.message().contains("splitting a message"), claude.message());
+        assertFalse(Checks.failed(findings), findings.toString());
+    }
+
+    @Test
     void aTeamMachineChecksItsWorkerPortAndAsksForNoGh() throws IOException {
         int free = freePort();
         writeTeamConfig(free);
@@ -134,6 +154,22 @@ class ChecksTest {
     }
 
     @Test
+    void aTrailingSlashInThePublicUrlIsHarmless() throws Exception {
+        HttpServer dispatchLike = stubWorkerApi();
+        try {
+            int port = dispatchLike.getAddress().getPort();
+            writeTeamConfig(port, "http://127.0.0.1:" + port + "/");
+
+            List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "workers",
+                    "workers: http://127.0.0.1:" + port + "/ reaches this Dispatch")), findings.toString());
+        } finally {
+            dispatchLike.stop(0);
+        }
+    }
+
+    @Test
     void somethingElseOnTheWorkerPortIsAWarning() throws Exception {
         HttpServer other = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         other.createContext("/", exchange -> {
@@ -158,10 +194,14 @@ class ChecksTest {
 
     /** personal.yaml with a group chat, which makes it a team, and the workers block a team then needs. */
     private void writeTeamConfig(int port) throws IOException {
+        writeTeamConfig(port, "http://127.0.0.1:" + port);
+    }
+
+    private void writeTeamConfig(int port, String publicUrl) throws IOException {
         writeConfig();
         Files.writeString(config, Files.readString(config)
                 .replace("    - name: bold\n", "    - name: bold\n      chatId: -1001234567890\n")
-                + "\nworkers:\n  publicUrl: 'http://127.0.0.1:" + port + "'\n  port: " + port + "\n");
+                + "\nworkers:\n  publicUrl: '" + publicUrl + "'\n  port: " + port + "\n");
     }
 
     /** What Dispatch answers an unauthenticated worker request; nothing else answers exactly this. */

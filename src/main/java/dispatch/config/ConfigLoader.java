@@ -26,7 +26,9 @@ public final class ConfigLoader {
             .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
             .build();
     private static final Pattern TEAM = Pattern.compile("[a-z0-9][a-z0-9-]*");
-    private static final Pattern PROJECT_KEY = Pattern.compile("[A-Za-z0-9._-]+");
+    // "." and ".." are excluded: `dispatch worker init` resolves a project name straight into a path segment
+    // (stateDir/repos/<name>), where either would resolve to a directory it does not own.
+    private static final Pattern PROJECT_KEY = Pattern.compile("(?!\\.{1,2}$)[A-Za-z0-9._-]+");
     private static final Set<String> SUPPORTED_AGENTS = Set.of("claude-code");
     private static final int MAX_GROUP_NAME = 40;
     /** Claude Code's --effort levels, in its own order. */

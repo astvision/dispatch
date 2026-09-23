@@ -95,7 +95,7 @@ public class WorkerClient {
 
     /** @param name what the member's /worker list will call this computer */
     public static Paired pair(HttpClient http, URI team, String code, String name) {
-        JsonNode answer = send(http, HttpRequest.newBuilder(team.resolve(WorkerApi.PAIR)).timeout(CALL_TIMEOUT)
+        JsonNode answer = send(http, HttpRequest.newBuilder(WorkerApi.url(team.toString(), WorkerApi.PAIR)).timeout(CALL_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("code", code, "name", name)))));
         return new Paired(answer.get("workerId").asLong(), answer.get("key").asText(), answer.get("team").asText());
@@ -143,7 +143,7 @@ public class WorkerClient {
     }
 
     public void attachment(long taskId, String fileRef, Path target) {
-        HttpRequest request = authorized(HttpRequest.newBuilder(team.resolve(WorkerApi.ATTACHMENT)).timeout(CALL_TIMEOUT)
+        HttpRequest request = authorized(HttpRequest.newBuilder(WorkerApi.url(team.toString(), WorkerApi.ATTACHMENT)).timeout(CALL_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(
                         Json.write(Map.of("taskId", taskId, "fileRef", fileRef))))).build();
@@ -183,7 +183,7 @@ public class WorkerClient {
     }
 
     private JsonNode call(String path, String body, Duration timeout) {
-        HttpRequest.Builder request = authorized(HttpRequest.newBuilder(team.resolve(path)).timeout(timeout)
+        HttpRequest.Builder request = authorized(HttpRequest.newBuilder(WorkerApi.url(team.toString(), path)).timeout(timeout)
                 .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)));
         acquireSlot();
         try {

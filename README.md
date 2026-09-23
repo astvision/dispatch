@@ -3,7 +3,7 @@
 Dispatch takes development tasks that members write to its Telegram bot and has Claude Code plan them in a git worktree. Once the requester approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance and bot can serve several groups, each with its own members and projects.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M3g.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Reply to a result to follow up on it, `/retry` a failed step, and send screenshots or files with a task for the agent to read. `CodexAgent` comes next.
+- Status: **M4.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Reply to a result to follow up on it, `/retry` a failed step, and send screenshots or files with a task for the agent to read. In a team, each member's tasks run on their own computer (`dispatch worker init`, `dispatch worker run`; ADR 0021). `CodexAgent` comes next.
 
 ## Security
 
@@ -109,7 +109,9 @@ dispatch worker run               # run in this terminal instead of the backgrou
 dispatch worker service status    # install | start | stop | status | uninstall
 ```
 
-Tasks you give the bot wait until this computer is connected, and continue on it after a restart. Nothing of your code, your Claude sessions or your credentials reaches the team machine — see SECURITY.md. Worktrees of tasks nothing has touched for a week are removed here automatically; anything with uncommitted changes or unpushed commits is kept.
+Tasks you give the bot wait until this computer is connected, and continue on it after a restart. Nothing of your code, your Claude sessions or your credentials reaches the team machine — see SECURITY.md. Worktrees of tasks nothing has touched for a week are removed here automatically; anything with uncommitted changes or unpushed commits is kept. A removed worktree's git-ignored content (build output, a copied `.env`) goes with it.
+
+Two `dispatch worker run` processes must never share one state directory: a second one refuses to start while the first holds it, because otherwise each would treat the other's live agents as orphans left over from a crash and kill them. If you installed the background service (`dispatch worker init` offers this), stop it first (`dispatch worker service stop`) before running `dispatch worker run` by hand.
 
 ### Help the agent: CLAUDE.md
 

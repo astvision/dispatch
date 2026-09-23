@@ -265,6 +265,19 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void projectNameCannotBeDotOrDotDot() throws IOException {
+        // dispatch worker init resolves a project name straight into stateDir/repos/<name>; either name would
+        // resolve outside that folder.
+        ConfigException dot = assertThrows(ConfigException.class,
+                () -> ConfigLoader.load(write(VALID.replace("- name: autoland-management\n", "- name: .\n")), ENV));
+        ConfigException dotDot = assertThrows(ConfigException.class,
+                () -> ConfigLoader.load(write(VALID.replace("- name: autoland-management\n", "- name: ..\n")), ENV));
+
+        assertTrue(dot.getMessage().contains("projects[0].name: letters, digits, '.', '_' and '-' only, got '.'"), dot.getMessage());
+        assertTrue(dotDot.getMessage().contains("projects[0].name: letters, digits, '.', '_' and '-' only, got '..'"), dotDot.getMessage());
+    }
+
+    @Test
     void adminsWhoApproveNewMembersAreTelegramUsers() throws IOException {
         String withAdmins = VALID.replace("telegram:\n  groups:\n", "telegram:\n  admins: [123456789, 555]\n  groups:\n");
         String invalid = VALID.replace("telegram:\n  groups:\n", "telegram:\n  admins: [0, 555, 555]\n  groups:\n");

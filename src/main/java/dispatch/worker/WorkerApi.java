@@ -64,6 +64,17 @@ public final class WorkerApi implements AutoCloseable {
     public static final String RESULT = "/api/worker/result";
     public static final String PROJECTS = "/api/worker/projects";
 
+    /**
+     * {@code base} (any trailing slash removed) plus {@code path}, one of this class's own route constants. Both
+     * {@link dispatch.cli.Checks} (probing {@code workers.publicUrl}) and {@link WorkerClient} (every request a
+     * worker sends) build a route this same way, so a trailing slash in the configured URL is harmless instead of
+     * doubling up into a path nothing serves, and a reverse proxy's own sub-path (e.g. {@code https://host/dispatch})
+     * is kept instead of silently dropped, as {@code URI.resolve} would drop it for an absolute path like these.
+     */
+    public static URI url(String base, String path) {
+        return URI.create((base.endsWith("/") ? base.substring(0, base.length() - 1) : base) + path);
+    }
+
     private static final int MAX_BODY = 64 * 1024;
     /** Matches {@code WorkerKeys}' own cap, so a name this route accepts is never rejected again once cleaned there. */
     private static final int MAX_NAME_LENGTH = 40;
