@@ -22,6 +22,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +94,13 @@ public final class WorkerInitCommand {
         WorkerClient.Setup team;
         try {
             team = terminal.during("Asking " + paired.teamUrl() + " for your projects", client::setup);
+        } catch (WorkerClient.RevokedException e) {
+            // Each team runs its own key store (WorkerApi.authenticate), so a stranded key saved for a different
+            // team's URL answers exactly like a revoked one -- either way --force alone cannot fix it; only a fresh
+            // code from this team can.
+            throw new CliException("the key saved in " + envFile + " is not valid for " + paired.teamUrl()
+                    + " (wrong team, or revoked); get a fresh code from /worker for this team, then run "
+                    + "dispatch worker init --force");
         } catch (RuntimeException e) {
             // The key is saved, so this is worth retrying without a new code: say so instead of a stack trace.
             throw new CliException("cannot ask " + paired.teamUrl() + " for your projects (" + e.getMessage()
@@ -342,6 +350,9 @@ public final class WorkerInitCommand {
      */
     private Optional<Path> clone(WorkerClient.ProjectInfo project, Path stateDir) {
         Path target = stateDir.resolve("repos").resolve(project.name());
+        // Only a directory this attempt itself creates is ever removed below: one already there is the member's own,
+        // whatever put it there, and is never ours to delete.
+        boolean existedBefore = Files.exists(target);
         try {
             OwnerOnly.createDirectories(target.getParent());
         } catch (IOException e) {
@@ -353,9 +364,26 @@ public final class WorkerInitCommand {
                     .run(target.getParent(), "clone", "--quiet", project.repo(), target.toString()));
         } catch (WorkspaceException e) {
             terminal.warn("cannot clone " + project.repo() + ": " + e.getMessage());
+            // A partly-populated target left by the failed clone would otherwise fail every retry ("already exists
+            // and is not an empty directory") until the member deletes it by hand.
+            if (!existedBefore) {
+                deleteRecursively(target);
+            }
             return Optional.empty();
         }
         return Optional.of(target);
+    }
+
+    /** Best-effort recursive delete of what this run's own failed clone created; never touches a pre-existing path. */
+    private static void deleteRecursively(Path root) {
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (var paths = Files.walk(root)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(WorkerInitCommand::deleteQuietly);
+        } catch (IOException ignored) {
+            // best effort: a stray leftover here is better than turning a warned clone failure into a crash
+        }
     }
 
     private String claude(Map<String, String> environment) {

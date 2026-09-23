@@ -129,6 +129,45 @@ class WorkerInitCommandTest extends WorkerApiFixture {
     }
 
     @Test
+    void aGenuinelyInterruptedCloneCleansUpSoALaterForcedRunCanRetryIt() throws Exception {
+        // Corrupt the origin's one blob so `git clone` transfers the objects, creates .git, then fails at checkout
+        // -- exactly the shape of a genuinely interrupted clone: a partly-populated target, left by this attempt.
+        String blob = GitFixture.sh(dir, "git", "--git-dir=" + repos.origin, "rev-parse", "HEAD:README.md");
+        Path object = repos.origin.resolve("objects").resolve(blob.substring(0, 2)).resolve(blob.substring(2));
+        byte[] original = Files.readAllBytes(object);
+        object.toFile().setWritable(true);
+        Files.writeString(object, "not a valid git object\n");
+
+        Path workerFile = dir.resolve("config/worker.yaml");
+        ScriptedTerminal firstAttempt = new ScriptedTerminal(
+                "http://127.0.0.1:" + api.port(), "ann-laptop", keys.newCode(BOLD),
+                "Clone it here",                           // fails partway: the corrupted object breaks checkout
+                "Skip it",                                 // move on for now; the project stays unmapped
+                JAVA, JAVA, "y");
+
+        int firstStatus = init(firstAttempt, workerFile);
+
+        assertEquals(0, firstStatus, firstAttempt.output());
+        assertTrue(firstAttempt.output().contains("cannot clone"), firstAttempt.output());
+        Path target = dir.resolve("state/worker/repos/alm");
+        assertFalse(Files.exists(target), "the failed attempt's own partial directory must be cleaned up: " + firstAttempt.output());
+
+        Files.write(object, original); // the transient failure is over
+
+        ScriptedTerminal secondAttempt = new ScriptedTerminal(
+                "",                                        // "already paired ... pair again?" no: reuse it
+                "Clone it here", "", "",
+                JAVA, JAVA, "y");
+        int secondStatus = new WorkerInitCommand(secondAttempt,
+                new Locations(dir.resolve("config/dispatch.yaml"), dir.resolve("state")), null)
+                .run(new Cli.WorkerInit(workerFile, true), Map.of());
+
+        assertEquals(0, secondStatus, secondAttempt.output());
+        assertTrue(Files.isDirectory(target.resolve(".git")), "the retried clone must succeed: " + secondAttempt.output());
+        assertEquals(target.toString(), WorkerConfigLoader.load(workerFile).projects().get("alm").path());
+    }
+
+    @Test
     void aMalformedWorkerEnvDoesNotLoseTheKeyAPairingJustBought() throws Exception {
         Path workerFile = dir.resolve("config/worker.yaml");
         Path envFile = SecretsFile.beside(workerFile);
@@ -160,12 +199,15 @@ class WorkerInitCommandTest extends WorkerApiFixture {
     }
 
     @Test
-    void aRejectedOrExpiredCodeIsRetriedWithoutLosingTheEarlierAnswers() throws Exception {
+    void aRejectedOrExpiredCodeIsRetriedByReAskingTheUrlNotJustTheCode() throws Exception {
         Path workerFile = dir.resolve("config/worker.yaml");
+        // A blank re-ask answer would be swallowed by required()'s own blank-retry, landing on the next script item
+        // as if no question had been asked at all -- an explicit, non-blank repeat is the only answer that proves
+        // the URL was actually asked again, not skipped straight to another code prompt.
         ScriptedTerminal terminal = new ScriptedTerminal(
                 "http://127.0.0.1:" + api.port(), "ann-laptop",
                 "not-a-real-code",                         // unknown/expired: the server answers 401 pairing_code
-                "",                                         // team URL re-asked; blank keeps the same one
+                "http://127.0.0.1:" + api.port(),          // the team URL question, asked again, answered explicitly
                 keys.newCode(BOLD),                         // a real, still-unspent code
                 "Skip it", JAVA, JAVA, "y");
 
@@ -173,6 +215,10 @@ class WorkerInitCommandTest extends WorkerApiFixture {
 
         assertEquals(0, status, terminal.output());
         assertTrue(terminal.output().contains("pairing failed"), terminal.output());
+        long urlQuestions = terminal.output().lines().filter(line -> line.contains("Team URL (your team owner has it")).count();
+        assertEquals(2, urlQuestions, "the URL must be re-asked after a rejected code, not just the code: " + terminal.output());
+        long nameQuestions = terminal.output().lines().filter(line -> line.contains("A name for this computer")).count();
+        assertEquals(1, nameQuestions, "the computer name, answered once already, must not be re-asked: " + terminal.output());
         assertEquals("ann-laptop", WorkerConfigLoader.load(workerFile).name());
     }
 
