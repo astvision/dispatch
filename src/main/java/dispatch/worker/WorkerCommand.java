@@ -23,6 +23,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -128,11 +129,19 @@ public final class WorkerCommand {
                 setup.authorName(), setup.authorEmail());
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(config.claudeCommand(), environment, Duration.ofSeconds(10)));
+        ActiveRuns activeRuns = new ActiveRuns();
         WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery,
-                Redactor.fromEnvironment(environment), new ActiveRuns());
-        Runtime.getRuntime().addShutdownHook(new Thread(loop::stop, "dispatch-worker-shutdown"));
+                Redactor.fromEnvironment(environment), activeRuns);
+        WorkerSweeper sweeper = new WorkerSweeper(config.stateDir(), workspaces, activeRuns, Clock.systemUTC());
+        Thread sweeperThread = Thread.ofVirtual().name("worker-sweeper").start(sweeper);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            sweeper.stop();
+            loop.stop();
+        }, "dispatch-worker-shutdown"));
         out.println("Running " + setup.team() + " tasks on this computer as " + config.name() + ". Ctrl+C to stop.");
         loop.run();
+        sweeper.stop();
+        sweeperThread.join(Duration.ofSeconds(10));
         return 0;
     }
 }

@@ -61,9 +61,13 @@ public final class WorkerLoop implements Runnable {
         this(config, client, agentsByType, workspaces, delivery, redactor, activeRuns, PROGRESS);
     }
 
-    /** @param progressInterval overrides {@link #PROGRESS}; a real wall-clock duration, so a test need not pay a real 10 s wait per tick. */
-    WorkerLoop(WorkerConfig config, WorkerClient client, Map<String, Agent> agentsByType, Workspaces workspaces,
-              Delivery delivery, Redactor redactor, ActiveRuns activeRuns, Duration progressInterval) {
+    /**
+     * @param progressInterval overrides {@link #PROGRESS}; a real wall-clock duration, so a test need not pay a real
+     *                         10 s wait per tick. Public because the end-to-end test drives a worker from another
+     *                         package and would otherwise wait out a whole production interval per assertion.
+     */
+    public WorkerLoop(WorkerConfig config, WorkerClient client, Map<String, Agent> agentsByType, Workspaces workspaces,
+                      Delivery delivery, Redactor redactor, ActiveRuns activeRuns, Duration progressInterval) {
         this.config = config;
         this.client = client;
         this.agentsByType = Map.copyOf(agentsByType);

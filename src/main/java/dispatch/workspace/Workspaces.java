@@ -46,6 +46,12 @@ public final class Workspaces {
         this.git = git;
     }
 
+    /** One lock per clone: concurrent fetch/worktree add in one clone fail on git's own lock files (.git/config, refs). */
+    // ponytail: in-process lock per clone, enough because one process owns each state directory (ADR 0005, 0021).
+    private ReentrantLock lockFor(Path repo) {
+        return repoLocks.computeIfAbsent(repo.toString(), path -> new ReentrantLock());
+    }
+
     /**
      * Creates the state layout owner-only (task text, plans and agent transcripts live here). Returns a warning when the
      * state directory itself is open to other users; group access, as systemd's StateDirectoryMode=0750 gives, is fine.
@@ -147,9 +153,7 @@ public final class Workspaces {
         if (Files.exists(worktree)) {
             throw new WorkspaceException("worktree " + worktree + " already exists; refusing to reuse it");
         }
-        // Concurrent fetch/worktree add in one clone fail on git's own lock files (.git/config, refs).
-        // ponytail: in-process lock per project, enough because one Dispatch process owns repos/ (ADR 0005).
-        ReentrantLock lock = repoLocks.computeIfAbsent(project.name(), name -> new ReentrantLock());
+        ReentrantLock lock = lockFor(repo);
         lock.lock();
         try {
             git.run(repo, "fetch", "origin", project.baseBranch());
@@ -169,7 +173,7 @@ public final class Workspaces {
         Path repo = repo(project);
         Path worktree = worktree(taskId);
         String branch = "dispatch/" + taskId;
-        ReentrantLock lock = repoLocks.computeIfAbsent(project.name(), name -> new ReentrantLock());
+        ReentrantLock lock = lockFor(repo);
         lock.lock();
         try {
             git.run(repo, "worktree", "prune");
@@ -198,12 +202,36 @@ public final class Workspaces {
         return new WorktreeState(uncommitted, onOrigin);
     }
 
+    /**
+     * The clone a worktree belongs to, asked of git itself: the worker's own sweeper walks {@code worktrees/} without
+     * knowing which project each one came from.
+     */
+    public Path repoOf(Path worktree) {
+        return Path.of(git.run(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir")).getParent();
+    }
+
+    /**
+     * What removing this worktree would lose, for a caller that does not know where the task's branch started: it asks
+     * git which commits exist only here instead ({@code branch --remotes --contains HEAD}), rather than comparing with
+     * a {@code baseSha} as {@link #state} does. A worktree straight off {@code origin/<base>} has nothing of its own,
+     * a delivered one's branch is on origin, and anything else is kept.
+     */
+    public WorktreeState localOnlyState(Path worktree) {
+        List<String> uncommitted = git.run(worktree, "status", "--porcelain").lines().filter(line -> !line.isBlank()).toList();
+        return new WorktreeState(uncommitted, !git.run(worktree, "branch", "--remotes", "--contains", "HEAD").isBlank());
+    }
+
     /** Removes the task's worktree, changes and all; its branch stays in the clone for {@link #recreateWorktree}. */
     public void removeWorktree(Config.Project project, long taskId) {
-        ReentrantLock lock = repoLocks.computeIfAbsent(project.name(), name -> new ReentrantLock());
+        removeWorktree(repo(project), taskId);
+    }
+
+    /** As above, for a caller that knows the clone but not the project (see {@link #repoOf}). */
+    public void removeWorktree(Path repo, long taskId) {
+        ReentrantLock lock = lockFor(repo);
         lock.lock();
         try {
-            git.run(repo(project), "worktree", "remove", "--force", worktree(taskId).toString());
+            git.run(repo, "worktree", "remove", "--force", worktree(taskId).toString());
         } finally {
             lock.unlock();
         }
