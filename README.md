@@ -91,7 +91,25 @@ One machine runs the team's bot, with clones of the team's projects: a small ser
 - **Joining later:** someone new opens the bot and writes to it. The bot's admins (you, after `init`) get their name with a button per group and **Deny**. Allowing adds them to the config and they can give tasks at once, no restart needed. After a Deny, a person can ask again a day later.
 - **Admins:** `telegram.admins` in the config lists the Telegram user ids of the people who decide.
 - **Config:** plain YAML you may edit by hand; `dispatch check` validates it. Per project: `path` (the clone), `baseBranch`, and optionally `model` and `effort` (`low`, `medium`, `high`, `xhigh` or `max`), for both phases or per phase: `plan: { model: opus, effort: high }` or `execute: { model: sonnet }`. Dispatch works in its own worktrees under the state directory and only adds `dispatch/<task>` branches to the clone.
-- **Workers:** once a group has a chat, each member's tasks run on their own computer, not this machine's: `workers.publicUrl` and `workers.port` are then required (`dispatch init` writes them; see `deploy/example.yaml`). **Upgrading an existing team config:** add a `workers` block before starting this version, or Dispatch refuses to start.
+- **Workers:** once a group has a chat, each member's tasks run on their own computer, not this machine's: `workers.publicUrl` and `workers.port` are then required (`dispatch init` and `dispatch ui` both ask for them; see `deploy/example.yaml`). Dispatch listens only on `127.0.0.1:<port>`; publish `publicUrl` in front of it with a tunnel, a reverse proxy or a private network. This machine needs no `claude` for tasks and no `gh` at all — only members' computers do. **Upgrading an existing team config:** add a `workers` block before starting this version, or Dispatch refuses to start. Send `/worker` in the bot's private chat for a pairing code, and again to list or revoke your computers.
+
+### Your own computer in a team
+
+Your tasks run where your Claude Code login, your clones and your `gh` are: on your own machine. Once:
+
+```sh
+dispatch worker init      # asks for the team URL and a code from /worker, then sets everything up
+```
+
+It pairs this computer, fetches the projects your team has for you, maps each one to a clone you already have (or clones it), asks for a model and effort per project if you want your own, checks `claude --version` and `gh auth status`, writes `worker.yaml` and an owner-only `worker.env`, and offers to keep it running in the background. After that:
+
+```sh
+dispatch check                    # the whole computer: pairing, the team, claude, gh, each project's clone
+dispatch worker run               # run in this terminal instead of the background
+dispatch worker service status    # install | start | stop | status | uninstall
+```
+
+Tasks you give the bot wait until this computer is connected, and continue on it after a restart. Nothing of your code, your Claude sessions or your credentials reaches the team machine — see SECURITY.md. Worktrees of tasks nothing has touched for a week are removed here automatically; anything with uncommitted changes or unpushed commits is kept.
 
 ### Help the agent: CLAUDE.md
 

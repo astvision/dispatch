@@ -416,7 +416,7 @@ class ConfigLoaderTest {
 
     private static final String CRM_REPO = "    repo: https://github.com/acme/crm.git\n";
 
-    /** VALID's group has a chat, which makes it a team (ADR 0020); its workers block, ready to strip or replace. */
+    /** VALID's group has a chat, which makes it a team (ADR 0021); its workers block, ready to strip or replace. */
     private static final String WORKERS_BLOCK = """
             workers:
               publicUrl: https://team.example.com

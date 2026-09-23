@@ -66,7 +66,7 @@ public final class Setup {
      * @param team    the team's name, as the config and the state directory use it
      * @param shared  a team's bot (admins, a group chat) rather than a personal one
      * @param chat    null for none
-     * @param workers null unless there is a chat: a team's tasks run on members' own computers (ADR 0020)
+     * @param workers null unless there is a chat: a team's tasks run on members' own computers (ADR 0021)
      */
     public record Answers(String team, boolean shared, List<Config.Member> members, Chat chat, Config.Workers workers, String claude,
                           List<ProjectAddCommand.Project> projects, String authorName, String authorEmail, Advanced advanced) {

@@ -99,9 +99,9 @@ projects                   wherever each project's path points; Dispatch adds wo
 |---|---|
 | `Main`, `App` | `Main` validates config and installs the shutdown hook. `App` wires everything explicitly: it migrates the DB, checks the bot token (`getMe`, which also says whether the bot has topics in private chats), runs `Recovery`, fails splits a previous process left running, registers the command menus (group, private chats), starts cloning missing repos in the background, and starts the poller, scheduler, outbox, draft-expiry and sweeper threads. A loop that dies unexpectedly is fatal. |
 | `config` | YAML + env loading into records. Startup fails naming the invalid field. `ConfigText` and `ConfigEdit` change the file's text in place (add a project or a member; set, remove or append a value), so comments and layout stay; `ConfigFile` replaces the file only with a version that validates. `ConfigFile.edit` holds an exclusive lock on the sibling `.lock` file across read, change, validation and replace. |
-| `cli` | The `dispatch` command: `init` (the setup wizard, on a JLine terminal), `project add`, `check`, `service install/start/stop/status/uninstall` (systemd user unit, launchd agent, Task Scheduler task), and `run` (with `--log-file` for services). Per-OS default locations; the secrets file beside the config is merged under the process environment. `install.sh` and `install.ps1` download the release jar and launcher, or build them from source, and install them. |
+| `cli` | The `dispatch` command: `init` (the setup wizard, on a JLine terminal), `project add`, `check`, `service install/start/stop/status/uninstall` (systemd user unit, launchd agent, Task Scheduler task), and `run` (with `--log-file` for services); on a member's own computer, `worker init` (pair this computer, map its projects, install its service), `worker pair`, `worker run`, `worker service`. Per-OS default locations; the secrets file beside the config is merged under the process environment. `install.sh` and `install.ps1` download the release jar and launcher, or build them from source, and install them. |
 | `store` | SQLite access and migrations (`PRAGMA user_version`); conditional updates. One connection behind a lock. |
-| `core` | `TaskService`: the channel-neutral commands `draft / split / create / approve / reject / correct / followUp / retry / cancel / status / history / timeline / stats`. `Scheduler` picks runs; `Coordinator` drives one run: it reads the store and the config into an immutable `Job`, hands it to a `Worker` — in this process `JobRunner`, which does the worktree, the agent and the delivery and touches no store — and applies the returned `JobResult` through `RunTransitions`; `Splitter` runs splits beside them; `Recovery` handles startup; `Sweeper` removes idle worktrees. |
+| `core` | `TaskService`: the channel-neutral commands `draft / split / create / approve / reject / correct / followUp / retry / cancel / status / history / timeline / stats`. `Scheduler` picks runs; `Coordinator` drives one run: it reads the store and the config into an immutable `Job`, hands it to a `Worker` — in this process `JobRunner`, which does the worktree, the agent and the delivery and touches no store — and applies the returned `JobResult` through `RunTransitions`; `Splitter` runs splits beside them; `Recovery` handles startup; `Sweeper` removes idle worktrees — in a team those worktrees are on members' computers, where `dispatch.worker.WorkerSweeper` does the same job. |
 | `agent` | `Agent` interface and `ClaudeCodeAgent` (CLI subprocess + stream-json parser). Tests run the real adapter against a fake `claude` shell script that replays recorded output. `CodexAgent` comes later. |
 | `workspace` | Clone, fetch, worktree add/remove/recreate, `copyFiles`, commit, push, `gh pr create`, delivering a failed delivery again. |
 | `telegram` | Bot API client (`java.net.http` + Jackson, including file downloads for attachments), `Poller`, `UpdateHandler` (parses updates, calls `TaskService`), `OutboxSender`, status edits, `messages_mn.properties`. |
@@ -317,6 +317,8 @@ interface JobEvents {
 
 `JobRunner` is the worker in this process: worktree, attachments, agent under its timeout, delivery. It is built with no `Database`, `Projects` or `Config`, so the same class runs a job on a team member's own computer with HTTP in between (W-2 for the split, W-3 for the remote workers). Cancelling reaches it through `control`: `ActiveRuns.stop` sets the run's stop reason, the runner stops its agent (SIGTERM, 10 s grace, SIGKILL) and answers `CANCELLED`. A worker that throws is the worker breaking: the run is logged as `run.crashed` and fails as `INTERNAL`.
 
+In a team the same `JobRunner` runs on the member's computer inside `WorkerLoop`, and `RemoteWorkers` is the `Worker` on this side: it parks the job until one of the requester's computers takes it, keeps the 60 s lease, and answers with the `JobResult` that computer reports (ADR 0021).
+
 ## Failure and recovery
 
 | Failure | Behaviour |
@@ -337,6 +339,8 @@ interface JobEvents {
 | Task topic deleted or not found | The task forgets its topic + WARN; its messages go to General, never to the group fallback. |
 | Invalid config | Startup fails, naming the field. |
 | SQLite error | Logged; the process exits non-zero and systemd restarts it (recovery above). |
+| A member's computer is offline | Their tasks stay queued; the requester is told once; they start when it connects. A task with a worktree waits for the computer that holds it, and while that computer is busy. |
+| A worker stops reporting for 60 s | The run is FAILED `INTERRUPTED`; the worktree stays on that computer and `/retry N` continues it there. |
 
 Nothing retries silently. The only automatic retries are Telegram polling and outbox delivery, and both log every attempt.
 
@@ -405,7 +409,7 @@ projects:
 
 A group's `chatId` is optional: a personal bot's group has none, and its tasks stay in the requester's private chat (ADR 0014). `telegram.admins` lists who approves people asking to join (ADR 0015); group names are at most 40 characters, so they fit in a button. Changing members or projects requires a restart, which interrupts active runs. Reloading config without a restart can come later.
 
-`workers` is required once any group has a `chatId`: each member's tasks then run on their own computer (`dispatch worker run`), reached at `publicUrl` behind the owner's tunnel or reverse proxy, on `port` (127.0.0.1 only). A personal bot needs neither key; its jobs run in this process. **Upgrading an existing team config:** add a `workers` block (see `deploy/example.yaml`) before starting this version — Dispatch refuses to start, and `dispatch check` reports it, once a group has a chat but no `workers` block. The full worker setup and key model are W-4's.
+`workers` is required once any group has a `chatId`: each member's tasks then run on their own computer (`dispatch worker run`), reached at `publicUrl` behind the owner's tunnel or reverse proxy, on `port` (127.0.0.1 only). A personal bot needs neither setting; its jobs run in this process. **Upgrading an existing team config:** add a `workers` block (see `deploy/example.yaml`) before starting this version — Dispatch refuses to start, and `dispatch check` reports it, once a group has a chat but no `workers` block. A member sets their computer up with `dispatch worker init` and keeps it running as the `dispatch-worker` service (ADR 0021); `dispatch check` covers both sides, and the key model is in [SECURITY.md](../SECURITY.md).
 
 ## Milestones
 
@@ -420,7 +424,8 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **M3e** setup and team bot (built) | One-line install (`install.sh`, `install.ps1`), arrow-key `dispatch init` for a personal or team bot, joining a shared bot by admin approval in Telegram, `dispatch service` on Linux, macOS and Windows |
 | **M3f** leaner agent runs (built) | A planning and a building session per task (ADR 0017), plans asked for as JSON only, the model that actually answered shown on plans and results with a warning when it isn't the configured one, model and effort per phase, a CLAUDE.md hint in `dispatch check` |
 | **M3g** interaction and ops (built) | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
-| **M4** | `CodexAgent` |
+| **M4** team workers (built) | Members see only each other's headlines (ADR 0020); the runner split into `Coordinator` and `JobRunner` behind `Worker`; a member's computer pairs with a one-time code and a worker key, and runs their tasks over `RemoteWorkers`/`WorkerApi` with 60 s leases (`dispatch worker pair`, `dispatch worker run`); `dispatch worker init` pairs a computer, maps or clones its projects and installs the `dispatch-worker` service; `dispatch check` covers both the team machine and a member's computer (ADR 0021) |
+| **M5** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
 
