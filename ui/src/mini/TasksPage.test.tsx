@@ -24,7 +24,7 @@ describe("the task pages", () => {
 
     render(<TasksPage scope="me" />);
 
-    expect(await screen.findByText("Fix the login timeout")).toBeInTheDocument();
+    expect(await screen.findByText(/Fix the login timeout/)).toBeInTheDocument();
     expect(screen.getByText("Ажиллаж байна")).toBeInTheDocument();
     expect(screen.getByText("Дууссан")).toBeInTheDocument();
     expect(api.listTasks).toHaveBeenCalledWith("me");
@@ -69,7 +69,7 @@ describe("the task pages", () => {
     vi.mocked(api.listTasks).mockResolvedValue({ tasks: [myFinishedTask] });
 
     render(<TasksPage scope="me" />);
-    fireEvent.click(await screen.findByRole("button", { name: /Expand row/i }));
+    fireEvent.click(await screen.findByText(/Add the export button/));
 
     expect(await screen.findByText(/#1 · PLAN · SUCCEEDED/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Pull request" })).toBeInTheDocument();
@@ -80,7 +80,7 @@ describe("the task pages", () => {
     vi.mocked(api.taskTimeline).mockResolvedValue(headlineTimeline);
 
     render(<TasksPage scope="group" />);
-    fireEvent.click(await screen.findByRole("button", { name: /Expand row/i }));
+    fireEvent.click(await screen.findByText(/Rename the settings page/));
 
     expect(await screen.findByText(/гарчгаас цаашгүй/)).toBeInTheDocument();
   });
@@ -94,7 +94,7 @@ describe("the task pages", () => {
     fireEvent.click(screen.getByRole("button", { name: "Цуцлах" }));
 
     expect(await screen.findByText(/only the member who gave this task/)).toBeInTheDocument();
-    expect(screen.getByText("Fix the login timeout")).toBeInTheDocument();
+    expect(screen.getByText(/Fix the login timeout/)).toBeInTheDocument();
   });
 
   it("says so when there is nothing to show", async () => {

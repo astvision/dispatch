@@ -275,23 +275,19 @@ class AppTest {
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 
+    /**
+     * The Mini App is opened from /manage, never from the menu button: Telegram's menu button is either the commands
+     * or a web app, and an earlier build took the command list away by making it a web app. Each start puts it back.
+     */
     @Test
-    void theManageButtonIsSetForEachMemberAndOnlyWhenTheMiniAppIsConfigured() throws Exception {
-        app = start();
-        telegram.awaitRequest("setMyCommands", WAIT);
-        telegram.awaitRequest("setMyCommands", WAIT);
-        assertTrue(telegram.drain("setChatMenuButton").isEmpty(), "no miniApp block, so nobody is offered it");
-        app.stop();
-        config = new Config(config.team(), config.stateDir(), config.telegram(), config.scheduler(), config.worktrees(),
-                config.limits(), config.agents(), config.projects(), config.delivery(), config.workers(),
-                new Config.MiniApp("https://dispatch.example.com", 0), config.secrets());
-
+    void eachMembersMenuButtonIsTheCommandList() throws Exception {
         app = start();
 
         JsonNode first = telegram.awaitRequest("setChatMenuButton", WAIT).json();
         JsonNode second = telegram.awaitRequest("setChatMenuButton", WAIT).json();
-        assertEquals("web_app", first.get("menu_button").get("type").asText());
-        assertEquals("https://dispatch.example.com", first.get("menu_button").get("web_app").get("url").asText());
+
+        assertEquals("commands", first.get("menu_button").get("type").asText());
+        assertEquals("commands", second.get("menu_button").get("type").asText());
         assertEquals(List.of(100L, 200L),
                 List.of(first.get("chat_id").asLong(), second.get("chat_id").asLong()),
                 "each member's own private chat, and nobody else's");

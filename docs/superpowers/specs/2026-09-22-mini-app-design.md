@@ -46,8 +46,8 @@ Without `miniApp`, nothing listens and the bot shows no Manage button. `ConfigLo
 
 ### Opening it
 
-- At start, and whenever members change, the bot sets the chat menu button of each member's private chat to a Web App button "Manage" pointing at `publicUrl` (`setChatMenuButton` with `chat_id`). Everyone else keeps the default menu.
-- `/manage` answers a member with the same Web App button, and anyone else as the bot answers non-members today.
+- `/manage` answers a member with a Web App button pointing at `publicUrl`, and anyone else as the bot answers non-members today.
+- **Not the chat menu button.** This was built as `setChatMenuButton` with a Web App button and withdrawn after the live run: Telegram's menu button is either the command list or a web app, so it silently replaced `/task`, `/status` and the rest. Each start now sets it back to `commands` (ADR 0019).
 
 ### Restart
 

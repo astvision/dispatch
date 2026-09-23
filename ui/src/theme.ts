@@ -11,10 +11,11 @@ export function telegramTheme(params: ThemeParams | null = themeParams, dark: bo
   return {
     algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
     token: {
+      // Only the accent colours come from Telegram. The neutral scale - backgrounds, headings, secondary and
+      // disabled text - is left to the algorithm, which derives it at contrasts that hold. Feeding it Telegram's
+      // colorBgBase or colorTextBase collapsed that scale and made secondary text invisible on a dark theme.
       // Every field is optional on Telegram's side, so each one is dropped rather than defaulted to a wrong colour.
       ...(params.button_color ? { colorPrimary: params.button_color } : {}),
-      ...(params.bg_color ? { colorBgBase: params.bg_color } : {}),
-      ...(params.text_color ? { colorTextBase: params.text_color } : {}),
       ...(params.link_color ? { colorLink: params.link_color } : {}),
     },
   };

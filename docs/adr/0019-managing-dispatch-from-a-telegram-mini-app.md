@@ -17,4 +17,4 @@ We chose this because a team's members carry phones and not terminals, and follo
 - Launch data older than an hour is refused with its own code, and the page asks the member to close and reopen the Mini App rather than failing silently.
 - The Mini App reads the config snapshot its process started with, as the worker API does; a save answers "restart needed", and Restart restarts the service.
 - `dispatch check` reports the Mini App: off, or on with its port and URL, warning when the public URL does not reach this Dispatch.
-- The chat menu button is set for each member at start, and only when `miniApp` is configured; everyone else keeps the default menu, so nobody who may not use it is offered it.
+- **It is opened from `/manage`, not from the chat menu button.** An early build made each member's menu button a "Manage" Web App button, which took their command list away: Telegram's menu button is one or the other, never both. The command list is worth more than the shortcut, so each start puts the menu button back to `commands`, which also repairs the chats that build changed.

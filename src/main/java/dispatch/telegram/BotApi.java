@@ -153,14 +153,13 @@ public final class BotApi {
     }
 
     /**
-     * Puts a "Manage" Web App button in one private chat's menu, where the paperclip menu usually is (ADR 0019).
-     * Everyone else keeps the default menu, so nobody who may not use the Mini App is offered it.
+     * Makes one private chat's menu button the command list, which is what it is by default. The Mini App is opened
+     * from /manage instead: Telegram's menu button is either the commands or a web app, and taking the commands away
+     * costs more than the shortcut is worth (ADR 0019).
      */
-    public void setChatMenuButton(long chatId, String text, String url) {
-        ObjectNode button = Json.object().put("type", "web_app").put("text", text);
-        button.putObject("web_app").put("url", url);
+    public void setCommandsMenuButton(long chatId) {
         ObjectNode body = Json.object().put("chat_id", chatId);
-        body.set("menu_button", button);
+        body.putObject("menu_button").put("type", "commands");
         call("setChatMenuButton", body, requestTimeout);
     }
 

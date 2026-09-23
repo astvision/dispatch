@@ -150,7 +150,7 @@ listens only on the machine it runs on. Anyone with its link can act as you, lik
 
 ### Manage it from Telegram
 
-The same pages open inside Telegram, from the bot's **Manage** menu button or `/manage`, so members follow their tasks
+The same pages open inside Telegram: send `/manage` to the bot and tap the button it answers with, so members follow their tasks
 from a phone. It is **off unless you turn it on**, and turning it on puts a shell-equivalent API on the internet: read
 [SECURITY.md](SECURITY.md) first.
 
