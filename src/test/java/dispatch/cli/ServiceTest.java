@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dispatch.testing.ScriptedTerminal;
 import dispatch.workspace.Git;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -203,6 +204,18 @@ class ServiceTest {
                 home.resolve("worker.yaml"), home.resolve("dispatch-worker.log"), "C:\\bin", home));
 
         assertTrue(schtasks.run.stream().anyMatch(line -> line.contains("/TN DispatchWorker")), schtasks.run.toString());
+    }
+
+    @Test
+    void statusOnAnUninstalledWorkerNamesTheWorkerCommandNotTheTeamOne() {
+        Service worker = Service.forOs("Linux", dir, commands, "bold", Service.Kind.WORKER);
+        ScriptedTerminal terminal = new ScriptedTerminal();
+        ServiceCommand command = new ServiceCommand(terminal, worker, JAVA);
+
+        int status = command.run("status", () -> spec(dir));
+
+        assertEquals(0, status);
+        assertTrue(terminal.output().contains("dispatch worker service install"), terminal.output());
     }
 
     private static Service.Spec spec(Path home) {

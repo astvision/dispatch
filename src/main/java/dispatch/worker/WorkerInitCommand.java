@@ -10,6 +10,7 @@ import dispatch.cli.ServiceCommand;
 import dispatch.cli.Setup;
 import dispatch.cli.Terminal;
 import dispatch.config.ConfigException;
+import dispatch.config.ConfigLoader;
 import dispatch.config.ConfigText;
 import dispatch.workspace.Git;
 import dispatch.workspace.WorkspaceException;
@@ -34,7 +35,8 @@ import java.util.stream.Collectors;
  * {@code worker.env}.
  *
  * <p>Unlike `dispatch init`, one thing is written before the summary: the pairing code is one-time, so the key it
- * buys is saved the moment it arrives rather than lost if the member stops halfway. The first line says so.
+ * buys is saved the moment it arrives rather than lost if the member stops halfway. Stopping after that point and
+ * running this again reuses the saved key instead of asking for a new code. The first line says so.
  */
 public final class WorkerInitCommand {
 
@@ -82,7 +84,8 @@ public final class WorkerInitCommand {
         }
         Path envFile = SecretsFile.beside(workerFile);
         terminal.say("Dispatch worker setup. Your tasks will run here, with your own Claude Code login and clones.");
-        terminal.say("Your key is saved as soon as you pair (the code works once); nothing else until you confirm the summary.");
+        terminal.say("Your key is saved as soon as you pair (the code works once); if you stop before finishing, running "
+                + "this again reuses that saved key -- nothing else is written until you confirm the summary.");
 
         terminal.step("1/5 Your team");
         Paired paired = pair(workerFile, envFile);
@@ -93,7 +96,8 @@ public final class WorkerInitCommand {
         } catch (RuntimeException e) {
             // The key is saved, so this is worth retrying without a new code: say so instead of a stack trace.
             throw new CliException("cannot ask " + paired.teamUrl() + " for your projects (" + e.getMessage()
-                    + "); your key is in " + envFile + ", so run dispatch worker init --force again when it answers");
+                    + "); your key is saved in " + envFile + ", so run dispatch worker init --force again once it "
+                    + "answers -- no new code needed");
         }
         terminal.ok("paired with " + team.team() + " as " + paired.name());
 
@@ -110,7 +114,8 @@ public final class WorkerInitCommand {
         terminal.step("5/5 Summary");
         summary(team.team(), paired, projects, claude, gh, workerFile);
         if (!terminal.confirm("Write this setup?", true)) {
-            throw new CliException("cancelled; " + workerFile + " was not written (your key stays in " + envFile + ")");
+            throw new CliException("cancelled; " + workerFile + " was not written, but your key stays in " + envFile
+                    + " -- no new code needed next time");
         }
         write(workerFile, render(paired, projects, claude, gh, stateDir));
         terminal.ok("wrote " + workerFile);
@@ -124,6 +129,9 @@ public final class WorkerInitCommand {
     /**
      * Exchanges a code for this computer's key and saves it at once. An existing key is offered for re-use first: a
      * member adding a project should not have to fetch a new code, nor leave a second computer in their /worker list.
+     * A key saved by an earlier attempt that never reached a full pairing (no valid {@code worker.yaml} to go with
+     * it) is reused too, once the team URL and computer name are confirmed, rather than asking for a fresh code the
+     * old one already spent.
      */
     private Paired pair(Path workerFile, Path envFile) {
         Optional<Paired> existing = existingPairing(workerFile, envFile);
@@ -131,23 +139,62 @@ public final class WorkerInitCommand {
                 + " as " + existing.get().name() + ". Pair again?", false)) {
             return existing.get();
         }
-        String url = required("Team URL (your team owner has it, e.g. https://team.example.com)",
-                existing.map(Paired::teamUrl).orElse(null));
-        String name = required("A name for this computer, as your /worker list will show it",
-                existing.map(Paired::name).orElse(Cli.hostName()));
+        String url = requiredTeamUrl(existing.map(Paired::teamUrl).orElse(null));
+        String name = requiredComputerName(existing.map(Paired::name).orElse(Cli.hostName()));
+        if (existing.isEmpty()) {
+            Optional<String> stranded = strandedKey(envFile);
+            if (stranded.isPresent()) {
+                terminal.ok("reusing the key already saved in " + envFile + " -- its one-time code is already spent");
+                return new Paired(url, name, stranded.get());
+            }
+        }
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            // A member who mistyped the URL (missing https://, a LAN address instead of the public one) should not
+            // have to burn three codes before being told to check it: re-ask it too, not just the code.
+            if (attempt > 1) {
+                url = requiredTeamUrl(url);
+            }
             String code = required("Pairing code (send /worker to the bot in Telegram)", null);
+            String pairUrl = url;
             try {
-                WorkerClient.Paired answer = terminal.during("Pairing with " + url,
-                        () -> WorkerClient.pair(HttpClient.newHttpClient(), URI.create(url), code, name));
+                WorkerClient.Paired answer = terminal.during("Pairing with " + pairUrl,
+                        () -> WorkerClient.pair(HttpClient.newHttpClient(), URI.create(pairUrl), code, name));
                 saveKey(workerFile, envFile, answer.key());
                 terminal.ok("this computer is #" + answer.workerId() + " in your /worker list");
-                return new Paired(url, name, answer.key());
+                return new Paired(pairUrl, name, answer.key());
             } catch (RuntimeException e) {
                 terminal.warn("pairing failed: " + e.getMessage());
             }
         }
         throw new CliException("could not pair after " + ATTEMPTS + " tries; check the URL and ask for a fresh code with /worker");
+    }
+
+    /** A team URL is worth nothing until {@link ConfigLoader#isWorkerUrl} accepts it: a bad one wastes a whole code first. */
+    private String requiredTeamUrl(String defaultValue) {
+        String value = defaultValue;
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String answer = required("Team URL (your team owner has it, e.g. https://team.example.com)", value);
+            if (ConfigLoader.isWorkerUrl(answer)) {
+                return answer;
+            }
+            terminal.warn("a team URL must start with https://, or http:// only for 127.0.0.1; got '" + answer + "'");
+            value = null;
+        }
+        throw new CliException("a valid Team URL is needed");
+    }
+
+    /** Same idea as {@link #requiredTeamUrl}: {@link WorkerConfigLoader}'s own name rule, checked before the code is spent. */
+    private String requiredComputerName(String defaultValue) {
+        String value = defaultValue;
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String answer = required("A name for this computer, as your /worker list will show it", value);
+            if (WorkerConfigLoader.isValidName(answer)) {
+                return answer;
+            }
+            terminal.warn("a name is letters, digits, '.', '_' and '-', at most 40 characters; got '" + answer + "'");
+            value = null;
+        }
+        throw new CliException("a valid computer name is needed");
     }
 
     private Optional<Paired> existingPairing(Path workerFile, Path envFile) {
@@ -164,16 +211,51 @@ public final class WorkerInitCommand {
         }
     }
 
+    /**
+     * A key saved by a pairing that got no further: {@code worker.yaml} may be missing or invalid (an aborted first
+     * attempt), but the key itself is still good, and its one-time code is already spent either way.
+     */
+    private Optional<String> strandedKey(Path envFile) {
+        if (!Files.exists(envFile)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.ofNullable(SecretsFile.read(envFile).get(WorkerCommand.KEY_VARIABLE));
+        } catch (IOException | CliException e) {
+            // Unreadable or malformed: nothing usable to reuse; pairing starts fresh below instead.
+            return Optional.empty();
+        }
+    }
+
     private void saveKey(Path workerFile, Path envFile, String key) {
         try {
             // A worker machine never runs `dispatch init`, so the config directory usually does not exist yet.
             OwnerOnly.createDirectories(workerFile.getParent());
-            Map<String, String> values = new LinkedHashMap<>(Files.exists(envFile) ? SecretsFile.read(envFile) : Map.of());
+            Map<String, String> values = new LinkedHashMap<>(existingSecrets(envFile));
             values.put(WorkerCommand.KEY_VARIABLE, key);
             SecretsFile.write(envFile, values);
             terminal.ok("wrote " + envFile + " (only you can read it)");
         } catch (IOException e) {
             throw new CliException("cannot write " + envFile + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Whatever {@code envFile} already holds, as a starting point for the new key. A malformed file must never cost
+     * the member the key a one-time code just bought, so it is replaced (with a warning) instead of aborting the
+     * save the way an ordinary read failure does.
+     */
+    private Map<String, String> existingSecrets(Path envFile) {
+        if (!Files.exists(envFile)) {
+            return Map.of();
+        }
+        try {
+            return SecretsFile.read(envFile);
+        } catch (CliException e) {
+            terminal.warn(envFile + " could not be read as it was (" + e.getMessage() + "); it will be replaced");
+            return Map.of();
+        } catch (IOException e) {
+            throw new CliException("cannot read " + envFile + ": " + e.getMessage());
         }
     }
 
@@ -192,7 +274,7 @@ public final class WorkerInitCommand {
             Optional<Path> path = folderFor(project, git, stateDir);
             if (path.isEmpty()) {
                 terminal.warn(project.name() + " is not set up here; tasks for it will wait until you run "
-                        + "dispatch worker init again");
+                        + "dispatch worker init --force again");
                 continue;
             }
             projects.put(project.name(), new WorkerConfig.Project(path.get().toString(),
@@ -219,7 +301,10 @@ public final class WorkerInitCommand {
                     }
                 }
                 case "clone" -> {
-                    return Optional.of(clone(project, stateDir));
+                    Optional<Path> cloned = clone(project, stateDir);
+                    if (cloned.isPresent()) {
+                        return cloned;
+                    }
                 }
                 default -> {
                     return Optional.empty();
@@ -250,21 +335,27 @@ public final class WorkerInitCommand {
         return Optional.of(probe.folder());
     }
 
-    private Path clone(WorkerClient.ProjectInfo project, Path stateDir) {
+    /**
+     * A failed clone must not discard every other answer already given: it warns and falls back to the same menu
+     * {@link #existingClone} already recovers to, so the member can pick "a clone I already have" or skip the
+     * project instead of losing the whole wizard over one project's network hiccup.
+     */
+    private Optional<Path> clone(WorkerClient.ProjectInfo project, Path stateDir) {
         Path target = stateDir.resolve("repos").resolve(project.name());
         try {
             OwnerOnly.createDirectories(target.getParent());
         } catch (IOException e) {
-            throw new CliException("cannot create " + target.getParent() + ": " + e.getMessage());
+            terminal.warn("cannot create " + target.getParent() + ": " + e.getMessage());
+            return Optional.empty();
         }
         try {
             terminal.during("Cloning " + project.repo() + " into " + target, () -> new Git("git", null, CLONE_TIMEOUT)
                     .run(target.getParent(), "clone", "--quiet", project.repo(), target.toString()));
         } catch (WorkspaceException e) {
-            throw new CliException("cannot clone " + project.repo() + ": " + e.getMessage()
-                    + "; clone it yourself and run dispatch worker init again");
+            terminal.warn("cannot clone " + project.repo() + ": " + e.getMessage());
+            return Optional.empty();
         }
-        return target;
+        return Optional.of(target);
     }
 
     private String claude(Map<String, String> environment) {
@@ -281,7 +372,7 @@ public final class WorkerInitCommand {
             }
             terminal.warn("cannot run " + command + " --version");
         }
-        throw new CliException("Claude Code could not be run; install it and run dispatch worker init again");
+        throw new CliException("Claude Code could not be run; install it and run dispatch worker init --force again");
     }
 
     /** Not fatal: a member can log in to gh later, and only delivery needs it. */

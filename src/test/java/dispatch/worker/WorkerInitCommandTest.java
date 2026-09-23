@@ -91,6 +91,61 @@ class WorkerInitCommandTest extends WorkerApiFixture {
     }
 
     @Test
+    void aBadTeamUrlOrComputerNameIsRefusedBeforeAnyCodeIsSpent() throws Exception {
+        Path workerFile = dir.resolve("config/worker.yaml");
+        ScriptedTerminal terminal = new ScriptedTerminal(
+                "http://192.168.1.50:7878",                // refused: plain http is only for 127.0.0.1
+                "http://127.0.0.1:" + api.port(),          // now valid
+                "Ann's laptop",                            // refused: apostrophe and space are not allowed
+                "ann-laptop",                               // now valid
+                keys.newCode(BOLD),
+                "Skip it", JAVA, JAVA, "y");
+
+        int status = init(terminal, workerFile);
+
+        assertEquals(0, status, terminal.output());
+        assertTrue(terminal.output().contains("must start with https://"), terminal.output());
+        assertTrue(terminal.output().contains("letters, digits"), terminal.output());
+    }
+
+    @Test
+    void aFailedCloneFallsBackToTheProjectMenuInsteadOfAbortingTheWizard() throws Exception {
+        Path workerFile = dir.resolve("config/worker.yaml");
+        Path blockedTarget = dir.resolve("state/worker/repos/alm");
+        Files.createDirectories(blockedTarget.getParent());
+        Files.createFile(blockedTarget); // not a directory: git clone into it must fail
+        ScriptedTerminal terminal = new ScriptedTerminal(
+                "http://127.0.0.1:" + api.port(), "ann-laptop", keys.newCode(BOLD),
+                "Clone it here",                                           // fails: the target already exists as a file
+                "A clone I already have", repos.repo("alm").toString(),    // recovers to an existing clone instead
+                "", "",
+                JAVA, JAVA, "y");
+
+        int status = init(terminal, workerFile);
+
+        assertEquals(0, status, terminal.output());
+        assertTrue(terminal.output().contains("cannot clone"), terminal.output());
+        assertEquals(repos.repo("alm").toString(), WorkerConfigLoader.load(workerFile).projects().get("alm").path());
+    }
+
+    @Test
+    void aMalformedWorkerEnvDoesNotLoseTheKeyAPairingJustBought() throws Exception {
+        Path workerFile = dir.resolve("config/worker.yaml");
+        Path envFile = SecretsFile.beside(workerFile);
+        Files.createDirectories(envFile.getParent());
+        Files.writeString(envFile, "not a valid line at all\n"); // no '=': SecretsFile.read throws on this
+        ScriptedTerminal terminal = new ScriptedTerminal(
+                "http://127.0.0.1:" + api.port(), "ann-laptop", keys.newCode(BOLD),
+                "Skip it", JAVA, JAVA, "y");
+
+        int status = init(terminal, workerFile);
+
+        assertEquals(0, status, terminal.output());
+        String key = SecretsFile.read(envFile).get(WorkerCommand.KEY_VARIABLE);
+        assertTrue(key != null && !key.isBlank(), "the key must survive a malformed existing worker.env: " + terminal.output());
+    }
+
+    @Test
     void anExistingWorkerYamlIsKeptUnlessForced() throws Exception {
         Path workerFile = dir.resolve("config/worker.yaml");
         Files.createDirectories(workerFile.getParent());
@@ -102,6 +157,66 @@ class WorkerInitCommandTest extends WorkerApiFixture {
         assertEquals(1, status, terminal.output());
         assertTrue(terminal.output().contains("dispatch worker init --force"), terminal.output());
         assertEquals("team: https://team.example.com\nname: ann-laptop\n", Files.readString(workerFile));
+    }
+
+    @Test
+    void aRejectedOrExpiredCodeIsRetriedWithoutLosingTheEarlierAnswers() throws Exception {
+        Path workerFile = dir.resolve("config/worker.yaml");
+        ScriptedTerminal terminal = new ScriptedTerminal(
+                "http://127.0.0.1:" + api.port(), "ann-laptop",
+                "not-a-real-code",                         // unknown/expired: the server answers 401 pairing_code
+                "",                                         // team URL re-asked; blank keeps the same one
+                keys.newCode(BOLD),                         // a real, still-unspent code
+                "Skip it", JAVA, JAVA, "y");
+
+        int status = init(terminal, workerFile);
+
+        assertEquals(0, status, terminal.output());
+        assertTrue(terminal.output().contains("pairing failed"), terminal.output());
+        assertEquals("ann-laptop", WorkerConfigLoader.load(workerFile).name());
+    }
+
+    @Test
+    void anUnreachableTeamUrlIsRetriedAfterReAskingTheUrl() throws Exception {
+        Path workerFile = dir.resolve("config/worker.yaml");
+        ScriptedTerminal terminal = new ScriptedTerminal(
+                "http://127.0.0.1:1", "ann-laptop",
+                "does-not-matter",                         // the connection fails before any code is checked
+                "http://127.0.0.1:" + api.port(),          // team URL re-asked; the real one this time
+                keys.newCode(BOLD),
+                "Skip it", JAVA, JAVA, "y");
+
+        int status = init(terminal, workerFile);
+
+        assertEquals(0, status, terminal.output());
+        assertTrue(terminal.output().contains("pairing failed"), terminal.output());
+        assertEquals("http://127.0.0.1:" + api.port(), WorkerConfigLoader.load(workerFile).team());
+    }
+
+    @Test
+    void anAbortedInitAfterPairingIsResumedWithoutANewCode() throws Exception {
+        Path workerFile = dir.resolve("config/worker.yaml");
+        String code = keys.newCode(BOLD);
+        // No more answers after the code: aborts at the very next question (alm's "how does it get onto this computer?").
+        ScriptedTerminal firstAttempt = new ScriptedTerminal("http://127.0.0.1:" + api.port(), "ann-laptop", code);
+
+        int firstStatus = init(firstAttempt, workerFile);
+
+        assertEquals(1, firstStatus, firstAttempt.output());
+        assertFalse(Files.exists(workerFile), "worker.yaml must not exist after an abort: " + firstAttempt.output());
+        String savedKey = SecretsFile.read(SecretsFile.beside(workerFile)).get(WorkerCommand.KEY_VARIABLE);
+        assertTrue(savedKey != null && !savedKey.isBlank(), "the key from the spent code must survive the abort");
+
+        // Only the team URL and the computer name: the code that pairing already spent is never asked for again.
+        ScriptedTerminal secondAttempt = new ScriptedTerminal(
+                "http://127.0.0.1:" + api.port(), "ann-laptop", "Skip it", JAVA, JAVA, "y");
+
+        int secondStatus = init(secondAttempt, workerFile);
+
+        assertEquals(0, secondStatus, secondAttempt.output());
+        assertFalse(secondAttempt.output().contains("Pairing code"), "resuming must not ask for a new code: " + secondAttempt.output());
+        assertEquals("ann-laptop", WorkerConfigLoader.load(workerFile).name());
+        assertEquals(savedKey, SecretsFile.read(SecretsFile.beside(workerFile)).get(WorkerCommand.KEY_VARIABLE));
     }
 
     /** No ServiceCommand: these tests must not install anything on the machine that runs them. */

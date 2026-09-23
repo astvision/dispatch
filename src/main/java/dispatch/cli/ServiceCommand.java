@@ -77,7 +77,7 @@ public final class ServiceCommand {
     private void status() {
         Service.Status status = service.status();
         if (!status.installed()) {
-            terminal.warn("not installed; install it with: dispatch service install");
+            terminal.warn("not installed; install it with: " + service.kind().manageCommand() + " install");
             return;
         }
         if (status.running()) {
