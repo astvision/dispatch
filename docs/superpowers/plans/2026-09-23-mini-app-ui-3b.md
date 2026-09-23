@@ -61,6 +61,9 @@ Type: Feature
 ## Deviations
 
 - Task 2 (tactical): the plan had every existing route's lambda gain a `Caller` parameter. `ManageApi.routes()` and `SetupApi.routes()` keep their `Function<JsonNode, Object>` shape instead, and `UiRoutes.anyCaller` lifts them at registration — which is also where the admin gate goes. Same single route concept inside `UiServer`, no churn in the two APIs or their tests. Files unchanged from the task's list except that `src/main/java/dispatch/ui/ManageApi.java` and `src/main/java/dispatch/ui/SetupApi.java` were not modified after all.
+- Task 4 (tactical): `statusPayload` and `historyPayload` gained a `mine` flag per task, and the active ones a `requester` name. The plan had "me" scope filtering the built payload by requester, but a running or queued item carried no requester at all, and filtering by name would confuse two members who share a first name. `src/main/java/dispatch/core/TaskService.java` was already in the task's `Files:`.
+- Task 4 (tactical): `retry`'s refusal is coded `cannot_retry`, not `not_yours`. `TaskService.retry` answers `REFUSED` both for "not your task" and for "it has not failed", and does not say which, so a `not_yours` message would tell a requester something untrue about their own task. The message names both reasons.
+- Task 4 (tactical): the DoD line about retrying by the requester is covered as the boundary "an admin may cancel anybody's task but never retry it". Retrying for real needs a task in `FAILED` with a failed run, which `TaskLifecycleTest` already exercises end to end; rebuilding that state here would test `TaskService`, not this API.
 - Task 3 (tactical): the DoD asked for "Telegram's documented example launch data". Telegram publishes the algorithm, not a signed test vector, so `TelegramAuthTest` signs its own data with that algorithm written out separately from `TelegramAuth` (plain `javax.crypto`, no production code) — the algorithm was confirmed against core.telegram.org/bots/webapps and three independent implementations before writing either side. The limit: a shared misreading of the algorithm would pass both. The live run (Task 10) is what closes that, since only Telegram can sign real launch data.
 - Task 3 (tactical): `verify` checks the Host first rather than last. `UiServer` already refuses a wrong Host before any route runs, so the order only shows in the unit test, and refusing the cheapest way first is no weaker.
 - Task 2 (tactical): `Auth.hostAllowed` became `Optional<String> hostRefusal`, for the same reason as `pageRefusal`: the Mini App's wrong-Host refusal must not tell a member to use the link `dispatch ui` printed.
@@ -71,7 +74,7 @@ Type: Feature
 - [x] Task 1: the `miniApp` config block
 - [x] Task 2: `UiServer` takes its authentication and hands routes the caller
 - [x] Task 3: `TelegramAuth`
-- [ ] Task 4: task payloads and `TasksApi`
+- [x] Task 4: task payloads and `TasksApi`
 - [ ] Task 5: the Mini App server in `dispatch run`
 - [ ] Task 6: the frontend's Telegram transport, theme and shell
 - [ ] Task 7: the task pages

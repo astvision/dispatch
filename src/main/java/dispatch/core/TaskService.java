@@ -713,6 +713,11 @@ public final class TaskService {
         return task.requester().ref().equals(who.ref());
     }
 
+    /** Null when the task is not among the active ones this viewer may see, e.g. a run of another group's project. */
+    private static String requesterName(Task task) {
+        return task == null ? null : task.requester().name();
+    }
+
     /** Whether {@code viewerRef} gave the task; a group chat (null viewer) owns nothing, so it sees headlines only (ADR 0020). */
     private static boolean ownedBy(Task task, String viewerRef) {
         return task != null && viewerRef != null && task.requester().ref().equals(viewerRef);
@@ -748,7 +753,12 @@ public final class TaskService {
         for (Runs.InProgress run : Runs.inProgress(tx, visibleProjects)) {
             boolean isRunning = run.status() == RunStatus.RUNNING;
             ObjectNode item = (isRunning ? running : queued).addObject().put("taskId", run.taskId()).put("project", run.project())
-                    .put("title", run.title()).put("kind", run.kind().name()).put("priority", priority(active.get(run.taskId())));
+                    .put("title", run.title()).put("kind", run.kind().name()).put("priority", priority(active.get(run.taskId())))
+                    // Who gave it: the name for an admin's Tasks page to show (ADR 0020 allows it), and a flag for the
+                    // Mini App's My tasks page, which keeps only the viewer's own and cannot go by name — two members
+                    // may share a first name.
+                    .put("requester", requesterName(active.get(run.taskId())))
+                    .put("mine", ownedBy(active.get(run.taskId()), viewerRef));
             if (isRunning) {
                 item.put("startedAt", text(run.startedAt()));
                 if (ownedBy(active.get(run.taskId()), viewerRef)) {
@@ -767,7 +777,7 @@ public final class TaskService {
         for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL, visibleProjects)) {
             awaiting.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                     .put("priority", task.priority().name()).put("requester", task.requester().name())
-                    .put("since", text(task.updatedAt()));
+                    .put("mine", ownedBy(task, viewerRef)).put("since", text(task.updatedAt()));
         }
         ArrayNode mine = payload.putArray("mine");
         active.values().stream().filter(task -> task.requester().ref().equals(viewerRef))
@@ -780,18 +790,25 @@ public final class TaskService {
      * the viewer's own tasks, everyone else's carry just the headline (ADR 0020).
      */
     public void history(Tx tx, Set<String> visibleProjects, String viewerRef, String originRef, String chatRef) {
+        enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, historyPayload(tx, visibleProjects, viewerRef), clock.instant());
+    }
+
+    /** The content of a history message; also what the Mini App's task list reads (spec: Task pages). */
+    public ObjectNode historyPayload(Tx tx, Set<String> visibleProjects, String viewerRef) {
         List<Task> finished = Tasks.finished(tx, visibleProjects, HISTORY_SIZE);
         Map<Long, BigDecimal> costs = Runs.costs(tx, finished.stream().map(Task::id).toList());
         ObjectNode payload = Json.object();
         ArrayNode listed = payload.putArray("tasks");
         for (Task task : finished) {
-            BigDecimal cost = ownedBy(task, viewerRef) ? costs.get(task.id()) : null;
+            boolean mine = ownedBy(task, viewerRef);
+            BigDecimal cost = mine ? costs.get(task.id()) : null;
             listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
+                    .put("mine", mine)
                     .put("phase", task.phase().name()).put("priority", task.priority().name())
                     .put("requester", task.requester().name()).put("createdAt", text(task.createdAt())).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
                     .put("costUsd", cost == null ? null : cost.toPlainString()).put("completedAt", text(task.completedAt()));
         }
-        enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, payload, clock.instant());
+        return payload;
     }
 
     /**
@@ -799,10 +816,19 @@ public final class TaskService {
      * are not found. Someone else's task stops at the headline: no runs, no cost (ADR 0020).
      */
     public void timeline(Tx tx, Set<String> visibleProjects, String viewerRef, long taskId, String originRef, String chatRef) {
+        Optional<ObjectNode> payload = timelinePayload(tx, visibleProjects, viewerRef, taskId);
+        enqueue(tx, null, payload.isPresent() ? OutboxKind.TASK_TIMELINE : OutboxKind.TASK_NOT_FOUND, chatRef, originRef,
+                payload.orElseGet(() -> Json.object().put("taskId", taskId)), clock.instant());
+    }
+
+    /**
+     * One task's timeline, or empty when it is not in {@code visibleProjects} — so a task's existence does not leak.
+     * Someone else's task stops at the headline here too (ADR 0020), which is what keeps that rule in one place.
+     */
+    public Optional<ObjectNode> timelinePayload(Tx tx, Set<String> visibleProjects, String viewerRef, long taskId) {
         Optional<Task> found = Tasks.find(tx, taskId).filter(task -> visibleProjects.contains(task.project()));
         if (found.isEmpty()) {
-            enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), clock.instant());
-            return;
+            return Optional.empty();
         }
         Task task = found.get();
         ObjectNode payload = Json.object().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
@@ -811,9 +837,7 @@ public final class TaskService {
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
                 .put("completedAt", text(task.completedAt()));
         if (!ownedBy(task, viewerRef)) {
-            payload.put("headline", true).putNull("costUsd");
-            enqueue(tx, null, OutboxKind.TASK_TIMELINE, chatRef, originRef, payload, clock.instant());
-            return;
+            return Optional.of(payload.put("headline", true).putNull("costUsd"));
         }
         ArrayNode runs = payload.putArray("runs");
         BigDecimal total = null;
@@ -832,7 +856,7 @@ public final class TaskService {
             }
         }
         payload.put("costUsd", total == null ? null : total.toPlainString());
-        enqueue(tx, null, OutboxKind.TASK_TIMELINE, chatRef, originRef, payload, clock.instant());
+        return Optional.of(payload);
     }
 
     /** Posts statistics for this month: the viewer's own in a private chat, the group's in a group chat (ADR 0012). */
