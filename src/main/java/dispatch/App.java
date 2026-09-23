@@ -18,6 +18,7 @@ import dispatch.core.Scheduler;
 import dispatch.core.Signal;
 import dispatch.core.Splitter;
 import dispatch.core.TaskService;
+import dispatch.core.Worker;
 import dispatch.store.Database;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.OutboxSender;
@@ -25,6 +26,9 @@ import dispatch.telegram.Poller;
 import dispatch.telegram.Renderer;
 import dispatch.telegram.TelegramException;
 import dispatch.telegram.UpdateHandler;
+import dispatch.worker.RemoteWorkers;
+import dispatch.worker.WorkerApi;
+import dispatch.worker.WorkerKeys;
 import dispatch.workspace.Delivery;
 import dispatch.workspace.Gh;
 import dispatch.workspace.Git;
@@ -50,6 +54,7 @@ public final class App {
     private final Sweeper sweeper;
     private final Splitter splitter;
     private final ActiveRuns activeRuns;
+    private final WorkerApi workerApi;
     private final Consumer<Throwable> onFatal;
     private final AtomicBoolean stopping = new AtomicBoolean();
     private Thread pollerThread;
@@ -58,8 +63,9 @@ public final class App {
     private Thread draftExpiryThread;
     private Thread sweeperThread;
 
+    /** @param workerApi null in personal mode, where no computer ever reaches this machine */
     private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, Sweeper sweeper, Splitter splitter,
-                ActiveRuns activeRuns, Consumer<Throwable> onFatal) {
+                ActiveRuns activeRuns, WorkerApi workerApi, Consumer<Throwable> onFatal) {
         this.db = db;
         this.poller = poller;
         this.scheduler = scheduler;
@@ -68,6 +74,7 @@ public final class App {
         this.sweeper = sweeper;
         this.splitter = splitter;
         this.activeRuns = activeRuns;
+        this.workerApi = workerApi;
         this.onFatal = onFatal;
     }
 
@@ -84,7 +91,9 @@ public final class App {
         Delivery delivery = new Delivery(git, new Gh(config.delivery().ghCommand(), config.secrets().ghToken(), Duration.ofMinutes(2)),
                 config.delivery().authorName(), config.delivery().authorEmail());
         Redactor redactor = Redactor.fromEnvironment(environment);
-        workspaces.createDirectories().ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
+        // Team mode never runs a task's agent or holds a worktree here; each member's own computer does (ADR 0020).
+        (config.workers() == null ? workspaces.createDirectories() : workspaces.createTeamDirectories())
+                .ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
         Database db = Database.open(stateDir.resolve("dispatch.db"));
         db.migrate();
         com.fasterxml.jackson.databind.JsonNode me = api.getMe();
@@ -99,14 +108,32 @@ public final class App {
         RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake);
         Groups groups = new Groups(config.telegram());
         Splitter[] splitter = new Splitter[1];
-        TaskService tasks = new TaskService(groups, projects, activeRuns, clock,
-                schedulerSignal::wake, outboxSignal::wake, taskTopics, draftId -> splitter[0].start(draftId));
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(config.agents().get("claude-code").command(), environment, Duration.ofSeconds(10)));
-        // Personal mode runs the job in this process; a team member's own computer runs the same JobRunner (W-3).
-        JobRunner jobRunner = new JobRunner(workspaces, delivery, agents, redactor, api::downloadFile);
+        WorkerKeys workerKeys = null;
+        Worker worker;
+        WorkerApi workerApi = null;
+        if (config.workers() == null) {
+            // Personal mode runs the job in this process, exactly as before.
+            worker = new JobRunner(workspaces, delivery, agents, redactor, api::downloadFile);
+        } else {
+            workerKeys = new WorkerKeys(db, clock);
+            // Someone taken out of the config takes their computers' access with them.
+            workerKeys.revokeWorkersOfEveryoneExcept(memberRefs(groups));
+            RemoteWorkers remoteWorkers = new RemoteWorkers(db, clock, schedulerSignal::wake);
+            try {
+                workerApi = WorkerApi.start(config, groups, workerKeys, remoteWorkers, api::downloadFile);
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("cannot listen on 127.0.0.1:" + config.workers().port()
+                        + " for members' computers: " + e.getMessage(), e);
+            }
+            worker = remoteWorkers;
+        }
         Coordinator coordinator = new Coordinator(db, projects, transitions, activeRuns, config::planLimits,
-                config::executeLimits, jobRunner, schedulerSignal::wake);
+                config::executeLimits, worker, schedulerSignal::wake);
+        TaskService tasks = new TaskService(groups, projects, activeRuns, clock,
+                schedulerSignal::wake, outboxSignal::wake, taskTopics, draftId -> splitter[0].start(draftId),
+                config.workers() != null);
         // Splitting happens before a project is chosen, so it cannot use the project's agent (ADR 0013).
         splitter[0] = new Splitter(db, tasks, agents.get("claude-code"), workspaces.splitsDir(), clock, Duration.ofMinutes(1));
 
@@ -127,17 +154,18 @@ public final class App {
         registerCommandMenus(api, renderer, groups);
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
         UpdateHandler handler = new UpdateHandler(db, tasks, new Membership(groups, members, clock, outboxSignal::wake), groups, projects,
-                api, renderer, redactor, botUsername, clock, outboxSignal::wake);
+                api, renderer, redactor, botUsername, clock, outboxSignal::wake, workerKeys,
+                config.workers() == null ? null : config.workers().publicUrl());
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         App[] app = new App[1];
         Scheduler scheduler = new Scheduler(db, config.scheduler().maxConcurrentRuns(), schedulerSignal, clock,
                 run -> Thread.ofVirtual().name("run-" + run.taskId() + "." + run.seq())
                         .start(app[0].guarded(() -> coordinator.execute(run))),
-                Duration.ofSeconds(5));
+                Duration.ofSeconds(5), config.workers() == null ? null : dispatch.store.Workers.SEEN_WITHIN);
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
         Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1));
-        app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], activeRuns, onFatal);
+        app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], activeRuns, workerApi, onFatal);
         app[0].startThreads();
         Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "task_topics", taskTopics, "groups", groups.all().size(),
                 "projects", config.projects().size(), "state_dir", stateDir);
@@ -147,6 +175,11 @@ public final class App {
     /** Blocks until polling ends (after {@link #stop()}). */
     public void join() throws InterruptedException {
         pollerThread.join();
+    }
+
+    /** The port members' computers connect to; 0 in personal mode. Tests start with port 0 and ask afterwards. */
+    public int workerPort() {
+        return workerApi == null ? 0 : workerApi.port();
     }
 
     /** Graceful stop: no new updates or runs; active runs end as interrupted and are reported (ADR 0008). */
@@ -165,6 +198,10 @@ public final class App {
             activeRuns.stopAll(ActiveRuns.StopReason.INTERRUPTED);
             if (!activeRuns.awaitIdle(STOP_TIMEOUT)) {
                 Log.warn("dispatch.runs_still_active", "waited_seconds", STOP_TIMEOUT.toSeconds());
+            }
+            if (workerApi != null) {
+                // After runs are idle, so a worker still reporting a run's outcome during shutdown gets through first.
+                workerApi.close();
             }
             draftExpiry.stop();
             draftExpiryThread.join(Duration.ofSeconds(10));
@@ -202,6 +239,11 @@ public final class App {
         };
     }
 
+    private static java.util.Set<String> memberRefs(Groups groups) {
+        return groups.all().stream().flatMap(group -> group.members().stream())
+                .map(member -> "telegram:" + member.id()).collect(java.util.stream.Collectors.toSet());
+    }
+
     /** Best effort: a group's menu fails while the bot is not yet in it, and works again on the next start. */
     private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups) {
         for (Config.Group group : groups.all()) {
@@ -216,7 +258,7 @@ public final class App {
             }
         }
         try {
-            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "stats", "cancel", "retry", "projects", "help"));
+            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "stats", "cancel", "retry", "worker", "projects", "help"));
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "scope", "all_private_chats", "error", e.getMessage());
         }

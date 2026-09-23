@@ -1,5 +1,7 @@
 package dispatch.cli;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -19,7 +21,7 @@ public final class Cli {
     private Cli() {
     }
 
-    public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Ui, Help {
+    public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Ui, WorkerPair, WorkerRun, Help {
     }
 
     /** @param logFile where output goes instead of the terminal, as a background service runs it; null for the terminal */
@@ -53,6 +55,13 @@ public final class Cli {
                              String group) implements Invocation {
     }
 
+    /** @param name what the member's /worker list calls this computer; this machine's host name when not given */
+    public record WorkerPair(Path workerFile, String url, String code, String name) implements Invocation {
+    }
+
+    public record WorkerRun(Path workerFile) implements Invocation {
+    }
+
     public record Help() implements Invocation {
     }
 
@@ -73,6 +82,10 @@ public final class Cli {
                            add a git clone on this machine as a project
                   ui [--port 7878] [--no-browser]
                            manage Dispatch in your browser; on a server: ssh -L 7878:localhost:7878 SERVER
+                  worker pair URL CODE [--name NAME]
+                           connect this computer to a team; CODE comes from /worker in the bot
+                  worker run
+                           run your own tasks on this computer
                   help     show this help
 
                 FILE defaults to %s
@@ -135,8 +148,38 @@ public final class Cli {
                 yield new Ui(arguments.configFile(defaults), port(arguments.values().getOrDefault("port", "7878")),
                         !arguments.switches().contains("no-browser"));
             }
+            case "worker" -> {
+                if (arguments.positional().isEmpty()) {
+                    throw new CliException("worker needs one of: pair, run");
+                }
+                yield switch (arguments.positional().getFirst()) {
+                    case "pair" -> {
+                        if (arguments.positional().size() < 3) {
+                            throw new CliException("worker pair needs the team URL and the code from /worker");
+                        }
+                        arguments.allow(3, Set.of("config", "name"));
+                        yield new WorkerPair(arguments.workerFile(defaults), arguments.positional().get(1),
+                                arguments.positional().get(2), arguments.values().getOrDefault("name", hostName()));
+                    }
+                    case "run" -> {
+                        arguments.allow(1, Set.of("config"));
+                        yield new WorkerRun(arguments.workerFile(defaults));
+                    }
+                    default -> throw new CliException("unknown command 'worker " + arguments.positional().getFirst() + "'");
+                };
+            }
             default -> throw new CliException("unknown command '" + command + "'");
         };
+    }
+
+    /** A name the member will recognise in /worker; anything the machine cannot tell us becomes "worker". */
+    private static String hostName() {
+        try {
+            String host = InetAddress.getLocalHost().getHostName().replaceAll("[^A-Za-z0-9._-]", "-");
+            return host.isBlank() ? "worker" : host.substring(0, Math.min(40, host.length()));
+        } catch (UnknownHostException e) {
+            return "worker";
+        }
     }
 
     private static int port(String value) {
@@ -197,6 +240,10 @@ public final class Cli {
 
         Path configFile(Locations defaults) {
             return values.containsKey("config") ? Path.of(values.get("config")) : defaults.configFile();
+        }
+
+        Path workerFile(Locations defaults) {
+            return values.containsKey("config") ? Path.of(values.get("config")) : defaults.workerFile();
         }
     }
 }

@@ -94,6 +94,27 @@ class CliTest {
         assertTrue(error("run", "extra").contains("run does not take 'extra'"));
     }
 
+    @Test
+    void workerPairAndRunAreParsed() {
+        Cli.WorkerPair pair = (Cli.WorkerPair) parse("worker", "pair", "https://team.example.com", "ABCD2345", "--name", "ann-laptop");
+        Cli.WorkerRun run = (Cli.WorkerRun) parse("worker", "run");
+
+        assertEquals("https://team.example.com", pair.url());
+        assertEquals("ABCD2345", pair.code());
+        assertEquals("ann-laptop", pair.name());
+        assertEquals(DEFAULTS.workerFile(), run.workerFile());
+    }
+
+    @Test
+    void workerNeedsAKnownSubcommandAndItsArguments() {
+        assertEquals("worker needs one of: pair, run",
+                assertThrows(CliException.class, () -> parse("worker")).getMessage());
+        assertEquals("worker pair needs the team URL and the code from /worker",
+                assertThrows(CliException.class, () -> parse("worker", "pair", "https://team.example.com")).getMessage());
+        assertEquals("unknown command 'worker restart'",
+                assertThrows(CliException.class, () -> parse("worker", "restart")).getMessage());
+    }
+
     private static Cli.Invocation parse(String... args) {
         return Cli.parse(args, DEFAULTS);
     }

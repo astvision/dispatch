@@ -194,6 +194,23 @@ class SetupApiTest {
         assertFalse(Files.exists(config));
     }
 
+    @Test
+    void writeRefusesATeamSetupEarlyBeforeAnythingIsWritten() throws Exception {
+        call("/api/setup/team", "{\"team\":true}");
+        call("/api/setup/token", "{\"token\":\"" + TOKEN + "\"}");
+        telegram.pushUpdate(start(1, 100, "Bold"));
+        call("/api/setup/people/next", "{}");
+        call("/api/setup/people/answer", "{\"id\":100,\"accept\":true}");
+        String writeBody = "{\"teamName\":\"backend\",\"claude\":\"" + json(JAVA) + "\",\"authorName\":\"a\",\"authorEmail\":\"a@example.com\","
+                + "\"projects\":[{\"folder\":\"" + json(repos.repo("alm").toString()) + "\",\"name\":\"alm\",\"baseBranch\":\"main\"}]}";
+
+        CliException refused = assertThrows(CliException.class, () -> call("/api/setup/write", writeBody));
+
+        assertTrue(refused.getMessage().contains("dispatch init"), refused.getMessage());
+        assertFalse(Files.exists(config), "nothing was written");
+        assertFalse(Files.exists(SecretsFile.beside(config)), "not even the secrets file");
+    }
+
     private void confirmTwoTeamMembers() throws Exception {
         telegram.pushUpdate(start(1, 100, "Bold"));
         call("/api/setup/people/next", "{}");

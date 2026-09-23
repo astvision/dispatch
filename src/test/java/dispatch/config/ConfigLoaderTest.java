@@ -1,6 +1,7 @@
 package dispatch.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -336,7 +337,91 @@ class ConfigLoaderTest {
         assertTrue(error.getMessage().contains("stateDir"), error.getMessage());
     }
 
+    @Test
+    void aTeamConfigNeedsAWorkersBlock() throws IOException {
+        ConfigException error = assertThrows(ConfigException.class,
+                () -> ConfigLoader.load(write(VALID.replace(WORKERS_BLOCK, "")), ENV));
+
+        assertTrue(error.getMessage().contains("workers: required once a group has a chat"), error.getMessage());
+    }
+
+    @Test
+    void aTeamConfigWithWorkersIsLoaded() throws IOException {
+        // VALID's group has a chatId and two members, which makes it a team; it already carries a workers block.
+        Config config = ConfigLoader.load(write(VALID), ENV);
+
+        assertTrue(config.isTeam());
+        assertEquals("https://team.example.com", config.workers().publicUrl());
+        assertEquals(7880, config.workers().port());
+    }
+
+    @Test
+    void aPersonalConfigNeedsNoWorkersAndIsNotATeam() throws IOException {
+        String onePersonNoChat = VALID.replace("      chatId: -1001234567890\n", "")
+                .replace("        - id: 222333444\n          name: Ali\n", "")
+                .replace(WORKERS_BLOCK, "");
+
+        Config config = ConfigLoader.load(write(onePersonNoChat), ENV);
+
+        assertNull(config.workers());
+        assertFalse(config.isTeam(), "no group chat, so nothing has to run elsewhere");
+    }
+
+    @Test
+    void aConfigWithSeveralMembersButNoGroupChatIsNotATeam() throws IOException {
+        String noChat = VALID.replace("      chatId: -1001234567890\n", "").replace(WORKERS_BLOCK, "");
+
+        Config config = ConfigLoader.load(write(noChat), ENV);
+
+        assertNull(config.workers());
+        assertFalse(config.isTeam(), "a team is a group chat that announces to several people, not a member count");
+    }
+
+    @Test
+    void everyBadWorkersValueIsReported() throws IOException {
+        Path file = write(VALID.replace(WORKERS_BLOCK, """
+                workers:
+                  publicUrl: http://team.example.com
+                  port: 70000
+                """));
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(file, ENV));
+
+        assertTrue(error.getMessage().contains("workers.publicUrl: must start with https://"), error.getMessage());
+        assertTrue(error.getMessage().contains("workers.port: must be from 1 to 65535, got 70000"), error.getMessage());
+    }
+
+    @Test
+    void plainHttpIsAcceptedOnlyOnTheLoopbackAddress() throws IOException {
+        Config config = ConfigLoader.load(write(VALID.replace(WORKERS_BLOCK, """
+                workers:
+                  publicUrl: http://127.0.0.1:7880
+                  port: 7880
+                """)), ENV);
+
+        assertEquals("http://127.0.0.1:7880", config.workers().publicUrl(), "tests pair over loopback without TLS");
+    }
+
+    @Test
+    void workersWithoutAPortIsReportedAsAPortProblem() throws IOException {
+        Path file = write(VALID.replace(WORKERS_BLOCK, """
+                workers:
+                  publicUrl: https://team.example.com
+                """));
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(file, ENV));
+
+        assertTrue(error.getMessage().contains("workers.port: must be from 1 to 65535, got 0"), error.getMessage());
+    }
+
     private static final String CRM_REPO = "    repo: https://github.com/acme/crm.git\n";
+
+    /** VALID's group has a chat, which makes it a team (ADR 0020); its workers block, ready to strip or replace. */
+    private static final String WORKERS_BLOCK = """
+            workers:
+              publicUrl: https://team.example.com
+              port: 7880
+            """;
 
     private static final String TWO_PROJECTS_IN_BACKEND = """
                   projects:
@@ -379,6 +464,9 @@ class ConfigLoaderTest {
             delivery:
               authorName: Dispatch (backend)
               authorEmail: dispatch-backend@users.noreply.github.com
+            workers:
+              publicUrl: https://team.example.com
+              port: 7880
             scheduler:
               maxConcurrentRuns: 2
             limits:

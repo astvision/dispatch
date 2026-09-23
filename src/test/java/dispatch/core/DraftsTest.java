@@ -146,7 +146,7 @@ class DraftsTest {
 
     @Test
     void withTopicsOnEachGivenTaskGetsItsOwnTopicInTheWritersPrivateChat() {
-        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, schedulerWakes::incrementAndGet, () -> { }, true, draftId -> { });
+        tasks = new TaskService(groups, projects, new ActiveRuns(), clock, schedulerWakes::incrementAndGet, () -> { }, true, draftId -> { }, false);
         long draftId = draft(SARA, "Add make help", "telegram:300/20");
 
         db.transaction(tx -> tasks.choosePriority(tx, SARA, draftId, Priority.LOW));

@@ -27,6 +27,15 @@ class RedactorTest {
     }
 
     @Test
+    void theWorkerKeyIsMaskedThoughNoPatternWouldCatchItsBase64urlShape() {
+        Redactor redactor = Redactor.fromEnvironment(Map.of("DISPATCH_WORKER_KEY", "qF3z9dK2p7XyN4wL8bT1vR6mJ0hS5cA-"));
+
+        String redacted = redactor.redact("agent output leaked qF3z9dK2p7XyN4wL8bT1vR6mJ0hS5cA- in a log line");
+
+        assertEquals("agent output leaked [redacted] in a log line", redacted);
+    }
+
+    @Test
     void tooShortEnvironmentValuesAreNotTreatedAsSecrets() {
         Redactor redactor = Redactor.fromEnvironment(Map.of("GH_TOKEN", "abc"));
 

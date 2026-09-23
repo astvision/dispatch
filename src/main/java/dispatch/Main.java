@@ -15,6 +15,7 @@ import dispatch.config.MemberWriter;
 import dispatch.telegram.BotApi;
 import dispatch.ui.UiCommand;
 import dispatch.ui.UiServer;
+import dispatch.worker.WorkerCommand;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -58,6 +59,8 @@ public final class Main {
             case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create).run(check.configFile(), System.getenv()));
             case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(JLineTerminal.system()).run(add, System.getenv()));
             case Cli.Ui ui -> ui(ui, defaults);
+            case Cli.WorkerPair pair -> System.exit(new WorkerCommand(System.out).pair(pair));
+            case Cli.WorkerRun worker -> System.exit(new WorkerCommand(System.out).run(worker, System.getenv()));
         }
     }
 

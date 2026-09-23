@@ -82,6 +82,15 @@ case "$prompt" in
         cat "$FAKE_CLAUDE_FIXTURES/execute-success.jsonl"
         exit 0
         ;;
+      *SCENARIO:exec-busy*)
+        # Reports one real tool call, then hangs (like SCENARIO:sleep) instead of finishing: a test that needs a
+        # genuinely RUNNING execution with real activity for /status to show — and, for another member, to withhold.
+        printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-session","permissionMode":"auto"}'
+        printf '%s\n' '{"type":"assistant","message":{"model":"claude-sonnet-5","content":[{"type":"tool_use","name":"Bash","input":{"command":"cat internal-notes.txt"}}]}}'
+        sleep 300 &
+        echo $! > fake-claude.child
+        wait
+        ;;
       *SCENARIO:leaky-summary*)
         # Split, so secret scanners never see a token-shaped literal in this file.
         token="gh""p_0123456789abcdefghijABCDEFGHIJ012345"

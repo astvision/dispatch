@@ -13,6 +13,11 @@ public record Locations(Path configFile, Path stateDir) {
         return of(System.getProperty("os.name"), System.getenv(), Path.of(System.getProperty("user.home")));
     }
 
+    /** The member's own worker settings, beside the config file. */
+    public Path workerFile() {
+        return configFile.resolveSibling("worker.yaml");
+    }
+
     static Locations of(String osName, Map<String, String> env, Path home) {
         if (osName.startsWith("Windows")) {
             Path roaming = directory(env, "APPDATA", home.resolve("AppData").resolve("Roaming"));

@@ -58,18 +58,50 @@ public final class Runs {
                 run.requestedBy().name(), now);
     }
 
+    public static Optional<ClaimedRun> claimNext(Tx tx, int maxConcurrentRuns, Instant now) {
+        return claimNext(tx, maxConcurrentRuns, now, null);
+    }
+
     /**
      * Claims the most urgent queued run that may start now, the oldest among equals: fewer than {@code maxConcurrentRuns}
      * runs are active, and an execution-type run also needs its project to have no other execution running (builds and
      * tests of the same project can clash on ports and test databases). Planning runs only need a free slot. A run that
      * cannot start yet never holds back the ones after it.
+     *
+     * @param workerSeenSince in team mode, a run starts only when one of its requester's computers reported since then —
+     *                        and, once the task has a worktree, only that computer — and fewer of that requester's runs
+     *                        are RUNNING than they have live computers, so a second task never gets claimed and then
+     *                        failed by the lease for want of a second computer to pick it up; null in personal mode,
+     *                        where the run happens in this process
      */
-    public static Optional<ClaimedRun> claimNext(Tx tx, int maxConcurrentRuns, Instant now) {
+    public static Optional<ClaimedRun> claimNext(Tx tx, int maxConcurrentRuns, Instant now, Instant workerSeenSince) {
         int running = tx.one("SELECT count(*) AS n FROM run WHERE status = ?", row -> row.intValue("n"), RunStatus.RUNNING)
                 .orElse(0);
         if (running >= maxConcurrentRuns) {
             return Optional.empty();
         }
+        // Capacity is one run per live worker (dispatch worker pair's own maxConcurrentRuns default): a member's queued
+        // run may be claimed only while fewer of their runs are RUNNING than they have live computers right now, so a
+        // second task waits here instead of being claimed and then failed by the lease with nobody to pick it up.
+        String workerGate = workerSeenSince == null ? "" : """
+                          AND EXISTS (SELECT 1 FROM worker w
+                                      WHERE w.member_ref = t.requester_ref AND w.revoked_at IS NULL
+                                        AND w.last_seen_at > ?
+                                        AND (t.worker_id IS NULL OR t.worker_id = w.id))
+                          AND (SELECT count(*) FROM worker live
+                               WHERE live.member_ref = t.requester_ref AND live.revoked_at IS NULL AND live.last_seen_at > ?)
+                              > (SELECT count(*) FROM run member_run JOIN task member_task ON member_task.id = member_run.task_id
+                                 WHERE member_task.requester_ref = t.requester_ref AND member_run.status = ?)
+                """;
+        List<Object> params = new ArrayList<>(List.of(RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE,
+                RunKind.DELIVER));
+        if (workerSeenSince != null) {
+            params.add(workerSeenSince);
+            params.add(workerSeenSince);
+            params.add(RunStatus.RUNNING);
+        }
+        params.add(Priority.URGENT);
+        params.add(Priority.NORMAL);
         Optional<ClaimedRun> next = tx.one("""
                         SELECT r.task_id, r.seq, r.kind
                         FROM run r JOIN task t ON t.id = r.task_id
@@ -77,10 +109,11 @@ public final class Runs {
                           AND (r.kind = ? OR NOT EXISTS (
                                 SELECT 1 FROM run busy JOIN task busy_task ON busy_task.id = busy.task_id
                                 WHERE busy.status = ? AND busy.kind IN (?, ?) AND busy_task.project = t.project))
+                        """ + workerGate + """
                         ORDER BY CASE t.priority WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END, r.queued_at, r.task_id, r.seq
                         LIMIT 1""",
                 row -> new ClaimedRun(row.longValue("task_id"), row.intValue("seq"), row.enumValue("kind", RunKind.class)),
-                RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE, RunKind.DELIVER, Priority.URGENT, Priority.NORMAL);
+                params.toArray());
         next.ifPresent(run -> {
             tx.update("UPDATE run SET status = ?, started_at = ? WHERE task_id = ? AND seq = ? AND status = ?",
                     RunStatus.RUNNING, now, run.taskId(), run.seq(), RunStatus.QUEUED);
@@ -162,11 +195,12 @@ public final class Runs {
 
     /**
      * Whether a run of {@code kind} before {@code seq} got as far as starting its agent, and so started the phase's agent
-     * session: a run that failed during setup never did, and resuming its session would fail.
+     * session: a run that failed during setup never did, and resuming its session would fail. Keyed off the session, not
+     * off a process id: a remote worker's agent runs on the member's computer and leaves no pid here.
      */
     public static boolean agentStartedBefore(Tx tx, long taskId, RunKind kind, int seq) {
-        return tx.one("SELECT 1 AS found FROM run WHERE task_id = ? AND kind = ? AND seq < ? AND pid IS NOT NULL LIMIT 1",
-                row -> true, taskId, kind, seq).isPresent();
+        return tx.one("SELECT 1 AS found FROM run WHERE task_id = ? AND kind = ? AND seq < ? AND agent_started_at IS NOT NULL"
+                + " LIMIT 1", row -> true, taskId, kind, seq).isPresent();
     }
 
     public static int nextSeq(Tx tx, long taskId) {
@@ -177,13 +211,20 @@ public final class Runs {
     public static OptionalInt latestSucceededPlanSeq(Tx tx, long taskId) {
         return tx.one("SELECT max(seq) AS seq FROM run WHERE task_id = ? AND kind = ? AND status = ?",
                         row -> row.intOrNull("seq"), taskId, RunKind.PLAN, RunStatus.SUCCEEDED)
-                .filter(seq -> seq != null)
                 .map(OptionalInt::of)
                 .orElse(OptionalInt.empty());
     }
 
-    public static void recordProcess(Tx tx, long taskId, int seq, long pid, Instant pidStart) {
-        tx.update("UPDATE run SET pid = ?, pid_start = ? WHERE task_id = ? AND seq = ?", pid, pidStart, taskId, seq);
+    /**
+     * Records that this run's agent session started.
+     *
+     * @param at       when the store learned it, which is what the next run of this kind reads
+     * @param pid      the agent's process, null when it runs on a member's own computer
+     * @param pidStart when that process started; null with a null pid
+     */
+    public static void recordAgentStarted(Tx tx, long taskId, int seq, Instant at, Long pid, Instant pidStart) {
+        tx.update("UPDATE run SET agent_started_at = ?, pid = ?, pid_start = ? WHERE task_id = ? AND seq = ?",
+                at, pid, pidStart, taskId, seq);
     }
 
     /** Ends a running run; false if it was not running (already finished elsewhere). */

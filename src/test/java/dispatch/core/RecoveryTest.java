@@ -61,7 +61,7 @@ class RecoveryTest {
     void orphanedAgentIsKilledAndItsRunFailsAsInterrupted() throws IOException, InterruptedException {
         ClaimedRun run = runningTask("alm");
         orphan = Sleeper.start(300);
-        transitions.recordProcess(run.taskId(), run.seq(), orphan.pid(), orphan.toHandle().info().startInstant().orElseThrow());
+        transitions.agentStarted(run.taskId(), run.seq(), orphan.pid(), orphan.toHandle().info().startInstant().orElseThrow());
 
         recovery.run();
 
@@ -77,12 +77,24 @@ class RecoveryTest {
         ClaimedRun run = runningTask("alm");
         orphan = Sleeper.start(300);
         Instant realStart = orphan.toHandle().info().startInstant().orElseThrow();
-        db.transaction(tx -> Runs.recordProcess(tx, run.taskId(), run.seq(), orphan.pid(), realStart.minusSeconds(60)));
+        db.transaction(tx -> Runs.recordAgentStarted(tx, run.taskId(), run.seq(), clock.instant(), orphan.pid(), realStart.minusSeconds(60)));
 
         recovery.run();
 
         assertTrue(orphan.isAlive(), "a different process now owning the pid must not be killed");
         assertEquals("FAILED", row("SELECT status FROM run WHERE task_id = ?", run.taskId()).get("status"));
+    }
+
+    @Test
+    void aRunOfARemoteWorkerHasNoProcessHereAndIsOnlyFailed() {
+        ClaimedRun run = runningTask("alm");
+        db.transaction(tx -> Runs.recordAgentStarted(tx, run.taskId(), run.seq(), clock.instant(), null, null));
+
+        recovery.run();
+
+        assertEquals("FAILED", row("SELECT status FROM run WHERE task_id = ?", run.taskId()).get("status"));
+        assertEquals("INTERRUPTED", row("SELECT failure_reason FROM task WHERE id = ?", run.taskId()).get("failure_reason"),
+                "the member retries; the worker's own startup deals with the agent it left behind");
     }
 
     @Test

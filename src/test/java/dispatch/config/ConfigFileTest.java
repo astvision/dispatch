@@ -44,6 +44,10 @@ class ConfigFileTest {
               authorName: 'Dispatch (acme)'
               authorEmail: 'dispatch@example.com'
 
+            workers:
+              publicUrl: https://team.example.com
+              port: 7880
+
             scheduler:
               maxConcurrentRuns: 2
 

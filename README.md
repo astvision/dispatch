@@ -91,6 +91,7 @@ One machine runs the team's bot, with clones of the team's projects: a small ser
 - **Joining later:** someone new opens the bot and writes to it. The bot's admins (you, after `init`) get their name with a button per group and **Deny**. Allowing adds them to the config and they can give tasks at once, no restart needed. After a Deny, a person can ask again a day later.
 - **Admins:** `telegram.admins` in the config lists the Telegram user ids of the people who decide.
 - **Config:** plain YAML you may edit by hand; `dispatch check` validates it. Per project: `path` (the clone), `baseBranch`, and optionally `model` and `effort` (`low`, `medium`, `high`, `xhigh` or `max`), for both phases or per phase: `plan: { model: opus, effort: high }` or `execute: { model: sonnet }`. Dispatch works in its own worktrees under the state directory and only adds `dispatch/<task>` branches to the clone.
+- **Workers:** once a group has a chat, each member's tasks run on their own computer, not this machine's: `workers.publicUrl` and `workers.port` are then required (`dispatch init` writes them; see `deploy/example.yaml`). **Upgrading an existing team config:** add a `workers` block before starting this version, or Dispatch refuses to start.
 
 ### Help the agent: CLAUDE.md
 

@@ -73,6 +73,7 @@ public final class ActiveRuns {
         private final long taskId;
         private final int seq;
         private RunHandle handle;
+        private AgentActivity reported;
         private StopReason stopReason;
 
         private ActiveRun(long taskId, int seq) {
@@ -113,7 +114,15 @@ public final class ActiveRuns {
         }
 
         public synchronized Optional<AgentActivity> activity() {
-            return handle == null ? Optional.empty() : Optional.of(handle.activity());
+            if (handle != null) {
+                return Optional.of(handle.activity());
+            }
+            return Optional.ofNullable(reported);
+        }
+
+        /** What a remote worker's agent is doing, from its progress every 10 s; a local run reads its handle instead. */
+        public synchronized void reportActivity(AgentActivity activity) {
+            this.reported = activity;
         }
     }
 }

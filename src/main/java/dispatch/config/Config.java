@@ -21,7 +21,21 @@ public record Config(
         Map<String, Agent> agents,
         List<Project> projects,
         Delivery delivery,
+        Workers workers,
         Secrets secrets) {
+
+    /**
+     * A team: its groups announce to a group chat, so tasks belong to different people and run on their own computers
+     * (ADR 0020). A personal bot has no group chat (ADR 0014), so its runs happen in this process.
+     */
+    public boolean isTeam() {
+        return isTeam(telegram);
+    }
+
+    /** Same check as {@link #isTeam()}, usable before a {@code Config} exists to ask it, e.g. while validating one. */
+    public static boolean isTeam(Telegram telegram) {
+        return telegram.groups().stream().anyMatch(group -> group.chatId() != null);
+    }
 
     /** Instance plan limits with the project's override applied field by field. */
     public RunLimits planLimits(Project project) {
@@ -149,6 +163,22 @@ public record Config(
 
         public String executeEffort() {
             return execute == null || execute.effort() == null ? effort : execute.effort();
+        }
+    }
+
+    /**
+     * Where members' computers reach this machine (spec: Configuration). Null in personal mode, where runs happen in this
+     * process.
+     *
+     * @param publicUrl the owner's tunnel or reverse proxy, e.g. https://team.example.com
+     * @param port      Dispatch listens on 127.0.0.1:port; the proxy forwards to it
+     */
+    public record Workers(String publicUrl, int port) {
+
+        @JsonCreator
+        static Workers fromYaml(@JsonProperty("publicUrl") String publicUrl, @JsonProperty("port") Integer port) {
+            // 0 rather than a mapping error, so a missing port is reported with everything else that is wrong.
+            return new Workers(publicUrl, port == null ? 0 : port);
         }
     }
 

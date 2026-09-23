@@ -25,10 +25,13 @@ import dispatch.store.Database;
 import dispatch.store.Kv;
 import dispatch.store.Outbox;
 import dispatch.store.Tx;
+import dispatch.store.Workers;
+import dispatch.worker.WorkerKeys;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -46,7 +49,8 @@ public final class UpdateHandler {
     /** Messages about a task's outcome; a reply to one is a follow-up (ADR 0006). */
     private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
-    private static final Set<String> COMMANDS = Set.of("task", "status", "history", "stats", "cancel", "retry", "projects", "help", "start");
+    private static final Set<String> COMMANDS =
+            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "projects", "help", "start");
 
     private final Database db;
     private final TaskService tasks;
@@ -59,10 +63,26 @@ public final class UpdateHandler {
     private final String botUsername;
     private final Clock clock;
     private final Runnable wakeOutbox;
+    private final WorkerKeys workers;
+    private final String workerUrl;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox) {
+        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null);
+    }
+
+    /**
+     * @param redactor  masks messages this handler edits directly, as the outbox sender does for everything it sends
+     * @param workers   null in personal mode, where a member has nothing to pair
+     * @param workerUrl the URL members' computers reach this machine on; null in personal mode
+     */
+    public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
+                         Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
+                         WorkerKeys workers, String workerUrl) {
+        if (workers != null) {
+            Objects.requireNonNull(workerUrl, "workerUrl is required when workers is configured");
+        }
         this.db = db;
         this.tasks = tasks;
         this.membership = membership;
@@ -74,6 +94,8 @@ public final class UpdateHandler {
         this.botUsername = botUsername;
         this.clock = clock;
         this.wakeOutbox = wakeOutbox;
+        this.workers = workers;
+        this.workerUrl = workerUrl;
     }
 
     public void handle(JsonNode update) {
@@ -121,6 +143,11 @@ public final class UpdateHandler {
             tx.afterCommit(() -> Log.info("telegram.join_message", "requester", who.ref(), "result", result));
             return;
         }
+        if (privateChat && isWorkerCommand(message)) {
+            // No admins to ask (so no join flow above): /worker still gets a plain refusal instead of silence.
+            onChatMessage(tx, message, true);
+            return;
+        }
         if (!groups.isGroupChat(Refs.chat(chatId))) {
             ignoreForeignChat(tx, chat, from);
             return;
@@ -138,6 +165,10 @@ public final class UpdateHandler {
 
     private boolean isCancelCommand(JsonNode message) {
         return Command.parse(message).filter(command -> command.name().equals("cancel") && command.addressedTo(botUsername)).isPresent();
+    }
+
+    private boolean isWorkerCommand(JsonNode message) {
+        return Command.parse(message).filter(command -> command.name().equals("worker") && command.addressedTo(botUsername)).isPresent();
     }
 
     /** A message in the team group, or in a member's private chat with the bot, from someone with a user id. */
@@ -209,6 +240,13 @@ public final class UpdateHandler {
                 taskId(command.args()).ifPresentOrElse(
                         id -> tasks.retry(tx, who, id, origin, chatRef),
                         () -> help(tx, visible, origin, chatRef, true));
+            }
+            case "worker" -> {
+                if (!privateChat) {
+                    privateOnly(tx, chatRef, origin);
+                    return;
+                }
+                worker(tx, who, command.args(), origin, chatRef);
             }
             case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
@@ -511,6 +549,53 @@ public final class UpdateHandler {
                 .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias())
                         .put("baseBranch", project.baseBranch()).put("unavailable", projects.unavailableReason(project).orElse(null)));
         enqueue(tx, OutboxKind.PROJECTS, chatRef, origin, payload);
+    }
+
+    /** /worker gives a one-time pairing code and lists the member's computers; /worker revoke N takes one away. */
+    private void worker(Tx tx, Requester who, String args, String origin, String chatRef) {
+        if (!groups.isMember(who.ref())) {
+            enqueue(tx, OutboxKind.NOT_ALLOWED, chatRef, origin, Json.object().put("name", who.name()));
+            return;
+        }
+        if (workers == null) {
+            enqueue(tx, OutboxKind.WORKER_PAIRING, chatRef, origin, Json.object().put("personal", true));
+            return;
+        }
+        String[] words = args.strip().split("\\s+");
+        if (words[0].equals("revoke")) {
+            revokeWorker(tx, who, words.length >= 2 ? words[1] : null, origin, chatRef);
+            return;
+        }
+        ObjectNode payload = Json.object().put("personal", false)
+                .put("code", workers.newCode(tx, who))
+                .put("minutes", (int) WorkerKeys.CODE_LIFETIME.toMinutes())
+                .put("url", workerUrl);
+        ArrayNode list = payload.putArray("workers");
+        for (Workers.Paired paired : workers.of(tx, who.ref())) {
+            ObjectNode item = list.addObject().put("id", paired.id()).put("name", paired.name());
+            item.put("lastSeenAt", paired.lastSeenAt() == null ? null : paired.lastSeenAt().toString());
+        }
+        enqueue(tx, OutboxKind.WORKER_PAIRING, chatRef, origin, payload);
+    }
+
+    /** @param number the argument after "revoke", or null when none was given; anything but a positive id is a usage refusal */
+    private void revokeWorker(Tx tx, Requester who, String number, String origin, String chatRef) {
+        long workerId = number == null ? -1 : parsePositiveLong(number);
+        if (workerId <= 0) {
+            enqueue(tx, OutboxKind.WORKER_USAGE, chatRef, origin, Json.object());
+            return;
+        }
+        boolean found = workers.revoke(tx, workerId, who.ref(), groups.isAdmin(who.ref()));
+        enqueue(tx, OutboxKind.WORKER_REVOKED, chatRef, origin, Json.object().put("workerId", workerId).put("found", found));
+    }
+
+    /** -1 for anything that is not a positive integer, so the caller can treat "not a valid id" as one case. */
+    private static long parsePositiveLong(String text) {
+        try {
+            return Long.parseLong(text);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private void enqueue(Tx tx, OutboxKind kind, String chatRef, String origin, ObjectNode payload) {

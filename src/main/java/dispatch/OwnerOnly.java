@@ -1,6 +1,7 @@
 package dispatch;
 
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,18 +31,31 @@ public final class OwnerOnly {
     private OwnerOnly() {
     }
 
-    /** Creates {@code dir} and any missing parents, each owner-only; existing directories are left as they are. */
+    /**
+     * Creates {@code dir} and any missing parents, each owner-only; existing directories are left as they are.
+     *
+     * <p>Safe for two concurrent callers racing to create the same directory (e.g. two worker requests fetching
+     * attachments into the same {@code outgoing} directory at once): the scan above and the create below are not
+     * atomic together, so a {@link FileAlreadyExistsException} here means another caller won the race, not that
+     * this call failed — the directory exists either way, which is all a caller of this method actually wants.
+     */
     public static void createDirectories(Path dir) throws IOException {
         List<Path> missing = new ArrayList<>();
         for (Path current = dir.toAbsolutePath(); current != null && !Files.exists(current); current = current.getParent()) {
             missing.addFirst(current);
         }
         for (Path created : missing) {
-            if (VIEWS.contains("posix")) {
-                Files.createDirectory(created, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
-            } else {
-                Files.createDirectory(created);
-                restrictAcl(created, true);
+            try {
+                if (VIEWS.contains("posix")) {
+                    Files.createDirectory(created, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+                } else {
+                    Files.createDirectory(created);
+                    restrictAcl(created, true);
+                }
+            } catch (FileAlreadyExistsException e) {
+                if (!Files.isDirectory(created)) {
+                    throw e;
+                }
             }
         }
     }

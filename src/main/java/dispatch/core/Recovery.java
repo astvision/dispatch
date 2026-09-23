@@ -16,6 +16,8 @@ import java.util.List;
 /**
  * Startup cleanup after a crash (ADR 0008): runs still marked RUNNING belong to a previous process. Their agents are
  * killed if still alive, and the runs fail as interrupted so members can decide to retry. Queued runs are untouched.
+ * A run without a pid had its agent on a member's own computer: only the run is failed here, and that worker kills what
+ * it left behind when it next starts.
  */
 public final class Recovery {
 

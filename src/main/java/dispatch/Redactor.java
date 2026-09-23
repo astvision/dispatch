@@ -16,8 +16,8 @@ public final class Redactor {
     static final String MASK = "[redacted]";
 
     /** Environment variables whose values are secrets wherever they appear. */
-    private static final Set<String> SECRET_VARIABLES =
-            Set.of("TELEGRAM_BOT_TOKEN", "GH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY");
+    private static final Set<String> SECRET_VARIABLES = Set.of("TELEGRAM_BOT_TOKEN", "GH_TOKEN", "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "DISPATCH_WORKER_KEY");
     /** Shorter values would mask ordinary words; real tokens are far longer. */
     private static final int MIN_SECRET_LENGTH = 8;
     /** Order matters: the Anthropic format must be masked before the generic "sk-" one. */

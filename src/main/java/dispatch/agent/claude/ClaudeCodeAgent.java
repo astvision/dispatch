@@ -28,7 +28,7 @@ import java.util.Set;
 public final class ClaudeCodeAgent implements Agent {
 
     /** Dispatch's own secrets; the agent process never needs them (ADR 0009). */
-    private static final Set<String> WITHHELD_VARIABLES = Set.of("TELEGRAM_BOT_TOKEN", "GH_TOKEN");
+    private static final Set<String> WITHHELD_VARIABLES = Set.of("TELEGRAM_BOT_TOKEN", "GH_TOKEN", "DISPATCH_WORKER_KEY");
     /** Compacted to one line (and so validated as JSON) when the class loads, not on the first run. */
     private static final String PLAN_SCHEMA = Json.read(resource("/plan-schema.json")).toString();
     private static final String SPLIT_SCHEMA = Json.read(resource("/split-schema.json")).toString();
