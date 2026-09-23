@@ -142,9 +142,16 @@ public final class WorkerApi implements AutoCloseable {
      * — three rejections deep, surfacing as {@code worker_api.failed}, the same event a genuine 500 uses, on every
      * ordinary shutdown with a poll in flight. {@code shutdownNow()} still runs, but only as a backstop for whatever
      * did not drain in time.
+     *
+     * <p>A parked {@code /next} is woken through {@link RemoteWorkers#stopPolling} before that wait, so it answers
+     * rather than being cut off — which is what makes a shutdown quiet for production's 25 s poll and not only for a
+     * test's short one.
      */
     @Override
     public void close() {
+        // First: a poll parked in RemoteWorkers is waiting on that class's lock, not on this server, so stop(1) below
+        // would only cut its socket. Woken here, it answers {"job": null} and the exchange ends normally.
+        workers.stopPolling();
         server.stop(1);
         bodyReads.shutdown();
         try {
