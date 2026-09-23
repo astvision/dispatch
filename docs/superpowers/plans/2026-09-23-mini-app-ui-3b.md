@@ -61,6 +61,9 @@ Type: Feature
 ## Deviations
 
 - Task 2 (tactical): the plan had every existing route's lambda gain a `Caller` parameter. `ManageApi.routes()` and `SetupApi.routes()` keep their `Function<JsonNode, Object>` shape instead, and `UiRoutes.anyCaller` lifts them at registration — which is also where the admin gate goes. Same single route concept inside `UiServer`, no churn in the two APIs or their tests. Files unchanged from the task's list except that `src/main/java/dispatch/ui/ManageApi.java` and `src/main/java/dispatch/ui/SetupApi.java` were not modified after all.
+- Tasks 6 and 7 (tactical): built and verified together, because the shell (Task 6) imports `TasksPage` (Task 7) and neither typechecks without the other. One commit covers both.
+- Task 6 (tactical): the theme mapping lives in its own `ui/src/theme.ts` rather than inline in `main.tsx`, so it can be tested as a function instead of through a render. The shell's two arms are `MiniApp` and `WebUi` in `ui/src/App.tsx`, sharing one `Shell`.
+- Task 7 (tactical): the tests click with `fireEvent`, as every other page test in this repo does; `@testing-library/user-event` is not a dependency here and this was not worth adding one for.
 - Task 5 (tactical): the wiring lives in a new `src/main/java/dispatch/ui/MiniApp.java` rather than inline in `App.start`, which keeps `App` to a field, a start and a close beside `WorkerApi`'s. `App.start` takes the config file path, so `Main`, `AppTest` and `TeamWorkersTest` pass it.
 - Task 5 (tactical): `MiniAppServerTest` picks a free port and writes it into the config, because `miniApp.port: 0` is refused by Task 1's validation — 0 is a test's shorthand, not something a person would write.
 - Task 4 (tactical): `statusPayload` and `historyPayload` gained a `mine` flag per task, and the active ones a `requester` name. The plan had "me" scope filtering the built payload by requester, but a running or queued item carried no requester at all, and filtering by name would confuse two members who share a first name. `src/main/java/dispatch/core/TaskService.java` was already in the task's `Files:`.
@@ -78,8 +81,8 @@ Type: Feature
 - [x] Task 3: `TelegramAuth`
 - [x] Task 4: task payloads and `TasksApi`
 - [x] Task 5: the Mini App server in `dispatch run`
-- [ ] Task 6: the frontend's Telegram transport, theme and shell
-- [ ] Task 7: the task pages
+- [x] Task 6: the frontend's Telegram transport, theme and shell
+- [x] Task 7: the task pages
 - [ ] Task 8: the Manage button and `/manage`
 - [ ] Task 9: `dispatch check`, ADR 0019 and the docs
 - [ ] Task 10: the live run from a phone

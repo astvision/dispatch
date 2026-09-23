@@ -1,5 +1,7 @@
 // Typed calls to the dispatch ui server. Every page goes through here, so errors look the same everywhere.
 
+import { inTelegram, initData } from "./telegram";
+
 export type Level = "OK" | "WARN" | "FAIL";
 
 export interface Finding {
@@ -38,10 +40,14 @@ export class ApiError extends Error {
 async function send<T>(path: string, init: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, { credentials: "same-origin", ...init });
+    // Inside Telegram every request proves itself with the signed launch data: there is no cookie and no session.
+    const headers = initData ? { ...init.headers, Authorization: `tma ${initData}` } : init.headers;
+    response = await fetch(path, { credentials: "same-origin", ...init, headers });
   } catch {
     if (init.signal?.aborted) throw new ApiError("aborted", "the request was stopped");
-    throw new ApiError("unreachable", "dispatch ui is not running; start it again and open the link it prints");
+    throw new ApiError("unreachable", inTelegram
+      ? "Dispatch is not answering; it may be restarting"
+      : "dispatch ui is not running; start it again and open the link it prints");
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -267,3 +273,75 @@ export const setAdmin = (version: string, id: number, admin: boolean) => post<Sa
 export const getLogs = (filter: { lines?: number; level?: LogLevel | null; event?: string | null }, signal?: AbortSignal) =>
   post<Logs>("/api/manage/logs", filter, signal);
 export const restartService = () => post<ServiceView>("/api/service/restart");
+
+// The Mini App (spec: Task pages). Only `dispatch run` serves these, because only it holds the queue.
+
+/** Who Telegram says is looking. The Mini App asks this instead of the setup state, which it never serves. */
+export interface Me {
+  ref: string;
+  name: string;
+  admin: boolean;
+}
+
+export type TaskState = "running" | "queued" | "awaitingApproval" | "finished";
+
+/** One row of a task list. A task that is not the viewer's own carries the headline fields only (ADR 0020). */
+export interface TaskRow {
+  taskId: number;
+  project: string;
+  title: string;
+  state: TaskState;
+  priority: string;
+  requester: string | null;
+  mine: boolean;
+  phase?: string;
+  prUrl?: string | null;
+  failureReason?: string | null;
+  costUsd?: string | null;
+  createdAt?: string | null;
+  completedAt?: string | null;
+  startedAt?: string | null;
+  queuedAt?: string | null;
+  since?: string | null;
+  steps?: number;
+  lastAction?: string;
+  waitingForWorker?: boolean;
+}
+
+export interface TaskRun {
+  seq: number;
+  kind: string;
+  cause: string | null;
+  status: string;
+  requestedBy: string;
+  instruction: string | null;
+  queuedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  costUsd: string | null;
+  failureReason: string | null;
+}
+
+export interface Timeline {
+  taskId: number;
+  project: string;
+  title: string;
+  requester: string;
+  phase: string;
+  priority: string;
+  prUrl: string | null;
+  failureReason: string | null;
+  createdAt: string | null;
+  completedAt: string | null;
+  costUsd: string | null;
+  /** True when this is someone else's task: no runs and no cost (ADR 0020). */
+  headline?: boolean;
+  runs?: TaskRun[];
+}
+
+export const getMe = (signal?: AbortSignal) => get<Me>("/api/me", signal);
+export const listTasks = (scope: "me" | "group", signal?: AbortSignal) =>
+  post<{ tasks: TaskRow[] }>("/api/tasks/list", { scope }, signal);
+export const taskTimeline = (taskId: number, signal?: AbortSignal) => post<Timeline>("/api/tasks/timeline", { taskId }, signal);
+export const cancelTask = (taskId: number) => post<{ result: string }>("/api/tasks/cancel", { taskId });
+export const retryTask = (taskId: number) => post<{ result: string }>("/api/tasks/retry", { taskId });
