@@ -53,8 +53,10 @@ final class UiAuth implements UiServer.Auth {
 
     /** Against DNS rebinding: a page on another site that resolves its name to 127.0.0.1 still sends its own Host. */
     @Override
-    public boolean hostAllowed(String host) {
-        return host != null && hosts.contains(host);
+    public Optional<String> hostRefusal(String host) {
+        return host != null && hosts.contains(host)
+                ? Optional.empty()
+                : Optional.of("Open Dispatch through the link dispatch ui printed.");
     }
 
     /** Redeems the one-time link: "/?t=TOKEN" becomes a session cookie and a redirect to "/". */

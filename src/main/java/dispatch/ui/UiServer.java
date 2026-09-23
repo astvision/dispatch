@@ -42,8 +42,11 @@ public final class UiServer implements AutoCloseable {
      */
     public interface Auth {
 
-        /** Against DNS rebinding: a page on another site that resolves its name here still sends its own Host. */
-        boolean hostAllowed(String host);
+        /**
+         * Against DNS rebinding: a page on another site that resolves its name here still sends its own Host. Empty
+         * when the Host is this server's; otherwise the plain-text refusal.
+         */
+        Optional<String> hostRefusal(String host);
 
         /** The headers every response of this server carries, the frame policy among them. */
         void headers(HttpExchange exchange);
@@ -166,8 +169,9 @@ public final class UiServer implements AutoCloseable {
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
         auth.headers(exchange);
-        if (!auth.hostAllowed(exchange.getRequestHeaders().getFirst("Host"))) {
-            text(exchange, 403, "Open Dispatch through the link dispatch ui printed.");
+        Optional<String> wrongHost = auth.hostRefusal(exchange.getRequestHeaders().getFirst("Host"));
+        if (wrongHost.isPresent()) {
+            text(exchange, 403, wrongHost.get());
             return;
         }
         if (auth.login(exchange)) {

@@ -61,13 +61,16 @@ Type: Feature
 ## Deviations
 
 - Task 2 (tactical): the plan had every existing route's lambda gain a `Caller` parameter. `ManageApi.routes()` and `SetupApi.routes()` keep their `Function<JsonNode, Object>` shape instead, and `UiRoutes.anyCaller` lifts them at registration — which is also where the admin gate goes. Same single route concept inside `UiServer`, no churn in the two APIs or their tests. Files unchanged from the task's list except that `src/main/java/dispatch/ui/ManageApi.java` and `src/main/java/dispatch/ui/SetupApi.java` were not modified after all.
+- Task 3 (tactical): the DoD asked for "Telegram's documented example launch data". Telegram publishes the algorithm, not a signed test vector, so `TelegramAuthTest` signs its own data with that algorithm written out separately from `TelegramAuth` (plain `javax.crypto`, no production code) — the algorithm was confirmed against core.telegram.org/bots/webapps and three independent implementations before writing either side. The limit: a shared misreading of the algorithm would pass both. The live run (Task 10) is what closes that, since only Telegram can sign real launch data.
+- Task 3 (tactical): `verify` checks the Host first rather than last. `UiServer` already refuses a wrong Host before any route runs, so the order only shows in the unit test, and refusing the cheapest way first is no weaker.
+- Task 2 (tactical): `Auth.hostAllowed` became `Optional<String> hostRefusal`, for the same reason as `pageRefusal`: the Mini App's wrong-Host refusal must not tell a member to use the link `dispatch ui` printed.
 - Task 2 (tactical): `Auth.mayLoadPages` returns `Optional<String>` and is named `pageRefusal`, so the refusal carries its own message instead of leaving `UiAuth`'s text stranded in `UiServer`. `UiServer.start` also takes an `IntFunction<Auth>` rather than an `Auth`, because an authentication names the port it belongs to and port 0 is only resolved by binding.
 
 ## Progress Tracking
 
 - [x] Task 1: the `miniApp` config block
 - [x] Task 2: `UiServer` takes its authentication and hands routes the caller
-- [ ] Task 3: `TelegramAuth`
+- [x] Task 3: `TelegramAuth`
 - [ ] Task 4: task payloads and `TasksApi`
 - [ ] Task 5: the Mini App server in `dispatch run`
 - [ ] Task 6: the frontend's Telegram transport, theme and shell
