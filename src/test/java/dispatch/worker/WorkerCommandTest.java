@@ -84,10 +84,13 @@ class WorkerCommandTest extends WorkerApiFixture {
     }
 
     @Test
-    void workerSpecPutsTheLogBesideTheWorkersOwnStateDir() throws Exception {
-        // workerSpec itself always asks ServiceCommand.runningJar() for the jar, which is null when this test runs
-        // from target/classes rather than a packaged jar; this drives the same worker.yaml -> Service.Spec logic
-        // through specFor's other overload with a stand-in jar instead, as InitCommandTest's service tests do.
+    void specForUsesTheWorkerConfigsOwnStateDirForTheLog() throws Exception {
+        // Not a workerSpec test: workerSpec always asks ServiceCommand.runningJar() for the jar, which is null when
+        // this test runs from target/classes rather than a packaged jar, so it cannot be driven to success here (it
+        // would only ever exercise the "no jar" CliException, already covered by workerSpecFailsFastWhenTheKeyIsMissing
+        // failing on a different check first). This instead drives the same worker.yaml -> Service.Spec logic
+        // workerSpec forwards to, through specFor's other overload with a stand-in jar, as InitCommandTest's service
+        // tests do.
         Path workerFile = dir.resolve("worker.yaml");
         Path stateDir = dir.resolve("worker-state");
         Files.writeString(workerFile, """

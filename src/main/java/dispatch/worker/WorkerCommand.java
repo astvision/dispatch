@@ -199,10 +199,16 @@ public final class WorkerCommand {
             // of returning null (file locks are held per JVM, not per channel); a second dispatch process gets null.
             // Either way, a run already holds this state directory.
             if (channel.tryLock() == null) {
-                throw heldElsewhere(stateDir, channel);
+                throw heldElsewhere(stateDir);
             }
         } catch (OverlappingFileLockException e) {
-            throw heldElsewhere(stateDir, channel);
+            // Do NOT close this losing channel here: on Linux, closing ANY file descriptor a process holds on a file
+            // drops every fcntl record lock that process holds on it, even one taken through a different descriptor
+            // (the classic POSIX advisory-lock gotcha) — closing this channel would silently release the first
+            // holder's still-good lock while it keeps believing it holds it. Unreachable from the CLI today (two real
+            // `dispatch worker run` processes never share a JVM), but leaving the fd open here costs nothing: this
+            // process is refusing to start and exits right after.
+            throw heldElsewhere(stateDir);
         } catch (IOException e) {
             closeQuietly(channel);
             throw new CliException("cannot lock " + lockFile + ": " + e.getMessage());
@@ -210,8 +216,7 @@ public final class WorkerCommand {
         return channel;
     }
 
-    private static CliException heldElsewhere(Path stateDir, FileChannel channel) {
-        closeQuietly(channel);
+    private static CliException heldElsewhere(Path stateDir) {
         return new CliException("another dispatch worker run already holds " + stateDir
                 + "; stop it first (dispatch worker service stop, if it runs as the service), then try again");
     }
