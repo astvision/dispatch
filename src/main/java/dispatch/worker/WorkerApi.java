@@ -15,6 +15,7 @@ import dispatch.core.Groups;
 import dispatch.core.Job;
 import dispatch.core.JobResult;
 import dispatch.domain.Attachment;
+import dispatch.store.Database;
 import dispatch.store.Workers;
 import dispatch.telegram.TelegramNames;
 import dispatch.ui.ApiException;
@@ -27,8 +28,10 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -98,19 +101,23 @@ public final class WorkerApi implements AutoCloseable {
     private final WorkerKeys keys;
     private final RemoteWorkers workers;
     private final AttachmentSource attachments;
+    private final Database db;
+    private final Clock clock;
     private final Set<String> hosts;
     private final Duration bodyReadTimeout;
     private final ExecutorService bodyReads;
     private final Map<Long, AtomicInteger> inFlightByWorker = new ConcurrentHashMap<>();
 
     private WorkerApi(HttpServer server, Config config, Groups groups, WorkerKeys keys, RemoteWorkers workers,
-                      AttachmentSource attachments, Duration bodyReadTimeout) {
+                      AttachmentSource attachments, Database db, Clock clock, Duration bodyReadTimeout) {
         this.server = server;
         this.config = config;
         this.groups = groups;
         this.keys = keys;
         this.workers = workers;
         this.attachments = attachments;
+        this.db = db;
+        this.clock = clock;
         this.hosts = allowedHosts(config.workers(), server.getAddress().getPort());
         this.bodyReadTimeout = bodyReadTimeout;
         this.bodyReads = Executors.newVirtualThreadPerTaskExecutor();
@@ -123,16 +130,16 @@ public final class WorkerApi implements AutoCloseable {
      *                    copy stays on this machine
      */
     public static WorkerApi start(Config config, Groups groups, WorkerKeys keys, RemoteWorkers workers,
-                                  AttachmentSource attachments) throws IOException {
-        return start(config, groups, keys, workers, attachments, DEFAULT_BODY_READ_TIMEOUT);
+                                  AttachmentSource attachments, Database db, Clock clock) throws IOException {
+        return start(config, groups, keys, workers, attachments, db, clock, DEFAULT_BODY_READ_TIMEOUT);
     }
 
     /** @param bodyReadTimeout overrides {@link #DEFAULT_BODY_READ_TIMEOUT}; a real wall-clock bound, for tests. */
     static WorkerApi start(Config config, Groups groups, WorkerKeys keys, RemoteWorkers workers,
-                           AttachmentSource attachments, Duration bodyReadTimeout) throws IOException {
+                           AttachmentSource attachments, Database db, Clock clock, Duration bodyReadTimeout) throws IOException {
         HttpServer http = HttpServer.create(
                 new InetSocketAddress(InetAddress.getByName("127.0.0.1"), config.workers().port()), 0);
-        WorkerApi api = new WorkerApi(http, config, groups, keys, workers, attachments, bodyReadTimeout);
+        WorkerApi api = new WorkerApi(http, config, groups, keys, workers, attachments, db, clock, bodyReadTimeout);
         http.createContext("/", api::handle);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         http.start();
@@ -263,6 +270,8 @@ public final class WorkerApi implements AutoCloseable {
         switch (path) {
             case PROJECTS -> json(exchange, 200, Json.write(projects(worker)));
             case NEXT -> {
+                readiness(body).ifPresent(reported ->
+                        db.transaction(tx -> Workers.saveReadiness(tx, worker.id(), reported, clock.instant())));
                 Optional<Job> job = workers.next(worker);
                 ObjectNode answer = Json.object();
                 if (job.isPresent()) {
@@ -323,6 +332,23 @@ public final class WorkerApi implements AutoCloseable {
         }
         exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
         send(exchange, 200, bytes);
+    }
+
+    /** Empty when the worker sent none: an older worker keeps working and counts as ready. */
+    private static Optional<Readiness> readiness(JsonNode body) {
+        JsonNode reported = body.path("readiness");
+        if (!reported.isObject()) {
+            return Optional.empty();
+        }
+        Map<String, Readiness.Check> projects = new LinkedHashMap<>();
+        reported.path("projects").fields().forEachRemaining(entry ->
+                projects.put(entry.getKey(), check(entry.getValue())));
+        return Optional.of(new Readiness(check(reported.path("claude")), check(reported.path("gh")), projects));
+    }
+
+    private static Readiness.Check check(JsonNode node) {
+        // A field a worker left out is "fine": only an explicit false holds anything.
+        return new Readiness.Check(node.path("ok").asBoolean(true), node.path("detail").asText(null));
     }
 
     private static JobResult readJobResult(JsonNode node) {

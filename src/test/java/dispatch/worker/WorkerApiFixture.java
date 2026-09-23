@@ -100,7 +100,7 @@ abstract class WorkerApiFixture {
         activeRuns = new ActiveRuns();
         keys = new WorkerKeys(db, clock);
         remote = new RemoteWorkers(db, clock, () -> { }, Duration.ofMillis(50), Duration.ofMillis(2));
-        api = WorkerApi.start(config(), groups(), keys, remote, attachments());
+        api = WorkerApi.start(config(), groups(), keys, remote, attachments(), db, clock);
     }
 
     @AfterEach

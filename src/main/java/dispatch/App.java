@@ -122,7 +122,7 @@ public final class App {
             workerKeys.revokeWorkersOfEveryoneExcept(memberRefs(groups));
             RemoteWorkers remoteWorkers = new RemoteWorkers(db, clock, schedulerSignal::wake);
             try {
-                workerApi = WorkerApi.start(config, groups, workerKeys, remoteWorkers, api::downloadFile);
+                workerApi = WorkerApi.start(config, groups, workerKeys, remoteWorkers, api::downloadFile, db, clock);
             } catch (java.io.IOException e) {
                 throw new IllegalStateException("cannot listen on 127.0.0.1:" + config.workers().port()
                         + " for members' computers: " + e.getMessage(), e);

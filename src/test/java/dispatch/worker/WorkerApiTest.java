@@ -214,7 +214,7 @@ class WorkerApiTest extends WorkerApiFixture {
         // closes that channel (java.nio.channels.Channel's own contract for an interrupted blocking operation), so a
         // stalled client is refused by losing its connection outright, not by a graceful JSON body. Either way, the
         // client sees this end quickly instead of the read hanging until its own socket timeout.
-        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, remote, attachments(), Duration.ofMillis(300))) {
+        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, remote, attachments(), db, clock, Duration.ofMillis(300))) {
             String head = "POST " + WorkerApi.PROJECTS + " HTTP/1.1\r\n"
                     + "Host: 127.0.0.1:" + impatient.port() + "\r\n"
                     + "Authorization: Bearer whatever\r\n"
@@ -248,7 +248,7 @@ class WorkerApiTest extends WorkerApiFixture {
         // drain (and this connection) hangs until something external intervenes. This test's own client-side
         // SO_TIMEOUT is that intervention: short enough that an unbounded close() fails this test with a
         // SocketTimeoutException instead of silently passing.
-        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, remote, attachments(), Duration.ofMillis(500))) {
+        try (WorkerApi impatient = WorkerApi.start(config(), groups(), keys, remote, attachments(), db, clock, Duration.ofMillis(500))) {
             String key = pair(BOLD, "ann-laptop");
             byte[] oversized = new byte[80_000];
             Arrays.fill(oversized, (byte) 'y');
@@ -306,7 +306,7 @@ class WorkerApiTest extends WorkerApiFixture {
     void publicUrlWithAnExplicitPortDoesNotAlsoAllowTheBareHost() throws Exception {
         String key = pair(BOLD, "ann-laptop");
         try (WorkerApi withPort = WorkerApi.start(config("https://team.example.com:8443"), groups(), keys, remote,
-                attachments())) {
+                attachments(), db, clock)) {
             Raw bareHost = rawPost(withPort.port(), WorkerApi.PROJECTS, "team.example.com", key, "{}");
             Raw hostWithPort = rawPost(withPort.port(), WorkerApi.PROJECTS, "team.example.com:8443", key, "{}");
 

@@ -18,6 +18,7 @@ import dispatch.core.JobEvents;
 import dispatch.core.JobResult;
 import dispatch.domain.Attachment;
 import dispatch.domain.RunKind;
+import dispatch.store.Workers;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
@@ -61,6 +62,35 @@ class WorkerProtocolTest extends WorkerApiFixture {
         JsonNode answer = Json.read(post(WorkerApi.NEXT, key, "{}").body());
 
         assertTrue(answer.get("job").isNull(), answer.toString());
+    }
+
+    @Test
+    void nextCarriesTheWorkersReadinessAndItIsStored() throws Exception {
+        String key = pair();
+
+        post(WorkerApi.NEXT, key, """
+                {"readiness": {"claude": {"ok": true, "detail": "2.1.280"},
+                               "gh": {"ok": false, "detail": "not logged in"},
+                               "projects": {"alm": {"ok": true}}}}""");
+
+        Readiness stored = db.transactionReturning(tx ->
+                Workers.readiness(tx, Workers.ofMember(tx, BOLD.ref()).getFirst().id()));
+        assertTrue(stored.claude().ok());
+        assertFalse(stored.gh().ok());
+        assertEquals("not logged in", stored.gh().detail());
+        assertTrue(stored.projects().get("alm").ok());
+    }
+
+    @Test
+    void nextWithoutReadinessLeavesTheWorkerReady() throws Exception {
+        // An older worker sends "{}"; it must keep working rather than being treated as broken.
+        String key = pair();
+
+        post(WorkerApi.NEXT, key, "{}");
+
+        Readiness stored = db.transactionReturning(tx ->
+                Workers.readiness(tx, Workers.ofMember(tx, BOLD.ref()).getFirst().id()));
+        assertTrue(stored.claude().ok());
     }
 
     @Test
@@ -200,7 +230,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
             throw new RuntimeException("https://api.telegram.org/botSECRET-TOKEN/getFile?file_id=" + fileRef);
         };
 
-        try (WorkerApi failingApi = WorkerApi.start(config(), groups(), keys, remote, failing)) {
+        try (WorkerApi failingApi = WorkerApi.start(config(), groups(), keys, remote, failing, db, clock)) {
             HttpResponse<String> answer = http.send(HttpRequest.newBuilder(
                             URI.create("http://127.0.0.1:" + failingApi.port() + WorkerApi.ATTACHMENT))
                             .header("Authorization", "Bearer " + key)
@@ -280,7 +310,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
             }
         };
 
-        try (WorkerApi slowApi = WorkerApi.start(config(), groups(), keys, remote, slow)) {
+        try (WorkerApi slowApi = WorkerApi.start(config(), groups(), keys, remote, slow, db, clock)) {
             URI attachmentUri = URI.create("http://127.0.0.1:" + slowApi.port() + WorkerApi.ATTACHMENT);
             int[] statuses = new int[attempts];
             Exception[] failures = new Exception[attempts];
