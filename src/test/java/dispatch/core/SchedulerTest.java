@@ -20,6 +20,7 @@ import dispatch.worker.WorkerKeys;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
@@ -178,6 +179,48 @@ class SchedulerTest {
                 clock.instant().minus(Workers.SEEN_WITHIN))).orElseThrow().taskId();
 
         assertEquals(Set.of(first, second), Set.of(claimedFirst, claimedSecond), "two live workers, two concurrent claims");
+    }
+
+    @Test
+    void aTaskPinnedToABusyComputerWaitsEvenWhenTheMemberHasAnotherFreeOne() {
+        long running = queuedTaskOf("telegram:100");
+        long pinned = queuedTaskOf("telegram:100");
+        long laptop = pair("telegram:100", "ann-laptop");
+        long desktop = pair("telegram:100", "ann-desktop");
+        db.transaction(tx -> Tasks.recordWorker(tx, pinned, laptop, clock.instant()));
+        db.transaction(tx -> Workers.touch(tx, laptop, clock.instant()));
+        db.transaction(tx -> Workers.touch(tx, desktop, clock.instant()));
+
+        assertEquals(running, claim().orElseThrow().taskId());
+        // The laptop polled first and took it, exactly as RemoteWorkers.recordAndReturn records.
+        db.transaction(tx -> Tasks.recordWorker(tx, running, laptop, clock.instant()));
+
+        assertTrue(claim().isEmpty(), "the only computer that may take it is already running one");
+        assertEquals("QUEUED", SqlRows.single(dbFile, "SELECT status FROM run WHERE task_id = ?", pinned).get("status"));
+
+        db.transaction(tx -> tx.update("UPDATE run SET status = 'SUCCEEDED' WHERE task_id = ?", running));
+
+        assertEquals(pinned, claim().orElseThrow().taskId(), "the laptop is free again");
+    }
+
+    @Test
+    void anUnpinnedTaskStillGoesToTheOtherComputerWhileOneIsBusy() {
+        long pinnedToLaptop = queuedTaskOf("telegram:100");
+        long fresh = queuedTaskOf("telegram:100");
+        long laptop = pair("telegram:100", "ann-laptop");
+        long desktop = pair("telegram:100", "ann-desktop");
+        db.transaction(tx -> Tasks.recordWorker(tx, pinnedToLaptop, laptop, clock.instant()));
+        db.transaction(tx -> Workers.touch(tx, laptop, clock.instant()));
+        db.transaction(tx -> Workers.touch(tx, desktop, clock.instant()));
+
+        assertEquals(pinnedToLaptop, claim().orElseThrow().taskId());
+
+        assertEquals(fresh, claim().orElseThrow().taskId(), "it is pinned to nobody, and the desktop is free");
+    }
+
+    /** One claim in team mode, with the worker window the Scheduler itself passes. */
+    private Optional<ClaimedRun> claim() {
+        return db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(), clock.instant().minus(Workers.SEEN_WITHIN)));
     }
 
     @Test
