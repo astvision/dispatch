@@ -136,13 +136,21 @@ public final class Workers {
     }
 
     /**
-     * The best report among {@code memberRef}'s live, unrevoked workers: a member with one broken laptop and one
-     * working desktop is not reported as stuck. Prefers a worker whose report holds no blocker; if every worker is
-     * broken, returns any one of their reports; if the member has no worker at all, returns {@link Readiness#READY}.
+     * The best report among {@code memberRef}'s live, unrevoked workers (live per {@link #isLive}, typically called
+     * with {@code now.minus(SEEN_WITHIN)}): a member with one broken laptop and one working desktop is not reported
+     * as stuck. Prefers a worker whose report holds no blocker; if every live worker is broken, returns any one of
+     * their reports.
+     *
+     * <p>If the member has no <em>live</em> worker — none at all, or every one gone stale — this returns
+     * {@link Readiness#READY} rather than a blocker: a stale report must not be read as "Claude Code is broken" when
+     * the actual state is "not connected", which the existing offline path already says.
      */
-    public static Readiness readinessOfMember(Tx tx, String memberRef) {
+    public static Readiness readinessOfMember(Tx tx, String memberRef, Instant seenSince) {
         Readiness bestSoFar = Readiness.READY;
         for (Paired worker : ofMember(tx, memberRef)) {
+            if (!isLive(tx, worker.id(), seenSince)) {
+                continue;
+            }
             Readiness report = readiness(tx, worker.id());
             if (hasNoBlocker(report)) {
                 return report;
