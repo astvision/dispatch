@@ -129,6 +129,19 @@ class CheckCommandTest {
     }
 
     @Test
+    void aComputerWithOnlyAWorkerYamlIsNotToldToRunDispatchInit() throws IOException {
+        Files.writeString(config.resolveSibling("worker.yaml"),
+                "team: 'https://team.example.invalid'\nname: 'ann-laptop'\n");
+
+        int exit = check();
+
+        assertEquals(1, exit, terminal.output());
+        assertFalse(terminal.output().contains("create one with: dispatch init"), terminal.output());
+        assertTrue(terminal.output().contains("worker: ann-laptop"), terminal.output());
+        assertTrue(terminal.output().contains("FAIL pairing: no worker key"), terminal.output());
+    }
+
+    @Test
     void missingConfigPointsToInit() {
         int exit = check();
 
