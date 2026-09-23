@@ -53,5 +53,7 @@ public enum OutboxKind {
     /** /worker revoke without a valid positive id. */
     WORKER_USAGE,
     /** To the requester, once: their task waits because none of their computers is connected. */
-    WORKER_WAITING
+    WORKER_WAITING,
+    /** /manage: a button that opens the Mini App, or a note that it is not turned on here (ADR 0019). */
+    MANAGE
 }

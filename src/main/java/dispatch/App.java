@@ -160,11 +160,13 @@ public final class App {
         }
 
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
-        registerCommandMenus(api, renderer, groups);
+        registerCommandMenus(api, renderer, groups, config.miniApp() != null);
+        registerMiniAppButtons(api, renderer, groups, config.miniApp());
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
         UpdateHandler handler = new UpdateHandler(db, tasks, new Membership(groups, members, clock, outboxSignal::wake), groups, projects,
                 api, renderer, redactor, botUsername, clock, outboxSignal::wake, workerKeys,
-                config.workers() == null ? null : config.workers().publicUrl());
+                config.workers() == null ? null : config.workers().publicUrl(),
+                config.miniApp() == null ? null : config.miniApp().publicUrl());
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         UiServer miniApp = null;
@@ -272,8 +274,29 @@ public final class App {
                 .map(member -> "telegram:" + member.id()).collect(java.util.stream.Collectors.toSet());
     }
 
+    /**
+     * A "Manage" Web App button in each member's private chat, set at start and left alone otherwise (ADR 0019).
+     * Best effort per member: someone who has never written to the bot has no private chat yet, and that must not
+     * stop the others getting theirs. Without a {@code miniApp} block no button is set at all.
+     */
+    private static void registerMiniAppButtons(BotApi api, Renderer renderer, Groups groups, Config.MiniApp miniApp) {
+        if (miniApp == null) {
+            return;
+        }
+        String label = renderer.text("manage.button");
+        for (Config.Group group : groups.all()) {
+            for (Config.Member member : group.members()) {
+                try {
+                    api.setChatMenuButton(member.id(), label, miniApp.publicUrl());
+                } catch (TelegramException e) {
+                    Log.warn("telegram.menu_button_failed", "member", member.id(), "error", e.getMessage());
+                }
+            }
+        }
+    }
+
     /** Best effort: a group's menu fails while the bot is not yet in it, and works again on the next start. */
-    private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups) {
+    private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups, boolean miniApp) {
         for (Config.Group group : groups.all()) {
             if (group.chatId() == null) {
                 continue;
@@ -286,7 +309,13 @@ public final class App {
             }
         }
         try {
-            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "stats", "cancel", "retry", "worker", "projects", "help"));
+            List<String> privateCommands = new java.util.ArrayList<>(
+                    List.of("task", "status", "history", "stats", "cancel", "retry", "worker"));
+            if (miniApp) {
+                privateCommands.add("manage");
+            }
+            privateCommands.addAll(List.of("projects", "help"));
+            api.setPrivateChatCommands(commands(renderer, privateCommands.toArray(String[]::new)));
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "scope", "all_private_chats", "error", e.getMessage());
         }

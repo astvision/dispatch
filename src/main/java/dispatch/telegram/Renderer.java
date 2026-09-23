@@ -30,7 +30,19 @@ public final class Renderer {
     /** Ten parts of this length still fit one message. */
     private static final int TOPIC_LIMIT = 300;
 
-    public record Button(String text, String data) {
+    /**
+     * An inline button: either one that calls back with {@code data}, or one that opens the Mini App at
+     * {@code webAppUrl} (ADR 0019). Exactly one of the two is set.
+     */
+    public record Button(String text, String data, String webAppUrl) {
+
+        public Button(String text, String data) {
+            this(text, data, null);
+        }
+
+        public static Button webApp(String text, String url) {
+            return new Button(text, null, url);
+        }
     }
 
     public record Document(String fileName, String markdown) {
@@ -146,6 +158,7 @@ public final class Renderer {
             case JOIN_REQUESTED -> plain(text("join.requested"));
             case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
             case JOIN_DENIED -> plain(text("join.denied"));
+            case MANAGE -> manage(payload);
         };
     }
 
@@ -243,6 +256,15 @@ public final class Renderer {
     }
 
     /** The member's one-time code, the exact command to run with it, and the computers they already paired. */
+    /** /manage: the button that opens the Mini App, or why there is none (ADR 0019). */
+    private Rendered manage(JsonNode payload) {
+        if (!payload.hasNonNull("url")) {
+            return plain(text("manage.off"));
+        }
+        return new Rendered(text("manage.open"),
+                List.of(List.of(Button.webApp(text("manage.button"), payload.get("url").asText()))), null);
+    }
+
     private Rendered workerPairing(JsonNode payload) {
         if (payload.path("personal").asBoolean()) {
             return plain(text("worker.personal"));

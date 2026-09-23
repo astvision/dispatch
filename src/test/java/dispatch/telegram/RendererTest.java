@@ -683,6 +683,7 @@ class RendererTest {
             case DRAFT_EXPIRED -> Json.object();
             case JOIN_REQUEST -> joinPayload("OPEN");
             case JOIN_REQUESTED, JOIN_DENIED -> Json.object();
+            case MANAGE -> Json.object().put("url", "https://dispatch.example.com");
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

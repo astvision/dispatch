@@ -152,6 +152,18 @@ public final class BotApi {
         setMyCommands(Json.object().put("type", "all_private_chats"), commands);
     }
 
+    /**
+     * Puts a "Manage" Web App button in one private chat's menu, where the paperclip menu usually is (ADR 0019).
+     * Everyone else keeps the default menu, so nobody who may not use the Mini App is offered it.
+     */
+    public void setChatMenuButton(long chatId, String text, String url) {
+        ObjectNode button = Json.object().put("type", "web_app").put("text", text);
+        button.putObject("web_app").put("url", url);
+        ObjectNode body = Json.object().put("chat_id", chatId);
+        body.set("menu_button", button);
+        call("setChatMenuButton", body, requestTimeout);
+    }
+
     private void setMyCommands(ObjectNode scope, List<BotCommand> commands) {
         ObjectNode body = Json.object();
         ArrayNode listed = body.putArray("commands");
@@ -250,7 +262,14 @@ public final class BotApi {
         ArrayNode keyboard = markup.putArray("inline_keyboard");
         for (List<Renderer.Button> buttons : rows) {
             ArrayNode row = keyboard.addArray();
-            buttons.forEach(button -> row.addObject().put("text", button.text()).put("callback_data", button.data()));
+            for (Renderer.Button button : buttons) {
+                ObjectNode entry = row.addObject().put("text", button.text());
+                if (button.webAppUrl() != null) {
+                    entry.putObject("web_app").put("url", button.webAppUrl());
+                } else {
+                    entry.put("callback_data", button.data());
+                }
+            }
         }
         return markup;
     }
