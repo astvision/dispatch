@@ -68,6 +68,7 @@ class AppTest {
                         List.of(), null, null, null)),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", gh.toString()),
                 null,
+                null,
                 new Config.Secrets(FakeTelegram.TOKEN, null));
     }
 
@@ -205,7 +206,7 @@ class AppTest {
                 new Config.Telegram(List.of(), List.of(new Config.Group("bold", null, List.of(new Config.Member(100, "Bold")), List.of("alm")))),
                 config.scheduler(), config.worktrees(), config.limits(), config.agents(),
                 List.of(new Config.Project("alm", null, null, mine.toString(), "main", "claude-code", null, "high", List.of(), null, null, null)),
-                config.delivery(), config.workers(), config.secrets());
+                config.delivery(), config.workers(), config.miniApp(), config.secrets());
         app = start();
         assertEquals("all_private_chats", telegram.awaitRequest("setMyCommands", WAIT).json().get("scope").get("type").asText(),
                 "no group menu without a group chat");
@@ -232,7 +233,7 @@ class AppTest {
         config = new Config("backend", repos.stateDir, new Config.Telegram(List.of(100L),
                 List.of(new Config.Group("backend", GROUP, List.copyOf(members), List.of("autoland-management")))),
                 config.scheduler(), config.worktrees(), config.limits(), config.agents(), config.projects(), config.delivery(),
-                config.workers(), config.secrets());
+                config.workers(), config.miniApp(), config.secrets());
         app = start((group, member) -> {
             members.add(member);
             return new Config.Telegram(List.of(100L), List.of(new Config.Group("backend", GROUP, List.copyOf(members), List.of("autoland-management"))));

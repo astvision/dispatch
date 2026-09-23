@@ -22,6 +22,7 @@ public record Config(
         List<Project> projects,
         Delivery delivery,
         Workers workers,
+        MiniApp miniApp,
         Secrets secrets) {
 
     /**
@@ -179,6 +180,22 @@ public record Config(
         static Workers fromYaml(@JsonProperty("publicUrl") String publicUrl, @JsonProperty("port") Integer port) {
             // 0 rather than a mapping error, so a missing port is reported with everything else that is wrong.
             return new Workers(publicUrl, port == null ? 0 : port);
+        }
+    }
+
+    /**
+     * Where members reach the management and task pages from inside Telegram (spec: Config). Null leaves the Mini App
+     * off, which is the default for every instance: nothing listens and the bot shows no Manage button.
+     *
+     * @param publicUrl the owner's tunnel or reverse proxy, e.g. https://dispatch.example.com
+     * @param port      Dispatch listens on 127.0.0.1:port; the tunnel forwards to it
+     */
+    public record MiniApp(String publicUrl, int port) {
+
+        @JsonCreator
+        static MiniApp fromYaml(@JsonProperty("publicUrl") String publicUrl, @JsonProperty("port") Integer port) {
+            // 0 rather than a mapping error, so a missing port is reported with everything else that is wrong.
+            return new MiniApp(publicUrl, port == null ? 0 : port);
         }
     }
 

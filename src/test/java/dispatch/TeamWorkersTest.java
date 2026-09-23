@@ -341,6 +341,6 @@ class TeamWorkersTest {
                 List.of(new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, null,
                         List.of(), null, null, null)),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", gh.toString()),
-                new Config.Workers("http://127.0.0.1:0", 0), new Config.Secrets(FakeTelegram.TOKEN, null));
+                new Config.Workers("http://127.0.0.1:0", 0), null, new Config.Secrets(FakeTelegram.TOKEN, null));
     }
 }
