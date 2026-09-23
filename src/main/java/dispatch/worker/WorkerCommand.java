@@ -33,6 +33,8 @@ public final class WorkerCommand {
 
     /** The key's name in worker.env, which only its owner may read (ADR 0009). */
     public static final String KEY_VARIABLE = "DISPATCH_WORKER_KEY";
+    /** How long shutdown waits for a `git worktree remove` already underway to finish before giving up on it. */
+    private static final Duration SWEEPER_STOP_TIMEOUT = Duration.ofSeconds(10);
 
     private final PrintStream out;
 
@@ -136,12 +138,24 @@ public final class WorkerCommand {
         Thread sweeperThread = Thread.ofVirtual().name("worker-sweeper").start(sweeper);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             sweeper.stop();
+            // Joined here, not left to the code after loop.run() below: on Ctrl+C the JVM can halt as soon as every
+            // shutdown hook returns, without waiting for the main thread to unwind — a removal caught mid `git
+            // worktree remove --force` would leave a half-deleted directory that wedges that task for good.
+            joinQuietly(sweeperThread, SWEEPER_STOP_TIMEOUT);
             loop.stop();
         }, "dispatch-worker-shutdown"));
         out.println("Running " + setup.team() + " tasks on this computer as " + config.name() + ". Ctrl+C to stop.");
         loop.run();
         sweeper.stop();
-        sweeperThread.join(Duration.ofSeconds(10));
+        joinQuietly(sweeperThread, SWEEPER_STOP_TIMEOUT);
         return 0;
+    }
+
+    private static void joinQuietly(Thread thread, Duration timeout) {
+        try {
+            thread.join(timeout);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

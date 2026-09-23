@@ -63,6 +63,19 @@ class WorkerSweeperTest {
     }
 
     @Test
+    void aWorktreeWithAnUnpushedCommitIsKept() throws Exception {
+        Path unpushed = workspaces.createWorktree(project(), 5).path();
+        // Empty on purpose: the working tree stays clean, so this isolates the pushed check from the uncommitted
+        // one — a worktree straight off origin/main with nothing but a local commit no one has pushed.
+        GitFixture.sh(unpushed, "git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit",
+                "--quiet", "--allow-empty", "-m", "local only, never pushed");
+        Files.setLastModifiedTime(unpushed, FileTime.from(clock.instant().minus(Duration.ofDays(30))));
+
+        assertEquals(0, sweeper().sweep());
+        assertTrue(Files.exists(unpushed), "a commit that never reached origin is not discardable here");
+    }
+
+    @Test
     void aWorktreeThatWasUsedRecentlyIsKept() throws Exception {
         Path recent = workspaces.createWorktree(project(), 4).path();
         Files.setLastModifiedTime(recent, FileTime.from(clock.instant().minus(Duration.ofDays(30))));

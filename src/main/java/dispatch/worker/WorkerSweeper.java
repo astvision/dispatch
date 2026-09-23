@@ -3,10 +3,10 @@ package dispatch.worker;
 import dispatch.Log;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Signal;
-import dispatch.workspace.WorkspaceException;
 import dispatch.workspace.Workspaces;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -19,11 +19,14 @@ import java.util.stream.Stream;
  * {@code Sweeper} cannot: since W-3 the worktrees are here, on the member's own machine (ADR 0021), and it never sees
  * them.
  *
- * <p>This side holds no task state, so it decides idleness from the files themselves — the newer of the worktree's own
- * last-modified time and that of the run logs under {@code runs/&lt;task&gt;} — and, unlike the team machine's sweeper,
- * it never discards a worktree that still holds work: anything with uncommitted changes or commits that are not on
- * origin is kept and logged, whatever the task's phase turned out to be. The {@code dispatch/&lt;task&gt;} branch stays
- * in this computer's clone, so a later retry or follow-up recreates the worktree here.
+ * <p>This side holds no task state, so it decides idleness from the files themselves — the newer of the worktree
+ * directory's own last-modified time (not a recursive scan: an edit deep inside does not bump it) and that of the
+ * run logs under {@code runs/&lt;task&gt;} — and, unlike the team machine's sweeper, it never discards a worktree
+ * that still holds work git can see: anything with uncommitted changes or commits that are not on origin is kept
+ * and logged, whatever the task's phase turned out to be. That check is what actually protects real work, not the
+ * directory's mtime. Git-ignored content (build output, scratch files) is not part of that check and goes with the
+ * worktree. The {@code dispatch/&lt;task&gt;} branch stays in this computer's clone, so a later retry or follow-up
+ * recreates the worktree here.
  */
 public final class WorkerSweeper implements Runnable {
 
@@ -74,7 +77,12 @@ public final class WorkerSweeper implements Runnable {
         signal.wake();
     }
 
-    /** One pass; returns how many worktrees it removed. */
+    /**
+     * One pass; returns how many worktrees it removed. Each worktree is handled independently: a {@link RuntimeException}
+     * from one (a broken clone, an unreadable path, a git subprocess failure) is logged and skipped rather than ending
+     * the pass — an hourly sweeper that dies silently on the first bad worktree brings back the disk-growth problem this
+     * class exists to fix, with nothing in the log to say so.
+     */
     public int sweep() {
         Path worktrees = stateDir.resolve("worktrees");
         if (!Files.isDirectory(worktrees)) {
@@ -85,14 +93,10 @@ public final class WorkerSweeper implements Runnable {
             if (stopped) {
                 break;
             }
-            Long taskId = taskIdOf(worktree);
-            if (taskId == null || activeRuns.isActive(taskId) || !isIdle(taskId, worktree)) {
-                continue;
-            }
             try {
-                removed += remove(taskId, worktree) ? 1 : 0;
-            } catch (WorkspaceException e) {
-                Log.warn("worker_sweeper.failed", "task", taskId, "error", e.getMessage());
+                removed += sweepOne(worktree) ? 1 : 0;
+            } catch (RuntimeException e) {
+                Log.warn("worker_sweeper.failed", "worktree", worktree, "error", e.getMessage());
             }
         }
         if (removed > 0) {
@@ -101,14 +105,38 @@ public final class WorkerSweeper implements Runnable {
         return removed;
     }
 
+    private boolean sweepOne(Path worktree) {
+        Long taskId = taskIdOf(worktree);
+        if (taskId == null || activeRuns.isActive(taskId) || !isIdle(taskId, worktree)) {
+            return false;
+        }
+        return remove(taskId, worktree);
+    }
+
     private boolean remove(long taskId, Path worktree) {
+        // The path inspected above and the path removed below must be the one and same directory: a mismatch (e.g. a
+        // directory named with a leading zero, whose parsed task id resolves to a different path than the one listed)
+        // must never fall through to deleting whatever that recomputed path happens to be.
+        Path expected = stateDir.resolve("worktrees").resolve(Long.toString(taskId));
+        if (!expected.equals(worktree)) {
+            Log.warn("worker_sweeper.path_mismatch", "task", taskId, "listed", worktree, "expected", expected);
+            return false;
+        }
         Workspaces.WorktreeState state = workspaces.localOnlyState(worktree);
         if (!state.disposable()) {
             Log.warn("worker_sweeper.kept", "task", taskId, "uncommitted", state.uncommitted().size(),
                     "pushed", state.pushed(), "worktree", worktree);
             return false;
         }
-        workspaces.removeWorktree(workspaces.repoOf(worktree), taskId);
+        Path repo = workspaces.repoOf(worktree);
+        // Three git subprocesses ran between the loop's own activeRuns check and here (status, branch, rev-parse);
+        // a run for this exact task can have been claimed and registered in that window, so it is checked again,
+        // immediately before the removal it would otherwise race.
+        if (activeRuns.isActive(taskId)) {
+            Log.info("worker_sweeper.skipped_active", "task", taskId);
+            return false;
+        }
+        workspaces.removeWorktree(repo, taskId);
         Log.info("worker_sweeper.removed", "task", taskId, "worktree", worktree);
         return true;
     }
@@ -132,9 +160,10 @@ public final class WorkerSweeper implements Runnable {
         }
     }
 
+    /** {@code NOFOLLOW_LINKS}: a symlink named like a task id must never be treated as that task's worktree. */
     private static Long taskIdOf(Path worktree) {
         try {
-            return Files.isDirectory(worktree) ? Long.valueOf(worktree.getFileName().toString()) : null;
+            return Files.isDirectory(worktree, LinkOption.NOFOLLOW_LINKS) ? Long.valueOf(worktree.getFileName().toString()) : null;
         } catch (NumberFormatException e) {
             return null;
         }
