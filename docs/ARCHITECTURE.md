@@ -32,6 +32,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Management from a phone | An opt-in Telegram Mini App served by `dispatch run`, authenticated by Telegram's signed launch data | 0019 |
 | Task privacy | Another member's task shows only its headline; only the requester acts on it, except cancel, which an admin may also do; a private message Telegram refuses falls back to a content-free group notice | 0020 |
 | Worker readiness | A member's computer reports on its poll whether `claude`, `gh` and each project's clone work; a run waits until a computer that may take it can, and its member is told the reason once (the assignee half is decided but not built yet) | 0022 |
+| Linking a group | Personal vs. team is `telegram.admins`/member count, not "a group has a chat"; whoever may manage Dispatch links a group to a project from Telegram, applied without a restart; the Mini App lists and unlinks | 0023 |
 
 Also decided without an ADR:
 - Only members of a configured group act, for their groups' projects, in their own private chat with the bot; groups get announcements and read-only reports.
@@ -433,6 +434,7 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **UI-3c** Mini App as a list (built) | The Mini App opens on the bot and its projects (`/api/projects` for members, the config for admins) with search; a project's page holds its tasks and, for an admin, a row per setting edited on its own screen, and Remove; Telegram's own Back button; one restart notice for the whole Mini App |
 | **T-1** worker readiness (built) | Readiness on the worker's `/api/worker/next` poll, cached for a minute on the worker and stored per worker; the scheduler claims a run only when a computer that may take it is ready for its project and kind; one private `WORKER_BLOCKED` message per reason, and the reason on `/status` (ADR 0022) |
 | **T-2** assignment | A task's assignee separate from its requester, `@bot @dev …` intake in the group, fallback when an assignee leaves (ADR 0022) |
+| **G-1** group linking (built) | `isTeam()`/`isPersonal()` on the config's own terms; the link prompt and callback when the bot is added to or commanded in an unknown group; config writes that move or extend a group, applied with no restart; the Mini App's Группүүд screen (list, unlink); a migrated chat id rewritten automatically (ADR 0023) |
 | **M5** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
