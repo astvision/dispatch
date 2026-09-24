@@ -17,7 +17,6 @@ import dispatch.config.ConfigFile;
 import dispatch.config.ConfigText;
 import dispatch.config.GroupWriter;
 import dispatch.telegram.BotApi;
-import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -317,13 +316,17 @@ public final class ManageApi {
         return saved;
     }
 
+    /**
+     * Best-effort in full: the token lookup (e.g. a wrongly permissioned secrets file) can fail just as the Telegram
+     * call itself can, and neither may turn an already-saved unlink into an error response.
+     */
     private void leaveChat(Long chatId) {
         if (chatId == null) {
             return;
         }
         try {
             bots.apply(SecretsFile.environment(configFile, processEnvironment).get("TELEGRAM_BOT_TOKEN")).leaveChat(chatId);
-        } catch (TelegramException e) {
+        } catch (RuntimeException e) {
             Log.warn("group.leave_failed", "chat_id", chatId, "error", e.getMessage());
         }
     }

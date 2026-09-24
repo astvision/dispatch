@@ -369,6 +369,23 @@ class ManageApiTest {
     }
 
     @Test
+    void aFailedTokenLookupDoesNotFailTheUnlinkEither() throws Exception {
+        // A wrongly permissioned or otherwise unreadable dispatch.env makes SecretsFile.environment throw a
+        // CliException, exactly as a call inside leaveChat's own try would see it: still a RuntimeException, and the
+        // already-committed save must survive it exactly as it survives leaveChat's own TelegramException.
+        ManageApi withBrokenTokenLookup = new ManageApi(config, service, Map.of("TELEGRAM_BOT_TOKEN", TOKEN),
+                token -> {
+                    throw new CliException("cannot read dispatch.env; it must belong to the user who runs Dispatch");
+                });
+
+        Object answer = withBrokenTokenLookup.routes().get("/api/manage/groups/unlink")
+                .apply(Json.MAPPER.readTree("{\"version\":\"" + version() + "\",\"name\":\"acme\"}"));
+
+        assertTrue(Json.MAPPER.readTree(Json.write(answer)).path("saved").asBoolean());
+        assertNull(load().telegram().groups().getFirst().chatId());
+    }
+
+    @Test
     void aPersonalBotHasNoAdminsToChange() throws Exception {
         String personal = new String(ManageApiTest.class.getResourceAsStream("/personal.yaml").readAllBytes())
                 .replace("STATE_DIR", dir.resolve("state").toString().replace("'", "''"))
