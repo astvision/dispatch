@@ -733,6 +733,7 @@ class RendererTest {
             }
             case GROUP_LINKED -> Json.object().put("projects", "life");
             case GROUP_TASK_SENT -> Json.object().put("requester", "Bold");
+            case UNKNOWN_USERNAME -> Json.object().put("username", "ali_dev");
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

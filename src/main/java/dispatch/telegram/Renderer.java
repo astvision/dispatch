@@ -168,6 +168,7 @@ public final class Renderer {
             case GROUP_LINK -> groupLink(payload);
             case GROUP_LINKED -> plain(format("group.greeting", escape(payload.path("projects").asText())));
             case GROUP_TASK_SENT -> plain(format("group.taskSent", escape(payload.path("requester").asText())));
+            case UNKNOWN_USERNAME -> plain(format("group.unknownUsername", escape(payload.path("username").asText())));
         };
     }
 

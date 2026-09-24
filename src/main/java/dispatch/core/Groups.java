@@ -41,6 +41,12 @@ public final class Groups {
         return telegram.groups().stream().anyMatch(group -> contains(group, requesterRef));
     }
 
+    /** The member's name as configured (the first group listing them wins), empty for someone who is not a member. */
+    public Optional<String> memberName(String requesterRef) {
+        return telegram.groups().stream().flatMap(group -> group.members().stream())
+                .filter(member -> ("telegram:" + member.id()).equals(requesterRef)).map(Config.Member::name).findFirst();
+    }
+
     public Set<String> projectsOfMember(String requesterRef) {
         Set<String> projects = new HashSet<>();
         telegram.groups().stream().filter(group -> contains(group, requesterRef)).forEach(group -> projects.addAll(group.projects()));

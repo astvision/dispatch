@@ -580,6 +580,156 @@ class UpdateHandlerTest {
         assertEquals("Please fix the login timeout", row("SELECT description FROM draft").get("description"));
     }
 
+    @Test
+    void aMemberMentionedByUsernameInTheGroupGetsTheTaskPrivatelyAndTheGroupIsTold() throws Exception {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+
+        handler.handle(people(540, 50, 100, "Bold", "@Ali_Dev please fix the login timeout", null, "@Ali_Dev"));
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("telegram:200", draft.get("requester_ref"), "the developer is the requester");
+        assertEquals("Ali", draft.get("requester_name"));
+        assertEquals("telegram:200", draft.get("chat_ref"));
+        assertEquals("telegram:" + GROUP + "/50", draft.get("origin_ref"));
+        assertEquals("autoland-management", draft.get("project"));
+        assertEquals("please fix the login timeout\n\nХүсэлт: Bold", draft.get("description"));
+
+        OutboxSender sender = sender();
+        assertTrue(sender.deliverDue());
+        assertTrue(sender.deliverDue());
+        assertEquals(200, telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+        JsonNode inGroup = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(GROUP, inGroup.get("chat_id").asLong());
+        assertEquals(50, inGroup.get("reply_parameters").get("message_id").asLong());
+        assertEquals("✉️ <b>Ali</b>: хувийн чатад илгээлээ.", inGroup.get("text").asText());
+    }
+
+    @Test
+    void aTextMentionNeedsNoRecordedUsername() {
+        JsonNode update = message(541, 51, 100, "Bold", GROUP, "supergroup", "Ali check the mobile login", null);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) update.get("message")).putArray("entities").addObject()
+                .put("offset", 0).put("length", 3).put("type", "text_mention")
+                .putObject("user").put("id", 200).put("is_bot", false).put("first_name", "Ali");
+
+        handler.handle(update);
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("telegram:200", draft.get("requester_ref"));
+        assertEquals("check the mobile login\n\nХүсэлт: Bold", draft.get("description"));
+    }
+
+    @Test
+    void anUnrecordedUsernameIsAnsweredInTheGroupAndGivesNoTask() throws Exception {
+        handler.handle(people(542, 52, 100, "Bold", "@nobody fix it", null, "@nobody"));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        Map<String, String> line = row("SELECT * FROM outbox");
+        assertEquals("UNKNOWN_USERNAME", line.get("kind"));
+        assertEquals("telegram:" + GROUP, line.get("chat_ref"));
+        assertEquals("telegram:" + GROUP + "/52", line.get("reply_to_ref"));
+
+        assertTrue(sender().deliverDue());
+        assertEquals("@nobody-г танихгүй байна — тэр ботод нэг удаа бичих хэрэгтэй.",
+                telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("text").asText());
+    }
+
+    @Test
+    void aMentionedPersonOutsideTheChatsProjectGroupsGetsNothing() {
+        // Sara is a member, but of the mobile group only.
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 300, "sara_dev", clock.instant()));
+
+        handler.handle(people(543, 53, 100, "Bold", "@sara_dev fix it", null, "@sara_dev"));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"));
+    }
+
+    @Test
+    void anAuthorOutsideTheChatsProjectGroupsIsIgnoredSilently() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+
+        handler.handle(people(544, 54, 300, "Sara", "@ali_dev fix it", null, "@ali_dev"));
+        handler.handle(people(545, 55, 999, "Stranger", "@ali_dev fix it", null, "@ali_dev"));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"), "no NOT_ALLOWED for ordinary chat");
+    }
+
+    @Test
+    void mentioningTheBotTooWinsOverMentioningAMember() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+
+        handler.handle(people(546, 56, 100, "Bold", "@" + BOT + " @ali_dev fix it", null, "@" + BOT, "@ali_dev"));
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("telegram:100", draft.get("requester_ref"), "G-1b: a task for the author");
+        assertEquals("@ali_dev fix it", draft.get("description"));
+    }
+
+    @Test
+    void aDeveloperMentioningThemselvesGetsNoRequesterLine() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+
+        handler.handle(people(547, 57, 200, "Ali", "@ali_dev remember the cache", null, "@ali_dev"));
+
+        assertEquals("remember the cache", row("SELECT description FROM draft").get("description"));
+    }
+
+    @Test
+    void aMentionReplyingToAMessageTakesItAsThePrivateTaskDoes() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+        String replied = """
+                {"message_id":29,"from":{"id":300,"is_bot":false,"first_name":"Sara"},"chat":{"id":%d,"type":"supergroup"},
+                 "date":1789640000,"caption":"Login screen is blank",
+                 "photo":[{"file_id":"shot","width":1280,"height":853,"file_size":90000}]}""".formatted(GROUP);
+
+        handler.handle(people(548, 58, 100, "Bold", "@ali_dev this one", replied, "@ali_dev"));
+
+        assertEquals("Login screen is blank\n\nthis one\n\nХүсэлт: Bold", row("SELECT description FROM draft").get("description"));
+        assertEquals("shot", row("SELECT file_ref FROM attachment WHERE draft_id = 1").get("file_ref"));
+    }
+
+    @Test
+    void severalMentionedDevelopersEachGetOneDraftEvenIfHandledTwice() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 100, "bold_dev", clock.instant()));
+        JsonNode update = people(549, 59, 100, "Bold", "@ali_dev @bold_dev split the release", null, "@ali_dev", "@bold_dev");
+
+        handler.handle(update);
+        handler.handle(update);
+
+        assertEquals("2", row("SELECT count(*) AS n FROM draft").get("n"));
+        Map<String, String> ali = row("SELECT * FROM draft WHERE requester_ref = 'telegram:200'");
+        assertEquals("telegram:" + GROUP + "/59#200", ali.get("origin_ref"));
+        assertEquals("split the release\n\nХүсэлт: Bold", ali.get("description"));
+        Map<String, String> bold = row("SELECT * FROM draft WHERE requester_ref = 'telegram:100'");
+        assertEquals("telegram:" + GROUP + "/59#100", bold.get("origin_ref"));
+        assertEquals("split the release", bold.get("description"));
+    }
+
+    @Test
+    void aMembersMessagesRecordTheirUsername() {
+        handler.handle(message(550, 60, 200, "Ali", 200L, "private", "hello", null));
+        handler.handle(message(551, 61, 100, "Bold", GROUP, "supergroup", "morning", null));
+        handler.handle(message(552, 62, 999, "Stranger", GROUP, "supergroup", "hi", null));
+
+        assertEquals("200", row("SELECT user_id FROM telegram_user WHERE username = 'ali_dev'").get("user_id"));
+        assertEquals("100", row("SELECT user_id FROM telegram_user WHERE username = 'bold_dev'").get("user_id"));
+        assertEquals("2", row("SELECT count(*) AS n FROM telegram_user").get("n"), "a non-member is not recorded");
+    }
+
+    /** A message in the linked group GROUP with a "mention" entity for each of {@code mentioned}, found in {@code text}. */
+    static JsonNode people(long updateId, long messageId, long fromId, String firstName, String text, String replyToJson,
+                           String... mentioned) {
+        JsonNode update = message(updateId, messageId, fromId, firstName, GROUP, "supergroup", text, replyToJson);
+        com.fasterxml.jackson.databind.node.ArrayNode entities =
+                ((com.fasterxml.jackson.databind.node.ObjectNode) update.get("message")).putArray("entities");
+        for (String name : mentioned) {
+            entities.addObject().put("offset", text.indexOf(name)).put("length", name.length()).put("type", "mention");
+        }
+        return update;
+    }
+
     private OutboxSender sender() {
         return new OutboxSender(db, api, renderer, redactor, new dispatch.core.Signal(), clock, Duration.ofSeconds(1));
     }

@@ -28,7 +28,7 @@ public final class Database implements AutoCloseable {
             "db/007-outbox-edits.sql", "db/008-split-drafts.sql", "db/009-join-requests.sql",
             "db/010-build-session.sql", "db/011-run-model.sql", "db/012-run-cause.sql",
             "db/013-attachments.sql", "db/014-agent-started.sql", "db/015-workers.sql",
-            "db/016-worker-readiness.sql");
+            "db/016-worker-readiness.sql", "db/017-telegram-usernames.sql");
 
     private final Connection connection;
     private final ReentrantLock lock = new ReentrantLock();

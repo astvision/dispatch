@@ -25,13 +25,17 @@ import dispatch.domain.Task;
 import dispatch.store.Database;
 import dispatch.store.Kv;
 import dispatch.store.Outbox;
+import dispatch.store.TelegramUsers;
 import dispatch.store.Tx;
 import dispatch.store.Workers;
 import dispatch.worker.WorkerKeys;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -42,7 +46,8 @@ import java.util.Set;
  * members' private chats with the bot are served (ADR 0011, 0012); other groups are left, other private chats ignored. A
  * group sees only its own projects, a member those of all their groups. Besides commands and buttons, a reply to a plan
  * message is a correction and a reply to a task's result is a follow-up. A member who mentions the bot in their linked
- * group gives a task, drafted in their private chat all the same (G-1b).
+ * group gives a task, drafted in their private chat all the same (G-1b); one who mentions a fellow member there gives it
+ * to them, drafted in theirs (G-1c).
  */
 public final class UpdateHandler {
 
@@ -111,14 +116,31 @@ public final class UpdateHandler {
         long updateId = update.path("update_id").asLong();
         db.transaction(tx -> {
             if (update.has("message")) {
-                onMessage(tx, update.get("message"));
+                JsonNode message = update.get("message");
+                recordUsername(tx, message.path("from"), message.path("chat"));
+                onMessage(tx, message);
             } else if (update.has("callback_query")) {
-                onCallback(tx, update.get("callback_query"));
+                JsonNode callback = update.get("callback_query");
+                recordUsername(tx, callback.path("from"), callback.path("message").path("chat"));
+                onCallback(tx, callback);
             } else if (update.has("my_chat_member")) {
                 onMembershipChange(tx, update.get("my_chat_member"));
             }
             Kv.put(tx, OFFSET_KEY, Long.toString(updateId + 1));
         });
+    }
+
+    /**
+     * Keeps a member's @username in the username book, so a mention of it in a linked group finds them (G-1c). Only from
+     * a member's private chat or a linked group: other chats are not served, and non-members' names are not kept.
+     */
+    private void recordUsername(Tx tx, JsonNode from, JsonNode chat) {
+        if (!from.has("id") || !from.hasNonNull("username") || !groups.isMember(Refs.user(from.get("id").asLong()))) {
+            return;
+        }
+        if (isPrivateChatOf(chat, from) || groups.isGroupChat(Refs.chat(chat.path("id").asLong()))) {
+            TelegramUsers.record(tx, from.get("id").asLong(), from.get("username").asText(), clock.instant());
+        }
     }
 
     /** Moves past an update whose handling failed (already logged by the caller) so it cannot block the ones after it. */
@@ -218,7 +240,12 @@ public final class UpdateHandler {
                 // Anything else a member writes privately is a task to give (ADR 0012).
                 tasks.draft(tx, who, null, text(message), origin, attachments(message));
             } else {
-                withoutBotMentions(message).ifPresent(rest -> groupTask(tx, who, null, rest, message, origin, chatRef));
+                Optional<String> forBot = withoutBotMentions(message);
+                if (forBot.isPresent()) {
+                    groupTask(tx, who, null, forBot.get(), message, origin, chatRef);
+                } else {
+                    mentionTasks(tx, who, message, origin, chatRef);
+                }
             }
             return;
         }
@@ -322,50 +349,138 @@ public final class UpdateHandler {
      */
     private void groupTask(Tx tx, Requester who, String projectKey, String own, JsonNode message, String origin, String chatRef) {
         Set<String> owned = groups.projectsOfChat(chatRef);
-        if (owned.stream().noneMatch(project -> groups.isMemberOfProjectGroup(who.ref(), project))) {
+        if (!inProjectGroup(who.ref(), owned)) {
             enqueue(tx, OutboxKind.NOT_ALLOWED, chatRef, origin, Json.object().put("name", who.name()));
             tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef));
             return;
         }
-        JsonNode repliedTo = message.path("reply_to_message");
-        if (repliedTo.path("from").path("is_bot").asBoolean(false)) {
-            // Such as the bot's own ✉️ line: nothing to give as a task.
-            repliedTo = Json.object();
-        }
+        JsonNode repliedTo = humanReplied(message);
         String text = withRepliedMessage(own, repliedTo);
         if (text.isBlank()) {
             enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object());
             return;
         }
-        String project = projectKey != null ? projectKey : owned.size() == 1 ? owned.iterator().next() : null;
-        String firstName = TelegramNames.clean(message.path("from").path("first_name").asText(""));
+        String project = projectKey != null ? projectKey : onlyProject(owned);
         tasks.draft(tx, who, project, text, origin, attachments(repliedTo, message),
-                new TaskService.GroupOrigin(chatRef, firstName.isEmpty() ? who.name() : firstName));
+                new TaskService.GroupOrigin(chatRef, firstName(message, who)));
     }
 
     /**
-     * The message's text without its mentions of this bot (and one space after each), or empty when it does not mention
-     * the bot. Telegram's offsets count UTF-16 units, as Java strings do.
+     * Members of the chat's project groups mentioned in a linked group, by @username or by name, each get the message as a
+     * task of their own, drafted in their private chat as G-1b drafts the author's (G-1c). The text is the message without
+     * those mentions, after a replied message as private /task puts it, and ends with who asked unless they asked
+     * themselves. The author must be in one of those groups too; anyone else's chat is left alone, without a refusal.
      */
+    private void mentionTasks(Tx tx, Requester author, JsonNode message, String origin, String chatRef) {
+        List<Mention> mentions = mentions(message);
+        if (mentions.isEmpty()) {
+            return;
+        }
+        Set<String> owned = groups.projectsOfChat(chatRef);
+        if (!inProjectGroup(author.ref(), owned)) {
+            tx.afterCommit(() -> Log.info("group.mention_ignored", "author", author.ref(), "chat", chatRef));
+            return;
+        }
+        Map<Long, List<Mention>> developers = new LinkedHashMap<>();
+        List<String> unknown = new ArrayList<>();
+        for (Mention mention : mentions) {
+            Optional<Long> userId = mention.userId() != null ? Optional.of(mention.userId()) : TelegramUsers.idOf(tx, mention.username());
+            if (userId.isEmpty()) {
+                if (unknown.stream().noneMatch(name -> name.equalsIgnoreCase(mention.username()))) {
+                    unknown.add(mention.username());
+                }
+            } else if (inProjectGroup(Refs.user(userId.get()), owned)) {
+                developers.computeIfAbsent(userId.get(), id -> new ArrayList<>()).add(mention);
+            }
+        }
+        unknown.forEach(name -> enqueue(tx, OutboxKind.UNKNOWN_USERNAME, chatRef, origin, Json.object().put("username", name)));
+        if (developers.isEmpty()) {
+            return;
+        }
+        JsonNode repliedTo = humanReplied(message);
+        String own = withRepliedMessage(without(text(message), developers.values().stream().flatMap(List::stream).toList()), repliedTo);
+        if (own.isBlank()) {
+            // A bare mention is someone being called, not a task.
+            tx.afterCommit(() -> Log.info("group.mention_empty", "author", author.ref(), "chat", chatRef));
+            return;
+        }
+        String askedBy = renderer.text("group.requestedBy") + " " + firstName(message, author);
+        List<Attachment> files = attachments(repliedTo, message);
+        for (long userId : developers.keySet()) {
+            String ref = Refs.user(userId);
+            String name = groups.memberName(ref).orElseThrow();
+            // One draft per developer: the group message alone would make the second a duplicate of the first.
+            String draftOrigin = developers.size() > 1 ? origin + "#" + userId : origin;
+            tasks.draft(tx, new Requester(ref, name), onlyProject(owned), ref.equals(author.ref()) ? own : own + "\n\n" + askedBy,
+                    draftOrigin, files, new TaskService.GroupOrigin(chatRef, name));
+        }
+    }
+
+    private boolean inProjectGroup(String requesterRef, Set<String> projects) {
+        return projects.stream().anyMatch(project -> groups.isMemberOfProjectGroup(requesterRef, project));
+    }
+
+    /** The chat's project when it has one only, else null and the prompt asks. */
+    private static String onlyProject(Set<String> owned) {
+        return owned.size() == 1 ? owned.iterator().next() : null;
+    }
+
+    /** The message this one replies to, unless a bot's, such as the ✉️ line: nothing to give as a task. */
+    private static JsonNode humanReplied(JsonNode message) {
+        JsonNode repliedTo = message.path("reply_to_message");
+        return repliedTo.path("from").path("is_bot").asBoolean(false) ? Json.object() : repliedTo;
+    }
+
+    /** What the group calls the author: their Telegram first name. */
+    private static String firstName(JsonNode message, Requester who) {
+        String firstName = TelegramNames.clean(message.path("from").path("first_name").asText(""));
+        return firstName.isEmpty() ? who.name() : firstName;
+    }
+
+    /** The message's text without its mentions of this bot (and one space after each), or empty when it does not mention the bot. */
     private Optional<String> withoutBotMentions(JsonNode message) {
+        List<Mention> toBot = mentions(message).stream().filter(mention -> botUsername.equalsIgnoreCase(mention.username())).toList();
+        return toBot.isEmpty() ? Optional.empty() : Optional.of(without(text(message), toBot));
+    }
+
+    /**
+     * A person named in a message: by @username, or by a text_mention that carries their id.
+     *
+     * @param end      past the mention and one space after it, which goes with it when it is removed
+     * @param username without the "@", null for a text_mention
+     * @param userId   null for an @username
+     */
+    private record Mention(int start, int end, String username, Long userId) {
+    }
+
+    /** The message's mentions of people other than bots, in order. Telegram's offsets count UTF-16 units, as Java strings do. */
+    private static List<Mention> mentions(JsonNode message) {
         String text = text(message);
         JsonNode entities = message.has("entities") ? message.get("entities") : message.path("caption_entities");
-        List<int[]> mentions = new ArrayList<>();
+        List<Mention> found = new ArrayList<>();
         for (JsonNode entity : entities) {
             int start = entity.path("offset").asInt(-1);
             int end = start + entity.path("length").asInt();
-            if (entity.path("type").asText().equals("mention") && start >= 0 && end <= text.length()
-                    && text.substring(start, end).equalsIgnoreCase("@" + botUsername)) {
-                mentions.add(new int[] {start, end < text.length() && text.charAt(end) == ' ' ? end + 1 : end});
+            if (start < 0 || end <= start + 1 || end > text.length()) {
+                continue;
+            }
+            int withSpace = end < text.length() && text.charAt(end) == ' ' ? end + 1 : end;
+            JsonNode user = entity.path("user");
+            if (entity.path("type").asText().equals("mention")) {
+                found.add(new Mention(start, withSpace, text.substring(start + 1, end), null));
+            } else if (entity.path("type").asText().equals("text_mention") && user.has("id") && !user.path("is_bot").asBoolean(false)) {
+                found.add(new Mention(start, withSpace, null, user.get("id").asLong()));
             }
         }
-        if (mentions.isEmpty()) {
-            return Optional.empty();
-        }
+        return found;
+    }
+
+    /** {@code text} without {@code removed}, stripped. */
+    private static String without(String text, List<Mention> removed) {
         StringBuilder rest = new StringBuilder(text);
         // From the last, so the earlier offsets still hold.
-        mentions.reversed().forEach(range -> rest.delete(range[0], range[1]));
-        return Optional.of(rest.toString().strip());
+        removed.stream().sorted(Comparator.comparingInt(Mention::start).reversed()).forEach(mention -> rest.delete(mention.start(), mention.end()));
+        return rest.toString().strip();
     }
 
     private void privateOnly(Tx tx, String chatRef, String origin) {

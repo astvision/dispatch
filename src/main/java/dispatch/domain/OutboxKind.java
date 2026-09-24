@@ -69,5 +69,7 @@ public enum OutboxKind {
      * To a group where a member gave a task by mentioning the bot: its prompt reached their private chat. Enqueued by the
      * sender once that prompt was delivered, so a refused prompt gets the fallback notice instead (G-1b).
      */
-    GROUP_TASK_SENT
+    GROUP_TASK_SENT,
+    /** To a linked group: an @username mentioned there is not in the username book, so it gives no task (G-1c). */
+    UNKNOWN_USERNAME
 }
