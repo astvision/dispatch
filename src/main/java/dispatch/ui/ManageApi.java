@@ -1,6 +1,7 @@
 package dispatch.ui;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.cli.CliException;
 import dispatch.cli.ProjectAddCommand;
@@ -14,6 +15,8 @@ import dispatch.config.ConfigEdit.At;
 import dispatch.config.ConfigException;
 import dispatch.config.ConfigFile;
 import dispatch.config.ConfigText;
+import dispatch.config.GroupWriter;
+import dispatch.telegram.BotApi;
 import dispatch.workspace.Git;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -92,12 +95,19 @@ public final class ManageApi {
     private final Path configFile;
     private final Service service;
     private final Map<String, String> processEnvironment;
+    private final Function<String, BotApi> bots;
     private final Git git = new Git("git", null, Duration.ofSeconds(30));
 
     public ManageApi(Path configFile, Service service, Map<String, String> processEnvironment) {
+        this(configFile, service, processEnvironment, null);
+    }
+
+    /** @param bots used to leave a group's chat best-effort after it is unlinked; null where that is not available */
+    public ManageApi(Path configFile, Service service, Map<String, String> processEnvironment, Function<String, BotApi> bots) {
         this.configFile = configFile.toAbsolutePath();
         this.service = service;
         this.processEnvironment = processEnvironment;
+        this.bots = bots;
     }
 
     public Map<String, Function<JsonNode, Object>> routes() {
@@ -110,6 +120,7 @@ public final class ManageApi {
                 Map.entry("/api/manage/people/rename", this::renameMember),
                 Map.entry("/api/manage/people/remove", this::removeMember),
                 Map.entry("/api/manage/people/admin", this::setAdmin),
+                Map.entry("/api/manage/groups/unlink", this::unlinkGroup),
                 Map.entry("/api/manage/logs", this::logs),
                 Map.entry("/api/service/restart", body -> restart()));
     }
@@ -285,6 +296,39 @@ public final class ManageApi {
             }
             return ConfigEdit.remove(text, At.of("telegram", "admins").value(String.valueOf(id)));
         });
+    }
+
+    /**
+     * Removes a group's chat id, keeping its members and projects. When a bot factory is available, the bot then
+     * leaves the chat best-effort: a failure there (e.g. it already left) never undoes the save.
+     */
+    private Saved unlinkGroup(JsonNode body) {
+        String name = SetupApi.text(body, "name");
+        AtomicReference<Long> chatId = new AtomicReference<>();
+        Saved saved = save(body, (text, config) -> {
+            String edited = GroupWriter.unlinkText(text, config, name);
+            chatId.set(group(config, name).chatId());
+            return edited;
+        });
+        if (bots != null) {
+            leaveChat(chatId.get());
+        }
+        return saved;
+    }
+
+    /**
+     * Best-effort in full: the token lookup (e.g. a wrongly permissioned secrets file) can fail just as the Telegram
+     * call itself can, and neither may turn an already-saved unlink into an error response.
+     */
+    private void leaveChat(Long chatId) {
+        if (chatId == null) {
+            return;
+        }
+        try {
+            bots.apply(SecretsFile.environment(configFile, processEnvironment).get("TELEGRAM_BOT_TOKEN")).leaveChat(chatId);
+        } catch (RuntimeException e) {
+            Log.warn("group.leave_failed", "chat_id", chatId, "error", e.getMessage());
+        }
     }
 
     /** Admins who actually belong to a group; an id in telegram.admins with no matching member is not a real admin. */

@@ -61,6 +61,44 @@ public final class ConfigText {
         return new StringBuilder(text).insert(lines.startOfLineAfter(lastLine(members.getValue().getLast())), entry).toString();
     }
 
+    /**
+     * Appends one block-style group to {@code telegram.groups}, indented like the existing first group item.
+     *
+     * @param project an existing project's name, written as is (already validated by the caller)
+     */
+    public static String addGroup(String text, String name, long chatId, List<Config.Member> members, String project) {
+        MappingNode top = root(text);
+        Lines lines = new Lines(text);
+        SequenceNode groups = telegramGroups(top);
+        Node firstItem = groups.getValue().getFirst();
+        Node lastItem = groups.getValue().getLast();
+        String prefix = lines.prefix(firstItem.getStartMark());
+        String indent = " ".repeat(prefix.length());
+        String memberPrefix = indent + "  - ";
+        StringBuilder block = new StringBuilder();
+        block.append(prefix).append("name: ").append(quoted(name)).append(lines.newline);
+        block.append(indent).append("chatId: ").append(chatId).append(lines.newline);
+        block.append(indent).append("members:").append(lines.newline);
+        for (Config.Member member : members) {
+            block.append(memberPrefix).append("id: ").append(member.id()).append(lines.newline);
+            block.append(" ".repeat(memberPrefix.length())).append("name: ").append(quoted(member.name())).append(lines.newline);
+        }
+        block.append(indent).append("projects:").append(lines.newline);
+        block.append(indent).append("  - ").append(yaml(project)).append(lines.newline);
+        int insertAt = lines.startOfLineAfter(lastLine(lastItem));
+        return new StringBuilder(text).insert(insertAt, block).toString();
+    }
+
+    /** {@code telegram.groups} as a block-style list; that shape is guaranteed once the config has loaded at all
+     * (ConfigLoader requires at least one group), so this only rejects a hand-edited flow-style list. */
+    private static SequenceNode telegramGroups(MappingNode top) {
+        if (value(top, "telegram") instanceof MappingNode telegram && value(telegram, "groups") instanceof SequenceNode groups
+                && groups.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !groups.getValue().isEmpty()) {
+            return groups;
+        }
+        throw new ConfigException("the config's telegram.groups is not a list of blocks; add the group by hand");
+    }
+
     /** Characters that YAML reads as an indicator when they lead a plain scalar, e.g. '-' as a sequence entry. */
     private static final String LEADING_INDICATORS = "-?:,[]{}#&*!|>'\"%@`";
 

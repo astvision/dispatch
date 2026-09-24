@@ -3,11 +3,13 @@ package dispatch;
 import dispatch.agent.Agent;
 import dispatch.agent.claude.ClaudeCodeAgent;
 import dispatch.config.Config;
+import dispatch.config.GroupWriter;
 import dispatch.config.MemberWriter;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Coordinator;
 import dispatch.core.DraftExpiry;
 import dispatch.core.Sweeper;
+import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
 import dispatch.core.JobRunner;
 import dispatch.core.Membership;
@@ -162,10 +164,11 @@ public final class App {
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
         registerCommandMenus(api, renderer, groups, config.miniApp() != null);
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
+        GroupLinks groupLinks = new GroupLinks(groups, GroupWriter.file(configFile, environment), clock, outboxSignal::wake);
         UpdateHandler handler = new UpdateHandler(db, tasks, new Membership(groups, members, clock, outboxSignal::wake), groups, projects,
                 api, renderer, redactor, botUsername, clock, outboxSignal::wake, workerKeys,
                 config.workers() == null ? null : config.workers().publicUrl(),
-                config.miniApp() == null ? null : config.miniApp().publicUrl());
+                config.miniApp() == null ? null : config.miniApp().publicUrl(), groupLinks);
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         UiServer miniApp = null;

@@ -25,17 +25,23 @@ public record Config(
         MiniApp miniApp,
         Secrets secrets) {
 
-    /**
-     * A team: its groups announce to a group chat, so tasks belong to different people and run on their own computers
-     * (ADR 0021). A personal bot has no group chat (ADR 0014), so its runs happen in this process.
-     */
     public boolean isTeam() {
         return isTeam(telegram);
     }
 
-    /** Same check as {@link #isTeam()}, usable before a {@code Config} exists to ask it, e.g. while validating one. */
+    /**
+     * A team: admins decide who joins, or several people share it; its tasks run on their own computers (ADR 0021).
+     * A personal bot has one member and no admins (ADR 0014), and its runs happen in this process even when it links
+     * group chats for announcements.
+     */
     public static boolean isTeam(Telegram telegram) {
-        return telegram.groups().stream().anyMatch(group -> group.chatId() != null);
+        long members = telegram.groups().stream().flatMap(group -> group.members().stream()).mapToLong(Member::id)
+                .distinct().count();
+        return !telegram.admins().isEmpty() || members > 1;
+    }
+
+    public boolean isPersonal() {
+        return !isTeam();
     }
 
     /** Instance plan limits with the project's override applied field by field. */
@@ -62,9 +68,10 @@ public record Config(
     }
 
     /**
-     * A team's chat with its members and the projects it owns; every project belongs to exactly one group (ADR 0012).
+     * A group with its members and the projects it owns; every project belongs to exactly one group (ADR 0012). A
+     * personal bot's group may link a chat too, for announcements (ADR 0014).
      *
-     * @param chatId the group chat for announcements; null for a personal bot, whose tasks stay in private chats (ADR 0014)
+     * @param chatId the group chat for announcements; null when the group has none, so its tasks stay in private chats
      */
     public record Group(String name, Long chatId, List<Member> members, List<String> projects) {
     }

@@ -27,6 +27,10 @@ public final class Renderer {
     private static final int TITLE_LIMIT = 80;
     private static final int ACTION_LIMIT = 120;
     private static final int INSTRUCTION_LIMIT = 150;
+    /** A plan question's text: long enough for any real question, short enough for its message. */
+    private static final int QUESTION_LIMIT = 3000;
+    /** Telegram sets no documented limit on a button's label, but a longer one is cut off on screen. */
+    private static final int BUTTON_LIMIT = 40;
     /** Ten parts of this length still fit one message. */
     private static final int TOPIC_LIMIT = 300;
 
@@ -49,10 +53,16 @@ public final class Renderer {
     }
 
     /**
-     * @param keyboard rows of inline buttons, empty for none
-     * @param document non-null when the content is sent as a file; {@code html} is then its caption
+     * @param keyboard   rows of inline buttons, empty for none
+     * @param document   non-null when the content is sent as a file; {@code html} is then its caption
+     * @param forceReply the input field's placeholder when the message asks for a forced reply instead of offering
+     *                   buttons; null otherwise
      */
-    public record Rendered(String html, List<List<Button>> keyboard, Document document) {
+    public record Rendered(String html, List<List<Button>> keyboard, Document document, String forceReply) {
+
+        public Rendered(String html, List<List<Button>> keyboard, Document document) {
+            this(html, keyboard, document, null);
+        }
     }
 
     private final ResourceBundle messages;
@@ -84,6 +94,10 @@ public final class Renderer {
      *                 instead (ADR 0020), never {@code kind}'s actual rendering
      */
     public Rendered render(OutboxKind kind, JsonNode payload, boolean fellBack) {
+        if (fellBack && kind == OutboxKind.DRAFT_PROMPT) {
+            // A task given in the group (G-1b): its giver has to open the private chat first.
+            return plain(format("group.taskStartFirst", escape(payload.path("requester").asText()), escape(botUsername)));
+        }
         if (fellBack) {
             // Meant for the requester's private chat: the group learns only that it could not be delivered (ADR 0020).
             return plain(format("fallback.private", taskId(payload), escape(botUsername)));
@@ -101,6 +115,9 @@ public final class Renderer {
             case DRAFT_EXPIRED -> plain(text("draft.expired")
                     + (payload.hasNonNull("title") ? "\n" + escapeWithin(payload.get("title").asText(), TITLE_LIMIT) : ""));
             case PLAN_READY -> throw new IllegalStateException("rendered above");
+            case PLAN_QUESTION -> planQuestion(payload);
+            case PLAN_ANSWER_PROMPT -> new Rendered(format("plan.answerPrompt", taskId(payload), payload.path("index").asInt()), List.of(),
+                    null, text("plan.answerPlaceholder"));
             case EXECUTION_QUEUED -> plain(format("task.executionQueued", taskId(payload), escape(payload.path("by").asText())));
             case CORRECTION_QUEUED -> plain(format("task.correctionQueued", taskId(payload)));
             case CORRECTION_REFUSED -> plain(switch (payload.path("reason").asText()) {
@@ -161,7 +178,46 @@ public final class Renderer {
             case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
             case JOIN_DENIED -> plain(text("join.denied"));
             case MANAGE -> manage(payload);
+            case GROUP_LINK -> groupLink(payload);
+            case GROUP_LINKED -> plain(format("group.greeting", escape(payload.path("projects").asText())));
+            case GROUP_TASK_SENT -> plain(format("group.taskSent", escape(payload.path("requester").asText())));
+            case UNKNOWN_USERNAME -> plain(format("group.unknownUsername", escape(payload.path("username").asText())));
         };
+    }
+
+    /**
+     * Asks which project a group the bot was added to belongs to; once answered, says what was linked or that it was not.
+     * Buttons carry the project's index, not its name, so a long name still fits Telegram's 64 bytes of callback data.
+     */
+    private Rendered groupLink(JsonNode payload) {
+        String title = escapeWithin(payload.path("title").asText(), TITLE_LIMIT);
+        switch (payload.path("status").asText()) {
+            case "LINKED" -> {
+                return plain(format("group.linkedTo", title, escape(payload.path("project").asText())));
+            }
+            case "DECLINED" -> {
+                return plain(format("group.declined", title));
+            }
+            default -> {
+                // OPEN: asked below.
+            }
+        }
+        String chatId = String.valueOf(payload.path("chatId").asLong());
+        List<List<Button>> keyboard = new ArrayList<>();
+        List<Button> row = new ArrayList<>();
+        JsonNode projects = payload.path("projects");
+        for (int index = 0; index < projects.size(); index++) {
+            row.add(new Button(projects.get(index).asText(), "link:" + chatId + ":" + index));
+            if (row.size() == 3) {
+                keyboard.add(row);
+                row = new ArrayList<>();
+            }
+        }
+        if (!row.isEmpty()) {
+            keyboard.add(row);
+        }
+        keyboard.add(List.of(new Button(text("button.groupNoLink"), "link:" + chatId + ":-")));
+        return new Rendered(format("group.linkAsk", title), keyboard, null);
     }
 
     /**
@@ -342,7 +398,8 @@ public final class Renderer {
         JsonNode plan = payload.path("plan");
         String planRef = taskId + ":" + payload.path("planSeq").asInt();
         boolean openQuestions = !plan.path("questions").isEmpty();
-        // With open questions there is nothing to approve yet: members answer by replying (a correction).
+        // With open questions there is nothing to approve yet: members answer them under the question messages (G-1d)
+        // or by replying, and either way the answers come back as a correction.
         List<List<Button>> buttons = List.of(openQuestions
                 ? List.of(new Button(text("button.reject"), "reject:" + planRef))
                 : List.of(new Button(text("button.approve"), "approve:" + planRef), new Button(text("button.reject"), "reject:" + planRef)));
@@ -370,6 +427,33 @@ public final class Renderer {
         return new Rendered(caption, buttons, new Document("plan-" + taskId + ".md", markdown(payload)));
     }
 
+    /**
+     * One open question of a plan, with a button per option and two for answering otherwise (G-1d); once answered, the
+     * answer and no buttons. Buttons carry indexes only, so callback data stays within Telegram's 64 bytes.
+     */
+    private Rendered planQuestion(JsonNode payload) {
+        String taskId = taskId(payload);
+        int index = payload.path("index").asInt();
+        String question = escapeWithin(payload.path("text").asText(), QUESTION_LIMIT);
+        if (payload.hasNonNull("answer")) {
+            return plain(format("plan.questionAnswered", taskId, index, payload.path("total").asInt(), question,
+                    escapeWithin(payload.get("answer").asText(), QUESTION_LIMIT)));
+        }
+        String data = "q:" + taskId + ":" + payload.path("planSeq").asInt() + ":" + index + ":";
+        List<List<Button>> keyboard = new ArrayList<>();
+        JsonNode options = payload.path("options");
+        for (int option = 0; option < options.size(); option++) {
+            keyboard.add(List.of(new Button(truncate(options.get(option).asText(), BUTTON_LIMIT), data + option)));
+        }
+        keyboard.add(List.of(new Button(text("button.answerOwn"), data + "w"), new Button(text("button.youDecide"), data + "d")));
+        return new Rendered(format("plan.question", taskId, index, payload.path("total").asInt(), question), keyboard, null);
+    }
+
+    /** A plan item's text; a question may be an object with answer options (G-1d). */
+    private static String itemText(JsonNode item) {
+        return item.isObject() ? item.path("text").asText() : item.asText();
+    }
+
     private void htmlSection(StringBuilder html, String labelKey, JsonNode items, boolean numbered) {
         if (items.isEmpty()) {
             return;
@@ -377,7 +461,7 @@ public final class Renderer {
         html.append("\n<b>").append(text(labelKey)).append("</b>\n");
         int number = 1;
         for (JsonNode item : items) {
-            html.append(numbered ? number++ + ". " : "• ").append(escape(item.asText())).append('\n');
+            html.append(numbered ? number++ + ". " : "• ").append(escape(itemText(item))).append('\n');
         }
     }
 
@@ -395,7 +479,7 @@ public final class Renderer {
             md.append("\n## ").append(text(section[0])).append("\n\n");
             int number = 1;
             for (JsonNode item : items) {
-                md.append(number++).append(". ").append(item.asText()).append('\n');
+                md.append(number++).append(". ").append(itemText(item)).append('\n');
             }
         }
         return md.toString();

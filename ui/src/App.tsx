@@ -10,6 +10,7 @@ import AddProjectPage from "./mini/AddProjectPage";
 import { useTelegramBackButton } from "./mini/backButton";
 import { RestartContext, useRestartNeeded } from "./mini/data";
 import FieldEditPage from "./mini/FieldEditPage";
+import GroupsPage from "./mini/GroupsPage";
 import HomePage from "./mini/HomePage";
 import { ListStyles, Section } from "./mini/List";
 import { ADMIN_PAGES, parentOf, projectPath, screenOf, type PagePath, type Screen } from "./mini/paths";
@@ -80,6 +81,7 @@ function MiniPage({ path }: { path: PagePath }) {
       </Section>
     );
   }
+  if (path === "/groups") return <GroupsPage />;
   return <div style={{ paddingTop: 12 }}><Page path={path === "/overview" ? "/" : path} /></div>;
 }
 

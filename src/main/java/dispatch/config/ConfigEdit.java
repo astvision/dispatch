@@ -99,10 +99,19 @@ public final class ConfigEdit {
      * @param value the value as typed; it is written quoted where YAML would read it differently
      */
     public static String set(String text, At at, String value) {
+        return setScalar(text, at, scalar(value));
+    }
+
+    /** Sets the value at {@code at} to a plain integer, e.g. a chat id; written unquoted, since YAML reads a bare
+     * integer as a number however it starts, unlike {@link #set(String, At, String)}'s general text ('-' leads both). */
+    public static String set(String text, At at, long value) {
+        return setScalar(text, at, Long.toString(value));
+    }
+
+    private static String setScalar(String text, At at, String scalar) {
         if (at.steps().isEmpty() || !(at.steps().getLast() instanceof Key)) {
             throw new IllegalArgumentException("set needs a key at the end, got " + at);
         }
-        String scalar = scalar(value);
         ConfigText.Lines lines = new ConfigText.Lines(text);
         Walk walk = walk(ConfigText.root(text), at);
         if (!walk.complete(at)) {

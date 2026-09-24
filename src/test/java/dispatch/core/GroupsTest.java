@@ -70,4 +70,20 @@ class GroupsTest {
         assertTrue(groups.isMemberOfProjectGroup("telegram:3", "life"));
         assertFalse(groups.isMemberOfProjectGroup("telegram:3", "alm"));
     }
+
+    @Test
+    void theOneMemberOfAPersonalBotMayManageItAndAnAdminMayManageATeam() {
+        Groups personal = new Groups(new Config.Telegram(List.of(), List.of(
+                new Config.Group("bold", -1L, List.of(new Config.Member(100, "Bold")), List.of("alm")))));
+        Groups team = new Groups(new Config.Telegram(List.of(100L), List.of(
+                new Config.Group("backend", -1L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
+                        List.of("alm")))));
+
+        assertTrue(personal.isPersonal());
+        assertTrue(personal.mayManage("telegram:100"));
+        assertFalse(personal.mayManage("telegram:999"));
+        assertFalse(team.isPersonal());
+        assertTrue(team.mayManage("telegram:100"));
+        assertFalse(team.mayManage("telegram:200"), "a member who is not an admin");
+    }
 }

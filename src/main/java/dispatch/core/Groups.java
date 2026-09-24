@@ -41,6 +41,12 @@ public final class Groups {
         return telegram.groups().stream().anyMatch(group -> contains(group, requesterRef));
     }
 
+    /** The member's name as configured (the first group listing them wins), empty for someone who is not a member. */
+    public Optional<String> memberName(String requesterRef) {
+        return telegram.groups().stream().flatMap(group -> group.members().stream())
+                .filter(member -> ("telegram:" + member.id()).equals(requesterRef)).map(Config.Member::name).findFirst();
+    }
+
     public Set<String> projectsOfMember(String requesterRef) {
         Set<String> projects = new HashSet<>();
         telegram.groups().stream().filter(group -> contains(group, requesterRef)).forEach(group -> projects.addAll(group.projects()));
@@ -85,6 +91,17 @@ public final class Groups {
 
     public List<Config.Group> all() {
         return telegram.groups();
+    }
+
+    /** One member and no admins: a personal bot (ADR 0014). */
+    public boolean isPersonal() {
+        return admins().isEmpty() && all().stream().flatMap(group -> group.members().stream())
+                .mapToLong(Config.Member::id).distinct().count() == 1;
+    }
+
+    /** Who may change this Dispatch's setup from Telegram: an admin, or a personal bot's one member. */
+    public boolean mayManage(String requesterRef) {
+        return isAdmin(requesterRef) || (isPersonal() && isMember(requesterRef));
     }
 
     private Optional<Config.Group> byChat(String chatRef) {

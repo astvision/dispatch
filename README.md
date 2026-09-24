@@ -84,6 +84,17 @@ dispatch ui                                      # manage it in your browser: pr
 
 The service is a systemd user service on Linux, a launchd agent on macOS and a Task Scheduler task on Windows. It starts at login and restarts after a failure. On Linux, it keeps running after you log out only once lingering is on; `dispatch service status` says so.
 
+### A bot for just you
+
+Everything stays in your private chat: tasks, plans, corrections and results. To also see a project's one-line
+announcements in a Telegram group, add the bot to that group, or send `/status@<bot>` there if it is already in it —
+it asks you privately which project, and a tap links it, with no restart. In the group, `/task@<bot> text` or a message
+mentioning `@<bot>` opens the task in your private chat as usual (a reply mentioning the bot takes the replied
+message as the task); the group gets announcements and answers `/status@bot`. Mentioning a member there (`@username`, or
+picking them by name) gives them the message as a task in their private chat, ending with `Хүсэлт: <your name>`; this
+needs the bot to be the group's admin, and an `@username` works once that member has written to the bot. Unlink a group from the Mini App's **Группүүд** screen
+(Home › Dispatch): the group keeps its projects, only the announcements stop (ADR 0023).
+
 ### A bot for your team
 
 One machine runs the team's bot, with clones of the team's projects: a small server or an always-on computer. Run `dispatch init` there and choose **My team**. Everyone writes their tasks to the same bot, in their own private chat, and the team group gets a one-line announcement per task and outcome.
@@ -91,6 +102,7 @@ One machine runs the team's bot, with clones of the team's projects: a small ser
 - **Joining later:** someone new opens the bot and writes to it. The bot's admins (you, after `init`) get their name with a button per group and **Deny**. Allowing adds them to the config and they can give tasks at once, no restart needed. After a Deny, a person can ask again a day later.
 - **Admins:** `telegram.admins` in the config lists the Telegram user ids of the people who decide.
 - **Config:** plain YAML you may edit by hand; `dispatch check` validates it. Per project: `path` (the clone), `baseBranch`, and optionally `model` and `effort` (`low`, `medium`, `high`, `xhigh` or `max`), for both phases or per phase: `plan: { model: opus, effort: high }` or `execute: { model: sonnet }`. Dispatch works in its own worktrees under the state directory and only adds `dispatch/<task>` branches to the clone.
+- **Linking a group:** an admin adds the bot to a Telegram group, or sends `/status@<bot>` there if it is already in it, and taps which project it's for; the group then gets that project's announcements and answers `/status@bot`, and a member of it can start a task there with `/task@<bot> text` or by mentioning `@<bot>`: the task still opens in their private chat. Unlink a group from the Mini App's **Группүүд** screen — it keeps its projects, only the announcements stop (ADR 0023).
 - **Workers:** once a group has a chat, each member's tasks run on their own computer, not this machine's: `workers.publicUrl` and `workers.port` are then required (`dispatch init` and `dispatch ui` both ask for them; see `deploy/example.yaml`). Dispatch listens only on `127.0.0.1:<port>`; publish `publicUrl` in front of it with a tunnel, a reverse proxy or a private network. This machine needs no `claude` for tasks and no `gh` at all — only members' computers do. **Upgrading an existing team config:** add a `workers` block before starting this version, or Dispatch refuses to start. Send `/worker` in the bot's private chat for a pairing code, and again to list or revoke your computers.
 
 ### Your own computer in a team
@@ -227,6 +239,10 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 | **✂️ Салгах** on that prompt | Haiku lists the separate tasks in your message (about $0.015, a few seconds). **✂️ N даалгавар болгох** gives each its own prompt; **Нэг даалгавар** keeps the message as one task |
 | **Approve** on the plan | The agent implements it; Dispatch commits, pushes `dispatch/N` and sends you the draft PR link and summary |
 | reply to the plan, or write in the task's topic | A correction: the agent revises the plan in the same session |
+| ❓ question messages under a plan with open questions | One at a time, each with the agent's likely answers as buttons. Once the last is answered, all answers go to the agent as one correction |
+| an answer button on a ❓ question | That option is your answer |
+| **✍️ Өөрөөр хариулах**, then write, or reply to the ❓ question | Your own words are the answer |
+| **🤷 Та шийд** | The agent picks the most reasonable answer and notes it as an assumption |
 | **Reject** on the plan | Closes the task |
 | reply to the result, or write in a finished task's topic | A follow-up: the agent continues in the same session, and one more commit goes to the same pull request |
 | `/retry N` | Repeats task N's failed step: a failed plan is planned again, a failed execution continues, a failed delivery is only delivered again |
@@ -238,9 +254,9 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 
 Each plan and result ends with the model that answered, the cost and the duration. A ⚠️ line appears when the model isn't the one the config asks for.
 
-**In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot`, `/stats@bot` and `/projects@bot` there cover that group's projects. Replying to an outcome line there is a follow-up too. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
+**In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot`, `/stats@bot` and `/projects@bot` there cover that group's projects. Replying to an outcome line there is a follow-up too. A member of the group gives a task there with `/task@bot text` or a message mentioning `@bot` (replying to a message takes that message as the task): the draft with its project and priority buttons opens in their private chat, with the project already chosen if `/task@bot project text` names one of the group's or the group has just one, and the group gets `✉️ <name>: sent to the private chat`, or, if they never pressed Start there, a hint to do so. Mentioning another member of the group's projects (`@username` or a name picked from the list) gives them the message as a task the same way: the draft opens in their private chat with `Хүсэлт: <author>` as its last line, and the group's line names them. An `@username` is known once that member has written to the bot or in the group; an unknown one gets a one-line answer. Messages from anyone outside the group's projects are left alone. The bot sees such mentions only as the group's admin. `/cancel` and `/retry` stay private. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
 
-Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject, reprioritize, follow up on or retry their task; the requester or an admin can cancel it. Other members see only a task's headline: who, project, title, priority, state and pull request, not its plan, the agent's actions or its cost. A plan with open questions has no Approve button: answer the questions by replying to it. The most urgent queued task starts first; nothing running is interrupted.
+Only configured members can give tasks, and only for their groups' projects. Only the requester can approve, correct, reject, reprioritize, follow up on or retry their task; the requester or an admin can cancel it. Other members see only a task's headline: who, project, title, priority, state and pull request, not its plan, the agent's actions or its cost. A plan with open questions has no Approve button: answer its ❓ question messages, or reply to the plan with a correction, which makes the remaining question buttons stale. The most urgent queued task starts first; nothing running is interrupted.
 
 ## Run from a checkout
 

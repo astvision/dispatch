@@ -7,7 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +29,25 @@ class ConfigLoaderTest {
             "TELEGRAM_BOT_TOKEN", "123:abc",
             "GH_TOKEN", "github_pat_x",
             "STATE_DIRECTORY", STATE);
+
+    /** dispatch init's own personal.yaml (ADR 0014), with its placeholders filled with absolute, non-existent paths. */
+    private static final String PERSONAL_BASE = personalYaml()
+            .replace("STATE_DIR", ROOT.resolve("var/lib/dispatch/bold").toString())
+            .replace("CLONE", ROOT.resolve("home/bold/work/alm").toString());
+    /** The same personal config, but its one group now also links a chat for announcements (this task). */
+    private static final String PERSONAL_WITH_CHAT =
+            PERSONAL_BASE.replace("    - name: bold\n", "    - name: bold\n      chatId: -4883391545\n");
+    /** PERSONAL_WITH_CHAT plus an admin, which makes it a team whose group chat now needs a workers block. */
+    private static final String TEAM_WITH_CHAT_NO_WORKERS =
+            PERSONAL_WITH_CHAT.replace("telegram:\n", "telegram:\n  admins: [123456789]\n");
+
+    private static String personalYaml() {
+        try (InputStream in = ConfigLoaderTest.class.getResourceAsStream("/personal.yaml")) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
 
     @TempDir
     Path dir;
@@ -355,7 +377,7 @@ class ConfigLoaderTest {
         ConfigException error = assertThrows(ConfigException.class,
                 () -> ConfigLoader.load(write(VALID.replace(WORKERS_BLOCK, "")), ENV));
 
-        assertTrue(error.getMessage().contains("workers: required once a group has a chat"), error.getMessage());
+        assertTrue(error.getMessage().contains("workers: required once a team's group has a chat"), error.getMessage());
     }
 
     @Test
@@ -381,13 +403,29 @@ class ConfigLoaderTest {
     }
 
     @Test
-    void aConfigWithSeveralMembersButNoGroupChatIsNotATeam() throws IOException {
+    void aConfigWithSeveralMembersIsATeamEvenWithoutAGroupChat() throws IOException {
         String noChat = VALID.replace("      chatId: -1001234567890\n", "").replace(WORKERS_BLOCK, "");
 
         Config config = ConfigLoader.load(write(noChat), ENV);
 
+        assertNull(config.workers(), "no group has a chat, so no workers are needed yet");
+        assertTrue(config.isTeam(), "several members share it, whether or not a group has a chat");
+    }
+
+    @Test
+    void aPersonalBotMayHaveGroupChatsWithoutWorkers() throws IOException {
+        Config config = ConfigLoader.load(write(PERSONAL_WITH_CHAT), ENV);
+
+        assertFalse(config.isTeam());
+        assertEquals(-4883391545L, config.telegram().groups().getFirst().chatId());
         assertNull(config.workers());
-        assertFalse(config.isTeam(), "a team is a group chat that announces to several people, not a member count");
+    }
+
+    @Test
+    void aTeamWithAGroupChatStillNeedsWorkers() throws IOException {
+        ConfigException e = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(TEAM_WITH_CHAT_NO_WORKERS), ENV));
+
+        assertTrue(e.getMessage().contains("workers: required"), e.getMessage());
     }
 
     @Test

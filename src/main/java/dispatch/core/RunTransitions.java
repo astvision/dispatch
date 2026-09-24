@@ -74,6 +74,10 @@ public final class RunTransitions {
             payload.set("plan", Json.read(plan.toJson()));
             putRunDetails(payload, run, result, now);
             enqueueForRequester(tx, task, OutboxKind.PLAN_READY, payload, now);
+            if (!plan.questionItems().isEmpty()) {
+                // One at a time: the next is sent once this one is answered (G-1d).
+                TaskService.enqueueQuestion(tx, task, seq, plan.questionItems(), 1, now);
+            }
             logTransition(tx, taskId, seq, Phase.PLANNING, Phase.AWAITING_APPROVAL);
         });
     }

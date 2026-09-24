@@ -72,6 +72,11 @@ public final class FakeTelegram implements AutoCloseable {
         scripted.computeIfAbsent(method, m -> new ConcurrentLinkedDeque<>()).add(new String[] {String.valueOf(status), body});
     }
 
+    /** The next call to {@code method} fails as the Bot API reports an error, e.g. 403 for a user who never started the bot. */
+    public void failNext(String method, int code, String description) {
+        respond(method, code, Json.object().put("ok", false).put("error_code", code).put("description", description).toString());
+    }
+
     /** Every sendMessage to {@code chatId} gets this HTTP status and body, e.g. a user who never started the bot. */
     public void refuseChat(long chatId, int status, String body) {
         refusedChats.put(chatId, new String[] {String.valueOf(status), body});

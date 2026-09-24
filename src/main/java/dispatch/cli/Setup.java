@@ -6,6 +6,7 @@ import dispatch.config.Config;
 import dispatch.config.ConfigException;
 import dispatch.config.ConfigLoader;
 import dispatch.config.ConfigText;
+import dispatch.config.GroupWriter;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.telegram.TelegramNames;
@@ -255,7 +256,7 @@ public final class Setup {
                     .append("    - ").append(members.getFirst().id()).append('\n');
         }
         yaml.append("  groups:\n")
-                .append("    - name: ").append(team).append(shared ? "\n" : "     # a personal bot: no group chat, everything stays private\n");
+                .append("    - name: ").append(team).append(shared ? "\n" : "     " + GroupWriter.NO_CHAT_COMMENT + "\n");
         if (chat != null) {
             yaml.append("      chatId: ").append(chat.id()).append("     # ").append(chat.title().replace('\n', ' ')).append('\n');
         }

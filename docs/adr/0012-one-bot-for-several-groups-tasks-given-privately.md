@@ -1,5 +1,8 @@
 # One bot for several groups; tasks are given privately
 
+Amended: a member may also start a task from their project's linked group by mentioning the bot; the draft still opens privately (G-1b).
+Amended: a member may also be mentioned in their project's linked group to receive the message as a task, drafted in their own private chat; the bot must be an admin of the group to see such messages (G-1c).
+
 An instance now serves several Telegram groups, and a person may be a member of several of them. The config lists groups, each with its members and projects; every project belongs to exactly one group. A member can give tasks for any project of their groups.
 
 Tasks are given in the private chat with the bot, not in a group. A plain message is enough: Dispatch asks with buttons for the project (skipped when the member has only one) and the priority. A message that waits for those answers is stored, so a restart loses nothing; unanswered, it expires after a day. The plan, corrections and result stay in the private chat, as ADR 0011 set out.

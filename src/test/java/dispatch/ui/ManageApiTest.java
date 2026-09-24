@@ -3,6 +3,7 @@ package dispatch.ui;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -12,12 +13,16 @@ import dispatch.cli.CliException;
 import dispatch.cli.Service;
 import dispatch.config.Config;
 import dispatch.config.ConfigLoader;
+import dispatch.telegram.BotApi;
+import dispatch.testing.FakeTelegram;
 import dispatch.testing.GitFixture;
 import java.io.IOException;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
@@ -313,6 +318,71 @@ class ManageApiTest {
 
         assertEquals("Bold is the team's only admin; make someone else admin first", demoteRefused.getMessage());
         assertEquals("Bold is the team's only admin; make someone else admin first", removeRefused.getMessage());
+    }
+
+    @Test
+    void unlinkingAGroupRemovesItsChatAndKeepsItsProjects() throws Exception {
+        JsonNode saved = call("/api/manage/groups/unlink", "{\"version\":\"" + version() + "\",\"name\":\"acme\"}");
+
+        assertTrue(saved.path("restartNeeded").asBoolean());
+        Config.Group group = load().telegram().groups().getFirst();
+        assertNull(group.chatId());
+        assertEquals(List.of("alm", "crm"), group.projects());
+    }
+
+    @Test
+    void unlinkingAGroupWithNoChatIsRefused() throws Exception {
+        call("/api/manage/groups/unlink", "{\"version\":\"" + version() + "\",\"name\":\"acme\"}");
+
+        CliException refused = assertThrows(CliException.class,
+                () -> call("/api/manage/groups/unlink", "{\"version\":\"" + version() + "\",\"name\":\"acme\"}"));
+
+        assertEquals("acme has no group chat to unlink", refused.getMessage());
+    }
+
+    @Test
+    void unlinkingAGroupLeavesItsChatBestEffort() throws Exception {
+        try (FakeTelegram telegram = FakeTelegram.start()) {
+            ManageApi withBot = new ManageApi(config, service, Map.of("TELEGRAM_BOT_TOKEN", TOKEN),
+                    token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)));
+
+            withBot.routes().get("/api/manage/groups/unlink").apply(Json.MAPPER.readTree("{\"version\":\"" + version() + "\",\"name\":\"acme\"}"));
+
+            FakeTelegram.Request leave = telegram.awaitRequest("leaveChat", Duration.ofSeconds(2));
+            assertEquals(-1001234567890L, leave.json().path("chat_id").asLong());
+        }
+    }
+
+    @Test
+    void aFailedLeaveDoesNotUndoTheUnlink() throws Exception {
+        try (FakeTelegram telegram = FakeTelegram.start()) {
+            telegram.failNext("leaveChat", 400, "Bad Request: group chat was deactivated");
+            ManageApi withBot = new ManageApi(config, service, Map.of("TELEGRAM_BOT_TOKEN", TOKEN),
+                    token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)));
+
+            Object answer = withBot.routes().get("/api/manage/groups/unlink")
+                    .apply(Json.MAPPER.readTree("{\"version\":\"" + version() + "\",\"name\":\"acme\"}"));
+
+            assertTrue(Json.MAPPER.readTree(Json.write(answer)).path("saved").asBoolean());
+            assertNull(load().telegram().groups().getFirst().chatId());
+        }
+    }
+
+    @Test
+    void aFailedTokenLookupDoesNotFailTheUnlinkEither() throws Exception {
+        // A wrongly permissioned or otherwise unreadable dispatch.env makes SecretsFile.environment throw a
+        // CliException, exactly as a call inside leaveChat's own try would see it: still a RuntimeException, and the
+        // already-committed save must survive it exactly as it survives leaveChat's own TelegramException.
+        ManageApi withBrokenTokenLookup = new ManageApi(config, service, Map.of("TELEGRAM_BOT_TOKEN", TOKEN),
+                token -> {
+                    throw new CliException("cannot read dispatch.env; it must belong to the user who runs Dispatch");
+                });
+
+        Object answer = withBrokenTokenLookup.routes().get("/api/manage/groups/unlink")
+                .apply(Json.MAPPER.readTree("{\"version\":\"" + version() + "\",\"name\":\"acme\"}"));
+
+        assertTrue(Json.MAPPER.readTree(Json.write(answer)).path("saved").asBoolean());
+        assertNull(load().telegram().groups().getFirst().chatId());
     }
 
     @Test

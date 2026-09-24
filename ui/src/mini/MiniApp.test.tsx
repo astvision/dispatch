@@ -18,6 +18,7 @@ vi.mock("../api", async (importOriginal) => ({
   listTasks: vi.fn(),
   editProject: vi.fn(),
   removeProject: vi.fn(),
+  unlinkGroup: vi.fn(),
 }));
 
 const ADMIN: api.Me = { ref: "telegram:100", name: "Bold", admin: true, bot: "dispatch_task_bot" };
@@ -156,6 +157,25 @@ describe("the Mini App", () => {
 
     await waitFor(() => expect(api.removeProject).toHaveBeenCalledWith("v1", "alm"));
     await waitFor(() => expect(window.location.pathname).toBe("/"));
+  });
+
+  it("lists linked groups and unlinks one after asking on the page", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    vi.mocked(api.unlinkGroup).mockResolvedValue(saved);
+    window.history.pushState(null, "", "/groups");
+    render(<App />);
+
+    fireEvent.click(await row("acme"));
+    fireEvent.click(await row("Тийм, салгах"));
+
+    await waitFor(() => expect(api.unlinkGroup).toHaveBeenCalledWith("v1", "acme"));
+  });
+
+  it("says how to link a group, since only Telegram can add the bot", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    window.history.pushState(null, "", "/groups");
+    render(<App />);
+    expect(await screen.findByText(/ботыг группт нэмнэ/)).toBeInTheDocument();
   });
 
   it("goes back one level at a time", async () => {

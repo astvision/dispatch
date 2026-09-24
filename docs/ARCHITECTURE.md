@@ -32,6 +32,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Management from a phone | An opt-in Telegram Mini App served by `dispatch run`, authenticated by Telegram's signed launch data | 0019 |
 | Task privacy | Another member's task shows only its headline; only the requester acts on it, except cancel, which an admin may also do; a private message Telegram refuses falls back to a content-free group notice | 0020 |
 | Worker readiness | A member's computer reports on its poll whether `claude`, `gh` and each project's clone work; a run waits until a computer that may take it can, and its member is told the reason once (the assignee half is decided but not built yet) | 0022 |
+| Linking a group | Personal vs. team is `telegram.admins`/member count, not "a group has a chat"; whoever may manage Dispatch links a group to a project from Telegram, applied without a restart; the Mini App lists and unlinks | 0023 |
 
 Also decided without an ADR:
 - Only members of a configured group act, for their groups' projects, in their own private chat with the bot; groups get announcements and read-only reports.
@@ -120,6 +121,7 @@ projects                   wherever each project's path points; Dispatch adds wo
 | `outbox` | `task_id`, `kind`, `chat_ref`, `reply_to_ref`, `edit_ref` (a message this row redraws instead of sending a new one), `fallback_chat_ref/reply_to_ref` (where a refused private message goes instead), `fell_back`, `payload`, `status` (`PENDING / SENT / FAILED`), `attempts`, `next_attempt_at`, `last_error`, `sent_ref` |
 | `draft` | `requester_ref/name`, `chat_ref` (private chat), `origin_ref` (unique: the message, plus `#<part>` for a part), `description`, `project` (once chosen), `status` (`OPEN / CREATED / EXPIRED / SPLIT`), `task_id`, `prompt_ref` (the prompt ✂️ was pressed on), `split_state` (`SPLITTING / PROPOSED / ONE_TOPIC / KEPT / FAILED`), `topics` (the proposed parts, JSON), `parent_id` and `part` (for a part) |
 | `attachment` | `draft_id`, then `task_id` once the task is given; `file_ref` (the channel's id to download it), `name` (safe, numbered), `size` |
+| `plan_answer` | `task_id`, `plan_seq`, `question_index` (1-based; the three are the key), `answer`, `answered_by`, `answered_at`, `message_ref` (the question message, redrawn with the answer) |
 | `task_event` | `task_id`, `run_seq`, `at`, `actor`, `from_phase`, `to_phase`, `reason` (append-only audit) |
 | `join_request` | `requester_ref/name`, `username`, `status` (`OPEN / APPROVED / DENIED`), `group_name`, `decided_by(_name)`, `created_at`, `decided_at` |
 | `kv` | Telegram `getUpdates` offset |
@@ -188,8 +190,10 @@ A transition that loses a race updates 0 rows and is logged.
 2. Run the agent read-only, requiring the plan JSON schema.
 3. On success, store `plan_json` and move to AWAITING_APPROVAL. The outbox sends the plan to the requester:
    - `[Approve]` and `[Reject]`, where the button data carries the plan's run seq so a stale button is refused;
-   - if `questions` is non-empty, no Approve button: the requester answers by replying, which is a correction;
+   - if `questions` is non-empty, no Approve button: the requester answers them, which is a correction (see **Plan questions**);
    - plans over 4096 chars go as a message plus `plan-<id>.md`.
+
+**Plan questions** (G-1d): a question is `{text, options}` with up to four options of at most 40 characters (longer ones are cut; a plain string, as older plans have it, has no options). With the plan, the requester privately gets the first question as its own `PLAN_QUESTION` message: a button per option (`q:<task>:<planSeq>:<index>:<option>`), **✍️ Өөрөөр хариулах** (`…:w`, which sends a `PLAN_ANSWER_PROMPT` asking for a forced reply) and **🤷 Та шийд** (`…:d`, "choose the most reasonable answer and note it as an assumption"). A tap, or a reply to the question or to its prompt, stores the answer in `plan_answer`, redraws the question with it and sends the next one. The last answer queues one correction listing every question with its answer, as a typed reply would. Only the requester answers; a question of a superseded plan, an answered one, or one of a task no longer awaiting approval is stale. A typed reply to the plan is still a correction, after which the remaining questions are stale. Nothing of this goes to the group.
 
 **Approve** (by the requester only): an EXECUTE run is queued whose instruction is the approved plan. Another member's press, a stale button, a task in another phase, or a plan with open questions is refused in the button's answer.
 
@@ -237,7 +241,7 @@ A session is resumed only if an earlier run of that phase started its agent: a p
   
   So at startup Dispatch registers a command menu for each group (`setMyCommands`, chat scope: `/status`, `/history`, `/stats`, `/help`); picking a command from the menu reaches it. `/cmd@otherbot` is ignored. Edited messages are ignored. Never make the bot a group admin: admins receive every message.
 - Members' private chats with the bot are served: task messages, `/task`, `/start`, `/help`, `/status`, `/history`, `/stats`, `/cancel`, buttons and replies to plans, with their own command menu (`all_private_chats` scope). Private chats of non-members are ignored and logged. Groups not in the config: `leaveChat` + WARN. A group migrated to a supergroup is logged at ERROR with the new chat ID.
-- Buttons: draft project / priority / ✂️ and the split proposal's split / keep whole, plan Approve / Reject, status priority, stats view / period. Replies: correction (to a plan), follow-up (to a result or an outcome line). `/retry <id>` is private like `/cancel`; `/projects` works in both.
+- Buttons: draft project / priority / ✂️ and the split proposal's split / keep whole, plan Approve / Reject, plan question options / ✍️ / 🤷, status priority, stats view / period. Replies: correction (to a plan), answer (to a plan question or its prompt), follow-up (to a result or an outcome line). `/retry <id>` is private like `/cancel`; `/projects` works in both.
 - Durability (ADR 0010): the offset is stored in the same transaction as an update's effects. Every bot message except live status edits goes through the outbox, whose sender retries with backoff from 5 s to 5 min, honours `retry_after` on 429, falls back from a refused private chat to the group, marks other messages FAILED after 24 h or immediately on a permanent error, and logs every attempt.
 - Rendering: `messages_mn.properties` (ResourceBundle), HTML parse mode with escaping; agent text is cut after escaping so a message never passes Telegram's limit. Messages redrawn in place by a button (draft prompt, status, stats) are edited directly, best effort and redacted like outbox messages. A redraw that a background step causes (a split's answer) is an outbox row with `edit_ref`, retried like any other; a retried edit that Telegram reports as "not modified" counts as sent. Live progress is `/status` on demand.
 - Attachments: `getFile`, then a GET of `/file/bot<token>/<file_path>`; errors never carry the URL. See the Attachments flow.
@@ -267,7 +271,7 @@ The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the
 
 - The agent's environment excludes `TELEGRAM_BOT_TOKEN` and `GH_TOKEN`; only Dispatch's own git/gh calls get the token. This is a guardrail: processes running as the same user can still read each other's environment.
 - The init event's `permissionMode` must equal the requested mode (`plan` or `auto`). Otherwise the run is stopped at once and fails as `AGENT`: Claude Code does not refuse a mode the model lacks.
-- The plan schema requires the fields `understanding`, `findings`, `steps[]`, `risks[]` and `questions[]`.
+- The plan schema requires the fields `understanding`, `findings`, `steps[]`, `risks[]` and `questions[]` (each `{text, options[]}`, with 2–4 likely answers of at most 40 characters).
 - Prompt rules:
   - Write in the language of the task.
   - Plans: ask questions only when a wrong answer would make the change wrong or harmful; otherwise assume, and list the assumption under risks. Return the plan only as the JSON answer, not also as a plan file.
@@ -433,6 +437,7 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **UI-3c** Mini App as a list (built) | The Mini App opens on the bot and its projects (`/api/projects` for members, the config for admins) with search; a project's page holds its tasks and, for an admin, a row per setting edited on its own screen, and Remove; Telegram's own Back button; one restart notice for the whole Mini App |
 | **T-1** worker readiness (built) | Readiness on the worker's `/api/worker/next` poll, cached for a minute on the worker and stored per worker; the scheduler claims a run only when a computer that may take it is ready for its project and kind; one private `WORKER_BLOCKED` message per reason, and the reason on `/status` (ADR 0022) |
 | **T-2** assignment | A task's assignee separate from its requester, `@bot @dev …` intake in the group, fallback when an assignee leaves (ADR 0022) |
+| **G-1** group linking (built) | `isTeam()`/`isPersonal()` on the config's own terms; the link prompt and callback when the bot is added to or commanded in an unknown group; config writes that move or extend a group, applied with no restart; the Mini App's Группүүд screen (list, unlink); a migrated chat id rewritten automatically (ADR 0023) |
 | **M5** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.

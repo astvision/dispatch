@@ -22,7 +22,8 @@ class PlanTest {
 
     @Test
     void jsonRoundTripKeepsEveryField() {
-        Plan plan = new Plan("u", List.of("f"), List.of("s1", "s2"), List.of("r"), List.of("q?"));
+        Plan plan = new Plan("u", List.of("f"), List.of("s1", "s2"), List.of("r"),
+                List.of(new PlanQuestion("q?", List.of("yes", "no")), new PlanQuestion("Why?", List.of())));
 
         assertEquals(plan, Plan.parse(plan.toJson()));
     }
@@ -59,5 +60,34 @@ class PlanTest {
     @Test
     void notJsonIsInvalid() {
         assertThrows(InvalidPlanException.class, () -> Plan.parse("Here is my plan: ..."));
+    }
+
+    @Test
+    void questionsAreOldTextsOrObjectsWithOptions() {
+        Plan plan = Plan.parse("""
+                {"understanding":"u","findings":[],"steps":[],"risks":[],
+                 "questions":["Old style?",{"text":"Which env?","options":["staging","prod"]}]}""");
+
+        assertEquals(List.of("Old style?", "Which env?"), plan.questions());
+        assertEquals(List.of(new PlanQuestion("Old style?", List.of()), new PlanQuestion("Which env?", List.of("staging", "prod"))),
+                plan.questionItems());
+    }
+
+    @Test
+    void optionsAreTrimmedToFourOfAtMostFortyCharactersAndBlankOnesDropped() {
+        String long41 = "x".repeat(41);
+        Plan plan = Plan.parse("""
+                {"understanding":"u","findings":[],"steps":[],"risks":[],
+                 "questions":[{"text":"Which?","options":["a"," ","b","%s","c","d"]}]}""".formatted(long41));
+
+        assertEquals(List.of("a", "b", "x".repeat(39) + "…", "c"), plan.questionItems().getFirst().options());
+    }
+
+    @Test
+    void questionObjectWithoutTextOrWithNonTextOptionIsInvalid() {
+        assertThrows(InvalidPlanException.class, () -> Plan.parse(
+                "{\"understanding\":\"u\",\"findings\":[],\"steps\":[],\"risks\":[],\"questions\":[{\"options\":[\"a\"]}]}"));
+        assertThrows(InvalidPlanException.class, () -> Plan.parse(
+                "{\"understanding\":\"u\",\"findings\":[],\"steps\":[],\"risks\":[],\"questions\":[{\"text\":\"q\",\"options\":[1]}]}"));
     }
 }

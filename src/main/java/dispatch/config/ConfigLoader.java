@@ -30,7 +30,7 @@ public final class ConfigLoader {
     // (stateDir/repos/<name>), where either would resolve to a directory it does not own.
     private static final Pattern PROJECT_KEY = Pattern.compile("(?!\\.{1,2}$)[A-Za-z0-9._-]+");
     private static final Set<String> SUPPORTED_AGENTS = Set.of("claude-code");
-    private static final int MAX_GROUP_NAME = 40;
+    static final int MAX_GROUP_NAME = 40;
     /** Claude Code's --effort levels, in its own order. */
     private static final List<String> EFFORT_LEVELS = List.of("low", "medium", "high", "xhigh", "max");
     /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
@@ -238,8 +238,9 @@ public final class ConfigLoader {
      */
     private static Config.Workers validateWorkers(Config.Workers workers, Config.Telegram telegram, List<String> errors) {
         if (workers == null) {
-            if (Config.isTeam(telegram)) {
-                errors.add("workers: required once a group has a chat; each member's tasks then run on their own computer "
+            boolean needsWorkers = Config.isTeam(telegram) && telegram.groups().stream().anyMatch(group -> group.chatId() != null);
+            if (needsWorkers) {
+                errors.add("workers: required once a team's group has a chat; each member's tasks then run on their own computer "
                         + "(publicUrl and port, see deploy/example.yaml)");
             }
             return null;

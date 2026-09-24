@@ -7,7 +7,9 @@ import dispatch.Json;
 import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.config.Config;
+import dispatch.core.AnswerResult;
 import dispatch.core.DraftChoice;
+import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
 import dispatch.core.JoinDecision;
 import dispatch.core.JoinRequestResult;
@@ -24,13 +26,17 @@ import dispatch.domain.Task;
 import dispatch.store.Database;
 import dispatch.store.Kv;
 import dispatch.store.Outbox;
+import dispatch.store.TelegramUsers;
 import dispatch.store.Tx;
 import dispatch.store.Workers;
 import dispatch.worker.WorkerKeys;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -40,7 +46,9 @@ import java.util.Set;
  * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). The configured groups and
  * members' private chats with the bot are served (ADR 0011, 0012); other groups are left, other private chats ignored. A
  * group sees only its own projects, a member those of all their groups. Besides commands and buttons, a reply to a plan
- * message is a correction and a reply to a task's result is a follow-up.
+ * message is a correction, one to a plan's question message answers it (G-1d) and one to a task's result is a follow-up.
+ * A member who mentions the bot in their linked group gives a task, drafted in their private chat all the same (G-1b);
+ * one who mentions a fellow member there gives it to them, drafted in theirs (G-1c).
  */
 public final class UpdateHandler {
 
@@ -66,11 +74,12 @@ public final class UpdateHandler {
     private final WorkerKeys workers;
     private final String workerUrl;
     private final String miniAppUrl;
+    private final GroupLinks groupLinks;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox) {
-        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null, null);
+        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null, null, null);
     }
 
     /**
@@ -78,10 +87,12 @@ public final class UpdateHandler {
      * @param workers    null in personal mode, where a member has nothing to pair
      * @param workerUrl  the URL members' computers reach this machine on; null in personal mode
      * @param miniAppUrl where Telegram opens the Mini App; null when it is not configured, and /manage says so
+     * @param groupLinks asks whoever may manage Dispatch which project an unknown group is for; null to leave every
+     *                   unknown group, as before group linking
      */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
-                         WorkerKeys workers, String workerUrl, String miniAppUrl) {
+                         WorkerKeys workers, String workerUrl, String miniAppUrl, GroupLinks groupLinks) {
         if (workers != null) {
             Objects.requireNonNull(workerUrl, "workerUrl is required when workers is configured");
         }
@@ -99,20 +110,38 @@ public final class UpdateHandler {
         this.workers = workers;
         this.workerUrl = workerUrl;
         this.miniAppUrl = miniAppUrl;
+        this.groupLinks = groupLinks;
     }
 
     public void handle(JsonNode update) {
         long updateId = update.path("update_id").asLong();
         db.transaction(tx -> {
             if (update.has("message")) {
-                onMessage(tx, update.get("message"));
+                JsonNode message = update.get("message");
+                recordUsername(tx, message.path("from"), message.path("chat"));
+                onMessage(tx, message);
             } else if (update.has("callback_query")) {
-                onCallback(tx, update.get("callback_query"));
+                JsonNode callback = update.get("callback_query");
+                recordUsername(tx, callback.path("from"), callback.path("message").path("chat"));
+                onCallback(tx, callback);
             } else if (update.has("my_chat_member")) {
                 onMembershipChange(tx, update.get("my_chat_member"));
             }
             Kv.put(tx, OFFSET_KEY, Long.toString(updateId + 1));
         });
+    }
+
+    /**
+     * Keeps a member's @username in the username book, so a mention of it in a linked group finds them (G-1c). Only from
+     * a member's private chat or a linked group: other chats are not served, and non-members' names are not kept.
+     */
+    private void recordUsername(Tx tx, JsonNode from, JsonNode chat) {
+        if (!from.has("id") || !from.hasNonNull("username") || !groups.isMember(Refs.user(from.get("id").asLong()))) {
+            return;
+        }
+        if (isPrivateChatOf(chat, from) || groups.isGroupChat(Refs.chat(chat.path("id").asLong()))) {
+            TelegramUsers.record(tx, from.get("id").asLong(), from.get("username").asText(), clock.instant());
+        }
     }
 
     /** Moves past an update whose handling failed (already logged by the caller) so it cannot block the ones after it. */
@@ -152,11 +181,15 @@ public final class UpdateHandler {
             return;
         }
         if (!groups.isGroupChat(Refs.chat(chatId))) {
-            ignoreForeignChat(tx, chat, from);
+            ignoreForeignChat(tx, message);
             return;
         }
         if (message.has("migrate_to_chat_id")) {
             long newChatId = message.get("migrate_to_chat_id").asLong();
+            if (groupLinks != null) {
+                groupLinks.migrated(tx, chatId, newChatId);
+                return;
+            }
             tx.afterCommit(() -> Log.error("telegram.group_migrated", null, "chat_id", chatId, "new_chat_id", newChatId,
                     "action", "set the group's chatId in telegram.groups to the new id and restart"));
             return;
@@ -192,6 +225,9 @@ public final class UpdateHandler {
         if (topicTask.isPresent() && parsed.map(command -> !COMMANDS.contains(command.name())).orElse(true)) {
             // Inside a task's own topic, anything that is not a command is about that task: a follow-up once it has finished,
             // otherwise a correction of its plan, which is refused with the reason when no plan is waiting.
+            if (replyToQuestion(tx, message, who, origin, chatRef)) {
+                return;
+            }
             Task task = topicTask.get();
             if (task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED) {
                 tasks.followUp(tx, who, task.id(), text(message), origin, chatRef);
@@ -201,9 +237,19 @@ public final class UpdateHandler {
             return;
         }
         if (parsed.isEmpty()) {
-            if (!replyToTask(tx, message, who, origin, chatRef) && privateChat) {
+            if (replyToTask(tx, message, who, origin, chatRef)) {
+                return;
+            }
+            if (privateChat) {
                 // Anything else a member writes privately is a task to give (ADR 0012).
                 tasks.draft(tx, who, null, text(message), origin, attachments(message));
+            } else {
+                Optional<String> forBot = withoutBotMentions(message);
+                if (forBot.isPresent()) {
+                    groupTask(tx, who, null, forBot.get(), message, origin, chatRef);
+                } else {
+                    mentionTasks(tx, who, message, origin, chatRef);
+                }
             }
             return;
         }
@@ -214,7 +260,9 @@ public final class UpdateHandler {
         switch (command.name()) {
             case "task" -> {
                 if (!privateChat) {
-                    privateOnly(tx, chatRef, origin);
+                    Optional<Config.Project> named = firstWordProject(command.args(), groups.projectsOfChat(chatRef));
+                    groupTask(tx, who, named.map(Config.Project::name).orElse(null),
+                            named.isPresent() ? afterFirstWord(command.args()) : command.args(), message, origin, chatRef);
                     return;
                 }
                 giveTask(tx, who, command.args(), message, origin);
@@ -280,12 +328,163 @@ public final class UpdateHandler {
     /** /task [project] [text]: the first word names the project only if it is one of the member's; a replied message is the text. */
     private void giveTask(Tx tx, Requester who, String args, JsonNode message, String origin) {
         JsonNode repliedTo = message.path("reply_to_message");
-        String[] firstAndRest = args.split("\\s+", 2);
-        Set<String> mine = groups.projectsOfMember(who.ref());
-        Optional<Config.Project> named = projects.find(firstAndRest[0]).filter(project -> mine.contains(project.name()));
-        String own = named.isPresent() ? (firstAndRest.length > 1 ? firstAndRest[1].strip() : "") : args;
+        Optional<Config.Project> named = firstWordProject(args, groups.projectsOfMember(who.ref()));
+        String own = named.isPresent() ? afterFirstWord(args) : args;
         tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), withRepliedMessage(own, repliedTo), origin,
                 attachments(repliedTo, message));
+    }
+
+    /** The project the first word of /task's arguments names, by name or alias, if it is one of {@code candidates}. */
+    private Optional<Config.Project> firstWordProject(String args, Set<String> candidates) {
+        return projects.find(args.split("\\s+", 2)[0]).filter(project -> candidates.contains(project.name()));
+    }
+
+    private static String afterFirstWord(String args) {
+        String[] firstAndRest = args.split("\\s+", 2);
+        return firstAndRest.length > 1 ? firstAndRest[1].strip() : "";
+    }
+
+    /**
+     * A task given in a linked group, by mentioning the bot or with /task (G-1b): a member of that group gets the usual draft
+     * in their private chat, as private /task makes it. The project is the one named, else the group's only one; a replied
+     * message, unless the bot's own, comes first in the text and brings its files.
+     *
+     * @param projectKey a project of this group named with /task, null if none
+     */
+    private void groupTask(Tx tx, Requester who, String projectKey, String own, JsonNode message, String origin, String chatRef) {
+        Set<String> owned = groups.projectsOfChat(chatRef);
+        if (!inProjectGroup(who.ref(), owned)) {
+            enqueue(tx, OutboxKind.NOT_ALLOWED, chatRef, origin, Json.object().put("name", who.name()));
+            tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef));
+            return;
+        }
+        JsonNode repliedTo = humanReplied(message);
+        String text = withRepliedMessage(own, repliedTo);
+        if (text.isBlank()) {
+            enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object());
+            return;
+        }
+        String project = projectKey != null ? projectKey : onlyProject(owned);
+        tasks.draft(tx, who, project, text, origin, attachments(repliedTo, message),
+                new TaskService.GroupOrigin(chatRef, firstName(message, who)));
+    }
+
+    /**
+     * Members of the chat's project groups mentioned in a linked group, by @username or by name, each get the message as a
+     * task of their own, drafted in their private chat as G-1b drafts the author's (G-1c). The text is the message without
+     * those mentions, after a replied message as private /task puts it, and ends with who asked unless they asked
+     * themselves. The author must be in one of those groups too; anyone else's chat is left alone, without a refusal.
+     */
+    private void mentionTasks(Tx tx, Requester author, JsonNode message, String origin, String chatRef) {
+        List<Mention> mentions = mentions(message);
+        if (mentions.isEmpty()) {
+            return;
+        }
+        Set<String> owned = groups.projectsOfChat(chatRef);
+        if (!inProjectGroup(author.ref(), owned)) {
+            tx.afterCommit(() -> Log.info("group.mention_ignored", "author", author.ref(), "chat", chatRef));
+            return;
+        }
+        Map<Long, List<Mention>> developers = new LinkedHashMap<>();
+        List<String> unknown = new ArrayList<>();
+        for (Mention mention : mentions) {
+            Optional<Long> userId = mention.userId() != null ? Optional.of(mention.userId()) : TelegramUsers.idOf(tx, mention.username());
+            if (userId.isEmpty()) {
+                if (unknown.stream().noneMatch(name -> name.equalsIgnoreCase(mention.username()))) {
+                    unknown.add(mention.username());
+                }
+            } else if (inProjectGroup(Refs.user(userId.get()), owned)) {
+                developers.computeIfAbsent(userId.get(), id -> new ArrayList<>()).add(mention);
+            }
+        }
+        unknown.forEach(name -> enqueue(tx, OutboxKind.UNKNOWN_USERNAME, chatRef, origin, Json.object().put("username", name)));
+        if (developers.isEmpty()) {
+            return;
+        }
+        JsonNode repliedTo = humanReplied(message);
+        String own = withRepliedMessage(without(text(message), developers.values().stream().flatMap(List::stream).toList()), repliedTo);
+        if (own.isBlank()) {
+            // A bare mention is someone being called, not a task.
+            tx.afterCommit(() -> Log.info("group.mention_empty", "author", author.ref(), "chat", chatRef));
+            return;
+        }
+        String askedBy = renderer.text("group.requestedBy") + " " + firstName(message, author);
+        List<Attachment> files = attachments(repliedTo, message);
+        for (long userId : developers.keySet()) {
+            String ref = Refs.user(userId);
+            String name = groups.memberName(ref).orElseThrow();
+            // One draft per developer: the group message alone would make the second a duplicate of the first.
+            String draftOrigin = developers.size() > 1 ? origin + "#" + userId : origin;
+            tasks.draft(tx, new Requester(ref, name), onlyProject(owned), ref.equals(author.ref()) ? own : own + "\n\n" + askedBy,
+                    draftOrigin, files, new TaskService.GroupOrigin(chatRef, name));
+        }
+    }
+
+    private boolean inProjectGroup(String requesterRef, Set<String> projects) {
+        return projects.stream().anyMatch(project -> groups.isMemberOfProjectGroup(requesterRef, project));
+    }
+
+    /** The chat's project when it has one only, else null and the prompt asks. */
+    private static String onlyProject(Set<String> owned) {
+        return owned.size() == 1 ? owned.iterator().next() : null;
+    }
+
+    /** The message this one replies to, unless a bot's, such as the ✉️ line: nothing to give as a task. */
+    private static JsonNode humanReplied(JsonNode message) {
+        JsonNode repliedTo = message.path("reply_to_message");
+        return repliedTo.path("from").path("is_bot").asBoolean(false) ? Json.object() : repliedTo;
+    }
+
+    /** What the group calls the author: their Telegram first name. */
+    private static String firstName(JsonNode message, Requester who) {
+        String firstName = TelegramNames.clean(message.path("from").path("first_name").asText(""));
+        return firstName.isEmpty() ? who.name() : firstName;
+    }
+
+    /** The message's text without its mentions of this bot (and one space after each), or empty when it does not mention the bot. */
+    private Optional<String> withoutBotMentions(JsonNode message) {
+        List<Mention> toBot = mentions(message).stream().filter(mention -> botUsername.equalsIgnoreCase(mention.username())).toList();
+        return toBot.isEmpty() ? Optional.empty() : Optional.of(without(text(message), toBot));
+    }
+
+    /**
+     * A person named in a message: by @username, or by a text_mention that carries their id.
+     *
+     * @param end      past the mention and one space after it, which goes with it when it is removed
+     * @param username without the "@", null for a text_mention
+     * @param userId   null for an @username
+     */
+    private record Mention(int start, int end, String username, Long userId) {
+    }
+
+    /** The message's mentions of people other than bots, in order. Telegram's offsets count UTF-16 units, as Java strings do. */
+    private static List<Mention> mentions(JsonNode message) {
+        String text = text(message);
+        JsonNode entities = message.has("entities") ? message.get("entities") : message.path("caption_entities");
+        List<Mention> found = new ArrayList<>();
+        for (JsonNode entity : entities) {
+            int start = entity.path("offset").asInt(-1);
+            int end = start + entity.path("length").asInt();
+            if (start < 0 || end <= start + 1 || end > text.length()) {
+                continue;
+            }
+            int withSpace = end < text.length() && text.charAt(end) == ' ' ? end + 1 : end;
+            JsonNode user = entity.path("user");
+            if (entity.path("type").asText().equals("mention")) {
+                found.add(new Mention(start, withSpace, text.substring(start + 1, end), null));
+            } else if (entity.path("type").asText().equals("text_mention") && user.has("id") && !user.path("is_bot").asBoolean(false)) {
+                found.add(new Mention(start, withSpace, null, user.get("id").asLong()));
+            }
+        }
+        return found;
+    }
+
+    /** {@code text} without {@code removed}, stripped. */
+    private static String without(String text, List<Mention> removed) {
+        StringBuilder rest = new StringBuilder(text);
+        // From the last, so the earlier offsets still hold.
+        removed.stream().sorted(Comparator.comparingInt(Mention::start).reversed()).forEach(mention -> rest.delete(mention.start(), mention.end()));
+        return rest.toString().strip();
     }
 
     private void privateOnly(Tx tx, String chatRef, String origin) {
@@ -300,6 +499,9 @@ public final class UpdateHandler {
         JsonNode repliedTo = message.path("reply_to_message");
         if (!repliedTo.has("message_id")) {
             return false;
+        }
+        if (replyToQuestion(tx, message, who, origin, chatRef)) {
+            return true;
         }
         long chatId = message.path("chat").path("id").asLong();
         String repliedRef = Refs.message(chatId, repliedTo.get("message_id").asLong(), null);
@@ -316,6 +518,68 @@ public final class UpdateHandler {
         int planSeq = Json.read(sent.get().payload()).path("planSeq").asInt();
         tasks.correct(tx, who, sent.get().taskId(), planSeq, text(message), origin, chatRef);
         return true;
+    }
+
+    /**
+     * A reply to a plan's question message, or to the prompt asking for an answer to one, answers that question (G-1d);
+     * false for any other message.
+     */
+    private boolean replyToQuestion(Tx tx, JsonNode message, Requester who, String origin, String chatRef) {
+        JsonNode repliedTo = message.path("reply_to_message");
+        if (!repliedTo.has("message_id")) {
+            return false;
+        }
+        String repliedRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
+        Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef)
+                .filter(found -> found.kind() == OutboxKind.PLAN_QUESTION || found.kind() == OutboxKind.PLAN_ANSWER_PROMPT);
+        if (sent.isEmpty()) {
+            return false;
+        }
+        JsonNode question = Json.read(sent.get().payload());
+        String questionRef = sent.get().kind() == OutboxKind.PLAN_QUESTION ? repliedRef : question.path("questionRef").asText();
+        long taskId = sent.get().taskId();
+        AnswerResult result = tasks.answer(tx, who, taskId, question.path("planSeq").asInt(), question.path("index").asInt(),
+                text(message), questionRef, origin, chatRef);
+        if (result == AnswerResult.STALE) {
+            enqueue(tx, OutboxKind.CORRECTION_REFUSED, chatRef, origin, Json.object().put("taskId", taskId).put("reason", "stale"));
+        }
+        return true;
+    }
+
+    /** A button under a plan's question: an option's index, "w" to write one's own answer or "d" to let the agent decide (G-1d). */
+    private void onQuestionButton(Tx tx, JsonNode callback, Requester who, String[] parts) {
+        String callbackId = callback.path("id").asText();
+        Optional<Long> taskId = taskId(parts[1]);
+        Optional<Long> planSeq = taskId(parts[2]);
+        Optional<Long> index = taskId(parts[3]);
+        Optional<Long> option = taskId(parts[4]);
+        boolean known = parts[4].equals("w") || parts[4].equals("d") || option.isPresent();
+        if (taskId.isEmpty() || planSeq.isEmpty() || index.isEmpty() || !known) {
+            answer(tx, callbackId, "callback.unknown");
+            return;
+        }
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        String questionRef = Refs.message(chatId, message.path("message_id").asLong(), null);
+        String chatRef = Refs.chat(chatId);
+        int seq = planSeq.get().intValue();
+        int question = index.get().intValue();
+        AnswerResult result = switch (parts[4]) {
+            case "w" -> tasks.askForAnswer(tx, who, taskId.get(), seq, question, questionRef);
+            case "d" -> tasks.answer(tx, who, taskId.get(), seq, question, renderer.text("plan.youDecide"), questionRef, questionRef,
+                    chatRef);
+            default -> tasks.chooseOption(tx, who, taskId.get(), seq, question, option.get().intValue(), questionRef, questionRef,
+                    chatRef);
+        };
+        answer(tx, callbackId, switch (result) {
+            case ANSWERED -> "callback.answered";
+            case PROMPTED -> "callback.writeAnswer";
+            case EMPTY -> "callback.unknown";
+            case NOT_ALLOWED -> "callback.notAllowed";
+            case NOT_FOUND -> "callback.notFound";
+            case NOT_REQUESTER -> "callback.notRequester";
+            case STALE -> "callback.stale";
+        });
     }
 
     private void onCallback(Tx tx, JsonNode callback) {
@@ -336,6 +600,15 @@ public final class UpdateHandler {
         if (servedChat && from.has("id") && parts.length == 4 && parts[0].equals("draft") && taskId(parts[1]).isPresent()) {
             Requester presser = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
             onDraftButton(tx, callback, presser, taskId(parts[1]).get(), parts[2], parts[3]);
+            return;
+        }
+        if (groupLinks != null && isPrivateChatOf(chat, from) && parts.length == 3 && parts[0].equals("link") && taskId(parts[1]).isPresent()) {
+            // The prompt only ever goes to a private chat; parts[1] is the negative group chat id, which taskId also parses.
+            onLinkButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
+            return;
+        }
+        if (servedChat && from.has("id") && parts.length == 5 && parts[0].equals("q")) {
+            onQuestionButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), parts);
             return;
         }
         boolean known = parts.length == 3 && Set.of("approve", "reject", "prio").contains(parts[0]);
@@ -515,19 +788,131 @@ public final class UpdateHandler {
         if (groups.isGroupChat(Refs.chat(chatId))) {
             tx.afterCommit(() -> Log.info("telegram.membership_changed", "chat_id", chatId, "status", status));
         } else if (JOINED_STATUSES.contains(status) && isGroup(chat)) {
-            leave(tx, chatId, change.path("from"));
+            JsonNode from = change.path("from");
+            if (mayLink(from)) {
+                askToLink(tx, chatId, chat.path("title").asText(), from.get("id").asLong());
+            } else {
+                leave(tx, chatId, from);
+            }
         }
     }
 
-    private void ignoreForeignChat(Tx tx, JsonNode chat, JsonNode from) {
+    private void ignoreForeignChat(Tx tx, JsonNode message) {
+        JsonNode chat = message.path("chat");
+        JsonNode from = message.path("from");
         long chatId = chat.path("id").asLong();
+        if (isGroup(chat) && message.has("migrate_from_chat_id")
+                && groups.isGroupChat(Refs.chat(message.get("migrate_from_chat_id").asLong()))) {
+            // A linked group's new supergroup, announced before the old chat's migrate_to_chat_id moved the link here.
+            tx.afterCommit(() -> Log.info("telegram.migrated_chat_seen", "chat_id", chatId));
+            return;
+        }
         if (isGroup(chat)) {
-            leave(tx, chatId, from);
+            // The bot may already be in the group (no "added" event then): a command to it from someone who may manage
+            // Dispatch asks, as does the service message about adding it, which can arrive before my_chat_member.
+            boolean asks = message.has("new_chat_members")
+                    || Command.parse(message).filter(command -> command.addressedTo(botUsername)).isPresent();
+            if (asks && mayLink(from)) {
+                askToLink(tx, chatId, chat.path("title").asText(), from.get("id").asLong());
+            } else {
+                leave(tx, chatId, from);
+            }
             return;
         }
         String type = chat.path("type").asText();
         long userId = from.path("id").asLong();
         tx.afterCommit(() -> Log.warn("telegram.chat_ignored", "chat_id", chatId, "type", type, "user_id", userId));
+    }
+
+    /** Whether {@code from} is asked which project an unknown group is for, instead of the bot leaving it. */
+    private boolean mayLink(JsonNode from) {
+        return groupLinks != null && from.has("id") && groups.mayManage(Refs.user(from.get("id").asLong()));
+    }
+
+    /**
+     * Asks {@code fromId} privately which project the group is for, once per open prompt. Sent directly rather than through
+     * the outbox so that a refusal (they never pressed Start) is seen here: the bot then leaves.
+     */
+    private void askToLink(Tx tx, long chatId, String title, long fromId) {
+        List<String> names = projects.all().stream().map(Config.Project::name).toList();
+        if (!groupLinks.open(tx, chatId, title, names)) {
+            return;
+        }
+        ObjectNode payload = Json.object().put("chatId", chatId).put("title", title).put("status", "OPEN");
+        names.forEach(payload.putArray("projects")::add);
+        Renderer.Rendered prompt = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+        tx.afterCommit(() -> {
+            try {
+                api.sendMessage(fromId, null, prompt.html(), null, prompt.keyboard());
+                Log.info("group.link_asked", "chat_id", chatId, "user_id", fromId);
+            } catch (RuntimeException e) {
+                Log.warn("group.link_prompt_refused", "chat_id", chatId, "user_id", fromId, "error", e.getMessage());
+                db.transaction(later -> groupLinks.forget(later, chatId));
+                bestEffort("leaveChat", () -> api.leaveChat(chatId));
+            }
+        });
+    }
+
+    /** A button on a link prompt: a project's index in the prompt's list, or "-" to leave the group unlinked. */
+    private void onLinkButton(Tx tx, JsonNode callback, Requester presser, long chatId, String choice) {
+        Optional<GroupLinks.Prompt> prompt = groupLinks.prompt(tx, chatId);
+        Optional<Long> index = taskId(choice);
+        GroupLinks.Result result;
+        if (choice.equals("-")) {
+            result = groupLinks.decline(tx, presser, chatId);
+        } else if (index.isPresent()) {
+            Optional<Long> announcedIn = chatOfPromptedProject(prompt, index.get());
+            result = groupLinks.link(tx, presser, chatId, index.get().intValue());
+            if (result == GroupLinks.Result.LINKED) {
+                leaveIfUnlinked(tx, announcedIn.filter(old -> old != chatId));
+            }
+        } else {
+            answer(tx, callback.path("id").asText(), "callback.unknown");
+            return;
+        }
+        answer(tx, callback.path("id").asText(), switch (result) {
+            case LINKED -> "callback.groupLinked";
+            case DECLINED -> "callback.groupDeclined";
+            case STALE -> "callback.groupStale";
+            case CONFIG_FAILED -> "callback.groupLinkFailed";
+            case NOT_ALLOWED -> "callback.notAdmin";
+        });
+        if (result != GroupLinks.Result.LINKED && result != GroupLinks.Result.DECLINED) {
+            return;
+        }
+        ObjectNode payload = Json.object().put("chatId", chatId).put("title", prompt.orElseThrow().title()).put("status", result.name());
+        if (result == GroupLinks.Result.LINKED) {
+            payload.put("project", prompt.get().projects().get(index.orElseThrow().intValue()));
+        } else {
+            tx.afterCommit(() -> bestEffort("leaveChat", () -> api.leaveChat(chatId)));
+        }
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+        JsonNode message = callback.path("message");
+        long promptChatId = message.path("chat").path("id").asLong();
+        long messageId = message.path("message_id").asLong();
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(promptChatId, messageId, redrawn.html(), redrawn.keyboard())));
+    }
+
+    /** The chat the project behind a prompt's button is announced in before the link, if the index still names one. */
+    private Optional<Long> chatOfPromptedProject(Optional<GroupLinks.Prompt> prompt, long index) {
+        return prompt.map(GroupLinks.Prompt::projects)
+                .filter(projects -> index >= 0 && index < projects.size())
+                .map(projects -> projects.get((int) index))
+                .flatMap(project -> groups.all().stream().filter(group -> group.projects().contains(project)).findFirst())
+                .map(Config.Group::chatId);
+    }
+
+    /**
+     * A project re-linked elsewhere took its group along (ruling R6), so the bot leaves the old chat, best-effort. Checked
+     * after the running groups were replaced: a chat still linked (its group kept other projects) is not left.
+     */
+    private void leaveIfUnlinked(Tx tx, Optional<Long> oldChat) {
+        oldChat.ifPresent(old -> tx.afterCommit(() -> {
+            if (!groups.isGroupChat(Refs.chat(old))) {
+                Log.info("group.left_old_chat", "chat_id", old);
+                bestEffort("leaveChat", () -> api.leaveChat(old));
+            }
+        }));
     }
 
     private void leave(Tx tx, long chatId, JsonNode from) {

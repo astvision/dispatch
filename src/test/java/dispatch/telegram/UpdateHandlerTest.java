@@ -10,7 +10,9 @@ import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.config.ConfigLoader;
+import dispatch.config.GroupWriter;
 import dispatch.core.ActiveRuns;
+import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
 import dispatch.core.Membership;
 import dispatch.core.Projects;
@@ -18,6 +20,7 @@ import dispatch.core.RunTransitions;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
+import dispatch.domain.Priority;
 import dispatch.store.Database;
 import dispatch.store.Outbox;
 import dispatch.store.Runs;
@@ -26,6 +29,7 @@ import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import java.math.BigDecimal;
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -62,6 +66,10 @@ class UpdateHandlerTest {
     private Projects projects;
     private BotApi api;
     private dispatch.Redactor redactor;
+    private Groups personalGroups;
+    private TaskService personalTasks;
+    private GroupLinks personalLinks;
+    private boolean linkFails;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -95,7 +103,7 @@ class UpdateHandlerTest {
     private UpdateHandler handlerWithWorkers(dispatch.worker.WorkerKeys keys, Groups groupsOverride) {
         Membership membershipOverride = new Membership(groupsOverride, UpdateHandlerTest::noJoins, clock, () -> { });
         return new UpdateHandler(db, tasks, membershipOverride, groupsOverride, projects, api, renderer, redactor, BOT, clock,
-                () -> { }, keys, "https://team.example.com", null);
+                () -> { }, keys, "https://team.example.com", null, null);
     }
 
     @AfterEach
@@ -402,15 +410,336 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void taskAndCancelInAGroupArePointedToThePrivateChat() {
-        handler.handle(message(507, 17, 999, "Sara", GROUP, "supergroup", "/task alm Drop the tables", null));
-        handler.handle(message(508, 18, 100, "Bold", GROUP, "supergroup", "/cancel 1", null));
+    void cancelAndRetryInAGroupArePointedToThePrivateChat() {
+        handler.handle(message(507, 17, 100, "Bold", GROUP, "supergroup", "/cancel@" + BOT + " 3", null));
+        handler.handle(message(508, 18, 100, "Bold", GROUP, "supergroup", "/retry 1", null));
 
         assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
-        Map<String, String> task = row("SELECT * FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/17");
-        assertEquals("PRIVATE_ONLY", task.get("kind"));
-        assertEquals(FakeTelegram.BOT_USERNAME, Json.read(task.get("payload")).get("bot").asText());
+        Map<String, String> cancel = row("SELECT * FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/17");
+        assertEquals("PRIVATE_ONLY", cancel.get("kind"));
+        assertEquals(FakeTelegram.BOT_USERNAME, Json.read(cancel.get("payload")).get("bot").asText());
         assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/18").get("kind"));
+    }
+
+    @Test
+    void memberMentioningTheBotInTheGroupGetsTheDraftPromptPrivatelyAndTheGroupIsTold() throws Exception {
+        handler.handle(mention(520, 30, 100, "Bold", "@" + BOT + " Fix the login timeout", null));
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("Fix the login timeout", draft.get("description"));
+        assertEquals("telegram:100", draft.get("requester_ref"));
+        assertEquals("telegram:" + GROUP + "/30", draft.get("origin_ref"));
+        assertEquals("autoland-management", draft.get("project"), "the group's only project is already chosen");
+        Map<String, String> prompt = row("SELECT * FROM outbox");
+        assertEquals("DRAFT_PROMPT", prompt.get("kind"));
+        assertEquals("telegram:100", prompt.get("chat_ref"));
+        assertEquals(null, prompt.get("reply_to_ref"), "never a reply target from another chat");
+
+        OutboxSender sender = sender();
+        assertTrue(sender.deliverDue());
+        assertTrue(sender.deliverDue());
+
+        JsonNode privately = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(100, privately.get("chat_id").asLong());
+        assertFalse(privately.has("reply_parameters"));
+        JsonNode inGroup = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(GROUP, inGroup.get("chat_id").asLong());
+        assertEquals(30, inGroup.get("reply_parameters").get("message_id").asLong());
+        assertEquals("✉️ <b>Bold</b>: хувийн чатад илгээлээ.", inGroup.get("text").asText());
+        assertFalse(sender.deliverDue(), "nothing else is said");
+    }
+
+    @Test
+    void taskCommandToTheBotInTheGroupStartsTheSameDraft() {
+        handler.handle(message(521, 31, 200, "Ali", GROUP, "supergroup", "/task@" + BOT + " Fix it", null));
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("Fix it", draft.get("description"));
+        assertEquals("telegram:200", draft.get("requester_ref"));
+        assertEquals("autoland-management", draft.get("project"));
+        assertEquals("DRAFT_PROMPT", row("SELECT kind FROM outbox").get("kind"));
+    }
+
+    @Test
+    void mentionReplyingToAMessageTakesThatMessageAsTheTask() {
+        String replied = """
+                {"message_id":29,"from":{"id":300,"is_bot":false,"first_name":"Sara"},"chat":{"id":%d,"type":"supergroup"},
+                 "date":1789640000,"text":"Login fails after 30s on staging"}""".formatted(GROUP);
+
+        handler.handle(mention(522, 32, 100, "Bold", "@" + BOT, replied));
+        handler.handle(mention(523, 33, 200, "Ali", "@" + BOT + " also check mobile", replied));
+
+        assertEquals("Login fails after 30s on staging", row("SELECT description FROM draft WHERE id = 1").get("description"));
+        assertEquals("Login fails after 30s on staging\n\nalso check mobile",
+                row("SELECT description FROM draft WHERE id = 2").get("description"), "as private /task orders it");
+    }
+
+    @Test
+    void mentionReplyingToAPhotoTakesThePhotoAlong() {
+        String replied = """
+                {"message_id":29,"from":{"id":300,"is_bot":false,"first_name":"Sara"},"chat":{"id":%d,"type":"supergroup"},
+                 "date":1789640000,"caption":"Login screen is blank",
+                 "photo":[{"file_id":"shot","width":1280,"height":853,"file_size":90000}]}""".formatted(GROUP);
+
+        handler.handle(mention(528, 38, 100, "Bold", "@" + BOT, replied));
+
+        assertEquals("Login screen is blank", row("SELECT description FROM draft").get("description"));
+        assertEquals("shot", row("SELECT file_ref FROM attachment WHERE draft_id = 1").get("file_ref"));
+    }
+
+    @Test
+    void mentionReplyingToTheBotsOwnMessageIsNotATask() {
+        String botLine = """
+                {"message_id":29,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":%d,"type":"supergroup"},
+                 "date":1789640000,"text":"✉️ Ali: хувийн чатад илгээлээ."}""".formatted(GROUP);
+
+        handler.handle(mention(529, 39, 100, "Bold", "@" + BOT, botLine));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        assertEquals("TASK_USAGE", row("SELECT kind FROM outbox").get("kind"));
+    }
+
+    @Test
+    void taskCommandInAGroupWithSeveralProjectsNamesOneOfThem() {
+        Config.Project crm = new Config.Project("crm-backend", "crm", "https://github.com/acme/crm.git", null, "main",
+                "claude-code", null, null, List.of(), null, null, null);
+        Config.Project alm = projects.all().getFirst();
+        Projects two = new Projects(List.of(alm, crm), project -> Optional.empty());
+        Groups shared = new Groups(List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold")),
+                List.of("autoland-management", "crm-backend"))));
+        TaskService sharedTasks = new TaskService(shared, two, new ActiveRuns(), clock, () -> { }, () -> { });
+        UpdateHandler sharedHandler = new UpdateHandler(db, sharedTasks, new Membership(shared, UpdateHandlerTest::noJoins, clock, () -> { }),
+                shared, two, api, renderer, redactor, BOT, clock, () -> { });
+
+        sharedHandler.handle(message(530, 40, 100, "Bold", GROUP, "supergroup", "/task@" + BOT + " crm Fix it", null));
+        sharedHandler.handle(message(531, 41, 100, "Bold", GROUP, "supergroup", "/task@" + BOT + " nope Fix it", null));
+
+        assertEquals("crm-backend", row("SELECT project FROM draft WHERE id = 1").get("project"));
+        assertEquals("Fix it", row("SELECT description FROM draft WHERE id = 1").get("description"));
+        Map<String, String> unnamed = row("SELECT * FROM draft WHERE id = 2");
+        assertEquals(null, unnamed.get("project"), "two projects and none named: the prompt asks");
+        assertEquals("nope Fix it", unnamed.get("description"), "an unknown word stays in the text");
+    }
+
+    @Test
+    void mentionWithNothingToDoIsAnsweredWithUsageInTheGroup() {
+        handler.handle(mention(523, 33, 100, "Bold", "@" + BOT, null));
+        handler.handle(message(524, 34, 100, "Bold", GROUP, "supergroup", "@someone_else fix it", null));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        Map<String, String> usage = row("SELECT * FROM outbox");
+        assertEquals("TASK_USAGE", usage.get("kind"));
+        assertEquals("telegram:" + GROUP, usage.get("chat_ref"));
+        assertEquals("telegram:" + GROUP + "/33", usage.get("reply_to_ref"));
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox").get("n"), "a message not for the bot is left alone");
+    }
+
+    @Test
+    void someoneOutsideTheGroupMentioningTheBotIsNotAllowed() {
+        handler.handle(mention(525, 35, 300, "Sara", "@" + BOT + " Drop the tables", null));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        Map<String, String> refused = row("SELECT * FROM outbox");
+        assertEquals("NOT_ALLOWED", refused.get("kind"));
+        assertEquals("telegram:" + GROUP, refused.get("chat_ref"));
+        assertEquals("telegram:" + GROUP + "/35", refused.get("reply_to_ref"));
+    }
+
+    @Test
+    void theSameMentionHandledTwiceMakesOneDraft() {
+        JsonNode update = mention(526, 36, 100, "Bold", "@" + BOT + " Fix the login timeout", null);
+
+        handler.handle(update);
+        handler.handle(update);
+
+        assertEquals("1", row("SELECT count(*) AS n FROM draft").get("n"));
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox").get("n"));
+
+        db.transaction(tx -> tasks.expireDrafts(tx, clock.instant().plusSeconds(1)));
+
+        Map<String, String> expired = row("SELECT * FROM outbox WHERE kind = 'DRAFT_EXPIRED'");
+        assertEquals("telegram:100", expired.get("chat_ref"));
+        assertEquals(null, expired.get("reply_to_ref"), "the group message is in another chat");
+    }
+
+    @Test
+    void whenThePrivateChatRefusesThePromptTheGroupIsAskedToPressStartInstead() throws Exception {
+        telegram.refuseChat(100, 403, "{\"ok\":false,\"error_code\":403,\"description\":\"Forbidden: bot can't initiate conversation with a user\"}");
+        handler.handle(mention(527, 37, 100, "Bold", "Please @" + BOT + " fix the login timeout", null));
+
+        OutboxSender sender = sender();
+        assertTrue(sender.deliverDue());
+        assertTrue(sender.deliverDue());
+
+        assertEquals(100, telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+        JsonNode inGroup = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(GROUP, inGroup.get("chat_id").asLong());
+        assertEquals(37, inGroup.get("reply_parameters").get("message_id").asLong());
+        assertEquals("⚠️ <b>Bold</b>: эхлээд @" + BOT + "-г нээж Start дарна уу.", inGroup.get("text").asText());
+        assertFalse(sender.deliverDue(), "no ✉️ line after the refusal");
+        assertEquals("Please fix the login timeout", row("SELECT description FROM draft").get("description"));
+    }
+
+    @Test
+    void aMemberMentionedByUsernameInTheGroupGetsTheTaskPrivatelyAndTheGroupIsTold() throws Exception {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+
+        handler.handle(people(540, 50, 100, "Bold", "@Ali_Dev please fix the login timeout", null, "@Ali_Dev"));
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("telegram:200", draft.get("requester_ref"), "the developer is the requester");
+        assertEquals("Ali", draft.get("requester_name"));
+        assertEquals("telegram:200", draft.get("chat_ref"));
+        assertEquals("telegram:" + GROUP + "/50", draft.get("origin_ref"));
+        assertEquals("autoland-management", draft.get("project"));
+        assertEquals("please fix the login timeout\n\nХүсэлт: Bold", draft.get("description"));
+
+        OutboxSender sender = sender();
+        assertTrue(sender.deliverDue());
+        assertTrue(sender.deliverDue());
+        assertEquals(200, telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+        JsonNode inGroup = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(GROUP, inGroup.get("chat_id").asLong());
+        assertEquals(50, inGroup.get("reply_parameters").get("message_id").asLong());
+        assertEquals("✉️ <b>Ali</b>: хувийн чатад илгээлээ.", inGroup.get("text").asText());
+    }
+
+    @Test
+    void aTextMentionNeedsNoRecordedUsername() {
+        JsonNode update = message(541, 51, 100, "Bold", GROUP, "supergroup", "Ali check the mobile login", null);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) update.get("message")).putArray("entities").addObject()
+                .put("offset", 0).put("length", 3).put("type", "text_mention")
+                .putObject("user").put("id", 200).put("is_bot", false).put("first_name", "Ali");
+
+        handler.handle(update);
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("telegram:200", draft.get("requester_ref"));
+        assertEquals("check the mobile login\n\nХүсэлт: Bold", draft.get("description"));
+    }
+
+    @Test
+    void anUnrecordedUsernameIsAnsweredInTheGroupAndGivesNoTask() throws Exception {
+        handler.handle(people(542, 52, 100, "Bold", "@nobody fix it", null, "@nobody"));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        Map<String, String> line = row("SELECT * FROM outbox");
+        assertEquals("UNKNOWN_USERNAME", line.get("kind"));
+        assertEquals("telegram:" + GROUP, line.get("chat_ref"));
+        assertEquals("telegram:" + GROUP + "/52", line.get("reply_to_ref"));
+
+        assertTrue(sender().deliverDue());
+        assertEquals("@nobody-г танихгүй байна — тэр ботод нэг удаа бичих хэрэгтэй.",
+                telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("text").asText());
+    }
+
+    @Test
+    void aMentionedPersonOutsideTheChatsProjectGroupsGetsNothing() {
+        // Sara is a member, but of the mobile group only.
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 300, "sara_dev", clock.instant()));
+
+        handler.handle(people(543, 53, 100, "Bold", "@sara_dev fix it", null, "@sara_dev"));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"));
+    }
+
+    @Test
+    void anAuthorOutsideTheChatsProjectGroupsIsIgnoredSilently() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+
+        handler.handle(people(544, 54, 300, "Sara", "@ali_dev fix it", null, "@ali_dev"));
+        handler.handle(people(545, 55, 999, "Stranger", "@ali_dev fix it", null, "@ali_dev"));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"), "no NOT_ALLOWED for ordinary chat");
+    }
+
+    @Test
+    void mentioningTheBotTooWinsOverMentioningAMember() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+
+        handler.handle(people(546, 56, 100, "Bold", "@" + BOT + " @ali_dev fix it", null, "@" + BOT, "@ali_dev"));
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("telegram:100", draft.get("requester_ref"), "G-1b: a task for the author");
+        assertEquals("@ali_dev fix it", draft.get("description"));
+    }
+
+    @Test
+    void aDeveloperMentioningThemselvesGetsNoRequesterLine() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+
+        handler.handle(people(547, 57, 200, "Ali", "@ali_dev remember the cache", null, "@ali_dev"));
+
+        assertEquals("remember the cache", row("SELECT description FROM draft").get("description"));
+    }
+
+    @Test
+    void aMentionReplyingToAMessageTakesItAsThePrivateTaskDoes() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+        String replied = """
+                {"message_id":29,"from":{"id":300,"is_bot":false,"first_name":"Sara"},"chat":{"id":%d,"type":"supergroup"},
+                 "date":1789640000,"caption":"Login screen is blank",
+                 "photo":[{"file_id":"shot","width":1280,"height":853,"file_size":90000}]}""".formatted(GROUP);
+
+        handler.handle(people(548, 58, 100, "Bold", "@ali_dev this one", replied, "@ali_dev"));
+
+        assertEquals("Login screen is blank\n\nthis one\n\nХүсэлт: Bold", row("SELECT description FROM draft").get("description"));
+        assertEquals("shot", row("SELECT file_ref FROM attachment WHERE draft_id = 1").get("file_ref"));
+    }
+
+    @Test
+    void severalMentionedDevelopersEachGetOneDraftEvenIfHandledTwice() {
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
+        db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 100, "bold_dev", clock.instant()));
+        JsonNode update = people(549, 59, 100, "Bold", "@ali_dev @bold_dev split the release", null, "@ali_dev", "@bold_dev");
+
+        handler.handle(update);
+        handler.handle(update);
+
+        assertEquals("2", row("SELECT count(*) AS n FROM draft").get("n"));
+        Map<String, String> ali = row("SELECT * FROM draft WHERE requester_ref = 'telegram:200'");
+        assertEquals("telegram:" + GROUP + "/59#200", ali.get("origin_ref"));
+        assertEquals("split the release\n\nХүсэлт: Bold", ali.get("description"));
+        Map<String, String> bold = row("SELECT * FROM draft WHERE requester_ref = 'telegram:100'");
+        assertEquals("telegram:" + GROUP + "/59#100", bold.get("origin_ref"));
+        assertEquals("split the release", bold.get("description"));
+    }
+
+    @Test
+    void aMembersMessagesRecordTheirUsername() {
+        handler.handle(message(550, 60, 200, "Ali", 200L, "private", "hello", null));
+        handler.handle(message(551, 61, 100, "Bold", GROUP, "supergroup", "morning", null));
+        handler.handle(message(552, 62, 999, "Stranger", GROUP, "supergroup", "hi", null));
+
+        assertEquals("200", row("SELECT user_id FROM telegram_user WHERE username = 'ali_dev'").get("user_id"));
+        assertEquals("100", row("SELECT user_id FROM telegram_user WHERE username = 'bold_dev'").get("user_id"));
+        assertEquals("2", row("SELECT count(*) AS n FROM telegram_user").get("n"), "a non-member is not recorded");
+    }
+
+    /** A message in the linked group GROUP with a "mention" entity for each of {@code mentioned}, found in {@code text}. */
+    static JsonNode people(long updateId, long messageId, long fromId, String firstName, String text, String replyToJson,
+                           String... mentioned) {
+        JsonNode update = message(updateId, messageId, fromId, firstName, GROUP, "supergroup", text, replyToJson);
+        com.fasterxml.jackson.databind.node.ArrayNode entities =
+                ((com.fasterxml.jackson.databind.node.ObjectNode) update.get("message")).putArray("entities");
+        for (String name : mentioned) {
+            entities.addObject().put("offset", text.indexOf(name)).put("length", name.length()).put("type", "mention");
+        }
+        return update;
+    }
+
+    private OutboxSender sender() {
+        return new OutboxSender(db, api, renderer, redactor, new dispatch.core.Signal(), clock, Duration.ofSeconds(1));
+    }
+
+    /** A message in the linked group GROUP that mentions the bot by its username. */
+    static JsonNode mention(long updateId, long messageId, long fromId, String firstName, String text, String replyToJson) {
+        JsonNode update = message(updateId, messageId, fromId, firstName, GROUP, "supergroup", text, replyToJson);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) update.get("message")).putArray("entities").addObject()
+                .put("offset", text.indexOf("@" + BOT)).put("length", BOT.length() + 1).put("type", "mention");
+        return update;
     }
 
     @Test
@@ -449,7 +778,7 @@ class UpdateHandlerTest {
     @Test
     void manageAnswersAMemberWithAButtonAndSaysSoWhenTheMiniAppIsOff() {
         UpdateHandler withMiniApp = new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
-                () -> { }, null, null, "https://dispatch.example.com");
+                () -> { }, null, null, "https://dispatch.example.com", null);
 
         withMiniApp.handle(message(570, 70, 100, "Bold", 100L, "private", "/manage", null));
         handler.handle(message(571, 71, 100, "Bold", 100L, "private", "/manage", null));
@@ -468,7 +797,7 @@ class UpdateHandlerTest {
     @Test
     void manageInsideATaskTopicIsACommandAndNotACorrection() {
         UpdateHandler withMiniApp = new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
-                () -> { }, null, null, "https://dispatch.example.com");
+                () -> { }, null, null, "https://dispatch.example.com", null);
         long taskId = taskAwaitingApproval(List.of());
         db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '56' WHERE id = ?", taskId));
 
@@ -927,6 +1256,242 @@ class UpdateHandlerTest {
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'NOT_ALLOWED'").get("n"));
     }
 
+    private static final long NEW_GROUP = -4883391545L;
+
+    @Test
+    void theOwnerAddingTheBotIsAskedWhichProjectAndTheBotStays() throws Exception {
+        UpdateHandler handler = personalHandler();
+
+        handler.handle(myChatMember(700, 100, -4883391545L, "note", "member"));
+
+        JsonNode prompt = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(100, prompt.get("chat_id").asLong(), "privately, to whoever added it");
+        assertTrue(prompt.get("text").asText().contains("note"));
+        assertEquals("link:-4883391545:0", prompt.at("/reply_markup/inline_keyboard/0/0/callback_data").asText());
+        Thread.sleep(100);
+        assertTrue(telegram.drain("leaveChat").isEmpty());
+    }
+
+    @Test
+    void someoneElseAddingTheBotMakesItLeave() throws Exception {
+        personalHandler().handle(myChatMember(701, 999, -4883391545L, "note", "member"));
+        assertEquals(-4883391545L, telegram.awaitRequest("leaveChat", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+    }
+
+    @Test
+    void theOwnersCommandInAGroupTheBotIsAlreadyInAlsoAsks() throws Exception {
+        personalHandler().handle(message(702, 30, 100, "Bold", -4883391545L, "group", "/status@" + BOT, null));
+        assertEquals(100, telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+    }
+
+    @Test
+    void tappingTheProjectLinksItAndTheNextTaskIsAnnouncedThereWithoutARestart() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(703, 100, -4883391545L, "note", "member"));
+        long promptId = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().path("message_id").asLong(1);
+
+        handler.handle(callback(704, 100, "Bold", 100L, promptId, "link:-4883391545:0"));
+
+        assertTrue(personalGroups.isGroupChat("telegram:-4883391545"), "the running groups, not only the file");
+        assertEquals("GROUP_LINKED", row("SELECT kind FROM outbox WHERE chat_ref = 'telegram:-4883391545'").get("kind"));
+        db.transaction(tx -> personalTasks.create(tx, BOLD, "life", "Fix it", Priority.NORMAL, "telegram:100/77"));
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_QUEUED' AND chat_ref = 'telegram:-4883391545'").get("n"));
+    }
+
+    @Test
+    void aStaleOrForeignButtonWritesNothing() {
+        UpdateHandler handler = personalHandler();
+        handler.handle(callback(705, 100, "Bold", 100L, 1, "link:-4883391545:0"));   // no prompt open
+        handler.handle(myChatMember(706, 100, -4883391545L, "note", "member"));
+        handler.handle(callback(707, 999, "Eve", 999L, 1, "link:-4883391545:0"));    // not the owner
+
+        assertFalse(personalGroups.isGroupChat("telegram:-4883391545"));
+    }
+
+    @Test
+    void aLongProjectNameStillFitsInTheButton() throws Exception {
+        UpdateHandler handler = personalHandlerWithProject("x".repeat(60));
+        handler.handle(myChatMember(708, 100, -4883391545L, "note", "member"));
+        String data = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json()
+                .at("/reply_markup/inline_keyboard/0/0/callback_data").asText();
+        assertTrue(data.getBytes(StandardCharsets.UTF_8).length <= 64, data);
+    }
+
+    @Test
+    void aRefusedPromptMakesTheBotLeave() throws Exception {
+        telegram.failNext("sendMessage", 403, "Forbidden: bot can't initiate conversation with a user");
+        personalHandler().handle(myChatMember(709, 100, -4883391545L, "note", "member"));
+        assertEquals(-4883391545L, telegram.awaitRequest("leaveChat", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+    }
+
+    @Test
+    void aLinkedGroupThatBecomesASupergroupKeepsItsLink() {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(710, 100, -4883391545L, "note", "member"));
+        handler.handle(callback(711, 100, "Bold", 100L, 1, "link:-4883391545:0"));
+
+        handler.handle(migration(712, -4883391545L, -1004883391545L));
+
+        assertTrue(personalGroups.isGroupChat("telegram:-1004883391545"));
+    }
+
+    /** Once the prompt was refused and the bot left, adding it again (after pressing Start) must ask again. */
+    @Test
+    void afterARefusedPromptAddingTheBotAgainAsksAgain() throws Exception {
+        UpdateHandler handler = personalHandler();
+        telegram.failNext("sendMessage", 403, "Forbidden: bot can't initiate conversation with a user");
+        handler.handle(myChatMember(720, 100, NEW_GROUP, "note", "member"));
+        telegram.awaitRequest("leaveChat", Duration.ofSeconds(2));
+        telegram.drain("sendMessage");
+
+        handler.handle(myChatMember(721, 100, NEW_GROUP, "note", "member"));
+
+        assertEquals(100, telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+    }
+
+    /** Telegram also sends a "new members" service message from the owner; it neither asks twice nor makes the bot leave. */
+    @Test
+    void theOwnersServiceMessageAboutAddingTheBotAsksOnceAndStays() throws Exception {
+        UpdateHandler handler = personalHandler();
+        JsonNode added = message(722, 32, 100, "Bold", NEW_GROUP, "group", "", null);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) added.get("message")).remove("text");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) added.get("message")).putArray("new_chat_members")
+                .addObject().put("id", 1).put("is_bot", true).put("first_name", "Dispatch");
+
+        handler.handle(added);
+        handler.handle(myChatMember(723, 100, NEW_GROUP, "note", "member"));
+
+        telegram.awaitRequest("sendMessage", Duration.ofSeconds(2));
+        Thread.sleep(100);
+        assertTrue(telegram.drain("sendMessage").isEmpty(), "one prompt per chat");
+        assertTrue(telegram.drain("leaveChat").isEmpty());
+    }
+
+    /** Spec, Errors: the bot removed from the group before the button was pressed still links; only the greeting may fail. */
+    @Test
+    void theBotRemovedBeforeTheTapStillLinks() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(726, 100, NEW_GROUP, "note", "member"));
+        handler.handle(myChatMember(727, 100, NEW_GROUP, "note", "left"));
+
+        handler.handle(callback(728, 100, "Bold", 100L, 1, "link:" + NEW_GROUP + ":0"));
+
+        assertEquals(renderer.text("callback.groupLinked"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertTrue(personalGroups.isGroupChat("telegram:" + NEW_GROUP), "the running groups, from what the writer returned");
+        assertEquals("GROUP_LINKED", row("SELECT kind FROM outbox WHERE chat_ref = ?", "telegram:" + NEW_GROUP).get("kind"),
+                "the greeting is an outbox message: its delivery failing is the sender's to log, not the link's");
+    }
+
+    @Test
+    void declineRedrawsThePromptAndLeaves() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(724, 100, NEW_GROUP, "note", "member"));
+
+        handler.handle(callback(725, 100, "Bold", 100L, 55, "link:" + NEW_GROUP + ":-"));
+
+        assertEquals(renderer.text("callback.groupDeclined"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode redrawn = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(55, redrawn.get("message_id").asLong());
+        assertEquals(0, redrawn.get("reply_markup").get("inline_keyboard").size());
+        assertEquals(NEW_GROUP, telegram.awaitRequest("leaveChat", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+        assertFalse(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
+    }
+
+    /** Ruling R6: the project's group follows it to the new chat, so the bot has nothing left to do in the old one. */
+    @Test
+    void relinkingAProjectToAnotherChatLeavesTheOldChat() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(730, 100, NEW_GROUP, "note", "member"));
+        handler.handle(callback(731, 100, "Bold", 100L, 1, "link:" + NEW_GROUP + ":0"));
+        long otherGroup = -4883391546L;
+        handler.handle(myChatMember(732, 100, otherGroup, "life", "member"));
+
+        handler.handle(callback(733, 100, "Bold", 100L, 2, "link:" + otherGroup + ":0"));
+
+        assertTrue(personalGroups.isGroupChat("telegram:" + otherGroup));
+        assertFalse(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
+        assertEquals(NEW_GROUP, telegram.awaitRequest("leaveChat", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+        Thread.sleep(100);
+        assertTrue(telegram.drain("leaveChat").isEmpty(), "only the old chat");
+    }
+
+    /** Ruling R7: the dedupe folds the near-simultaneous add events; an ignored prompt must not block the chat forever. */
+    @Test
+    void anUnansweredPromptIsAskedAgainOnlyOnceItIsAMinuteOld() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(734, 100, NEW_GROUP, "note", "member"));
+        telegram.awaitRequest("sendMessage", Duration.ofSeconds(2));
+
+        handler.handle(myChatMember(735, 100, NEW_GROUP, "note", "member"));
+        Thread.sleep(100);
+        assertTrue(telegram.drain("sendMessage").isEmpty(), "a second add within 60 s sends no second prompt");
+
+        clock.advance(Duration.ofSeconds(61));
+        handler.handle(myChatMember(736, 100, NEW_GROUP, "note", "member"));
+        assertEquals(100, telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+    }
+
+    @Test
+    void aFailedConfigWriteIsReportedAndTheQuestionStaysOpen() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(737, 100, NEW_GROUP, "note", "member"));
+        linkFails = true;
+
+        handler.handle(callback(738, 100, "Bold", 100L, 1, "link:" + NEW_GROUP + ":0"));
+
+        assertEquals(renderer.text("callback.groupLinkFailed"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertFalse(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'GROUP_LINKED'").get("n"));
+        assertTrue(db.transactionReturning(tx -> personalLinks.prompt(tx, NEW_GROUP)).isPresent(), "the prompt stays open");
+    }
+
+    private UpdateHandler personalHandler() {
+        return personalHandlerWithProject("life");
+    }
+
+    /** A personal Dispatch: Bold alone, one chatless group owning {@code project}, and an in-memory config writer. */
+    private UpdateHandler personalHandlerWithProject(String project) {
+        Config.Project only = new Config.Project(project, null, "https://github.com/acme/life.git", null, "master",
+                "claude-code", null, null, List.of(), null, null, null);
+        Projects personalProjects = new Projects(List.of(only), candidate -> Optional.empty());
+        Config.Telegram[] config = {new Config.Telegram(List.of(),
+                List.of(new Config.Group("bold", null, List.of(new Config.Member(100, "Bold")), List.of(project))))};
+        personalGroups = new Groups(config[0]);
+        personalTasks = new TaskService(personalGroups, personalProjects, new ActiveRuns(), clock, () -> { }, () -> { });
+        // Only the in-place rule: the one chatless group takes the chat.
+        GroupWriter fakeWriter = new GroupWriter() {
+            @Override
+            public Config.Telegram link(long chatId, String title, String linked) {
+                if (linkFails) {
+                    throw new dispatch.config.ConfigException("config file is read-only");
+                }
+                return config[0] = withChat(config[0], group -> group.projects().contains(linked), chatId);
+            }
+
+            @Override
+            public Config.Telegram unlink(String groupName) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Config.Telegram migrate(long oldChatId, long newChatId) {
+                return config[0] = withChat(config[0], group -> Long.valueOf(oldChatId).equals(group.chatId()), newChatId);
+            }
+        };
+        personalLinks = new GroupLinks(personalGroups, fakeWriter, clock, () -> { });
+        return new UpdateHandler(db, personalTasks, new Membership(personalGroups, UpdateHandlerTest::noJoins, clock, () -> { }),
+                personalGroups, personalProjects, api, renderer, redactor, BOT, clock, () -> { }, null, null, null, personalLinks);
+    }
+
+    private static Config.Telegram withChat(Config.Telegram telegram, java.util.function.Predicate<Config.Group> which, long chatId) {
+        return new Config.Telegram(telegram.admins(), telegram.groups().stream()
+                .map(group -> which.test(group) ? new Config.Group(group.name(), chatId, group.members(), group.projects()) : group)
+                .toList());
+    }
+
     private long taskAwaitingApproval() {
         return taskAwaitingApproval(List.of());
     }
@@ -942,7 +1507,8 @@ class UpdateHandlerTest {
     private long taskAwaitingApproval(List<String> questions) {
         task("Fix the login timeout");
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
-        Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), questions);
+        Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(),
+                questions.stream().map(text -> new dispatch.domain.PlanQuestion(text, List.of())).toList());
         transitions.planSucceeded(run.taskId(), run.seq(), plan,
                 new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", plan.toJson(), null, new BigDecimal("0.1"), 3, List.of(), null, null, null));
         return run.taskId();
@@ -1005,6 +1571,36 @@ class UpdateHandlerTest {
                             "chat":{"id":%d,"title":"Team","type":"supergroup"},"date":1789640000,"text":"plan"},
                  "chat_instance":"123","data":"%s"}}"""
                 .formatted(updateId, updateId, fromId, firstName, GROUP, data));
+    }
+
+    /** A button pressed under a message in {@code chatId}: the presser's private chat when it is their id, else a group. */
+    static JsonNode callback(long updateId, long fromId, String firstName, long chatId, long messageId, String data) {
+        return Json.read("""
+                {"update_id":%d,"callback_query":{"id":"cb-%d",
+                 "from":{"id":%d,"is_bot":false,"first_name":"%s"},
+                 "message":{"message_id":%d,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},
+                            "chat":{"id":%d,"type":"%s"},"date":1789640000,"text":"prompt"},
+                 "chat_instance":"789","data":"%s"}}"""
+                .formatted(updateId, updateId, fromId, firstName, messageId, chatId, chatId == fromId ? "private" : "supergroup", data));
+    }
+
+    /** The bot's own membership in {@code chatId} changed to {@code status}, by {@code fromId}. */
+    static JsonNode myChatMember(long updateId, long fromId, long chatId, String title, String status) {
+        return Json.read("""
+                {"update_id":%d,"my_chat_member":{"chat":{"id":%d,"title":%s,"type":"group"},
+                 "from":{"id":%d,"is_bot":false,"first_name":"Adder"},"date":1789640000,
+                 "old_chat_member":{"user":{"id":1,"is_bot":true,"first_name":"Dispatch"},"status":"left"},
+                 "new_chat_member":{"user":{"id":1,"is_bot":true,"first_name":"Dispatch"},"status":"%s"}}}"""
+                .formatted(updateId, chatId, Json.MAPPER.valueToTree(title), fromId, status));
+    }
+
+    /** The service message Telegram posts in a group that became the supergroup {@code newChatId}. */
+    static JsonNode migration(long updateId, long oldChatId, long newChatId) {
+        JsonNode update = message(updateId, updateId, 100, "Bold", oldChatId, "group", "", null);
+        com.fasterxml.jackson.databind.node.ObjectNode message = (com.fasterxml.jackson.databind.node.ObjectNode) update.get("message");
+        message.remove("text");
+        message.put("migrate_to_chat_id", newChatId);
+        return update;
     }
 
     private Map<String, String> row(String sql, Object... params) {

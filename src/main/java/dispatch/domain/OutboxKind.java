@@ -10,6 +10,13 @@ public enum OutboxKind {
     DRAFT_PROMPT,
     DRAFT_EXPIRED,
     PLAN_READY,
+    /**
+     * To the requester privately: one open question of a plan, with its answer options as buttons; sent one at a time and
+     * redrawn with the answer (G-1d).
+     */
+    PLAN_QUESTION,
+    /** To the requester privately: asks for their own answer to a question, as a forced reply (G-1d). */
+    PLAN_ANSWER_PROMPT,
     EXECUTION_QUEUED,
     CORRECTION_QUEUED,
     CORRECTION_REFUSED,
@@ -57,5 +64,19 @@ public enum OutboxKind {
     /** To the requester privately, once per reason: their computer is connected but cannot do the task, and why. */
     WORKER_BLOCKED,
     /** /manage: a button that opens the Mini App, or a note that it is not turned on here (ADR 0019). */
-    MANAGE
+    MANAGE,
+    /**
+     * To whoever added the bot to an unknown group: which project to link it to. Rendered here but sent directly, not
+     * through the outbox, so a refusal is seen and the bot can leave.
+     */
+    GROUP_LINK,
+    /** To a group just linked: which project's tasks it will hear about. */
+    GROUP_LINKED,
+    /**
+     * To a group where a member gave a task by mentioning the bot: its prompt reached their private chat. Enqueued by the
+     * sender once that prompt was delivered, so a refused prompt gets the fallback notice instead (G-1b).
+     */
+    GROUP_TASK_SENT,
+    /** To a linked group: an @username mentioned there is not in the username book, so it gives no task (G-1c). */
+    UNKNOWN_USERNAME
 }
