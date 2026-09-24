@@ -1,7 +1,13 @@
 import { Button, Form, Input, Select, Space } from "antd";
 import { useState } from "react";
-import type { PhaseChoice, ProjectFields } from "../api";
+import type { ManagedProject, PhaseChoice, ProjectFields } from "../api";
 import { EFFORTS, MODELS, PHASE_EFFORTS, PHASE_MODELS, withCurrent } from "../options";
+
+/** What an edit of {@code project} starts from: every field as the config has it now. */
+export function fieldsOf(project: ManagedProject): ProjectFields {
+  return { name: project.name, baseBranch: project.baseBranch, alias: project.alias, model: project.model, effort: project.effort,
+    plan: project.plan, execute: project.execute };
+}
 
 interface Props {
   initial: ProjectFields;

@@ -1,13 +1,22 @@
-import { SettingOutlined } from "@ant-design/icons";
-import { Button, Dropdown, Flex, Layout, Menu, Result, Segmented, Spin, theme, Typography } from "antd";
-import { useEffect, useState } from "react";
+import { LeftOutlined } from "@ant-design/icons";
+import { Button, Layout, Menu, Result, Spin, theme, Typography } from "antd";
+import { useContext, useEffect, useState } from "react";
 import { ApiError, getMe, type Me } from "./api";
 import LogsPage from "./manage/LogsPage";
 import PeoplePage from "./manage/PeoplePage";
 import ProjectsPage from "./manage/ProjectsPage";
 import SettingsPage from "./manage/SettingsPage";
+import AddProjectPage from "./mini/AddProjectPage";
+import { useTelegramBackButton } from "./mini/backButton";
+import { RestartContext, useRestartNeeded } from "./mini/data";
+import FieldEditPage from "./mini/FieldEditPage";
+import HomePage from "./mini/HomePage";
+import { ListStyles, Section } from "./mini/List";
+import { ADMIN_PAGES, parentOf, projectPath, screenOf, type PagePath, type Screen } from "./mini/paths";
+import ProjectPage from "./mini/ProjectPage";
 import TasksPage from "./mini/TasksPage";
 import OverviewPage from "./OverviewPage";
+import RestartNotice from "./RestartNotice";
 import SetupPage from "./setup/SetupPage";
 import { inTelegram } from "./telegram";
 import { usePath } from "./usePath";
@@ -20,13 +29,6 @@ const MANAGE_PAGES = [
   { key: "/settings", label: "Settings" },
   { key: "/logs", label: "Logs" },
 ];
-
-/**
- * In Telegram a member gets their own tasks; an admin gets the group's tasks and the management pages too.
- * `short` is what fits the phone's switch, where the full label is cut off mid-word.
- */
-const MY_TASKS = { key: "/tasks", label: "Миний даалгаврууд", short: "Минийх" };
-const GROUP_TASKS = { key: "/group-tasks", label: "Бүх даалгавар", short: "Бүгд" };
 
 function Page({ path, heading = true }: { path: string; heading?: boolean }) {
   switch (path) {
@@ -47,11 +49,6 @@ function Page({ path, heading = true }: { path: string; heading?: boolean }) {
   }
 }
 
-/** The pages inside Telegram, in menu order, for whoever is looking. */
-function pagesFor(me: Me) {
-  return me.admin ? [MY_TASKS, GROUP_TASKS, ...MANAGE_PAGES] : [MY_TASKS];
-}
-
 function Shell({ pages, selected, onSelect, children }: {
   pages: { key: string; label: string }[];
   selected: string;
@@ -69,55 +66,84 @@ function Shell({ pages, selected, onSelect, children }: {
   );
 }
 
-/**
- * The Mini App's own chrome. A phone has no room for seven menu items in a row, so the two task pages are a
- * Segmented control — thumb-sized and always visible — and an admin's management pages sit behind one more tap.
- * A member has only their own tasks, so they get no chrome at all.
- */
-function MiniShell({ me, selected, onSelect, children }: {
-  me: Me;
-  selected: string;
-  onSelect: (key: string) => void;
-  children: React.ReactNode;
-}) {
+const TASK_TITLES: Record<string, string> = { "/tasks": "Миний даалгаврууд", "/group-tasks": "Бүх даалгавар" };
+
+/** One of `dispatch ui`'s own pages inside the Mini App; the task lists sit on the raised surface like the rest. */
+function MiniPage({ path }: { path: PagePath }) {
   const { token } = theme.useToken();
+  if (path === "/tasks" || path === "/group-tasks") {
+    return (
+      <Section title={TASK_TITLES[path]}>
+        <div style={{ padding: "4px 16px 8px", background: token.colorBgContainer }}>
+          <Page path={path} heading={false} />
+        </div>
+      </Section>
+    );
+  }
+  return <div style={{ paddingTop: 12 }}><Page path={path === "/overview" ? "/" : path} /></div>;
+}
+
+function MiniScreen({ me, screen, navigate }: { me: Me; screen: Screen; navigate: (path: string) => void }) {
+  switch (screen.kind) {
+    case "home":
+      return <HomePage me={me} navigate={navigate} />;
+    case "page":
+      return <MiniPage path={screen.path} />;
+    case "add":
+      return <AddProjectPage navigate={navigate} />;
+    case "project":
+      return <ProjectPage key={screen.name} me={me} name={screen.name} navigate={navigate} />;
+    case "field":
+      return <FieldEditPage key={`${screen.name}/${screen.field}`} name={screen.name} field={screen.field}
+                            back={() => navigate(projectPath(screen.name))} />;
+  }
+}
+
+/** Whether {@code me} may open {@code screen}: a member has the projects and their own tasks, an admin everything. */
+function reachable(me: Me, screen: Screen) {
+  if (me.admin) return true;
+  if (screen.kind === "page") return !ADMIN_PAGES.includes(screen.path);
+  return screen.kind === "home" || screen.kind === "project";
+}
+
+/**
+ * The Mini App's own chrome, after Telegram's settings screens: raised sections on the page's ground, Telegram's Back
+ * button in its header, and "restart to apply" kept above every screen once something was saved.
+ */
+function MiniShell({ back, children }: { back: (() => void) | null; children: React.ReactNode }) {
+  const { token } = theme.useToken();
+  const restart = useContext(RestartContext);
+  useTelegramBackButton(back);
 
   // The page needs a surface of its own: antd paints its components, not the document, and a transparent body left
   // antd's dark text on whatever the webview happened to paint. Set on body too, so overscroll matches.
   useEffect(() => {
-    document.body.style.background = token.colorBgContainer;
+    document.body.style.background = token.colorBgLayout;
     document.body.style.color = token.colorText;
-  }, [token.colorBgContainer, token.colorText]);
+  }, [token.colorBgLayout, token.colorText]);
 
   return (
-    <div style={{ minHeight: "100vh", padding: "8px 12px 24px", background: token.colorBgContainer, color: token.colorText }}>
-      {me.admin && (
-        <Flex gap={8} align="center" style={{ marginBottom: 12 }}>
-          <Segmented
-            block
-            style={{ flex: 1 }}
-            value={selected === GROUP_TASKS.key ? GROUP_TASKS.key : MY_TASKS.key}
-            onChange={(value) => onSelect(String(value))}
-            options={[MY_TASKS, GROUP_TASKS].map((page) => ({ label: page.short, value: page.key }))}
-          />
-          <Dropdown
-            trigger={["click"]}
-            menu={{ items: MANAGE_PAGES, selectedKeys: [selected], onClick: ({ key }) => onSelect(key) }}
-          >
-            <Button aria-label="Тохиргоо" icon={<SettingOutlined />} size="large" />
-          </Dropdown>
-        </Flex>
-      )}
-      {children}
-    </div>
+    <main style={{ minHeight: "100vh", padding: "8px 16px 32px", background: token.colorBgLayout, color: token.colorText,
+                   fontFamily: token.fontFamily }}>
+      <ListStyles />
+      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+        {back && (
+          // Telegram's own Back button is the way back; this one is for a client that does not show it.
+          <Button type="link" icon={<LeftOutlined />} onClick={back} aria-label="Буцах" style={{ paddingInline: 0 }}>Буцах</Button>
+        )}
+        {restart.installed !== null && <div style={{ marginTop: 8 }}><RestartNotice installed={restart.installed} /></div>}
+        {children}
+      </div>
+    </main>
   );
 }
 
-/** Inside Telegram: who is looking decides what there is to reach, and the pages are `dispatch ui`'s own. */
+/** Inside Telegram: who is looking decides what there is to reach. */
 function MiniApp() {
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [path, navigate] = usePath();
+  const restart = useRestartNeeded();
 
   useEffect(() => {
     getMe().then(setMe, (failure: ApiError) => setError(failure));
@@ -126,14 +152,15 @@ function MiniApp() {
   if (error) return <Result status="warning" title={titleFor(error)} subTitle={error.message} />;
   if (!me) return <Spin size="large" tip="Уншиж байна…"><div style={{ height: 200 }} /></Spin>;
 
-  // Telegram opens the Mini App at "/", which is Overview's own path, so the landing page is named rather than
-  // matched: whoever opens this wants their tasks, not the machine's version number.
-  const reachable = pagesFor(me);
-  const page = path !== "/" && reachable.some((candidate) => candidate.key === path) ? path : MY_TASKS.key;
+  const wanted = screenOf(path);
+  const screen: Screen = reachable(me, wanted) ? wanted : { kind: "home" };
+  const parent = parentOf(screen);
   return (
-    <MiniShell me={me} selected={page} onSelect={navigate}>
-      <Page path={page} heading={!me.admin} />
-    </MiniShell>
+    <RestartContext.Provider value={restart}>
+      <MiniShell back={parent === null ? null : () => navigate(parent)}>
+        <MiniScreen me={me} screen={screen} navigate={navigate} />
+      </MiniShell>
+    </RestartContext.Provider>
   );
 }
 

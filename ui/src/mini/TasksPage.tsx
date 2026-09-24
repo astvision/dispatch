@@ -20,11 +20,13 @@ const CANCELLABLE: TaskState[] = ["running", "queued", "awaitingApproval"];
  * <p>A phone is too narrow for a table, so each task is a row that wraps: the title on its own line, everything else
  * underneath. It polls rather than saving anything, so it follows LogsPage rather than useManagedConfig.
  */
-export default function TasksPage({ scope, intervalMs = 5000, heading = true }: {
+export default function TasksPage({ scope, intervalMs = 5000, heading = true, project }: {
   scope: "me" | "group";
   intervalMs?: number;
-  /** False when the shell's own switch already names this page, so the phone does not say it twice. */
+  /** False when the screen already names this list, so the phone does not say it twice. */
   heading?: boolean;
+  /** Only this project's tasks, on its own page. */
+  project?: string;
 }) {
   const [tasks, setTasks] = useState<TaskRow[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -40,7 +42,7 @@ export default function TasksPage({ scope, intervalMs = 5000, heading = true }: 
       try {
         const answer = await listTasks(scope);
         if (!stopped) {
-          setTasks(answer.tasks);
+          setTasks(project === undefined ? answer.tasks : answer.tasks.filter((task) => task.project === project));
           setError(null);
         }
       } catch (e) {
@@ -53,7 +55,7 @@ export default function TasksPage({ scope, intervalMs = 5000, heading = true }: 
       stopped = true;
       clearTimeout(timer);
     };
-  }, [scope, intervalMs, reloadToken]);
+  }, [scope, intervalMs, reloadToken, project]);
 
   const act = useCallback(async (call: () => Promise<unknown>) => {
     const done = await acting.run(call);

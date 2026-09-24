@@ -56,7 +56,7 @@ class MiniAppServerTest {
         Groups groups = new Groups(config.telegram());
         TaskService tasks = new TaskService(groups, new Projects(config.projects(), project -> Optional.empty()),
                 new ActiveRuns(), new TestClock(NOW), () -> { }, () -> { });
-        server = MiniApp.start(config, configFile, db, tasks, groups, token -> {
+        server = MiniApp.start(config, configFile, db, tasks, groups, "dispatch_backend_bot", token -> {
             throw new AssertionError("no bot is called in this test");
         }, Map.of("TELEGRAM_BOT_TOKEN", TOKEN), java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC), "/ui-test").orElseThrow();
     }
@@ -97,6 +97,21 @@ class MiniAppServerTest {
         assertTrue(member.body().contains("\"ref\":\"telegram:200\""), member.body());
         assertTrue(member.body().contains("\"admin\":false"), member.body());
         assertTrue(admin.body().contains("\"admin\":true"), admin.body());
+        assertTrue(member.body().contains("\"bot\":\"dispatch_backend_bot\""), "the header names the bot: " + member.body());
+    }
+
+    @Test
+    void aMemberIsListedOnlyTheProjectsOfTheirOwnGroups() throws Exception {
+        HttpResponse<String> ali = get("/api/projects", initData(200));
+        HttpResponse<String> bold = get("/api/projects", initData(100));
+
+        assertEquals(200, ali.statusCode(), ali.body());
+        assertTrue(ali.body().contains("\"name\":\"alm\""), ali.body());
+        assertTrue(ali.body().contains("\"baseBranch\":\"main\""), ali.body());
+        assertFalse(ali.body().contains("crm"), "Ali is not in the group that owns crm: " + ali.body());
+        assertTrue(bold.body().contains("\"name\":\"crm\""), bold.body());
+        assertTrue(bold.body().contains("\"alias\":\"c\""), bold.body());
+        assertEquals(401, get("/api/projects", null).statusCode());
     }
 
     @Test
@@ -176,6 +191,12 @@ class MiniAppServerTest {
                         - id: 200
                           name: Ali
                       projects: [alm]
+                    - name: mobile
+                      chatId: -1009876543210
+                      members:
+                        - id: 100
+                          name: Bold
+                      projects: [crm]
                 delivery:
                   authorName: Dispatch (backend)
                   authorEmail: dispatch@example.com
@@ -190,6 +211,11 @@ class MiniAppServerTest {
                   - name: alm
                     repo: https://github.com/acme/alm.git
                     baseBranch: main
+                    agent: claude-code
+                  - name: crm
+                    alias: c
+                    repo: https://github.com/acme/crm.git
+                    baseBranch: develop
                     agent: claude-code
                 workers:
                   publicUrl: https://team.example.com
