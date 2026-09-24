@@ -84,6 +84,18 @@ class PlanTest {
     }
 
     @Test
+    void optionTrimmingCountsCodePointsAndNeverSplitsAnEmoji() {
+        String emoji = "🚀";
+        String fortieth = "x".repeat(39) + emoji;
+        String split = "x".repeat(38) + emoji + "yy";
+        Plan plan = Plan.parse("""
+                {"understanding":"u","findings":[],"steps":[],"risks":[],
+                 "questions":[{"text":"Which?","options":["%s","%s"]}]}""".formatted(fortieth, split));
+
+        assertEquals(List.of(fortieth, "x".repeat(38) + emoji + "…"), plan.questionItems().getFirst().options());
+    }
+
+    @Test
     void questionObjectWithoutTextOrWithNonTextOptionIsInvalid() {
         assertThrows(InvalidPlanException.class, () -> Plan.parse(
                 "{\"understanding\":\"u\",\"findings\":[],\"steps\":[],\"risks\":[],\"questions\":[{\"options\":[\"a\"]}]}"));

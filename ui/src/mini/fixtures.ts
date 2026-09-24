@@ -1,4 +1,4 @@
-import type { TaskRow, Timeline } from "../api";
+import type { PlanView, TaskDetail, TaskRow, Timeline } from "../api";
 
 /** Bold's own task, still running. */
 export const myRunningTask: TaskRow = {
@@ -81,3 +81,30 @@ export const headlineTimeline: Timeline = {
   costUsd: null,
   headline: true,
 };
+
+/** At the pass: one plan with an open question, one plan ready to approve. */
+export const waitingOnQuestion: TaskRow = {
+  taskId: 10, project: "alm", title: "Make the login timeout configurable", state: "awaitingApproval", priority: "NORMAL",
+  requester: "Bold", mine: true, since: "2026-09-23T09:40:00Z", openQuestions: 2, question: "Which environments?",
+};
+export const waitingOnApproval: TaskRow = {
+  taskId: 11, project: "crm", title: "Add the CSV export", state: "awaitingApproval", priority: "NORMAL", requester: "Bold",
+  mine: true, since: "2026-09-23T09:50:00Z", openQuestions: 0,
+};
+
+export const planWithQuestions: PlanView = {
+  planSeq: 1,
+  understanding: "Make the timeout a setting",
+  steps: ["Read auth.timeout", "Default to 30 minutes"],
+  risks: ["Sessions end sooner in staging"],
+  findings: [],
+  questions: [
+    { index: 1, text: "Which environments?", options: ["staging", "prod"], answer: null },
+    { index: 2, text: "Keep the old default?", options: ["yes", "no"], answer: null },
+  ],
+};
+
+export const detailOf = (task: TaskRow, plan: PlanView): TaskDetail => ({
+  taskId: task.taskId, project: task.project, title: task.title, phase: "AWAITING_APPROVAL", prUrl: null,
+  failureReason: null, createdAt: null, completedAt: null, costUsd: null, plan,
+});

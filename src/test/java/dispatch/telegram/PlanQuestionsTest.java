@@ -184,6 +184,20 @@ class PlanQuestionsTest {
     }
 
     @Test
+    void aSecondWriteTapWhileThePromptIsOpenPointsAtIt() throws Exception {
+        long taskId = taskWithTwoQuestions();
+        long question1 = deliveredQuestion(1);
+
+        handler.handle(tap(626, BOLD, question1, "q:" + taskId + ":1:1:w"));
+        telegram.drain("answerCallbackQuery");
+        deliverAll();
+        handler.handle(tap(627, BOLD, question1, "q:" + taskId + ":1:1:w"));
+
+        assertEquals("Хариултаа доорх мессежид бичнэ үү.", answerText());
+        assertEquals("1", count("SELECT count(*) AS n FROM outbox WHERE kind = 'PLAN_ANSWER_PROMPT'"));
+    }
+
+    @Test
     void aReplyToTheQuestionMessageItselfIsTheAnswer() {
         long taskId = taskWithTwoQuestions();
         long question1 = deliveredQuestion(1);
@@ -226,10 +240,71 @@ class PlanQuestionsTest {
         telegram.drain("answerCallbackQuery");
         handler.handle(tap(611, BOLD, question1, "q:" + taskId + ":1:1:1"));
 
-        assertEquals(renderer.text("callback.stale"), answerText());
+        assertEquals("Энэ асуултад аль хэдийн хариулсан.", answerText(), "answered, while the plan is still current");
         assertEquals("staging", row("SELECT answer FROM plan_answer WHERE task_id = ?", taskId).get("answer"));
         assertEquals("2", count("SELECT count(*) AS n FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_ref IS NULL"),
                 "the second question was sent once");
+    }
+
+    @Test
+    void aReplyToAnAnsweredQuestionSaysSoAndOneToAnOutdatedPlanSaysThat() throws Exception {
+        long taskId = taskWithTwoQuestions();
+        long question1 = deliveredQuestion(1);
+        handler.handle(tap(620, BOLD, question1, "q:" + taskId + ":1:1:0"));
+        long question2 = deliveredQuestion(2);
+        telegram.drain("sendMessage");
+
+        handler.handle(UpdateHandlerTest.message(621, 73, BOLD, "Bold", BOLD, "private", "prod after all", botReply(question1)));
+        deliverAll();
+
+        assertEquals("Энэ асуултад аль хэдийн хариулсан.", lastSentText());
+        assertEquals("staging", row("SELECT answer FROM plan_answer WHERE task_id = ?", taskId).get("answer"));
+
+        long planMessage = messageId(row("SELECT sent_ref FROM outbox WHERE kind = 'PLAN_READY'").get("sent_ref"));
+        handler.handle(UpdateHandlerTest.message(622, 74, BOLD, "Bold", BOLD, "private", "Only staging", botReply(planMessage)));
+        handler.handle(UpdateHandlerTest.message(623, 75, BOLD, "Bold", BOLD, "private", "yes", botReply(question2)));
+        deliverAll();
+
+        assertEquals("#" + taskId + ": энэ төлөвлөгөө хуучирсан байна. Хамгийн сүүлийн төлөвлөгөөнд хариу бичнэ үү.", lastSentText());
+    }
+
+    @Test
+    void aStickerReplyToAQuestionIsAskedForText() throws Exception {
+        long taskId = taskWithTwoQuestions();
+        long question1 = deliveredQuestion(1);
+        telegram.drain("sendMessage");
+        JsonNode sticker = UpdateHandlerTest.message(624, 76, BOLD, "Bold", BOLD, "private", "", botReply(question1));
+        com.fasterxml.jackson.databind.node.ObjectNode body = (com.fasterxml.jackson.databind.node.ObjectNode) sticker.get("message");
+        body.remove("text");
+        body.putObject("sticker").put("file_id", "s1");
+
+        handler.handle(sticker);
+        deliverAll();
+
+        assertEquals("Хариултаа текстээр бичнэ үү.", lastSentText());
+        assertEquals("0", count("SELECT count(*) AS n FROM plan_answer WHERE task_id = " + taskId));
+    }
+
+    @Test
+    void aReplyFromSomeoneTheTasksNoLongerAllowIsRefusedInWords() throws Exception {
+        taskWithTwoQuestions();
+        long question1 = deliveredQuestion(1);
+        telegram.drain("sendMessage");
+        // The handler still sees Bold as a member, but the task service's groups no longer have him, e.g. mid config change.
+        Groups withoutBold = new Groups(List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(200, "Ali")),
+                List.of("autoland-management"))));
+        Projects projects = new Projects(List.of(), project -> Optional.empty());
+        UpdateHandler refusing = new UpdateHandler(db, new TaskService(withoutBold, projects, new ActiveRuns(), clock, () -> { }, () -> { }),
+                new Membership(withoutBold, (group, member) -> null, clock, () -> { }),
+                new Groups(List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold")), List.of("autoland-management")))),
+                projects, new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)), renderer,
+                dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME, clock, () -> { });
+
+        refusing.handle(UpdateHandlerTest.message(625, 77, BOLD, "Bold", BOLD, "private", "prod", botReply(question1)));
+        deliverAll();
+
+        assertEquals(renderer.text("callback.notAllowed"), lastSentText());
+        assertEquals("0", count("SELECT count(*) AS n FROM plan_answer"));
     }
 
     @Test
@@ -299,6 +374,10 @@ class PlanQuestionsTest {
 
     private String answerText() throws InterruptedException {
         return telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText();
+    }
+
+    private String lastSentText() {
+        return telegram.drain("sendMessage").getLast().json().get("text").asText();
     }
 
     private static long messageId(String ref) {

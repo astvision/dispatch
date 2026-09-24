@@ -43,7 +43,7 @@ function TextField({ id, initial, hint, required, busy, onSave }: {
 }
 
 /** A choice: tapping an option saves it at once and ticks it, as Telegram's own settings do. */
-function Choices<T extends string | null>({ title, options, value, busy, onPick }: {
+export function Choices<T extends string | null>({ title, options, value, busy, onPick }: {
   title?: string;
   options: { value: T; label: string }[];
   value: T;

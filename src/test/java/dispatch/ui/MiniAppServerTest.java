@@ -46,18 +46,21 @@ class MiniAppServerTest {
     private final HttpClient http = HttpClient.newHttpClient();
     private Database db;
     private UiServer server;
+    private Groups groups;
+    private Path configFile;
 
     @BeforeEach
     void setUp() throws IOException {
-        Path configFile = writeConfig();
+        configFile = writeConfig();
         Config config = ConfigLoader.load(configFile, Map.of("TELEGRAM_BOT_TOKEN", TOKEN));
         db = Database.open(dir.resolve("dispatch.db"));
         db.migrate();
-        Groups groups = new Groups(config.telegram());
+        groups = new Groups(config.telegram());
         TaskService tasks = new TaskService(groups, new Projects(config.projects(), project -> Optional.empty()),
                 new ActiveRuns(), new TestClock(NOW), () -> { }, () -> { });
         server = MiniApp.start(config, configFile, db, tasks, groups, "dispatch_backend_bot", token -> {
-            throw new AssertionError("no bot is called in this test");
+            // Only an unlink's best-effort leave asks for one, and it survives this as it survives Telegram failing.
+            throw new IllegalStateException("no bot in these tests");
         }, Map.of("TELEGRAM_BOT_TOKEN", TOKEN), java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC), "/ui-test").orElseThrow();
     }
 
@@ -115,6 +118,25 @@ class MiniAppServerTest {
     }
 
     @Test
+    void anyMemberReadsAndSavesTheirOwnGroupAckPreference() throws Exception {
+        HttpResponse<String> defaulted = get("/api/me/prefs", initData(200));
+        assertEquals(200, defaulted.statusCode());
+        assertTrue(defaulted.body().contains("\"groupAck\":\"reaction\""), defaulted.body());
+
+        HttpResponse<String> saved = post("/api/me/prefs", initData(200), "{\"groupAck\":\"silent\"}");
+        assertEquals(200, saved.statusCode(), saved.body());
+        assertTrue(saved.body().contains("\"groupAck\":\"silent\""), saved.body());
+        assertTrue(get("/api/me/prefs", initData(200)).body().contains("\"groupAck\":\"silent\""), "read back what was saved");
+
+        HttpResponse<String> invalid = post("/api/me/prefs", initData(200), "{\"groupAck\":\"loud\"}");
+        assertEquals(400, invalid.statusCode());
+        assertTrue(invalid.body().contains("\"error\":\"invalid\""), invalid.body());
+
+        assertEquals(200, get("/api/me/prefs", initData(100)).statusCode(), "any member, not only an admin");
+        assertEquals(401, get("/api/me/prefs", null).statusCode());
+    }
+
+    @Test
     void onlyAnAdminReachesTheManagementPages() throws Exception {
         HttpResponse<String> memberManaging = post("/api/manage/config", initData(200));
         HttpResponse<String> memberTasks = post("/api/tasks/list", initData(200));
@@ -124,6 +146,31 @@ class MiniAppServerTest {
         assertTrue(memberManaging.body().contains("\"error\":\"not_admin\""), memberManaging.body());
         assertEquals(200, memberTasks.statusCode(), "their own tasks are theirs to see");
         assertEquals(200, adminManaging.statusCode(), adminManaging.body());
+    }
+
+    /** The Mini App runs inside the bot: an unlink applies to the running groups, where dispatch ui needs a restart. */
+    @Test
+    void anUnlinkHereAppliesToTheRunningBotWithoutARestart() throws Exception {
+        String version = ManageApi.version(Files.readAllBytes(configFile));
+
+        HttpResponse<String> unlinked = post("/api/manage/groups/unlink", initData(100),
+                "{\"version\":\"" + version + "\",\"name\":\"mobile\"}");
+
+        assertEquals(200, unlinked.statusCode(), unlinked.body());
+        assertTrue(unlinked.body().contains("\"restartNeeded\":false"), unlinked.body());
+        assertFalse(groups.isGroupChat("telegram:-1009876543210"), "the running bot no longer serves the chat");
+        assertTrue(groups.isGroupChat("telegram:-1001234567890"), "the other group is untouched");
+    }
+
+    /** The rules themselves are {@link TasksApiTest}'s; here, that the task sheet's routes are served, signed only. */
+    @Test
+    void theTaskSheetsRoutesAreServedToASignedMember() throws Exception {
+        for (String route : List.of("detail", "answer", "approve", "reject")) {
+            HttpResponse<String> missing = post("/api/tasks/" + route, initData(200), "{\"taskId\":4242,\"planSeq\":1,\"index\":1,\"text\":\"x\"}");
+            assertEquals(404, missing.statusCode(), route + ": " + missing.body());
+            assertTrue(missing.body().contains("\"error\":\"not_found\""), missing.body());
+            assertEquals(401, post("/api/tasks/" + route, null).statusCode(), route);
+        }
     }
 
     @Test
@@ -154,8 +201,12 @@ class MiniAppServerTest {
     }
 
     private HttpResponse<String> post(String path, String initData) throws Exception {
+        return post(path, initData, "{}");
+    }
+
+    private HttpResponse<String> post(String path, String initData, String body) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(uri(path))
-                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString("{}"));
+                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body));
         if (initData != null) {
             request.header("Authorization", "tma " + initData);
         }

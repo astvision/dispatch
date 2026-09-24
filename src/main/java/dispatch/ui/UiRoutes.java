@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.cli.Checks;
 import dispatch.cli.Locations;
 import dispatch.cli.Service;
+import dispatch.config.Config;
 import dispatch.telegram.BotApi;
 import dispatch.ui.UiServer.Caller;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -29,11 +31,14 @@ public final class UiRoutes {
         this.manage = manage;
     }
 
-    /** @param version what the Overview shows as this build's version */
+    /**
+     * @param version     what the Overview shows as this build's version
+     * @param applyGroups the running bot's groups for a management change to apply at once; null for {@code dispatch ui}
+     */
     public static UiRoutes management(Path configFile, Locations locations, Function<String, BotApi> bots, Service service,
-                                      Map<String, String> environment, String version) {
+                                      Map<String, String> environment, String version, Consumer<Config.Telegram> applyGroups) {
         return new UiRoutes(new OverviewApi(configFile, locations, new Checks(bots), service, environment, version),
-                new ManageApi(configFile, service, environment, bots));
+                new ManageApi(configFile, service, environment, bots, applyGroups));
     }
 
     /** @param adminsOnly whether a caller who may not manage is refused; false for {@code dispatch ui} */

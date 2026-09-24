@@ -5,7 +5,7 @@ export type Field = "baseBranch" | "alias" | "model" | "effort" | "plan" | "exec
 export const FIELDS: Field[] = ["baseBranch", "alias", "model", "effort", "plan", "execute"];
 
 /** Pages from `dispatch ui` reached from the home screen, by path. */
-export type PagePath = "/tasks" | "/group-tasks" | "/people" | "/settings" | "/logs" | "/overview" | "/groups";
+export type PagePath = "/projects" | "/tasks" | "/group-tasks" | "/people" | "/settings" | "/logs" | "/overview" | "/groups" | "/prefs";
 
 export type Screen =
   | { kind: "home" }
@@ -14,7 +14,7 @@ export type Screen =
   | { kind: "project"; name: string }
   | { kind: "field"; name: string; field: Field };
 
-const PAGES: PagePath[] = ["/tasks", "/group-tasks", "/people", "/settings", "/logs", "/overview", "/groups"];
+const PAGES: PagePath[] = ["/projects", "/tasks", "/group-tasks", "/people", "/settings", "/logs", "/overview", "/groups", "/prefs"];
 export const ADMIN_PAGES: PagePath[] = ["/group-tasks", "/people", "/settings", "/logs", "/overview", "/groups"];
 
 // The server answers a path whose last segment has a dot as a file, not as this page, so a dot is escaped too.
@@ -23,6 +23,7 @@ const segment = (name: string) => encodeURIComponent(name).replace(/\./g, "%2E")
 export const projectPath = (name: string) => `/p/${segment(name)}`;
 export const fieldPath = (name: string, field: Field) => `${projectPath(name)}/edit/${field}`;
 export const ADD_PATH = "/projects/add";
+export const PROJECTS_PATH = "/projects";
 
 export function screenOf(path: string): Screen {
   if (PAGES.includes(path as PagePath)) return { kind: "page", path: path as PagePath };
@@ -49,6 +50,9 @@ export function parentOf(screen: Screen): string | null {
       return null;
     case "field":
       return projectPath(screen.name);
+    case "project":
+    case "add":
+      return PROJECTS_PATH;
     default:
       return "/";
   }

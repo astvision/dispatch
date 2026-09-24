@@ -35,13 +35,23 @@ public record Config(
      * group chats for announcements.
      */
     public static boolean isTeam(Telegram telegram) {
-        long members = telegram.groups().stream().flatMap(group -> group.members().stream()).mapToLong(Member::id)
-                .distinct().count();
-        return !telegram.admins().isEmpty() || members > 1;
+        return !telegram.admins().isEmpty() || distinctMembers(telegram) > 1;
     }
 
     public boolean isPersonal() {
-        return !isTeam();
+        return isPersonal(telegram);
+    }
+
+    /**
+     * No admins and exactly one member (ADR 0014). A config without members is neither personal nor a team; the loader
+     * rejects one, so for any loaded config this is the negation of {@link #isTeam(Telegram)}.
+     */
+    public static boolean isPersonal(Telegram telegram) {
+        return telegram.admins().isEmpty() && distinctMembers(telegram) == 1;
+    }
+
+    private static long distinctMembers(Telegram telegram) {
+        return telegram.groups().stream().flatMap(group -> group.members().stream()).mapToLong(Member::id).distinct().count();
     }
 
     /** Instance plan limits with the project's override applied field by field. */

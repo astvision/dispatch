@@ -13,6 +13,13 @@ public interface GroupWriter {
     /** What {@code dispatch init} writes after a personal group's name ({@code Setup}); false once the group has a chat. */
     String NO_CHAT_COMMENT = "# a personal bot: no group chat, everything stays private";
 
+    /** No group owns the project any more, e.g. it was removed after a link prompt listed it. */
+    final class UnknownProject extends ConfigException {
+        public UnknownProject(String project) {
+            super("no project " + project + " in any group");
+        }
+    }
+
     /** @return telegram as the file holds it afterwards */
     Config.Telegram link(long chatId, String title, String project);
 
@@ -51,14 +58,14 @@ public interface GroupWriter {
     /**
      * The pure text edit behind {@link #link}.
      *
-     * @throws ConfigException when no group owns {@code project}; the text is returned unchanged otherwise (e.g. the
+     * @throws UnknownProject when no group owns {@code project}; the text is returned unchanged otherwise (e.g. the
      *                          project's group already holds this chat)
      */
     static String linkText(String text, Config config, long chatId, String title, String project) {
         Config.Group from = config.telegram().groups().stream()
                 .filter(group -> group.projects().contains(project))
                 .findFirst()
-                .orElseThrow(() -> new ConfigException("no project " + project + " in any group"));
+                .orElseThrow(() -> new UnknownProject(project));
         Config.Group already = config.telegram().groups().stream()
                 .filter(group -> Long.valueOf(chatId).equals(group.chatId()))
                 .findFirst()
@@ -138,11 +145,25 @@ public interface GroupWriter {
     }
 
     /**
-     * A group name from a chat's title, e.g. "acme-backend"; "group" when nothing usable is left. Copied from
-     * {@link dispatch.cli.Setup#teamName}'s rule rather than importing {@code dispatch.cli} into {@code dispatch.config}.
+     * A group name from a chat's title, e.g. "acme-backend", "Тэмдэглэл баг" → "temdeglel-bag"; "group" when nothing usable
+     * is left. {@link dispatch.cli.Setup#teamName}'s rule after transliterating Cyrillic, copied rather than importing
+     * {@code dispatch.cli} into {@code dispatch.config}.
      */
     private static String slug(String title) {
-        String slug = title.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
+        String slug = latin(title.toLowerCase(Locale.ROOT)).replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
         return slug.isEmpty() ? "group" : slug;
+    }
+
+    /** Mongolian and Russian Cyrillic letters of a lower-case {@code text} spelled in Latin; everything else as it was. */
+    private static String latin(String text) {
+        String cyrillic = "абвгдеёжзийклмноөпрстуүфхцчшщъыьэюя";
+        String[] latin = {"a", "b", "v", "g", "d", "e", "yo", "j", "z", "i", "i", "k", "l", "m", "n", "o", "u", "p", "r", "s", "t",
+                "u", "u", "f", "kh", "ts", "ch", "sh", "sh", "", "y", "", "e", "yu", "ya"};
+        StringBuilder spelled = new StringBuilder(text.length());
+        for (char letter : text.toCharArray()) {
+            int index = cyrillic.indexOf(letter);
+            spelled.append(index < 0 ? String.valueOf(letter) : latin[index]);
+        }
+        return spelled.toString();
     }
 }

@@ -85,6 +85,16 @@ public final class Renderer {
         return messages.getString(key);
     }
 
+    /** A command menu of {@code names}, each described as command.&lt;name&gt; says. */
+    public List<BotApi.BotCommand> commands(String... names) {
+        return java.util.Arrays.stream(names).map(name -> new BotApi.BotCommand(name, text("command." + name))).toList();
+    }
+
+    /** A linked group's menu: groups only read, tasks are given and cancelled privately (ADR 0012). */
+    public List<BotApi.BotCommand> groupCommands() {
+        return commands("status", "history", "stats", "projects", "help");
+    }
+
     public Rendered render(OutboxKind kind, JsonNode payload) {
         return render(kind, payload, false);
     }
@@ -122,6 +132,11 @@ public final class Renderer {
             case CORRECTION_QUEUED -> plain(format("task.correctionQueued", taskId(payload)));
             case CORRECTION_REFUSED -> plain(switch (payload.path("reason").asText()) {
                 case "stale" -> format("task.correctionStale", taskId(payload));
+                case "alreadyAnswered" -> text("plan.alreadyAnswered");
+                case "empty" -> text("plan.answerEmpty");
+                case "notAllowed" -> text("callback.notAllowed");
+                case "notFound" -> text("callback.notFound");
+                case "notRequester" -> text("callback.notRequester");
                 case "requester" -> format("task.correctionNotRequester", taskId(payload), escape(payload.path("requester").asText()));
                 default -> format("task.correctionRefused", taskId(payload), text("phase." + payload.path("phase").asText()));
             });
@@ -161,7 +176,9 @@ public final class Renderer {
                     escape(payload.path("reason").asText())));
             case TASK_USAGE -> plain(text("task.usage"));
             case PRIVATE_ONLY -> plain(format("privateOnly", escape(payload.path("bot").asText())));
-            case NO_PROJECTS -> plain(text("noProjects"));
+            case NO_PROJECTS -> plain(payload.hasNonNull("names")
+                    ? format("group.noProjects", escape(payload.get("names").asText()))
+                    : text("noProjects"));
             case HELP -> plain(format(payload.path("privateChat").asBoolean() ? "help.private" : "help",
                     projectList(payload.path("projects")), escape(payload.path("bot").asText())));
             case PROJECTS -> projects(payload.path("projects"));
@@ -181,7 +198,11 @@ public final class Renderer {
             case GROUP_LINK -> groupLink(payload);
             case GROUP_LINKED -> plain(format("group.greeting", escape(payload.path("projects").asText())));
             case GROUP_TASK_SENT -> plain(format("group.taskSent", escape(payload.path("requester").asText())));
+            // Never actually sent: OutboxSender reacts directly instead of rendering a message for it.
+            case GROUP_REACTION -> plain(escape(payload.path("emoji").asText()));
+            case GROUP_WORKING -> plain(format("group.working", escape(payload.path("requester").asText())));
             case UNKNOWN_USERNAME -> plain(format("group.unknownUsername", escape(payload.path("username").asText())));
+            case GROUP_READD -> plain(format("group.readdAfterMigration", escape(payload.path("group").asText())));
         };
     }
 
@@ -197,6 +218,9 @@ public final class Renderer {
             }
             case "DECLINED" -> {
                 return plain(format("group.declined", title));
+            }
+            case "MOVED" -> {
+                return plain(format("group.linkMovedTo", title));
             }
             default -> {
                 // OPEN: asked below.
@@ -436,14 +460,16 @@ public final class Renderer {
         int index = payload.path("index").asInt();
         String question = escapeWithin(payload.path("text").asText(), QUESTION_LIMIT);
         if (payload.hasNonNull("answer")) {
+            // The answer gets whatever room the rest of the message leaves, so a long question and answer still fit.
+            int budget = MESSAGE_LIMIT - format("plan.questionAnswered", taskId, index, payload.path("total").asInt(), question, "").length();
             return plain(format("plan.questionAnswered", taskId, index, payload.path("total").asInt(), question,
-                    escapeWithin(payload.get("answer").asText(), QUESTION_LIMIT)));
+                    escapeWithin(payload.get("answer").asText(), budget)));
         }
         String data = "q:" + taskId + ":" + payload.path("planSeq").asInt() + ":" + index + ":";
         List<List<Button>> keyboard = new ArrayList<>();
         JsonNode options = payload.path("options");
         for (int option = 0; option < options.size(); option++) {
-            keyboard.add(List.of(new Button(truncate(options.get(option).asText(), BUTTON_LIMIT), data + option)));
+            keyboard.add(List.of(new Button(label(options.get(option).asText()), data + option)));
         }
         keyboard.add(List.of(new Button(text("button.answerOwn"), data + "w"), new Button(text("button.youDecide"), data + "d")));
         return new Rendered(format("plan.question", taskId, index, payload.path("total").asInt(), question), keyboard, null);
@@ -862,17 +888,24 @@ public final class Renderer {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
-    /** Escapes {@code text} and cuts the result to at most {@code limit} chars, never inside an entity. */
+    /** Escapes {@code text} and cuts the result to at most {@code limit} chars, never inside an entity or an emoji. */
     private static String escapeWithin(String text, int limit) {
         StringBuilder escaped = new StringBuilder();
-        for (int i = 0; i < text.length(); i++) {
-            String next = escape(String.valueOf(text.charAt(i)));
+        for (int i = 0; i < text.length(); i += Character.charCount(text.codePointAt(i))) {
+            String next = escape(Character.toString(text.codePointAt(i)));
             if (escaped.length() + next.length() > limit - 1) {
                 return escaped.append('…').toString();
             }
             escaped.append(next);
         }
         return escaped.toString();
+    }
+
+    /** A button label of at most {@link #BUTTON_LIMIT} code points, so an emoji is never cut in half. */
+    private static String label(String text) {
+        return text.codePointCount(0, text.length()) <= BUTTON_LIMIT
+                ? text
+                : text.substring(0, text.offsetByCodePoints(0, BUTTON_LIMIT - 1)) + "…";
     }
 
     private static String truncate(String text, int limit) {

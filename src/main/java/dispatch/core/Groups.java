@@ -95,8 +95,7 @@ public final class Groups {
 
     /** One member and no admins: a personal bot (ADR 0014). */
     public boolean isPersonal() {
-        return admins().isEmpty() && all().stream().flatMap(group -> group.members().stream())
-                .mapToLong(Config.Member::id).distinct().count() == 1;
+        return Config.isPersonal(telegram);
     }
 
     /** Who may change this Dispatch's setup from Telegram: an admin, or a personal bot's one member. */

@@ -49,8 +49,8 @@ export function Section({ title, children }: { title?: string; children: ReactNo
   const { token } = theme.useToken();
   return (
     <section style={{ marginTop: 20 }}>
-      {title && <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 4px 8px", color: token.colorText }}>{title}</h2>}
-      <div style={{ background: token.colorBgContainer, borderRadius: 12, overflow: "hidden" }}>{children}</div>
+      {title && <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 4px 8px", color: `var(--ink, ${token.colorText})` }}>{title}</h2>}
+      <div style={{ background: `var(--slip, ${token.colorBgContainer})`, borderRadius: 12, overflow: "hidden" }}>{children}</div>
     </section>
   );
 }

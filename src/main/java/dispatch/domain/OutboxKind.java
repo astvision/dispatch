@@ -77,6 +77,16 @@ public enum OutboxKind {
      * sender once that prompt was delivered, so a refused prompt gets the fallback notice instead (G-1b).
      */
     GROUP_TASK_SENT,
+    /**
+     * A reaction on the group message that started a group-origin draft or task, instead of the ✉️ line by default
+     * (G-1e); each new state replaces the previous reaction. Payload: {@code emoji}, and for the 👀 state also
+     * {@code requester}, the ✉️ line's own text sent instead if Telegram refuses the reaction.
+     */
+    GROUP_REACTION,
+    /** reactionAndLine's own line, alongside the ✍ reaction when a group-origin task is created (G-1e). */
+    GROUP_WORKING,
     /** To a linked group: an @username mentioned there is not in the username book, so it gives no task (G-1c). */
-    UNKNOWN_USERNAME
+    UNKNOWN_USERNAME,
+    /** To whoever may manage Dispatch in a linked group, privately: it became a supergroup the bot had just left. */
+    GROUP_READD
 }

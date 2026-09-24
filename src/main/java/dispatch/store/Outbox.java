@@ -107,6 +107,26 @@ public final class Outbox {
                 now);
     }
 
+    /** Whether question {@code index} of plan {@code planSeq} already has a prompt for its answer, sent or on its way. */
+    public static boolean hasAnswerPrompt(Tx tx, long taskId, int planSeq, int index) {
+        return tx.one("""
+                        SELECT 1 AS found FROM outbox
+                        WHERE task_id = ? AND kind = 'PLAN_ANSWER_PROMPT' AND status <> 'FAILED'
+                          AND json_extract(payload, '$.planSeq') = ? AND json_extract(payload, '$.index') = ?
+                        LIMIT 1""",
+                row -> true, taskId, planSeq, index).isPresent();
+    }
+
+    /** The chat message that asked question {@code index} of plan {@code planSeq}, once Telegram has it; empty before. */
+    public static Optional<String> sentQuestion(Tx tx, long taskId, int planSeq, int index) {
+        return tx.one("""
+                        SELECT sent_ref FROM outbox
+                        WHERE task_id = ? AND kind = 'PLAN_QUESTION' AND edit_ref IS NULL AND sent_ref IS NOT NULL
+                          AND json_extract(payload, '$.planSeq') = ? AND json_extract(payload, '$.index') = ?
+                        ORDER BY id LIMIT 1""",
+                row -> row.string("sent_ref"), taskId, planSeq, index);
+    }
+
     public static Optional<Sent> findSent(Tx tx, String sentRef) {
         return tx.one("SELECT id, task_id, kind, payload FROM outbox WHERE sent_ref = ?",
                 row -> new Sent(row.longValue("id"), row.longOrNull("task_id"), row.enumValue("kind", OutboxKind.class),

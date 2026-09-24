@@ -334,6 +334,71 @@ class OutboxSenderTest {
         assertEquals("SENT", row(id).get("status"));
     }
 
+    @Test
+    void reactionIsSentAndMarkedSentWithoutASentRef() throws Exception {
+        long id = enqueueReaction(null, "✍", null);
+
+        assertTrue(sender.deliverDue());
+
+        JsonNode body = telegram.awaitRequest("setMessageReaction", Duration.ofSeconds(1)).json();
+        assertEquals(-100, body.get("chat_id").asLong());
+        assertEquals(55, body.get("message_id").asLong());
+        assertEquals("✍", body.get("reaction").get(0).get("emoji").asText());
+        assertEquals("emoji", body.get("reaction").get(0).get("type").asText());
+        assertFalse(body.get("is_big").asBoolean());
+        Map<String, String> row = row(id);
+        assertEquals("SENT", row.get("status"));
+        assertNull(row.get("sent_ref"), "a reaction is not a message of its own");
+    }
+
+    @Test
+    void reactionRefusedOnThePromptStateFallsBackToTheEnvelopeLineOnce() throws Exception {
+        telegram.respond("setMessageReaction", 400,
+                "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: REACTION_INVALID\"}");
+        long id = enqueueReaction(null, "👀", "Bold");
+
+        sender.deliverDue();
+
+        assertEquals("SENT", row(id).get("status"), "resolved once, not retried forever");
+        assertTrue(sender.deliverDue(), "the fallback line is due at once");
+        JsonNode fallback = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
+        assertEquals(-100, fallback.get("chat_id").asLong());
+        assertEquals(55, fallback.get("reply_parameters").get("message_id").asLong());
+        assertEquals("✉️ <b>Bold</b>: хувийн чатад илгээлээ.", fallback.get("text").asText());
+    }
+
+    @Test
+    void reactionRefusedOnALaterStateIsOnlyLoggedNeverTheEnvelopeLine() {
+        telegram.respond("setMessageReaction", 400,
+                "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: REACTION_INVALID\"}");
+        long id = enqueueReaction(null, "👍", null);
+
+        sender.deliverDue();
+
+        assertEquals("FAILED", row(id).get("status"));
+        assertTrue(telegram.drain("sendMessage").isEmpty(), "no ✉️ line for a state past the prompt");
+    }
+
+    @Test
+    void transientReactionErrorIsRetriedNotFallenBack() {
+        telegram.respond("setMessageReaction", 500, SERVER_ERROR);
+        long id = enqueueReaction(null, "✍", null);
+
+        sender.deliverDue();
+
+        assertEquals("PENDING", row(id).get("status"));
+        assertTrue(telegram.drain("sendMessage").isEmpty());
+    }
+
+    private long enqueueReaction(Long taskId, String emoji, String requester) {
+        ObjectNode payload = Json.object().put("emoji", emoji);
+        if (requester != null) {
+            payload.put("requester", requester);
+        }
+        return db.transactionReturning(tx -> Outbox.enqueue(tx, taskId, OutboxKind.GROUP_REACTION, "telegram:-100", "telegram:-100/55",
+                payload, clock.instant()));
+    }
+
     private long enqueue(OutboxKind kind, ObjectNode payload) {
         return db.transactionReturning(tx -> Outbox.enqueue(tx, null, kind, "telegram:-100", "telegram:-100/55", payload, clock.instant()));
     }

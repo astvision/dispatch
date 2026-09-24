@@ -44,7 +44,7 @@ public final class UiCommand {
                     + "(cd ui && npm ci && npm run build) && ./mvnw -Pui package");
         }
         Path configFile = options.configFile().toAbsolutePath();
-        UiRoutes management = UiRoutes.management(configFile, locations, bots, service, processEnvironment, version());
+        UiRoutes management = UiRoutes.management(configFile, locations, bots, service, processEnvironment, version(), null);
         UiServer server;
         try {
             SetupApi setup = new SetupApi(configFile, locations, bots, service, ServiceCommand.runningJar(), processEnvironment);

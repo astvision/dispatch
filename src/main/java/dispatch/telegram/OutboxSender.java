@@ -1,13 +1,17 @@
 package dispatch.telegram;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.core.Signal;
+import dispatch.domain.GroupAck;
+import dispatch.domain.GroupReaction;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Priority;
 import dispatch.domain.Task;
 import dispatch.store.Database;
+import dispatch.store.MemberPrefs;
 import dispatch.store.Outbox;
 import dispatch.store.Tasks;
 import java.nio.charset.StandardCharsets;
@@ -99,6 +103,10 @@ public final class OutboxSender implements Runnable {
             createTopic(message, attempts, task.orElseThrow());
             return;
         }
+        if (message.kind() == OutboxKind.GROUP_REACTION) {
+            react(message, attempts);
+            return;
+        }
         Renderer.Rendered rendered;
         try {
             // Masked before rendering, so length limits apply to the text that is actually sent.
@@ -131,10 +139,15 @@ public final class OutboxSender implements Runnable {
             db.transaction(tx -> {
                 Outbox.markSent(tx, message.id(), attempts, Refs.message(chatId, sentId, null), clock.instant());
                 if (message.kind() == OutboxKind.DRAFT_PROMPT && message.fallbackChatRef() != null) {
-                    // A task given in a group (G-1b): only now that its prompt arrived does the group hear so.
+                    // A task given in a group (G-1b): only now that its prompt arrived does the group hear so, by the
+                    // developer's own choice of reaction, reaction + line, or silence (G-1e).
                     String requester = Json.read(message.payload()).path("requester").asText();
-                    Outbox.enqueue(tx, null, OutboxKind.GROUP_TASK_SENT, message.fallbackChatRef(), message.fallbackReplyToRef(),
-                            Json.object().put("requester", requester), clock.instant());
+                    GroupAck pref = MemberPrefs.groupAck(tx, Refs.chatId(message.chatRef()));
+                    if (pref != GroupAck.SILENT) {
+                        Outbox.enqueue(tx, null, OutboxKind.GROUP_REACTION, message.fallbackChatRef(), message.fallbackReplyToRef(),
+                                Json.object().put("emoji", GroupReaction.PROMPT_DELIVERED.emoji()).put("requester", requester),
+                                clock.instant());
+                    }
                 }
             });
             Log.info("outbox.sent", "id", message.id(), "kind", message.kind(), "task", message.taskId(), "attempt", attempts);
@@ -178,6 +191,32 @@ public final class OutboxSender implements Runnable {
             });
             Log.info("outbox.topic_created", "id", message.id(), "task", task.id(), "thread", thread);
         } catch (TelegramException e) {
+            handleFailure(message, attempts, e);
+        }
+    }
+
+    /**
+     * setMessageReaction on the group message that started a group-origin task, replacing whatever reaction was there
+     * before (G-1e). Refused — reactions off in that chat, the message gone, any Bot API error — the 👀 state falls back
+     * to the old ✉️ line once; a later state's refusal is only logged, since its own outcome line already told the group.
+     */
+    private void react(Outbox.Message message, int attempts) {
+        JsonNode payload = Json.read(message.payload());
+        String emoji = payload.path("emoji").asText();
+        try {
+            api.setMessageReaction(Refs.chatId(message.chatRef()), Refs.messageId(message.replyToRef()), emoji);
+            db.transaction(tx -> Outbox.markSent(tx, message.id(), attempts, null, clock.instant()));
+            Log.info("outbox.reacted", "id", message.id(), "task", message.taskId(), "emoji", emoji);
+        } catch (TelegramException e) {
+            if (e.isPermanent() && emoji.equals(GroupReaction.PROMPT_DELIVERED.emoji())) {
+                Log.warn("outbox.reaction_fell_back", "id", message.id(), "task", message.taskId(), "error", e.getMessage());
+                db.transaction(tx -> {
+                    Outbox.markSent(tx, message.id(), attempts, null, clock.instant());
+                    Outbox.enqueue(tx, message.taskId(), OutboxKind.GROUP_TASK_SENT, message.chatRef(), message.replyToRef(),
+                            Json.object().put("requester", payload.path("requester").asText()), clock.instant());
+                });
+                return;
+            }
             handleFailure(message, attempts, e);
         }
     }

@@ -97,7 +97,9 @@ public record Plan(String understanding, List<String> findings, List<String> ste
                 }
                 String label = option.asText().strip();
                 if (!label.isEmpty() && options.size() < MAX_OPTIONS) {
-                    options.add(label.length() <= MAX_OPTION_LENGTH ? label : label.substring(0, MAX_OPTION_LENGTH - 1) + "…");
+                    options.add(label.codePointCount(0, label.length()) <= MAX_OPTION_LENGTH
+                            ? label
+                            : label.substring(0, label.offsetByCodePoints(0, MAX_OPTION_LENGTH - 1)) + "…");
                 }
             }
             questions.add(new PlanQuestion(text.asText(), options));

@@ -6,6 +6,7 @@ import dispatch.Json;
 import dispatch.Log;
 import dispatch.agent.AgentResult;
 import dispatch.domain.FailureReason;
+import dispatch.domain.GroupReaction;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
@@ -119,6 +120,7 @@ public final class RunTransitions {
             enqueueForRequester(tx, task, OutboxKind.TASK_COMPLETED, payload, now);
             enqueue(tx, task, OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", taskId).put("project", task.project())
                     .put("prUrl", prUrl).put("filesChanged", files.size()), now);
+            GroupAcks.react(tx, task, GroupReaction.COMPLETED, now);
             logTransition(tx, taskId, seq, Phase.EXECUTING, Phase.COMPLETED);
         });
     }
@@ -143,6 +145,7 @@ public final class RunTransitions {
             enqueueForRequester(tx, task, OutboxKind.TASK_FAILED,
                     Json.object().put("taskId", taskId).put("reason", reason.name()).put("detail", shortDetail), now);
             enqueue(tx, task, OutboxKind.TASK_FAILED_SHORT, Json.object().put("taskId", taskId).put("reason", reason.name()), now);
+            GroupAcks.react(tx, task, GroupReaction.ENDED, now);
             logTransition(tx, taskId, seq, task.phase(), Phase.FAILED);
         });
     }

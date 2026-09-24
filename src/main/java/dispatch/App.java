@@ -284,8 +284,7 @@ public final class App {
                 continue;
             }
             try {
-                // Groups only read: tasks are given and cancelled privately (ADR 0012).
-                api.setMyCommands(group.chatId(), commands(renderer, "status", "history", "stats", "projects", "help"));
+                api.setMyCommands(group.chatId(), renderer.groupCommands());
             } catch (TelegramException e) {
                 Log.warn("telegram.command_menu_failed", "group", group.name(), "chat_id", group.chatId(), "error", e.getMessage());
             }
@@ -297,13 +296,9 @@ public final class App {
                 privateCommands.add("manage");
             }
             privateCommands.addAll(List.of("projects", "help"));
-            api.setPrivateChatCommands(commands(renderer, privateCommands.toArray(String[]::new)));
+            api.setPrivateChatCommands(renderer.commands(privateCommands.toArray(String[]::new)));
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "scope", "all_private_chats", "error", e.getMessage());
         }
-    }
-
-    private static List<BotApi.BotCommand> commands(Renderer renderer, String... names) {
-        return java.util.Arrays.stream(names).map(name -> new BotApi.BotCommand(name, renderer.text("command." + name))).toList();
     }
 }

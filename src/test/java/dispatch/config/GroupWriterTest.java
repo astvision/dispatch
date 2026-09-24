@@ -138,10 +138,20 @@ class GroupWriterTest {
         assertTrue(text.contains("# A personal instance's config"), "other comments stay");
     }
 
+    /** Mongolian and Russian titles would otherwise slug to nothing and every group would be "group", "group-2", … */
+    @Test
+    void aCyrillicTitleIsTransliteratedIntoAReadableName() throws IOException {
+        addSecondProject("crm");
+
+        Config.Telegram telegram = GroupWriter.file(file, ENV).link(-4883391545L, "Тэмдэглэл баг", "alm");
+
+        assertEquals(List.of("bold", "temdeglel-bag"), telegram.groups().stream().map(Config.Group::name).toList());
+    }
+
     @Test
     void anUnknownProjectLeavesTheFileAsItWas() throws IOException {
         String before = Files.readString(file);
-        assertThrows(ConfigException.class, () -> GroupWriter.file(file, ENV).link(-1L, "x", "nope"));
+        assertThrows(GroupWriter.UnknownProject.class, () -> GroupWriter.file(file, ENV).link(-1L, "x", "nope"));
         assertEquals(before, Files.readString(file));
     }
 

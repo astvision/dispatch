@@ -9,6 +9,7 @@ import dispatch.Redactor;
 import dispatch.config.Config;
 import dispatch.core.AnswerResult;
 import dispatch.core.DraftChoice;
+import dispatch.core.DraftResult;
 import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
 import dispatch.core.JoinDecision;
@@ -31,6 +32,8 @@ import dispatch.store.Tx;
 import dispatch.store.Workers;
 import dispatch.worker.WorkerKeys;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -59,6 +62,7 @@ public final class UpdateHandler {
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
     private static final Set<String> COMMANDS =
             Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "projects", "help", "start");
+    private static final Duration UNKNOWN_NOTICE_INTERVAL = Duration.ofHours(24);
 
     private final Database db;
     private final TaskService tasks;
@@ -187,7 +191,7 @@ public final class UpdateHandler {
         if (message.has("migrate_to_chat_id")) {
             long newChatId = message.get("migrate_to_chat_id").asLong();
             if (groupLinks != null) {
-                groupLinks.migrated(tx, chatId, newChatId);
+                migrated(tx, chatId, newChatId);
                 return;
             }
             tx.afterCommit(() -> Log.error("telegram.group_migrated", null, "chat_id", chatId, "new_chat_id", newChatId,
@@ -196,6 +200,34 @@ public final class UpdateHandler {
         }
         if (from.has("id")) {
             onChatMessage(tx, message, false);
+        }
+    }
+
+    /** Moves the link to the supergroup, closes any link prompt that can no longer be answered, and sets its menu. */
+    private void migrated(Tx tx, long oldChatId, long newChatId) {
+        for (GroupLinks.Prompt closed : groupLinks.migrated(tx, oldChatId, newChatId)) {
+            if (closed.messageId() == null) {
+                continue;
+            }
+            ObjectNode payload = Json.object().put("chatId", newChatId).put("title", closed.title()).put("status", "MOVED");
+            Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+            tx.afterCommit(() -> bestEffort("editMessageText",
+                    () -> api.editMessageText(closed.sentTo(), closed.messageId(), redrawn.html(), redrawn.keyboard())));
+        }
+        // After the running groups were replaced: only a migration that actually moved the link gets the menu.
+        tx.afterCommit(() -> {
+            if (groups.isGroupChat(Refs.chat(newChatId))) {
+                setGroupMenu(newChatId);
+            }
+        });
+    }
+
+    /** Best effort, as at start: the group's command menu, so members pick "/status@bot" rather than typing it. */
+    private void setGroupMenu(long chatId) {
+        try {
+            api.setMyCommands(chatId, renderer.groupCommands());
+        } catch (TelegramException e) {
+            Log.warn("telegram.command_menu_failed", "chat_id", chatId, "error", e.getMessage());
         }
     }
 
@@ -354,8 +386,7 @@ public final class UpdateHandler {
     private void groupTask(Tx tx, Requester who, String projectKey, String own, JsonNode message, String origin, String chatRef) {
         Set<String> owned = groups.projectsOfChat(chatRef);
         if (!inProjectGroup(who.ref(), owned)) {
-            enqueue(tx, OutboxKind.NOT_ALLOWED, chatRef, origin, Json.object().put("name", who.name()));
-            tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef));
+            tasks.notAllowed(tx, who, origin, chatRef, clock.instant());
             return;
         }
         JsonNode repliedTo = humanReplied(message);
@@ -365,8 +396,17 @@ public final class UpdateHandler {
             return;
         }
         String project = projectKey != null ? projectKey : onlyProject(owned);
-        tasks.draft(tx, who, project, text, origin, attachments(repliedTo, message),
-                new TaskService.GroupOrigin(chatRef, firstName(message, who)));
+        String firstName = firstName(message, who);
+        DraftResult result = tasks.draft(tx, who, project, text, origin, attachments(repliedTo, message),
+                new TaskService.GroupOrigin(chatRef, firstName));
+        if (result == DraftResult.NO_PROJECTS) {
+            noProjects(tx, chatRef, origin, List.of(firstName));
+        }
+    }
+
+    /** Tells a group, under the message that gave them tasks, which members have no project there to take one. */
+    private void noProjects(Tx tx, String chatRef, String origin, List<String> firstNames) {
+        enqueue(tx, OutboxKind.NO_PROJECTS, chatRef, origin, Json.object().put("names", String.join(", ", firstNames)));
     }
 
     /**
@@ -382,7 +422,7 @@ public final class UpdateHandler {
         }
         Set<String> owned = groups.projectsOfChat(chatRef);
         if (!inProjectGroup(author.ref(), owned)) {
-            tx.afterCommit(() -> Log.info("group.mention_ignored", "author", author.ref(), "chat", chatRef));
+            // Ordinary chat of someone outside the project groups: nothing to do, and a line per message would be noise.
             return;
         }
         Map<Long, List<Mention>> developers = new LinkedHashMap<>();
@@ -397,7 +437,9 @@ public final class UpdateHandler {
                 developers.computeIfAbsent(userId.get(), id -> new ArrayList<>()).add(mention);
             }
         }
-        unknown.forEach(name -> enqueue(tx, OutboxKind.UNKNOWN_USERNAME, chatRef, origin, Json.object().put("username", name)));
+        long chatId = message.path("chat").path("id").asLong();
+        unknown.stream().filter(name -> unknownNoticeDue(tx, chatId, name))
+                .forEach(name -> enqueue(tx, OutboxKind.UNKNOWN_USERNAME, chatRef, origin, Json.object().put("username", name)));
         if (developers.isEmpty()) {
             return;
         }
@@ -410,14 +452,38 @@ public final class UpdateHandler {
         }
         String askedBy = renderer.text("group.requestedBy") + " " + firstName(message, author);
         List<Attachment> files = attachments(repliedTo, message);
+        List<String> withoutProjects = new ArrayList<>();
         for (long userId : developers.keySet()) {
             String ref = Refs.user(userId);
             String name = groups.memberName(ref).orElseThrow();
+            // The ✉️ line and the prompt call them as the group does: by the first word of the configured name.
+            String firstName = name.strip().split("\\s+", 2)[0];
             // One draft per developer: the group message alone would make the second a duplicate of the first.
             String draftOrigin = developers.size() > 1 ? origin + "#" + userId : origin;
-            tasks.draft(tx, new Requester(ref, name), onlyProject(owned), ref.equals(author.ref()) ? own : own + "\n\n" + askedBy,
-                    draftOrigin, files, new TaskService.GroupOrigin(chatRef, name));
+            DraftResult result = tasks.draft(tx, new Requester(ref, name), onlyProject(owned),
+                    ref.equals(author.ref()) ? own : own + "\n\n" + askedBy, draftOrigin, files, new TaskService.GroupOrigin(chatRef, firstName));
+            if (result == DraftResult.NO_PROJECTS) {
+                withoutProjects.add(firstName);
+            }
         }
+        if (!withoutProjects.isEmpty()) {
+            noProjects(tx, chatRef, origin, withoutProjects);
+        }
+    }
+
+    /**
+     * Whether an unknown @name may be pointed out in this chat now, and if so notes that it was: at most once a day per
+     * chat and name, so a name the team keeps using is not answered every time.
+     */
+    private boolean unknownNoticeDue(Tx tx, long chatId, String username) {
+        // ponytail: one kv row per (chat, name) ever pointed out, never pruned; a table with cleanup if that ever grows large
+        String key = "unknown." + chatId + "." + username.toLowerCase(Locale.ROOT);
+        Instant now = clock.instant();
+        boolean due = Kv.get(tx, key).map(Instant::parse).map(last -> !now.isBefore(last.plus(UNKNOWN_NOTICE_INTERVAL))).orElse(true);
+        if (due) {
+            Kv.put(tx, key, now.toString());
+        }
+        return due;
     }
 
     private boolean inProjectGroup(String requesterRef, Set<String> projects) {
@@ -450,7 +516,7 @@ public final class UpdateHandler {
     /**
      * A person named in a message: by @username, or by a text_mention that carries their id.
      *
-     * @param end      past the mention and one space after it, which goes with it when it is removed
+     * @param end      past the mention, one of ",.:;" right after it and then one space, which go with it when it is removed
      * @param username without the "@", null for a text_mention
      * @param userId   null for an @username
      */
@@ -468,22 +534,29 @@ public final class UpdateHandler {
             if (start < 0 || end <= start + 1 || end > text.length()) {
                 continue;
             }
-            int withSpace = end < text.length() && text.charAt(end) == ' ' ? end + 1 : end;
+            int removedEnd = end < text.length() && ",.:;".indexOf(text.charAt(end)) >= 0 ? end + 1 : end;
+            removedEnd = removedEnd < text.length() && text.charAt(removedEnd) == ' ' ? removedEnd + 1 : removedEnd;
             JsonNode user = entity.path("user");
             if (entity.path("type").asText().equals("mention")) {
-                found.add(new Mention(start, withSpace, text.substring(start + 1, end), null));
+                found.add(new Mention(start, removedEnd, text.substring(start + 1, end), null));
             } else if (entity.path("type").asText().equals("text_mention") && user.has("id") && !user.path("is_bot").asBoolean(false)) {
-                found.add(new Mention(start, withSpace, null, user.get("id").asLong()));
+                found.add(new Mention(start, removedEnd, null, user.get("id").asLong()));
             }
         }
         return found;
     }
 
-    /** {@code text} without {@code removed}, stripped. */
+    /** {@code text} without {@code removed}, stripped, and with no doubled space where one was taken out. */
     private static String without(String text, List<Mention> removed) {
         StringBuilder rest = new StringBuilder(text);
         // From the last, so the earlier offsets still hold.
-        removed.stream().sorted(Comparator.comparingInt(Mention::start).reversed()).forEach(mention -> rest.delete(mention.start(), mention.end()));
+        removed.stream().sorted(Comparator.comparingInt(Mention::start).reversed()).forEach(mention -> {
+            int at = mention.start();
+            rest.delete(at, mention.end());
+            while (at > 0 && at < rest.length() && rest.charAt(at - 1) == ' ' && rest.charAt(at) == ' ') {
+                rest.deleteCharAt(at);
+            }
+        });
         return rest.toString().strip();
     }
 
@@ -540,8 +613,18 @@ public final class UpdateHandler {
         long taskId = sent.get().taskId();
         AnswerResult result = tasks.answer(tx, who, taskId, question.path("planSeq").asInt(), question.path("index").asInt(),
                 text(message), questionRef, origin, chatRef);
-        if (result == AnswerResult.STALE) {
-            enqueue(tx, OutboxKind.CORRECTION_REFUSED, chatRef, origin, Json.object().put("taskId", taskId).put("reason", "stale"));
+        // Every refusal is answered in words: a reply has no callback to answer, and silence would look like it was taken.
+        String reason = switch (result) {
+            case ANSWERED, PROMPTED, PROMPT_OPEN -> null;
+            case EMPTY -> "empty";
+            case ALREADY_ANSWERED -> "alreadyAnswered";
+            case NOT_ALLOWED -> "notAllowed";
+            case NOT_FOUND -> "notFound";
+            case NOT_REQUESTER -> "notRequester";
+            case STALE -> "stale";
+        };
+        if (reason != null) {
+            enqueue(tx, OutboxKind.CORRECTION_REFUSED, chatRef, origin, Json.object().put("taskId", taskId).put("reason", reason));
         }
         return true;
     }
@@ -574,10 +657,12 @@ public final class UpdateHandler {
         answer(tx, callbackId, switch (result) {
             case ANSWERED -> "callback.answered";
             case PROMPTED -> "callback.writeAnswer";
+            case PROMPT_OPEN -> "plan.answerPromptOpen";
             case EMPTY -> "callback.unknown";
             case NOT_ALLOWED -> "callback.notAllowed";
             case NOT_FOUND -> "callback.notFound";
             case NOT_REQUESTER -> "callback.notRequester";
+            case ALREADY_ANSWERED -> "plan.alreadyAnswered";
             case STALE -> "callback.stale";
         });
     }
@@ -810,8 +895,13 @@ public final class UpdateHandler {
         if (isGroup(chat)) {
             // The bot may already be in the group (no "added" event then): a command to it from someone who may manage
             // Dispatch asks, as does the service message about adding it, which can arrive before my_chat_member.
-            boolean asks = message.has("new_chat_members")
+            boolean asks = addsThisBot(message)
                     || Command.parse(message).filter(command -> command.addressedTo(botUsername)).isPresent();
+            if (!asks && message.has("new_chat_members") && mayLink(from)) {
+                // A manager adding someone else to a group the bot waits in (its prompt open, or not delivered yet).
+                tx.afterCommit(() -> Log.info("group.members_added_ignored", "chat_id", chatId));
+                return;
+            }
             if (asks && mayLink(from)) {
                 askToLink(tx, chatId, chat.path("title").asText(), from.get("id").asLong());
             } else {
@@ -824,6 +914,16 @@ public final class UpdateHandler {
         tx.afterCommit(() -> Log.warn("telegram.chat_ignored", "chat_id", chatId, "type", type, "user_id", userId));
     }
 
+    /** Whether the message is the service message about adding this bot, and not only other members. */
+    private boolean addsThisBot(JsonNode message) {
+        for (JsonNode member : message.path("new_chat_members")) {
+            if (member.path("is_bot").asBoolean(false) && botUsername.equalsIgnoreCase(member.path("username").asText())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Whether {@code from} is asked which project an unknown group is for, instead of the bot leaving it. */
     private boolean mayLink(JsonNode from) {
         return groupLinks != null && from.has("id") && groups.mayManage(Refs.user(from.get("id").asLong()));
@@ -831,7 +931,8 @@ public final class UpdateHandler {
 
     /**
      * Asks {@code fromId} privately which project the group is for, once per open prompt. Sent directly rather than through
-     * the outbox so that a refusal (they never pressed Start) is seen here: the bot then leaves.
+     * the outbox so that a refusal (they never pressed Start) is seen here: the bot then leaves. Any other failure keeps
+     * the bot and the open prompt.
      */
     private void askToLink(Tx tx, long chatId, String title, long fromId) {
         List<String> names = projects.all().stream().map(Config.Project::name).toList();
@@ -842,15 +943,37 @@ public final class UpdateHandler {
         names.forEach(payload.putArray("projects")::add);
         Renderer.Rendered prompt = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
         tx.afterCommit(() -> {
+            long messageId;
             try {
-                api.sendMessage(fromId, null, prompt.html(), null, prompt.keyboard());
-                Log.info("group.link_asked", "chat_id", chatId, "user_id", fromId);
+                messageId = api.sendMessage(fromId, null, prompt.html(), null, prompt.keyboard());
             } catch (RuntimeException e) {
+                if (!isRefusal(e)) {
+                    // A timeout or a Telegram outage: the bot stays, and a later add or command to it asks again.
+                    Log.warn("group.link_prompt_failed", "chat_id", chatId, "user_id", fromId, "error", e.getMessage());
+                    return;
+                }
                 Log.warn("group.link_prompt_refused", "chat_id", chatId, "user_id", fromId, "error", e.getMessage());
                 db.transaction(later -> groupLinks.forget(later, chatId));
                 bestEffort("leaveChat", () -> api.leaveChat(chatId));
+                return;
+            }
+            Log.info("group.link_asked", "chat_id", chatId, "user_id", fromId);
+            try {
+                db.transaction(later -> groupLinks.sent(later, chatId, fromId, messageId));
+            } catch (RuntimeException e) {
+                // The prompt arrived and its buttons work; only a migration closing it cannot edit it now.
+                Log.error("group.link_prompt_record_failed", e, "chat_id", chatId, "user_id", fromId, "message_id", messageId);
             }
         });
+    }
+
+    /** Telegram refusing the private chat itself (they never pressed Start, or blocked the bot): asking again cannot help. */
+    private static boolean isRefusal(RuntimeException e) {
+        if (!(e instanceof TelegramException telegram)) {
+            return false;
+        }
+        String message = String.valueOf(telegram.getMessage());
+        return telegram.errorCode() == 403 || message.contains("chat not found") || message.contains("can't initiate conversation");
     }
 
     /** A button on a link prompt: a project's index in the prompt's list, or "-" to leave the group unlinked. */
@@ -858,18 +981,17 @@ public final class UpdateHandler {
         Optional<GroupLinks.Prompt> prompt = groupLinks.prompt(tx, chatId);
         Optional<Long> index = taskId(choice);
         GroupLinks.Result result;
+        Optional<Long> announcedIn = Optional.empty();
         if (choice.equals("-")) {
             result = groupLinks.decline(tx, presser, chatId);
         } else if (index.isPresent()) {
-            Optional<Long> announcedIn = chatOfPromptedProject(prompt, index.get());
-            result = groupLinks.link(tx, presser, chatId, index.get().intValue());
-            if (result == GroupLinks.Result.LINKED) {
-                leaveIfUnlinked(tx, announcedIn.filter(old -> old != chatId));
-            }
+            announcedIn = chatOfPromptedProject(prompt, index.get());
+            result = groupLinks.link(tx, presser, chatId, index.get());
         } else {
             answer(tx, callback.path("id").asText(), "callback.unknown");
             return;
         }
+        // Answered first: after-commits run in order, and the button's spinner should not wait on the calls below.
         answer(tx, callback.path("id").asText(), switch (result) {
             case LINKED -> "callback.groupLinked";
             case DECLINED -> "callback.groupDeclined";
@@ -877,6 +999,10 @@ public final class UpdateHandler {
             case CONFIG_FAILED -> "callback.groupLinkFailed";
             case NOT_ALLOWED -> "callback.notAdmin";
         });
+        if (result == GroupLinks.Result.LINKED) {
+            leaveIfUnlinked(tx, announcedIn.filter(old -> old != chatId));
+            tx.afterCommit(() -> setGroupMenu(chatId));
+        }
         if (result != GroupLinks.Result.LINKED && result != GroupLinks.Result.DECLINED) {
             return;
         }
@@ -917,6 +1043,9 @@ public final class UpdateHandler {
 
     private void leave(Tx tx, long chatId, JsonNode from) {
         long userId = from.path("id").asLong();
+        if (groupLinks != null) {
+            groupLinks.left(tx, chatId);
+        }
         tx.afterCommit(() -> {
             Log.warn("telegram.leaving_foreign_group", "chat_id", chatId, "user_id", userId);
             bestEffort("leaveChat", () -> api.leaveChat(chatId));

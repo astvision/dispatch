@@ -413,6 +413,21 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void personalMeansExactlyOneMemberAndNoAdminsLikeGroupsSays() {
+        Config.Telegram nobody = new Config.Telegram(List.of(), List.of(new Config.Group("g", null, List.of(), List.of("p"))));
+        Config.Telegram one = new Config.Telegram(List.of(), List.of(new Config.Group("g", null,
+                List.of(new Config.Member(1, "Bold")), List.of("p")), new Config.Group("h", null, List.of(new Config.Member(1, "Bold")),
+                List.of("q"))));
+
+        assertFalse(Config.isPersonal(nobody), "no member at all is not a personal bot");
+        assertFalse(Config.isTeam(nobody));
+        assertEquals(new dispatch.core.Groups(nobody).isPersonal(), Config.isPersonal(nobody));
+        assertTrue(Config.isPersonal(one), "one distinct member across groups");
+        assertFalse(Config.isTeam(one));
+        assertEquals(new dispatch.core.Groups(one).isPersonal(), Config.isPersonal(one));
+    }
+
+    @Test
     void aPersonalBotMayHaveGroupChatsWithoutWorkers() throws IOException {
         Config config = ConfigLoader.load(write(PERSONAL_WITH_CHAT), ENV);
 

@@ -14,12 +14,16 @@ import GroupsPage from "./mini/GroupsPage";
 import HomePage from "./mini/HomePage";
 import { ListStyles, Section } from "./mini/List";
 import { ADMIN_PAGES, parentOf, projectPath, screenOf, type PagePath, type Screen } from "./mini/paths";
+import PrefsPage from "./mini/PrefsPage";
 import ProjectPage from "./mini/ProjectPage";
+import MiniProjectsPage from "./mini/ProjectsPage";
 import TasksPage from "./mini/TasksPage";
+import "./mini/world.css";
+import { worldStyle } from "./mini/world";
 import OverviewPage from "./OverviewPage";
 import RestartNotice from "./RestartNotice";
 import SetupPage from "./setup/SetupPage";
-import { inTelegram } from "./telegram";
+import { inTelegram, prefersDark, themeParams } from "./telegram";
 import { usePath } from "./usePath";
 import { useSetupState } from "./useSetupState";
 
@@ -82,6 +86,7 @@ function MiniPage({ path }: { path: PagePath }) {
     );
   }
   if (path === "/groups") return <GroupsPage />;
+  if (path === "/prefs") return <PrefsPage />;
   return <div style={{ paddingTop: 12 }}><Page path={path === "/overview" ? "/" : path} /></div>;
 }
 
@@ -90,7 +95,7 @@ function MiniScreen({ me, screen, navigate }: { me: Me; screen: Screen; navigate
     case "home":
       return <HomePage me={me} navigate={navigate} />;
     case "page":
-      return <MiniPage path={screen.path} />;
+      return screen.path === "/projects" ? <MiniProjectsPage me={me} navigate={navigate} /> : <MiniPage path={screen.path} />;
     case "add":
       return <AddProjectPage navigate={navigate} />;
     case "project":
@@ -109,24 +114,28 @@ function reachable(me: Me, screen: Screen) {
 }
 
 /**
- * The Mini App's own chrome, after Telegram's settings screens: raised sections on the page's ground, Telegram's Back
- * button in its header, and "restart to apply" kept above every screen once something was saved.
+ * The Mini App's own chrome: Telegram's colours as the page's world (world.ts), Telegram's Back button in its header,
+ * and "restart to apply" kept above every screen once something was saved.
  */
 function MiniShell({ back, children }: { back: (() => void) | null; children: React.ReactNode }) {
   const { token } = theme.useToken();
   const restart = useContext(RestartContext);
   useTelegramBackButton(back);
+  const world = worldStyle(themeParams, prefersDark, token);
+  const ground = String((world as Record<string, string>)["--ground"]);
+  const ink = String((world as Record<string, string>)["--ink"]);
 
   // The page needs a surface of its own: antd paints its components, not the document, and a transparent body left
   // antd's dark text on whatever the webview happened to paint. Set on body too, so overscroll matches.
   useEffect(() => {
-    document.body.style.background = token.colorBgLayout;
-    document.body.style.color = token.colorText;
-  }, [token.colorBgLayout, token.colorText]);
+    document.body.style.background = ground;
+    document.body.style.color = ink;
+    document.body.style.margin = "0";
+  }, [ground, ink]);
 
   return (
-    <main style={{ minHeight: "100vh", padding: "8px 16px 32px", background: token.colorBgLayout, color: token.colorText,
-                   fontFamily: token.fontFamily }}>
+    <main className="mini-world" style={{ ...world, padding: "8px 16px calc(24px + env(safe-area-inset-bottom))",
+                                          fontFamily: token.fontFamily }}>
       <ListStyles />
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
         {back && (

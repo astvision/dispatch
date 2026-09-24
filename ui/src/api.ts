@@ -316,6 +316,12 @@ export interface TaskRow {
   steps?: number;
   lastAction?: string;
   waitingForWorker?: boolean;
+  /** A running or queued run's kind: PLAN or EXECUTE. */
+  kind?: string;
+  blocked?: string;
+  /** On the viewer's own task awaiting approval: how many of its plan's questions are open, and the first of them. */
+  openQuestions?: number;
+  question?: string;
 }
 
 export interface TaskRun {
@@ -349,10 +355,54 @@ export interface Timeline {
   runs?: TaskRun[];
 }
 
+/** One of a plan's questions: the answer options the agent offered, and the answer once given. */
+export interface PlanQuestionView {
+  index: number;
+  text: string;
+  options: string[];
+  answer: string | null;
+}
+
+export interface PlanView {
+  planSeq: number;
+  understanding: string;
+  steps: string[];
+  risks: string[];
+  findings: string[];
+  questions: PlanQuestionView[];
+}
+
+/** The requester's own task with its latest plan, as the Mini App's task sheet shows it. */
+export interface TaskDetail {
+  taskId: number;
+  project: string;
+  title: string;
+  phase: string;
+  prUrl: string | null;
+  failureReason: string | null;
+  createdAt: string | null;
+  completedAt: string | null;
+  costUsd: string | null;
+  plan?: PlanView;
+}
+
+/** One answer to a question: an offered option's index, the requester's own words, or "you decide". */
+export type Answer = { option: number } | { text: string } | { decide: true };
+
+/** How the caller's own group hears about their task (G-1e); reaction is the default. */
+export type GroupAck = "reaction" | "reactionAndLine" | "silent";
+
 export const getMe = (signal?: AbortSignal) => get<Me>("/api/me", signal);
+export const getPrefs = (signal?: AbortSignal) => get<{ groupAck: GroupAck }>("/api/me/prefs", signal);
+export const savePrefs = (groupAck: GroupAck) => post<{ groupAck: GroupAck }>("/api/me/prefs", { groupAck });
 export const listProjects = (signal?: AbortSignal) => get<{ projects: ProjectSummary[] }>("/api/projects", signal);
 export const listTasks = (scope: "me" | "group", signal?: AbortSignal) =>
   post<{ tasks: TaskRow[] }>("/api/tasks/list", { scope }, signal);
 export const taskTimeline = (taskId: number, signal?: AbortSignal) => post<Timeline>("/api/tasks/timeline", { taskId }, signal);
 export const cancelTask = (taskId: number) => post<{ result: string }>("/api/tasks/cancel", { taskId });
 export const retryTask = (taskId: number) => post<{ result: string }>("/api/tasks/retry", { taskId });
+export const getTaskDetail = (taskId: number, signal?: AbortSignal) => post<TaskDetail>("/api/tasks/detail", { taskId }, signal);
+export const answerQuestion = (taskId: number, planSeq: number, index: number, answer: Answer) =>
+  post<TaskDetail & { result: string }>("/api/tasks/answer", { taskId, planSeq, index, ...answer });
+export const approvePlan = (taskId: number, planSeq: number) => post<{ result: string }>("/api/tasks/approve", { taskId, planSeq });
+export const rejectPlan = (taskId: number, planSeq: number) => post<{ result: string }>("/api/tasks/reject", { taskId, planSeq });

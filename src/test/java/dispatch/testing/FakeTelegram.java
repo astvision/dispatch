@@ -42,6 +42,7 @@ public final class FakeTelegram implements AutoCloseable {
 
     private final HttpServer server;
     private final Map<String, BlockingQueue<Request>> requests = new ConcurrentHashMap<>();
+    private final List<String> calls = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<String, Deque<String[]>> scripted = new ConcurrentHashMap<>();
     private final Map<Long, String[]> refusedChats = new ConcurrentHashMap<>();
     private final BlockingQueue<JsonNode> updates = new LinkedBlockingQueue<>();
@@ -99,6 +100,11 @@ public final class FakeTelegram implements AutoCloseable {
         return request;
     }
 
+    /** Every Bot API method called so far, in the order the calls arrived. */
+    public List<String> calls() {
+        return List.copyOf(calls);
+    }
+
     public List<Request> drain(String method) {
         List<Request> drained = new ArrayList<>();
         queue(method).drainTo(drained);
@@ -128,6 +134,7 @@ public final class FakeTelegram implements AutoCloseable {
         }
         String method = path.substring(path.lastIndexOf('/') + 1);
         byte[] body = exchange.getRequestBody().readAllBytes();
+        calls.add(method);
         queue(method).add(new Request(method, exchange.getRequestHeaders().getFirst("Content-Type"), body));
 
         if (method.equals("sendMessage")) {

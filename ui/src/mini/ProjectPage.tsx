@@ -4,7 +4,7 @@ import { removeProject, type ManagedProject, type Me, type PhaseChoice, type Pro
 import { EFFORTS, MODELS } from "../options";
 import { MiniManaged, useMiniConfig, useProjects } from "./data";
 import { Header, Row, Section } from "./List";
-import { fieldPath, type Field } from "./paths";
+import { fieldPath, PROJECTS_PATH, type Field } from "./paths";
 import TasksPage from "./TasksPage";
 
 const label = (options: { value: string | null; label: string }[], value: string | null) =>
@@ -94,7 +94,7 @@ function AdminProject({ name, navigate }: { name: string; navigate: (path: strin
             <Settings project={project} navigate={navigate} />
             <Section>
               <RemoveRows busy={saving} onRemove={async () => {
-                if (await save((version) => removeProject(version, name))) navigate("/");
+                if (await save((version) => removeProject(version, name))) navigate(PROJECTS_PATH);
               }} />
             </Section>
           </>

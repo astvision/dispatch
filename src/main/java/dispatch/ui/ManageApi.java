@@ -39,6 +39,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -96,6 +97,7 @@ public final class ManageApi {
     private final Service service;
     private final Map<String, String> processEnvironment;
     private final Function<String, BotApi> bots;
+    private final Consumer<Config.Telegram> applyGroups;
     private final Git git = new Git("git", null, Duration.ofSeconds(30));
 
     public ManageApi(Path configFile, Service service, Map<String, String> processEnvironment) {
@@ -104,10 +106,21 @@ public final class ManageApi {
 
     /** @param bots used to leave a group's chat best-effort after it is unlinked; null where that is not available */
     public ManageApi(Path configFile, Service service, Map<String, String> processEnvironment, Function<String, BotApi> bots) {
+        this(configFile, service, processEnvironment, bots, null);
+    }
+
+    /**
+     * @param bots        likewise
+     * @param applyGroups the running bot's groups, handed the saved telegram after an unlink so it applies without a
+     *                    restart; null outside {@code dispatch run} ({@code dispatch ui} is a process of its own)
+     */
+    public ManageApi(Path configFile, Service service, Map<String, String> processEnvironment, Function<String, BotApi> bots,
+                     Consumer<Config.Telegram> applyGroups) {
         this.configFile = configFile.toAbsolutePath();
         this.service = service;
         this.processEnvironment = processEnvironment;
         this.bots = bots;
+        this.applyGroups = applyGroups;
     }
 
     public Map<String, Function<JsonNode, Object>> routes() {
@@ -300,20 +313,36 @@ public final class ManageApi {
 
     /**
      * Removes a group's chat id, keeping its members and projects. When a bot factory is available, the bot then
-     * leaves the chat best-effort: a failure there (e.g. it already left) never undoes the save.
+     * leaves the chat best-effort: a failure there (e.g. it already left) never undoes the save. Inside the running bot
+     * the saved groups apply at once, so no restart is needed.
      */
     private Saved unlinkGroup(JsonNode body) {
         String name = SetupApi.text(body, "name");
         AtomicReference<Long> chatId = new AtomicReference<>();
+        AtomicReference<String> edited = new AtomicReference<>();
         Saved saved = save(body, (text, config) -> {
-            String edited = GroupWriter.unlinkText(text, config, name);
+            edited.set(GroupWriter.unlinkText(text, config, name));
             chatId.set(group(config, name).chatId());
-            return edited;
+            return edited.get();
         });
         if (bots != null) {
             leaveChat(chatId.get());
         }
-        return saved;
+        if (applyGroups == null || !applyLive(edited.get())) {
+            return saved;
+        }
+        return new Saved(saved.saved(), false, saved.version());
+    }
+
+    /** False, with the restart notice kept, if the saved text cannot be applied: the save itself stands either way. */
+    private boolean applyLive(String saved) {
+        try {
+            applyGroups.accept(ConfigFile.parse(configFile, saved, SecretsFile.environment(configFile, processEnvironment)).telegram());
+            return true;
+        } catch (RuntimeException e) {
+            Log.warn("group.unlink_not_applied", "error", e.getMessage(), "action", "restart Dispatch to apply the unlink");
+            return false;
+        }
     }
 
     /**

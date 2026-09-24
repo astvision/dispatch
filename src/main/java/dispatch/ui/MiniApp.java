@@ -7,7 +7,9 @@ import dispatch.cli.Service;
 import dispatch.config.Config;
 import dispatch.core.Groups;
 import dispatch.core.TaskService;
+import dispatch.domain.GroupAck;
 import dispatch.store.Database;
+import dispatch.store.MemberPrefs;
 import dispatch.telegram.BotApi;
 import dispatch.ui.UiServer.Caller;
 import java.io.IOException;
@@ -53,12 +55,15 @@ public final class MiniApp {
                     + "install the release jar to use it");
             return Optional.empty();
         }
+        // Inside dispatch run: a management change the bot can take live (an unlink) goes straight to its groups.
         UiRoutes management = UiRoutes.management(configFile, Locations.current(), bots, Service.forThisMachine(),
-                environment, version());
+                environment, version(), groups::replace);
         Map<String, BiFunction<Caller, JsonNode, Object>> post = new HashMap<>(management.post(true));
         post.putAll(new TasksApi(db, tasks, groups).routes());
+        post.put("/api/me/prefs", (caller, body) -> setPrefs(caller, body, db, clock));
         Map<String, Function<Caller, Object>> get = new HashMap<>(management.get(true));
         get.put("/api/me", caller -> me(caller, botUsername));
+        get.put("/api/me/prefs", caller -> prefs(caller, db));
         get.put("/api/projects", caller -> projects(caller, config.projects(), groups));
         return Optional.of(UiServer.start(miniApp.port(), resourceRoot,
                 port -> new TelegramAuth(config.secrets().telegramBotToken(), () -> groups, config.isTeam(),
@@ -72,6 +77,27 @@ public final class MiniApp {
      */
     private static Map<String, Object> me(Caller caller, String botUsername) {
         return Map.of("ref", caller.ref(), "name", caller.name(), "admin", caller.admin(), "bot", botUsername);
+    }
+
+    /** How the caller's own group hears about their task: their own choice, everyone's to read and change (G-1e). */
+    private static Map<String, Object> prefs(Caller caller, Database db) {
+        GroupAck pref = db.transactionReturning(tx -> MemberPrefs.groupAck(tx, userId(caller.ref())));
+        return Map.of("groupAck", pref.value());
+    }
+
+    private static Map<String, Object> setPrefs(Caller caller, JsonNode body, Database db, Clock clock) {
+        GroupAck value;
+        try {
+            value = GroupAck.fromValue(body.path("groupAck").asText(""));
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(400, "invalid", "groupAck must be one of reaction, reactionAndLine, silent");
+        }
+        db.transaction(tx -> MemberPrefs.setGroupAck(tx, userId(caller.ref()), value, clock.instant()));
+        return Map.of("groupAck", value.value());
+    }
+
+    private static long userId(String ref) {
+        return Long.parseLong(ref.substring("telegram:".length()));
     }
 
     /**

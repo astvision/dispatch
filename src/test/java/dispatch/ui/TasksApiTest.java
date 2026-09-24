@@ -7,17 +7,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
+import dispatch.agent.AgentOutcome;
+import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Groups;
 import dispatch.core.Projects;
+import dispatch.core.RunTransitions;
 import dispatch.core.TaskService;
+import dispatch.domain.ClaimedRun;
+import dispatch.domain.Plan;
+import dispatch.domain.PlanQuestion;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
+import dispatch.store.Runs;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import dispatch.ui.UiServer.Caller;
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -45,6 +53,7 @@ class TasksApiTest {
     private TestClock clock;
     private TaskService tasks;
     private TasksApi api;
+    private RunTransitions transitions;
 
     @BeforeEach
     void setUp() {
@@ -61,6 +70,7 @@ class TasksApiTest {
         tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.empty()), new ActiveRuns(), clock,
                 () -> { }, () -> { });
         api = new TasksApi(db, tasks, groups);
+        transitions = new RunTransitions(db, clock, () -> { });
     }
 
     @AfterEach
@@ -150,6 +160,125 @@ class TasksApiTest {
         assertEquals("cannot_retry", refused.code());
         assertTrue(refused.getMessage().contains("only the member who gave it"), refused.getMessage());
         assertEquals("CANCELLED", api.cancel(BOLD_CALLER, Json.object().put("taskId", alis)).path("result").asText());
+    }
+
+    @Test
+    void theRequesterReadsTheirPlanWithItsQuestionsAndNobodyElseDoes() {
+        long taskId = planned(ALI, twoQuestions());
+
+        JsonNode detail = api.detail(ALI_CALLER, Json.object().put("taskId", taskId));
+
+        assertEquals("AWAITING_APPROVAL", detail.path("phase").asText());
+        JsonNode plan = detail.path("plan");
+        assertEquals(1, plan.path("planSeq").asInt());
+        assertEquals("Make the timeout configurable", plan.path("understanding").asText());
+        assertEquals("Read auth.timeout", plan.path("steps").get(0).asText());
+        assertEquals("[\"staging\",\"prod\"]", plan.path("questions").get(0).path("options").toString());
+        assertTrue(plan.path("questions").get(0).path("answer").isNull(), "not answered yet");
+        JsonNode listed = item(api.list(ALI_CALLER, Json.object()), taskId);
+        assertEquals(2, listed.path("openQuestions").asInt(), "the home screen says what the task waits on");
+        assertEquals("Which environments?", listed.path("question").asText());
+        assertFalse(item(api.list(BOLD_CALLER, Json.object().put("scope", "group")), taskId).has("question"),
+                "someone else's task stays a headline (ADR 0020)");
+        for (String route : List.of("detail", "answer", "approve", "reject")) {
+            ApiException refused = assertThrows(ApiException.class, () -> call(route, BOLD_CALLER,
+                    Json.object().put("taskId", taskId).put("planSeq", 1).put("index", 1).put("option", 0)));
+            assertEquals(403, refused.status(), route + ": even an admin decides nobody else's plan");
+            assertEquals("not_yours", refused.code(), route);
+        }
+        assertEquals(404, assertThrows(ApiException.class, () -> api.detail(STRANGER, Json.object().put("taskId", taskId))).status());
+    }
+
+    @Test
+    void answeringTheLastQuestionQueuesTheAnswersAsOneCorrection() {
+        long taskId = planned(ALI, twoQuestions());
+
+        JsonNode first = api.answer(ALI_CALLER, Json.object().put("taskId", taskId).put("planSeq", 1).put("index", 1).put("option", 1));
+        assertEquals("prod", first.path("plan").path("questions").get(0).path("answer").asText());
+        assertEquals("AWAITING_APPROVAL", first.path("phase").asText(), "one question is still open");
+
+        JsonNode last = api.answer(ALI_CALLER, Json.object().put("taskId", taskId).put("planSeq", 1).put("index", 2).put("decide", true));
+
+        assertEquals("PLANNING", last.path("phase").asText(), "the agent plans again with the answers");
+        String correction = SqlRows.single(dbFile, "SELECT instruction FROM run WHERE task_id = ? AND cause = 'CORRECTION'", taskId)
+                .get("instruction");
+        assertTrue(correction.contains("Which environments? → prod"), correction);
+        assertTrue(correction.contains("Keep the old default? → Та хамгийн боломжит"), "the chat's own 'you decide' words: " + correction);
+    }
+
+    @Test
+    void questionsAreAnsweredInOrderAndAnOlderPlanIsStale() {
+        long taskId = planned(ALI, twoQuestions());
+
+        ApiException outOfOrder = assertThrows(ApiException.class, () -> api.answer(ALI_CALLER,
+                Json.object().put("taskId", taskId).put("planSeq", 1).put("index", 2).put("text", "yes")));
+        ApiException stale = assertThrows(ApiException.class, () -> api.answer(ALI_CALLER,
+                Json.object().put("taskId", taskId).put("planSeq", 7).put("index", 1).put("text", "prod")));
+        ApiException staleApproval = assertThrows(ApiException.class, () -> api.approve(ALI_CALLER,
+                Json.object().put("taskId", taskId).put("planSeq", 7)));
+
+        assertEquals(409, outOfOrder.status());
+        assertEquals("out_of_order", outOfOrder.code());
+        assertEquals("stale", stale.code());
+        assertEquals("stale", staleApproval.code());
+        assertTrue(staleApproval.getMessage().contains("newer one"), staleApproval.getMessage());
+    }
+
+    @Test
+    void aPlanWithOpenQuestionsCannotBeApproved() {
+        long taskId = planned(ALI, twoQuestions());
+
+        ApiException refused = assertThrows(ApiException.class, () -> api.approve(ALI_CALLER,
+                Json.object().put("taskId", taskId).put("planSeq", 1)));
+
+        assertEquals(409, refused.status());
+        assertEquals("open_questions", refused.code());
+        assertEquals("AWAITING_APPROVAL", phase(taskId));
+    }
+
+    @Test
+    void theRequesterApprovesOrRejectsAPlanWithoutQuestions() {
+        long approved = planned(ALI, noQuestions());
+        long rejected = planned(ALI, noQuestions());
+
+        assertEquals("APPROVED", api.approve(ALI_CALLER, Json.object().put("taskId", approved).put("planSeq", 1)).path("result").asText());
+        assertEquals("REJECTED", api.reject(ALI_CALLER, Json.object().put("taskId", rejected).put("planSeq", 1)).path("result").asText());
+
+        assertEquals("EXECUTING", phase(approved));
+        assertEquals("REJECTED", phase(rejected));
+        assertEquals("wrong_state", assertThrows(ApiException.class, () -> api.approve(ALI_CALLER,
+                Json.object().put("taskId", approved).put("planSeq", 1))).code(), "a second tap changes nothing");
+    }
+
+    private Object call(String route, Caller caller, com.fasterxml.jackson.databind.node.ObjectNode body) {
+        return switch (route) {
+            case "detail" -> api.detail(caller, body);
+            case "answer" -> api.answer(caller, body);
+            case "approve" -> api.approve(caller, body);
+            default -> api.reject(caller, body);
+        };
+    }
+
+    private long planned(Requester who, Plan plan) {
+        create(who, "Fix the login timeout " + System.nanoTime());
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.planSucceeded(run.taskId(), run.seq(), plan,
+                new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", plan.toJson(), null, new BigDecimal("0.1"), 3, List.of(), null, null, null));
+        return run.taskId();
+    }
+
+    private static Plan twoQuestions() {
+        return new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(),
+                List.of(new PlanQuestion("Which environments?", List.of("staging", "prod")),
+                        new PlanQuestion("Keep the old default?", List.of("yes", "no"))));
+    }
+
+    private static Plan noQuestions() {
+        return new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), List.of());
+    }
+
+    private String phase(long taskId) {
+        return SqlRows.single(dbFile, "SELECT phase FROM task WHERE id = ?", taskId).get("phase");
     }
 
     private long create(Requester who, String title) {

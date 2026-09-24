@@ -131,6 +131,18 @@ class RendererTest {
     }
 
     @Test
+    void aCutLandingInsideAnEmojiDropsTheWholeEmoji() {
+        // The detail's limit is 1500 chars with room for "…": the cut falls between the emoji's two UTF-16 halves.
+        String emoji = "😀";
+        ObjectNode payload = Json.object().put("taskId", 42).put("reason", "AGENT").put("detail", "x".repeat(1498) + emoji + "tail");
+
+        String html = renderer.render(OutboxKind.TASK_FAILED, payload).html();
+
+        assertTrue(html.contains("x".repeat(1498) + "…"), "the emoji goes whole, not its first half");
+        assertFalse(html.chars().anyMatch(c -> Character.isSurrogate((char) c)), "no half emoji left behind");
+    }
+
+    @Test
     void completedTaskLinksThePullRequestWithSummaryDenialsCostAndDuration() {
         String html = renderer.render(OutboxKind.TASK_COMPLETED,
                 completedPayload("https://github.com/acme/alm/pull/7", 2, List.of("Bash: git push origin dispatch/42"))).html();
@@ -632,6 +644,17 @@ class RendererTest {
     }
 
     @Test
+    void aButtonLabelIsCutByCodePointsAndNeverSplitsAnEmoji() {
+        String emoji = "🚀";
+        ObjectNode payload = questionPayload("Which?", List.of("x".repeat(39) + emoji, "x".repeat(38) + emoji + "yy"));
+
+        List<List<Renderer.Button>> keyboard = renderer.render(OutboxKind.PLAN_QUESTION, payload).keyboard();
+
+        assertEquals("x".repeat(39) + emoji, keyboard.get(0).getFirst().text());
+        assertEquals("x".repeat(38) + emoji + "…", keyboard.get(1).getFirst().text());
+    }
+
+    @Test
     void anAnsweredQuestionShowsItsAnswerWithoutButtons() {
         ObjectNode payload = questionPayload("Which <env>?", List.of("staging")).put("answer", "prod & staging");
 
@@ -639,6 +662,17 @@ class RendererTest {
 
         assertEquals("✅ <b>#42</b> · асуулт 1/2\nWhich &lt;env&gt;?\n→ <i>prod &amp; staging</i>", rendered.html());
         assertTrue(rendered.keyboard().isEmpty());
+    }
+
+    @Test
+    void anAnsweredQuestionWithALongAnswerStaysWithinTelegramsLimit() {
+        ObjectNode payload = questionPayload("q".repeat(1500), List.of()).put("answer", "Only staging " + "a".repeat(3987));
+
+        String html = renderer.render(OutboxKind.PLAN_QUESTION, payload).html();
+
+        assertTrue(html.length() <= 4096, "html length " + html.length());
+        assertTrue(html.contains("→ <i>Only staging aaa"), html);
+        assertTrue(html.endsWith("…</i>"), "the answer is cut, not the markup");
     }
 
     @Test
@@ -787,7 +821,10 @@ class RendererTest {
             }
             case GROUP_LINKED -> Json.object().put("projects", "life");
             case GROUP_TASK_SENT -> Json.object().put("requester", "Bold");
+            case GROUP_REACTION -> Json.object().put("emoji", "👀");
+            case GROUP_WORKING -> Json.object().put("requester", "Bold");
             case UNKNOWN_USERNAME -> Json.object().put("username", "ali_dev");
+            case GROUP_READD -> Json.object().put("group", "bold");
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

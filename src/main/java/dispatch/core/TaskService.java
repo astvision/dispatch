@@ -1,5 +1,6 @@
 package dispatch.core;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
@@ -9,6 +10,7 @@ import dispatch.domain.Attachment;
 import dispatch.domain.Draft;
 import dispatch.domain.DraftStatus;
 import dispatch.domain.FailureReason;
+import dispatch.domain.GroupReaction;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
@@ -36,6 +38,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -140,7 +143,10 @@ public final class TaskService {
         }
         List<Config.Project> offered = offeredProjects(who.ref());
         if (offered.isEmpty()) {
-            enqueue(tx, null, OutboxKind.NO_PROJECTS, chatRef, replyTo, Json.object(), now);
+            // A task given in a group is answered there by the caller, in one line for everyone its message concerned.
+            if (group == null) {
+                enqueue(tx, null, OutboxKind.NO_PROJECTS, chatRef, replyTo, Json.object(), now);
+            }
             return DraftResult.NO_PROJECTS;
         }
         String named = projectKey == null ? null : projects.find(projectKey).map(Config.Project::name).orElse(null);
@@ -398,6 +404,7 @@ public final class TaskService {
             // Said once, when the task is given; /status keeps showing it until a computer connects.
             enqueue(tx, id, OutboxKind.WORKER_WAITING, who.ref(), null, Json.object().put("taskId", id), now);
         }
+        GroupAcks.react(tx, Tasks.find(tx, id).orElseThrow(), GroupReaction.TASK_CREATED, now);
         tx.afterCommit(wakeScheduler);
         tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "priority", priority,
                 "requester", who.ref()));
@@ -532,8 +539,8 @@ public final class TaskService {
     /**
      * The requester's answer to question {@code index} (1-based) of the plan with run number {@code planSeq} (G-1d). The
      * question message is redrawn with it and the next unanswered question is sent; the last answer sends them all to
-     * the agent as one correction, exactly as a typed one. A question of an older plan, one already answered, or one of
-     * a task no longer awaiting approval is stale and changes nothing.
+     * the agent as one correction, exactly as a typed one. A question already answered, one of an older plan, or one of a
+     * task no longer awaiting approval changes nothing.
      *
      * @param questionRef the question message, redrawn with the answer
      * @param originRef   the message the correction is acknowledged under
@@ -554,7 +561,7 @@ public final class TaskService {
         List<PlanQuestion> questions = Plan.parse(task.planJson()).questionItems();
         String text = answer.strip();
         if (!PlanAnswers.record(tx, taskId, planSeq, index, text, who.ref(), questionRef, now)) {
-            return AnswerResult.STALE;
+            return AnswerResult.ALREADY_ANSWERED;
         }
         Outbox.enqueueEdit(tx, taskId, OutboxKind.PLAN_QUESTION, task.requester().ref(), questionRef,
                 questionPayload(taskId, planSeq, questions, index).put("answer", text), now);
@@ -594,6 +601,10 @@ public final class TaskService {
         Optional<AnswerResult> refused = questionRefusal(tx, who, taskId, planSeq, index);
         if (refused.isPresent()) {
             return refused.get();
+        }
+        if (Outbox.hasAnswerPrompt(tx, taskId, planSeq, index)) {
+            // The question is unanswered, so its prompt is still open: a second one would only clutter the chat.
+            return AnswerResult.PROMPT_OPEN;
         }
         Task task = Tasks.find(tx, taskId).orElseThrow();
         Outbox.enqueue(tx, taskId, OutboxKind.PLAN_ANSWER_PROMPT, task.requester().ref(), questionRef,
@@ -638,8 +649,11 @@ public final class TaskService {
             return Optional.of(AnswerResult.STALE);
         }
         int total = Plan.parse(task.planJson()).questionItems().size();
-        if (index < 1 || index > total || PlanAnswers.of(tx, taskId, planSeq).containsKey(index)) {
+        if (index < 1 || index > total) {
             return Optional.of(AnswerResult.STALE);
+        }
+        if (PlanAnswers.of(tx, taskId, planSeq).containsKey(index)) {
+            return Optional.of(AnswerResult.ALREADY_ANSWERED);
         }
         return Optional.empty();
     }
@@ -686,6 +700,7 @@ public final class TaskService {
         Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.REJECTED, "rejected", now);
         enqueue(tx, taskId, OutboxKind.TASK_REJECTED, task.chatRef(), task.groupOriginRef(),
                 Json.object().put("taskId", taskId).put("by", who.name()), now);
+        GroupAcks.react(tx, task, GroupReaction.ENDED, now);
         logTransition(tx, taskId, Phase.AWAITING_APPROVAL, Phase.REJECTED, who.ref());
         return RejectResult.REJECTED;
     }
@@ -754,6 +769,7 @@ public final class TaskService {
             // Sent from a private chat: answer there too, not only in the group.
             enqueue(tx, taskId, OutboxKind.TASK_CANCELLED, chatRef, originRef, cancelled, now);
         }
+        GroupAcks.react(tx, task, GroupReaction.ENDED, now);
         tx.afterCommit(() -> activeRuns.stop(taskId, ActiveRuns.StopReason.CANCELLED));
         logTransition(tx, taskId, task.phase(), Phase.CANCELLED, who.ref());
         return CancelResult.CANCELLED;
@@ -936,9 +952,24 @@ public final class TaskService {
         }
         ArrayNode awaiting = payload.putArray("awaitingApproval");
         for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL, visibleProjects)) {
-            awaiting.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
+            ObjectNode item = awaiting.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                     .put("priority", task.priority().name()).put("requester", task.requester().name())
                     .put("mine", ownedBy(task, viewerRef)).put("since", text(task.updatedAt()));
+            if (ownedBy(task, viewerRef)) {
+                // What the Mini App's home shows on the requester's own waiting task: the question it waits on, if any.
+                currentPlan(tx, task.id()).ifPresent(plan -> {
+                    List<JsonNode> open = new ArrayList<>();
+                    plan.withArray("questions").forEach(question -> {
+                        if (question.path("answer").isNull()) {
+                            open.add(question);
+                        }
+                    });
+                    item.put("openQuestions", open.size());
+                    if (!open.isEmpty()) {
+                        item.put("question", open.getFirst().path("text").asText());
+                    }
+                });
+            }
         }
         ArrayNode mine = payload.putArray("mine");
         active.values().stream().filter(task -> task.requester().ref().equals(viewerRef))
@@ -1052,6 +1083,31 @@ public final class TaskService {
         return Optional.of(payload);
     }
 
+    /**
+     * The task's latest plan with its questions and the answers given so far, as the Mini App's task sheet shows it; empty
+     * when the task has no plan yet. It does not check who asks: the caller shows it to the requester alone.
+     */
+    public Optional<ObjectNode> currentPlan(Tx tx, long taskId) {
+        Optional<Task> found = Tasks.find(tx, taskId).filter(task -> task.planJson() != null);
+        OptionalInt planSeq = Runs.latestSucceededPlanSeq(tx, taskId);
+        if (found.isEmpty() || planSeq.isEmpty()) {
+            return Optional.empty();
+        }
+        Plan plan = Plan.parse(found.get().planJson());
+        Map<Integer, String> answers = PlanAnswers.of(tx, taskId, planSeq.getAsInt());
+        ObjectNode payload = Json.object().put("planSeq", planSeq.getAsInt()).put("understanding", plan.understanding());
+        plan.steps().forEach(payload.putArray("steps")::add);
+        plan.risks().forEach(payload.putArray("risks")::add);
+        plan.findings().forEach(payload.putArray("findings")::add);
+        ArrayNode questions = payload.putArray("questions");
+        for (int index = 1; index <= plan.questionItems().size(); index++) {
+            PlanQuestion question = plan.questionItems().get(index - 1);
+            ObjectNode item = questions.addObject().put("index", index).put("text", question.text()).put("answer", answers.get(index));
+            question.options().forEach(item.putArray("options")::add);
+        }
+        return Optional.of(payload);
+    }
+
     /** Posts statistics for this month: the viewer's own in a private chat, the group's in a group chat (ADR 0012). */
     public void stats(Tx tx, String viewerRef, List<String> groupNames, String originRef, String chatRef) {
         String view = viewerRef != null ? "me" : "group:" + groupNames.getFirst();
@@ -1104,9 +1160,10 @@ public final class TaskService {
         return Optional.of(payload);
     }
 
-    private void notAllowed(Tx tx, Requester who, String originRef, String chatRef, Instant now) {
+    /** Tells {@code who} in {@code chatRef} that they may not give Dispatch tasks, and logs it; also for a group's task (G-1b). */
+    public void notAllowed(Tx tx, Requester who, String originRef, String chatRef, Instant now) {
         enqueue(tx, null, OutboxKind.NOT_ALLOWED, chatRef, originRef, Json.object().put("name", who.name()), now);
-        tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name()));
+        tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef));
     }
 
     /**

@@ -151,6 +151,16 @@ public final class BotApi {
         return call("createForumTopic", body, requestTimeout).path("message_thread_id").asLong();
     }
 
+    /**
+     * The one reaction shown on a message, replacing whatever was there before: a group-origin task's state instead of
+     * the old ✉️ line (G-1e).
+     */
+    public void setMessageReaction(long chatId, long messageId, String emoji) {
+        ObjectNode body = Json.object().put("chat_id", chatId).put("message_id", messageId).put("is_big", false);
+        body.putArray("reaction").addObject().put("type", "emoji").put("emoji", emoji);
+        call("setMessageReaction", body, requestTimeout);
+    }
+
     public void editForumTopic(long chatId, long threadId, String name) {
         call("editForumTopic", Json.object().put("chat_id", chatId).put("message_thread_id", threadId).put("name", name), requestTimeout);
     }

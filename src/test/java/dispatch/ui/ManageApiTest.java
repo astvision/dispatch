@@ -330,6 +330,22 @@ class ManageApiTest {
         assertEquals(List.of("alm", "crm"), group.projects());
     }
 
+    /** Inside dispatch run the Mini App hands the saved groups to the running bot, so no restart is needed. */
+    @Test
+    void unlinkingInsideTheRunningBotAppliesTheGroupsAtOnce() throws Exception {
+        List<Config.Telegram> applied = new ArrayList<>();
+        ManageApi live = new ManageApi(config, service, Map.of("TELEGRAM_BOT_TOKEN", TOKEN), null, applied::add);
+
+        JsonNode saved = Json.MAPPER.readTree(Json.write(live.routes().get("/api/manage/groups/unlink")
+                .apply(Json.MAPPER.readTree("{\"version\":\"" + version() + "\",\"name\":\"acme\"}"))));
+
+        assertTrue(saved.path("saved").asBoolean());
+        assertFalse(saved.path("restartNeeded").asBoolean(), saved.toString());
+        assertEquals(1, applied.size());
+        assertNull(applied.getFirst().groups().getFirst().chatId());
+        assertEquals(List.of("alm", "crm"), applied.getFirst().groups().getFirst().projects());
+    }
+
     @Test
     void unlinkingAGroupWithNoChatIsRefused() throws Exception {
         call("/api/manage/groups/unlink", "{\"version\":\"" + version() + "\",\"name\":\"acme\"}");

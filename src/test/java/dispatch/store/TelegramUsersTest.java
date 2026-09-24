@@ -50,6 +50,25 @@ class TelegramUsersTest {
     }
 
     @Test
+    void recordingTheSameUsernameAgainWritesNothingButACaseChangeIsKept() {
+        db.transaction(tx -> TelegramUsers.record(tx, 200, "ali_dev", T0));
+        db.transaction(tx -> TelegramUsers.record(tx, 200, "ali_dev", T0.plusSeconds(60)));
+
+        assertEquals(Timestamps.format(T0), updatedAt(200));
+
+        db.transaction(tx -> TelegramUsers.record(tx, 200, "Ali_Dev", T0.plusSeconds(120)));
+
+        assertEquals(Timestamps.format(T0.plusSeconds(120)), updatedAt(200));
+        assertEquals("Ali_Dev", db.transactionReturning(tx -> tx.one("SELECT username FROM telegram_user", row -> row.string("username")))
+                .orElseThrow());
+    }
+
+    private String updatedAt(long userId) {
+        return db.transactionReturning(tx -> tx.one("SELECT updated_at FROM telegram_user WHERE user_id = ?",
+                row -> row.string("updated_at"), userId)).orElseThrow();
+    }
+
+    @Test
     void aUsernameMovingToAnotherAccountClearsTheOldRow() {
         db.transaction(tx -> TelegramUsers.record(tx, 200, "ali_dev", T0));
         db.transaction(tx -> TelegramUsers.record(tx, 300, "ALI_DEV", T0.plusSeconds(60)));

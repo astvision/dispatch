@@ -14,6 +14,9 @@ export interface ThemeParams {
   button_color?: string;
   button_text_color?: string;
   secondary_bg_color?: string;
+  section_bg_color?: string;
+  section_separator_color?: string;
+  destructive_text_color?: string;
 }
 
 export interface Launch {
