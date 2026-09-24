@@ -215,6 +215,21 @@ class TaskLifecycleTest {
     }
 
     @Test
+    void statusSaysOfflineRatherThanAStaleBlockerWhenTheComputerGoesSilent() {
+        tasks = teamTaskService();
+        liveWorkerReporting(BOLD, "ann-laptop", new Readiness(new Readiness.Check(false, "cannot run claude"),
+                new Readiness.Check(true, null), Map.of()));
+        create(BOLD, "alm", "Fix login timeout", "100");
+        reportBlocked();
+
+        clock.advance(Duration.ofSeconds(Workers.SEEN_WITHIN.toSeconds() + 1));
+
+        JsonNode queued = tasksStatusPayload().get("queued").get(0);
+        assertTrue(queued.get("waitingForWorker").asBoolean(), queued.toString());
+        assertFalse(queued.has("blocked"), "before the scheduler's next pass clears it: " + queued);
+    }
+
+    @Test
     void aTaskWaitingOnlyForItsTurnIsNotReportedAsBlocked() {
         tasks = teamTaskService();
         // gh is broken, but a plan never touches GitHub: this task is not held by it.

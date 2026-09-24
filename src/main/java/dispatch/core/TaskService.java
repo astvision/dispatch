@@ -759,10 +759,12 @@ public final class TaskService {
             } else {
                 item.put("queuedAt", text(run.queuedAt()));
                 Task queuedTask = active.get(run.taskId());
-                if (requiresWorker && queuedTask != null && waitsForWorker(tx, queuedTask, workerSeenSince)) {
+                boolean waitingForWorker = requiresWorker && queuedTask != null && waitsForWorker(tx, queuedTask, workerSeenSince);
+                if (waitingForWorker) {
                     item.put("waitingForWorker", true);
                 }
-                String blocked = requiresWorker ? Tasks.blockedReason(tx, run.taskId()) : null;
+                // An offline computer's last blocker is stale until the scheduler's next pass clears it; offline says more.
+                String blocked = requiresWorker && !waitingForWorker ? Tasks.blockedReason(tx, run.taskId()) : null;
                 if (blocked != null) {
                     item.put("blocked", blocked);
                 }
@@ -782,8 +784,8 @@ public final class TaskService {
 
     /**
      * Tells each requester what on their computer holds their queued run — once per reason, not once per call — and
-     * forgets the reason once nothing holds it, so /status stops saying so. The scheduler calls this when it found
-     * nothing to claim, so it costs nothing while work is flowing.
+     * forgets the reason once nothing holds it, so /status stops saying so. The scheduler calls this whenever it found
+     * nothing to claim: when the queue is held or full, never between two claims.
      *
      * @param workerSeenSince how recently a computer must have reported to count, as the scheduler's claim uses
      */
