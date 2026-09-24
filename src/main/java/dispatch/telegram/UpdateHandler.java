@@ -41,7 +41,8 @@ import java.util.Set;
  * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). The configured groups and
  * members' private chats with the bot are served (ADR 0011, 0012); other groups are left, other private chats ignored. A
  * group sees only its own projects, a member those of all their groups. Besides commands and buttons, a reply to a plan
- * message is a correction and a reply to a task's result is a follow-up.
+ * message is a correction and a reply to a task's result is a follow-up. A member who mentions the bot in their linked
+ * group gives a task, drafted in their private chat all the same (G-1b).
  */
 public final class UpdateHandler {
 
@@ -210,9 +211,14 @@ public final class UpdateHandler {
             return;
         }
         if (parsed.isEmpty()) {
-            if (!replyToTask(tx, message, who, origin, chatRef) && privateChat) {
+            if (replyToTask(tx, message, who, origin, chatRef)) {
+                return;
+            }
+            if (privateChat) {
                 // Anything else a member writes privately is a task to give (ADR 0012).
                 tasks.draft(tx, who, null, text(message), origin, attachments(message));
+            } else {
+                withoutBotMentions(message).ifPresent(rest -> groupTask(tx, who, rest, message, origin, chatRef));
             }
             return;
         }
@@ -223,7 +229,7 @@ public final class UpdateHandler {
         switch (command.name()) {
             case "task" -> {
                 if (!privateChat) {
-                    privateOnly(tx, chatRef, origin);
+                    groupTask(tx, who, command.args(), message, origin, chatRef);
                     return;
                 }
                 giveTask(tx, who, command.args(), message, origin);
@@ -295,6 +301,54 @@ public final class UpdateHandler {
         String own = named.isPresent() ? (firstAndRest.length > 1 ? firstAndRest[1].strip() : "") : args;
         tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), withRepliedMessage(own, repliedTo), origin,
                 attachments(repliedTo, message));
+    }
+
+    /**
+     * A task given in a linked group, by mentioning the bot or with /task (G-1b): a member of that group gets the usual draft
+     * in their private chat, with the group's project chosen if it has just one; a replied message is the text, or follows it.
+     */
+    private void groupTask(Tx tx, Requester who, String own, JsonNode message, String origin, String chatRef) {
+        Set<String> owned = groups.projectsOfChat(chatRef);
+        if (owned.stream().noneMatch(project -> groups.isMemberOfProjectGroup(who.ref(), project))) {
+            enqueue(tx, OutboxKind.NOT_ALLOWED, chatRef, origin, Json.object().put("name", who.name()));
+            tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef));
+            return;
+        }
+        String replied = text(message.path("reply_to_message")).strip();
+        String text = own.isBlank() ? replied : replied.isEmpty() ? own : own + "\n\n" + replied;
+        if (text.isBlank()) {
+            enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object());
+            return;
+        }
+        String project = owned.size() == 1 ? owned.iterator().next() : null;
+        String firstName = TelegramNames.clean(message.path("from").path("first_name").asText(""));
+        tasks.draft(tx, who, project, text, origin, attachments(message),
+                new TaskService.GroupOrigin(chatRef, firstName.isEmpty() ? who.name() : firstName));
+    }
+
+    /**
+     * The message's text without its mentions of this bot (and one space after each), or empty when it does not mention
+     * the bot. Telegram's offsets count UTF-16 units, as Java strings do.
+     */
+    private Optional<String> withoutBotMentions(JsonNode message) {
+        String text = text(message);
+        JsonNode entities = message.has("entities") ? message.get("entities") : message.path("caption_entities");
+        List<int[]> mentions = new ArrayList<>();
+        for (JsonNode entity : entities) {
+            int start = entity.path("offset").asInt(-1);
+            int end = start + entity.path("length").asInt();
+            if (entity.path("type").asText().equals("mention") && start >= 0 && end <= text.length()
+                    && text.substring(start, end).equalsIgnoreCase("@" + botUsername)) {
+                mentions.add(new int[] {start, end < text.length() && text.charAt(end) == ' ' ? end + 1 : end});
+            }
+        }
+        if (mentions.isEmpty()) {
+            return Optional.empty();
+        }
+        StringBuilder rest = new StringBuilder(text);
+        // From the last, so the earlier offsets still hold.
+        mentions.reversed().forEach(range -> rest.delete(range[0], range[1]));
+        return Optional.of(rest.toString().strip());
     }
 
     private void privateOnly(Tx tx, String chatRef, String origin) {

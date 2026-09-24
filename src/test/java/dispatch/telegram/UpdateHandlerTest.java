@@ -410,15 +410,139 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void taskAndCancelInAGroupArePointedToThePrivateChat() {
-        handler.handle(message(507, 17, 999, "Sara", GROUP, "supergroup", "/task alm Drop the tables", null));
-        handler.handle(message(508, 18, 100, "Bold", GROUP, "supergroup", "/cancel 1", null));
+    void cancelAndRetryInAGroupArePointedToThePrivateChat() {
+        handler.handle(message(507, 17, 100, "Bold", GROUP, "supergroup", "/cancel@" + BOT + " 3", null));
+        handler.handle(message(508, 18, 100, "Bold", GROUP, "supergroup", "/retry 1", null));
 
         assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
-        Map<String, String> task = row("SELECT * FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/17");
-        assertEquals("PRIVATE_ONLY", task.get("kind"));
-        assertEquals(FakeTelegram.BOT_USERNAME, Json.read(task.get("payload")).get("bot").asText());
+        Map<String, String> cancel = row("SELECT * FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/17");
+        assertEquals("PRIVATE_ONLY", cancel.get("kind"));
+        assertEquals(FakeTelegram.BOT_USERNAME, Json.read(cancel.get("payload")).get("bot").asText());
         assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/18").get("kind"));
+    }
+
+    @Test
+    void memberMentioningTheBotInTheGroupGetsTheDraftPromptPrivatelyAndTheGroupIsTold() throws Exception {
+        handler.handle(mention(520, 30, 100, "Bold", "@" + BOT + " Fix the login timeout", null));
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("Fix the login timeout", draft.get("description"));
+        assertEquals("telegram:100", draft.get("requester_ref"));
+        assertEquals("telegram:" + GROUP + "/30", draft.get("origin_ref"));
+        assertEquals("autoland-management", draft.get("project"), "the group's only project is already chosen");
+        Map<String, String> prompt = row("SELECT * FROM outbox");
+        assertEquals("DRAFT_PROMPT", prompt.get("kind"));
+        assertEquals("telegram:100", prompt.get("chat_ref"));
+        assertEquals(null, prompt.get("reply_to_ref"), "never a reply target from another chat");
+
+        OutboxSender sender = sender();
+        assertTrue(sender.deliverDue());
+        assertTrue(sender.deliverDue());
+
+        JsonNode privately = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(100, privately.get("chat_id").asLong());
+        assertFalse(privately.has("reply_parameters"));
+        JsonNode inGroup = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(GROUP, inGroup.get("chat_id").asLong());
+        assertEquals(30, inGroup.get("reply_parameters").get("message_id").asLong());
+        assertEquals("✉️ <b>Bold</b>: хувийн чатад илгээлээ.", inGroup.get("text").asText());
+        assertFalse(sender.deliverDue(), "nothing else is said");
+    }
+
+    @Test
+    void taskCommandToTheBotInTheGroupStartsTheSameDraft() {
+        handler.handle(message(521, 31, 200, "Ali", GROUP, "supergroup", "/task@" + BOT + " Fix it", null));
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("Fix it", draft.get("description"));
+        assertEquals("telegram:200", draft.get("requester_ref"));
+        assertEquals("autoland-management", draft.get("project"));
+        assertEquals("DRAFT_PROMPT", row("SELECT kind FROM outbox").get("kind"));
+    }
+
+    @Test
+    void mentionReplyingToAMessageTakesThatMessageAsTheTask() {
+        String replied = """
+                {"message_id":29,"from":{"id":300,"is_bot":false,"first_name":"Sara"},"chat":{"id":%d,"type":"supergroup"},
+                 "date":1789640000,"text":"Login fails after 30s on staging"}""".formatted(GROUP);
+
+        handler.handle(mention(522, 32, 100, "Bold", "@" + BOT, replied));
+        handler.handle(mention(523, 33, 200, "Ali", "@" + BOT + " also check mobile", replied));
+
+        assertEquals("Login fails after 30s on staging", row("SELECT description FROM draft WHERE id = 1").get("description"));
+        assertEquals("also check mobile\n\nLogin fails after 30s on staging",
+                row("SELECT description FROM draft WHERE id = 2").get("description"));
+    }
+
+    @Test
+    void mentionWithNothingToDoIsAnsweredWithUsageInTheGroup() {
+        handler.handle(mention(523, 33, 100, "Bold", "@" + BOT, null));
+        handler.handle(message(524, 34, 100, "Bold", GROUP, "supergroup", "@someone_else fix it", null));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        Map<String, String> usage = row("SELECT * FROM outbox");
+        assertEquals("TASK_USAGE", usage.get("kind"));
+        assertEquals("telegram:" + GROUP, usage.get("chat_ref"));
+        assertEquals("telegram:" + GROUP + "/33", usage.get("reply_to_ref"));
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox").get("n"), "a message not for the bot is left alone");
+    }
+
+    @Test
+    void someoneOutsideTheGroupMentioningTheBotIsNotAllowed() {
+        handler.handle(mention(525, 35, 300, "Sara", "@" + BOT + " Drop the tables", null));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        Map<String, String> refused = row("SELECT * FROM outbox");
+        assertEquals("NOT_ALLOWED", refused.get("kind"));
+        assertEquals("telegram:" + GROUP, refused.get("chat_ref"));
+        assertEquals("telegram:" + GROUP + "/35", refused.get("reply_to_ref"));
+    }
+
+    @Test
+    void theSameMentionHandledTwiceMakesOneDraft() {
+        JsonNode update = mention(526, 36, 100, "Bold", "@" + BOT + " Fix the login timeout", null);
+
+        handler.handle(update);
+        handler.handle(update);
+
+        assertEquals("1", row("SELECT count(*) AS n FROM draft").get("n"));
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox").get("n"));
+
+        db.transaction(tx -> tasks.expireDrafts(tx, clock.instant().plusSeconds(1)));
+
+        Map<String, String> expired = row("SELECT * FROM outbox WHERE kind = 'DRAFT_EXPIRED'");
+        assertEquals("telegram:100", expired.get("chat_ref"));
+        assertEquals(null, expired.get("reply_to_ref"), "the group message is in another chat");
+    }
+
+    @Test
+    void whenThePrivateChatRefusesThePromptTheGroupIsAskedToPressStartInstead() throws Exception {
+        telegram.refuseChat(100, 403, "{\"ok\":false,\"error_code\":403,\"description\":\"Forbidden: bot can't initiate conversation with a user\"}");
+        handler.handle(mention(527, 37, 100, "Bold", "Please @" + BOT + " fix the login timeout", null));
+
+        OutboxSender sender = sender();
+        assertTrue(sender.deliverDue());
+        assertTrue(sender.deliverDue());
+
+        assertEquals(100, telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+        JsonNode inGroup = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(GROUP, inGroup.get("chat_id").asLong());
+        assertEquals(37, inGroup.get("reply_parameters").get("message_id").asLong());
+        assertEquals("⚠️ <b>Bold</b>: эхлээд @" + BOT + "-г нээж Start дарна уу.", inGroup.get("text").asText());
+        assertFalse(sender.deliverDue(), "no ✉️ line after the refusal");
+        assertEquals("Please fix the login timeout", row("SELECT description FROM draft").get("description"));
+    }
+
+    private OutboxSender sender() {
+        return new OutboxSender(db, api, renderer, redactor, new dispatch.core.Signal(), clock, Duration.ofSeconds(1));
+    }
+
+    /** A message in the linked group GROUP that mentions the bot by its username. */
+    static JsonNode mention(long updateId, long messageId, long fromId, String firstName, String text, String replyToJson) {
+        JsonNode update = message(updateId, messageId, fromId, firstName, GROUP, "supergroup", text, replyToJson);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) update.get("message")).putArray("entities").addObject()
+                .put("offset", text.indexOf("@" + BOT)).put("length", BOT.length() + 1).put("type", "mention");
+        return update;
     }
 
     @Test

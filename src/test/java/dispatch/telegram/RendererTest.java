@@ -720,6 +720,7 @@ class RendererTest {
                 yield payload;
             }
             case GROUP_LINKED -> Json.object().put("projects", "life");
+            case GROUP_TASK_SENT -> Json.object().put("requester", "Bold");
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

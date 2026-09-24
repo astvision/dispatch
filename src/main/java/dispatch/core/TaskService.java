@@ -103,31 +103,57 @@ public final class TaskService {
 
     /** @param attachments files sent with the message, which the task's agent gets to read */
     public DraftResult draft(Tx tx, Requester who, String projectKey, String text, String originRef, List<Attachment> attachments) {
+        return draft(tx, who, projectKey, text, originRef, attachments, null);
+    }
+
+    /**
+     * The group a task was given in by mentioning the bot, and the first name it calls the giver by (G-1b).
+     *
+     * @param chatRef the group chat, where the prompt's delivery is confirmed or, if refused, the giver is asked to press Start
+     */
+    public record GroupOrigin(String chatRef, String firstName) {
+    }
+
+    /**
+     * @param originRef the message that gave the task; one in a group (G-1b) is not replied to, being in another chat
+     * @param group     where the task was given if not privately, else null; the draft and its prompt are private either way
+     */
+    public DraftResult draft(Tx tx, Requester who, String projectKey, String text, String originRef, List<Attachment> attachments,
+                             GroupOrigin group) {
         Instant now = clock.instant();
         String chatRef = who.ref();
+        String replyTo = inChat(chatRef, originRef);
         if (Drafts.existsWithOrigin(tx, originRef)) {
             tx.afterCommit(() -> Log.info("draft.duplicate_ignored", "origin", originRef));
             return DraftResult.DUPLICATE;
         }
         if (!groups.isMember(who.ref())) {
-            notAllowed(tx, who, originRef, chatRef, now);
+            notAllowed(tx, who, replyTo, chatRef, now);
             return DraftResult.NOT_ALLOWED;
         }
         String description = text == null ? "" : text.strip();
         if (description.isEmpty()) {
-            enqueue(tx, null, OutboxKind.TASK_USAGE, chatRef, originRef, Json.object(), now);
+            enqueue(tx, null, OutboxKind.TASK_USAGE, chatRef, replyTo, Json.object(), now);
             return DraftResult.EMPTY;
         }
         List<Config.Project> offered = offeredProjects(who.ref());
         if (offered.isEmpty()) {
-            enqueue(tx, null, OutboxKind.NO_PROJECTS, chatRef, originRef, Json.object(), now);
+            enqueue(tx, null, OutboxKind.NO_PROJECTS, chatRef, replyTo, Json.object(), now);
             return DraftResult.NO_PROJECTS;
         }
         String named = projectKey == null ? null : projects.find(projectKey).map(Config.Project::name).orElse(null);
         String project = preselected(offered, named);
         long id = Drafts.insert(tx, new Drafts.NewDraft(who, chatRef, originRef, description, project, null, null), now);
         Attachments.addToDraft(tx, id, attachments);
-        enqueue(tx, null, OutboxKind.DRAFT_PROMPT, chatRef, originRef, draftPayload(tx, id).orElseThrow(), now);
+        ObjectNode payload = draftPayload(tx, id).orElseThrow();
+        if (group == null) {
+            enqueue(tx, null, OutboxKind.DRAFT_PROMPT, chatRef, replyTo, payload, now);
+        } else {
+            // The sender confirms a delivered prompt in the group, or falls back there with a Start hint (G-1b).
+            Outbox.enqueueWithFallback(tx, null, OutboxKind.DRAFT_PROMPT, chatRef, null, group.chatRef(), originRef,
+                    payload.put("requester", group.firstName()), now);
+            tx.afterCommit(wakeOutbox);
+        }
         tx.afterCommit(() -> Log.info("draft.created", "draft", id, "requester", who.ref(), "project", project,
                 "attachments", attachments.size()));
         return DraftResult.DRAFTED;
@@ -274,7 +300,8 @@ public final class TaskService {
             long id = Drafts.insert(tx, new Drafts.NewDraft(who, whole.chatRef(), originRef, whole.topics().get(part - 1), project,
                     draftId, part), now);
             Attachments.copyToDraft(tx, draftId, id);
-            enqueue(tx, null, OutboxKind.DRAFT_PROMPT, whole.chatRef(), originRef, draftPayload(tx, id).orElseThrow(), now);
+            enqueue(tx, null, OutboxKind.DRAFT_PROMPT, whole.chatRef(), inChat(whole.chatRef(), originRef),
+                    draftPayload(tx, id).orElseThrow(), now);
         }
         tx.afterCommit(() -> Log.info("split.accepted", "draft", draftId, "parts", whole.topics().size()));
         return DraftChoice.SPLIT;
@@ -295,7 +322,7 @@ public final class TaskService {
         List<Draft> stale = Drafts.openCreatedBefore(tx, createdBefore);
         for (Draft draft : stale) {
             Drafts.expire(tx, draft.id(), now);
-            enqueue(tx, null, OutboxKind.DRAFT_EXPIRED, draft.chatRef(), draft.originRef(),
+            enqueue(tx, null, OutboxKind.DRAFT_EXPIRED, draft.chatRef(), inChat(draft.chatRef(), draft.originRef()),
                     Json.object().put("draftId", draft.id()).put("title", title(draft.description())), now);
         }
         if (!stale.isEmpty()) {
@@ -953,6 +980,14 @@ public final class TaskService {
     private void notAllowed(Tx tx, Requester who, String originRef, String chatRef, Instant now) {
         enqueue(tx, null, OutboxKind.NOT_ALLOWED, chatRef, originRef, Json.object().put("name", who.name()), now);
         tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name()));
+    }
+
+    /**
+     * {@code originRef} as a reply target in {@code chatRef}, or null when it is in another chat: a draft given in a group
+     * (G-1b) is prompted privately, and a reply target from elsewhere could land on an unrelated message.
+     */
+    private static String inChat(String chatRef, String originRef) {
+        return originRef.startsWith(chatRef + "/") ? originRef : null;
     }
 
     private void enqueue(Tx tx, Long taskId, OutboxKind kind, String chatRef, String replyToRef, ObjectNode payload, Instant now) {

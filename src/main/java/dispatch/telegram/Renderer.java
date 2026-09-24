@@ -84,6 +84,10 @@ public final class Renderer {
      *                 instead (ADR 0020), never {@code kind}'s actual rendering
      */
     public Rendered render(OutboxKind kind, JsonNode payload, boolean fellBack) {
+        if (fellBack && kind == OutboxKind.DRAFT_PROMPT) {
+            // A task given in the group (G-1b): its giver has to open the private chat first.
+            return plain(format("group.taskStartFirst", escape(payload.path("requester").asText()), escape(botUsername)));
+        }
         if (fellBack) {
             // Meant for the requester's private chat: the group learns only that it could not be delivered (ADR 0020).
             return plain(format("fallback.private", taskId(payload), escape(botUsername)));
@@ -163,6 +167,7 @@ public final class Renderer {
             case MANAGE -> manage(payload);
             case GROUP_LINK -> groupLink(payload);
             case GROUP_LINKED -> plain(format("group.greeting", escape(payload.path("projects").asText())));
+            case GROUP_TASK_SENT -> plain(format("group.taskSent", escape(payload.path("requester").asText())));
         };
     }
 

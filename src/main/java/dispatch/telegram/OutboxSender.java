@@ -126,7 +126,15 @@ public final class OutboxSender implements Runnable {
                     ? api.sendMessage(chatId, thread, rendered.html(), replyTo, rendered.keyboard())
                     : api.sendDocument(chatId, thread, rendered.document().fileName(),
                             rendered.document().markdown().getBytes(StandardCharsets.UTF_8), rendered.html(), replyTo, rendered.keyboard());
-            db.transaction(tx -> Outbox.markSent(tx, message.id(), attempts, Refs.message(chatId, sentId, null), clock.instant()));
+            db.transaction(tx -> {
+                Outbox.markSent(tx, message.id(), attempts, Refs.message(chatId, sentId, null), clock.instant());
+                if (message.kind() == OutboxKind.DRAFT_PROMPT && message.fallbackChatRef() != null) {
+                    // A task given in a group (G-1b): only now that its prompt arrived does the group hear so.
+                    String requester = Json.read(message.payload()).path("requester").asText();
+                    Outbox.enqueue(tx, null, OutboxKind.GROUP_TASK_SENT, message.fallbackChatRef(), message.fallbackReplyToRef(),
+                            Json.object().put("requester", requester), clock.instant());
+                }
+            });
             Log.info("outbox.sent", "id", message.id(), "kind", message.kind(), "task", message.taskId(), "attempt", attempts);
         } catch (TelegramException e) {
             if (inTaskTopic && e.getMessage().contains("message thread not found")) {
