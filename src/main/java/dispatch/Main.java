@@ -1,5 +1,6 @@
 package dispatch;
 
+import dispatch.cli.AskCommand;
 import dispatch.cli.CheckCommand;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
@@ -66,6 +67,7 @@ public final class Main {
                         Service.forThisMachine(Service.Kind.WORKER), ServiceCommand.runningJar()))
                         .run(init, System.getenv()));
             }
+            case Cli.Ask ask -> System.exit(AskCommand.run(ask, System.getenv(), System.out));
             case Cli.WorkerPair pair -> System.exit(new WorkerCommand(System.out).pair(pair));
             case Cli.WorkerRun worker -> {
                 redirect(worker.logFile());

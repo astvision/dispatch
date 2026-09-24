@@ -22,7 +22,15 @@ public final class Cli {
     }
 
     public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Ui, WorkerInit, WorkerPair,
-            WorkerRun, WorkerService, Help {
+            WorkerRun, WorkerService, Ask, Help {
+    }
+
+    /**
+     * What the bot's assistant reads (A-1); who asks comes from the environment the bot sets, never from an option.
+     *
+     * @param taskId the one task to show; null for the member's task list
+     */
+    public record Ask(Long taskId) implements Invocation {
     }
 
     /** @param logFile where output goes instead of the terminal, as a background service runs it; null for the terminal */
@@ -101,6 +109,8 @@ public final class Cli {
                            run your own tasks on this computer
                   worker service install|start|stop|status|uninstall
                            keep your worker running in the background
+                  ask tasks | ask task N
+                           what the bot's assistant reads about a member's tasks; the bot runs it
                   help     show this help
 
                 FILE defaults to %s
@@ -194,6 +204,18 @@ public final class Cli {
                     }
                     default -> throw new CliException("unknown command 'worker " + arguments.positional().getFirst() + "'");
                 };
+            }
+            case "ask" -> {
+                List<String> what = arguments.positional();
+                if (what.size() == 1 && what.getFirst().equals("tasks")) {
+                    arguments.allow(1, Set.of());
+                    yield new Ask(null);
+                }
+                if (what.size() == 2 && what.getFirst().equals("task") && what.get(1).matches("[1-9][0-9]{0,17}")) {
+                    arguments.allow(2, Set.of());
+                    yield new Ask(Long.parseLong(what.get(1)));
+                }
+                throw new CliException("ask needs 'tasks' or 'task N'");
             }
             default -> throw new CliException("unknown command '" + command + "'");
         };
