@@ -714,6 +714,12 @@ class RendererTest {
             case JOIN_REQUEST -> joinPayload("OPEN");
             case JOIN_REQUESTED, JOIN_DENIED -> Json.object();
             case MANAGE -> Json.object().put("url", "https://dispatch.example.com");
+            case GROUP_LINK -> {
+                ObjectNode payload = Json.object().put("chatId", -1L).put("title", "note").put("status", "OPEN");
+                payload.putArray("projects").add("life");
+                yield payload;
+            }
+            case GROUP_LINKED -> Json.object().put("projects", "life");
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

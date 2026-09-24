@@ -57,5 +57,12 @@ public enum OutboxKind {
     /** To the requester privately, once per reason: their computer is connected but cannot do the task, and why. */
     WORKER_BLOCKED,
     /** /manage: a button that opens the Mini App, or a note that it is not turned on here (ADR 0019). */
-    MANAGE
+    MANAGE,
+    /**
+     * To whoever added the bot to an unknown group: which project to link it to. Rendered here but sent directly, not
+     * through the outbox, so a refusal is seen and the bot can leave.
+     */
+    GROUP_LINK,
+    /** To a group just linked: which project's tasks it will hear about. */
+    GROUP_LINKED
 }

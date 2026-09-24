@@ -161,7 +161,44 @@ public final class Renderer {
             case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
             case JOIN_DENIED -> plain(text("join.denied"));
             case MANAGE -> manage(payload);
+            case GROUP_LINK -> groupLink(payload);
+            case GROUP_LINKED -> plain(format("group.greeting", escape(payload.path("projects").asText())));
         };
+    }
+
+    /**
+     * Asks which project a group the bot was added to belongs to; once answered, says what was linked or that it was not.
+     * Buttons carry the project's index, not its name, so a long name still fits Telegram's 64 bytes of callback data.
+     */
+    private Rendered groupLink(JsonNode payload) {
+        String title = escapeWithin(payload.path("title").asText(), TITLE_LIMIT);
+        switch (payload.path("status").asText()) {
+            case "LINKED" -> {
+                return plain(format("group.linkedTo", title, escape(payload.path("project").asText())));
+            }
+            case "DECLINED" -> {
+                return plain(format("group.declined", title));
+            }
+            default -> {
+                // OPEN: asked below.
+            }
+        }
+        String chatId = String.valueOf(payload.path("chatId").asLong());
+        List<List<Button>> keyboard = new ArrayList<>();
+        List<Button> row = new ArrayList<>();
+        JsonNode projects = payload.path("projects");
+        for (int index = 0; index < projects.size(); index++) {
+            row.add(new Button(projects.get(index).asText(), "link:" + chatId + ":" + index));
+            if (row.size() == 3) {
+                keyboard.add(row);
+                row = new ArrayList<>();
+            }
+        }
+        if (!row.isEmpty()) {
+            keyboard.add(row);
+        }
+        keyboard.add(List.of(new Button(text("button.groupNoLink"), "link:" + chatId + ":-")));
+        return new Rendered(format("group.linkAsk", title), keyboard, null);
     }
 
     /**

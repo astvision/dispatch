@@ -8,6 +8,7 @@ import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.config.Config;
 import dispatch.core.DraftChoice;
+import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
 import dispatch.core.JoinDecision;
 import dispatch.core.JoinRequestResult;
@@ -66,11 +67,12 @@ public final class UpdateHandler {
     private final WorkerKeys workers;
     private final String workerUrl;
     private final String miniAppUrl;
+    private final GroupLinks groupLinks;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox) {
-        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null, null);
+        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null, null, null);
     }
 
     /**
@@ -78,10 +80,12 @@ public final class UpdateHandler {
      * @param workers    null in personal mode, where a member has nothing to pair
      * @param workerUrl  the URL members' computers reach this machine on; null in personal mode
      * @param miniAppUrl where Telegram opens the Mini App; null when it is not configured, and /manage says so
+     * @param groupLinks asks whoever may manage Dispatch which project an unknown group is for; null to leave every
+     *                   unknown group, as before group linking
      */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
-                         WorkerKeys workers, String workerUrl, String miniAppUrl) {
+                         WorkerKeys workers, String workerUrl, String miniAppUrl, GroupLinks groupLinks) {
         if (workers != null) {
             Objects.requireNonNull(workerUrl, "workerUrl is required when workers is configured");
         }
@@ -99,6 +103,7 @@ public final class UpdateHandler {
         this.workers = workers;
         this.workerUrl = workerUrl;
         this.miniAppUrl = miniAppUrl;
+        this.groupLinks = groupLinks;
     }
 
     public void handle(JsonNode update) {
@@ -152,11 +157,15 @@ public final class UpdateHandler {
             return;
         }
         if (!groups.isGroupChat(Refs.chat(chatId))) {
-            ignoreForeignChat(tx, chat, from);
+            ignoreForeignChat(tx, message);
             return;
         }
         if (message.has("migrate_to_chat_id")) {
             long newChatId = message.get("migrate_to_chat_id").asLong();
+            if (groupLinks != null) {
+                groupLinks.migrated(tx, chatId, newChatId);
+                return;
+            }
             tx.afterCommit(() -> Log.error("telegram.group_migrated", null, "chat_id", chatId, "new_chat_id", newChatId,
                     "action", "set the group's chatId in telegram.groups to the new id and restart"));
             return;
@@ -338,6 +347,11 @@ public final class UpdateHandler {
             onDraftButton(tx, callback, presser, taskId(parts[1]).get(), parts[2], parts[3]);
             return;
         }
+        if (groupLinks != null && isPrivateChatOf(chat, from) && parts.length == 3 && parts[0].equals("link") && taskId(parts[1]).isPresent()) {
+            // The prompt only ever goes to a private chat; parts[1] is the negative group chat id, which taskId also parses.
+            onLinkButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
+            return;
+        }
         boolean known = parts.length == 3 && Set.of("approve", "reject", "prio").contains(parts[0]);
         if (!servedChat || !known || !from.has("id")) {
             answer(tx, callbackId, "callback.unknown");
@@ -515,19 +529,108 @@ public final class UpdateHandler {
         if (groups.isGroupChat(Refs.chat(chatId))) {
             tx.afterCommit(() -> Log.info("telegram.membership_changed", "chat_id", chatId, "status", status));
         } else if (JOINED_STATUSES.contains(status) && isGroup(chat)) {
-            leave(tx, chatId, change.path("from"));
+            JsonNode from = change.path("from");
+            if (mayLink(from)) {
+                askToLink(tx, chatId, chat.path("title").asText(), from.get("id").asLong());
+            } else {
+                leave(tx, chatId, from);
+            }
+        } else if (groupLinks != null && isGroup(chat)) {
+            // Removed before the prompt was answered: adding it again must ask again.
+            groupLinks.forget(tx, chatId);
         }
     }
 
-    private void ignoreForeignChat(Tx tx, JsonNode chat, JsonNode from) {
+    private void ignoreForeignChat(Tx tx, JsonNode message) {
+        JsonNode chat = message.path("chat");
+        JsonNode from = message.path("from");
         long chatId = chat.path("id").asLong();
+        if (isGroup(chat) && message.has("migrate_from_chat_id")
+                && groups.isGroupChat(Refs.chat(message.get("migrate_from_chat_id").asLong()))) {
+            // A linked group's new supergroup, announced before the old chat's migrate_to_chat_id moved the link here.
+            tx.afterCommit(() -> Log.info("telegram.migrated_chat_seen", "chat_id", chatId));
+            return;
+        }
         if (isGroup(chat)) {
-            leave(tx, chatId, from);
+            // The bot may already be in the group (no "added" event then): a command to it from someone who may manage
+            // Dispatch asks, as does the service message about adding it, which can arrive before my_chat_member.
+            boolean asks = message.has("new_chat_members")
+                    || Command.parse(message).filter(command -> command.addressedTo(botUsername)).isPresent();
+            if (asks && mayLink(from)) {
+                askToLink(tx, chatId, chat.path("title").asText(), from.get("id").asLong());
+            } else {
+                leave(tx, chatId, from);
+            }
             return;
         }
         String type = chat.path("type").asText();
         long userId = from.path("id").asLong();
         tx.afterCommit(() -> Log.warn("telegram.chat_ignored", "chat_id", chatId, "type", type, "user_id", userId));
+    }
+
+    /** Whether {@code from} is asked which project an unknown group is for, instead of the bot leaving it. */
+    private boolean mayLink(JsonNode from) {
+        return groupLinks != null && from.has("id") && groups.mayManage(Refs.user(from.get("id").asLong()));
+    }
+
+    /**
+     * Asks {@code fromId} privately which project the group is for, once per open prompt. Sent directly rather than through
+     * the outbox so that a refusal (they never pressed Start) is seen here: the bot then leaves.
+     */
+    private void askToLink(Tx tx, long chatId, String title, long fromId) {
+        List<String> names = projects.all().stream().map(Config.Project::name).toList();
+        if (!groupLinks.open(tx, chatId, title, names)) {
+            return;
+        }
+        ObjectNode payload = Json.object().put("chatId", chatId).put("title", title).put("status", "OPEN");
+        names.forEach(payload.putArray("projects")::add);
+        Renderer.Rendered prompt = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+        tx.afterCommit(() -> {
+            try {
+                api.sendMessage(fromId, null, prompt.html(), null, prompt.keyboard());
+                Log.info("group.link_asked", "chat_id", chatId, "user_id", fromId);
+            } catch (RuntimeException e) {
+                Log.warn("group.link_prompt_refused", "chat_id", chatId, "user_id", fromId, "error", e.getMessage());
+                db.transaction(later -> groupLinks.forget(later, chatId));
+                bestEffort("leaveChat", () -> api.leaveChat(chatId));
+            }
+        });
+    }
+
+    /** A button on a link prompt: a project's index in the prompt's list, or "-" to leave the group unlinked. */
+    private void onLinkButton(Tx tx, JsonNode callback, Requester presser, long chatId, String choice) {
+        Optional<GroupLinks.Prompt> prompt = groupLinks.prompt(tx, chatId);
+        Optional<Long> index = taskId(choice);
+        GroupLinks.Result result;
+        if (choice.equals("-")) {
+            result = groupLinks.decline(tx, presser, chatId);
+        } else if (index.isPresent()) {
+            result = groupLinks.link(tx, presser, chatId, index.get().intValue());
+        } else {
+            answer(tx, callback.path("id").asText(), "callback.unknown");
+            return;
+        }
+        answer(tx, callback.path("id").asText(), switch (result) {
+            case LINKED -> "callback.groupLinked";
+            case DECLINED -> "callback.groupDeclined";
+            case STALE -> "callback.groupStale";
+            case CONFIG_FAILED -> "callback.groupLinkFailed";
+            case NOT_ALLOWED -> "callback.notAdmin";
+        });
+        if (result != GroupLinks.Result.LINKED && result != GroupLinks.Result.DECLINED) {
+            return;
+        }
+        ObjectNode payload = Json.object().put("chatId", chatId).put("title", prompt.orElseThrow().title()).put("status", result.name());
+        if (result == GroupLinks.Result.LINKED) {
+            payload.put("project", prompt.get().projects().get(index.orElseThrow().intValue()));
+        } else {
+            tx.afterCommit(() -> bestEffort("leaveChat", () -> api.leaveChat(chatId)));
+        }
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+        JsonNode message = callback.path("message");
+        long promptChatId = message.path("chat").path("id").asLong();
+        long messageId = message.path("message_id").asLong();
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(promptChatId, messageId, redrawn.html(), redrawn.keyboard())));
     }
 
     private void leave(Tx tx, long chatId, JsonNode from) {
