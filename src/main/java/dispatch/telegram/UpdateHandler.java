@@ -535,9 +535,6 @@ public final class UpdateHandler {
             } else {
                 leave(tx, chatId, from);
             }
-        } else if (groupLinks != null && isGroup(chat)) {
-            // Removed before the prompt was answered: adding it again must ask again.
-            groupLinks.forget(tx, chatId);
         }
     }
 

@@ -1044,6 +1044,22 @@ class UpdateHandlerTest {
         assertTrue(telegram.drain("leaveChat").isEmpty());
     }
 
+    /** Spec, Errors: the bot removed from the group before the button was pressed still links; only the greeting may fail. */
+    @Test
+    void theBotRemovedBeforeTheTapStillLinks() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(726, 100, NEW_GROUP, "note", "member"));
+        handler.handle(myChatMember(727, 100, NEW_GROUP, "note", "left"));
+
+        handler.handle(callback(728, 100, "Bold", 100L, 1, "link:" + NEW_GROUP + ":0"));
+
+        assertEquals(renderer.text("callback.groupLinked"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertTrue(personalGroups.isGroupChat("telegram:" + NEW_GROUP), "the running groups, from what the writer returned");
+        assertEquals("GROUP_LINKED", row("SELECT kind FROM outbox WHERE chat_ref = ?", "telegram:" + NEW_GROUP).get("kind"),
+                "the greeting is an outbox message: its delivery failing is the sender's to log, not the link's");
+    }
+
     @Test
     void declineRedrawsThePromptAndLeaves() throws Exception {
         UpdateHandler handler = personalHandler();
