@@ -170,6 +170,16 @@ public final class Tasks {
         tx.update("UPDATE task SET worker_id = ?, updated_at = ? WHERE id = ?", workerId, now, id);
     }
 
+    /** The readiness blocker code the requester was last told holds this task, or null when nothing does. */
+    public static String blockedReason(Tx tx, long id) {
+        return tx.one("SELECT blocked_reason FROM task WHERE id = ?", row -> row.string("blocked_reason"), id).orElse(null);
+    }
+
+    /** Only writes when it changes: called on every idle poll of the scheduler. */
+    public static void setBlockedReason(Tx tx, long id, String code) {
+        tx.update("UPDATE task SET blocked_reason = ? WHERE id = ? AND blocked_reason IS NOT ?", code, id, code);
+    }
+
     public static Optional<Long> workerOf(Tx tx, long id) {
         return tx.one("SELECT worker_id FROM task WHERE id = ?", row -> row.longOrNull("worker_id"), id);
     }

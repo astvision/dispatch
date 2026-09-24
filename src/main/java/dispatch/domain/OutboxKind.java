@@ -53,5 +53,7 @@ public enum OutboxKind {
     /** /worker revoke without a valid positive id. */
     WORKER_USAGE,
     /** To the requester, once: their task waits because none of their computers is connected. */
-    WORKER_WAITING
+    WORKER_WAITING,
+    /** To the requester privately, once per reason: their computer is connected but cannot do the task, and why. */
+    WORKER_BLOCKED
 }

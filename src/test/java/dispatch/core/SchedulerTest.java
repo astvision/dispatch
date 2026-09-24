@@ -244,12 +244,15 @@ class SchedulerTest {
                         Map.of("alm", new Readiness.Check(true, null))), clock.instant()));
 
         assertTrue(claim().isEmpty());
+        db.transaction(tx -> Tasks.setBlockedReason(tx, taskId, "claude"));
 
         db.transaction(tx -> Workers.saveReadiness(tx, workerId,
                 new Readiness(new Readiness.Check(true, "2.1.280"), new Readiness.Check(true, null),
                         Map.of("alm", new Readiness.Check(true, null))), clock.instant()));
 
         assertEquals(taskId, claim().orElseThrow().taskId(), "fixing it starts the run with no further action");
+        assertNull(db.transactionReturning(tx -> Tasks.blockedReason(tx, taskId)),
+                "a started run is held by nothing, so the next block is news again");
     }
 
     @Test

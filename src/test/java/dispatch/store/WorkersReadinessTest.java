@@ -4,10 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dispatch.domain.RunKind;
 import dispatch.worker.Readiness;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -77,59 +79,70 @@ class WorkersReadinessTest {
     }
 
     @Test
-    void readinessOfMemberPrefersTheWorkerWithNoBlocker() {
+    void oneWorkingComputerIsEnoughToHoldNothing() {
         long brokenLaptop = workerId;
         long workingDesktop = db.transactionReturning(tx -> Workers.insert(tx, "telegram:100", "desktop", "sha2", NOW));
-        db.transaction(tx -> Workers.touch(tx, brokenLaptop, NOW));
-        db.transaction(tx -> Workers.touch(tx, workingDesktop, NOW));
-        db.transaction(tx -> Workers.saveReadiness(tx, brokenLaptop,
-                new Readiness(new Readiness.Check(false, "not installed"), new Readiness.Check(true, null), Map.of()), NOW));
-        db.transaction(tx -> Workers.saveReadiness(tx, workingDesktop,
-                new Readiness(new Readiness.Check(true, "2.1.280"), new Readiness.Check(true, null), Map.of()), NOW));
+        live(brokenLaptop, CLAUDE_BROKEN);
+        live(workingDesktop, new Readiness(new Readiness.Check(true, "2.1.280"), new Readiness.Check(true, null), Map.of()));
 
-        Readiness member = db.transactionReturning(tx -> Workers.readinessOfMember(tx, "telegram:100", SEEN_SINCE));
-
-        assertTrue(member.claude().ok(), "one working machine is enough; the member is not reported as stuck");
+        assertTrue(blockerOf(null, "alm", RunKind.PLAN).isEmpty(), "the member is not reported as stuck");
     }
 
     @Test
-    void readinessOfMemberFallsBackToAnyReportWhenEveryLiveWorkerIsBroken() {
-        db.transaction(tx -> Workers.touch(tx, workerId, NOW));
-        db.transaction(tx -> Workers.saveReadiness(tx, workerId,
-                new Readiness(new Readiness.Check(false, "not installed"), new Readiness.Check(true, null), Map.of()), NOW));
+    void whenEveryLiveComputerIsHeldItSaysWhy() {
+        live(workerId, CLAUDE_BROKEN);
 
-        Readiness member = db.transactionReturning(tx -> Workers.readinessOfMember(tx, "telegram:100", SEEN_SINCE));
+        Readiness.Blocker blocker = blockerOf(null, "alm", RunKind.PLAN).orElseThrow();
 
-        assertFalse(member.claude().ok());
+        assertEquals("claude", blocker.code());
+        assertEquals("not installed", blocker.detail());
     }
 
     @Test
-    void readinessOfMemberWithNoWorkerIsReady() {
-        Readiness member = db.transactionReturning(tx -> Workers.readinessOfMember(tx, "telegram:999", SEEN_SINCE));
-
-        assertTrue(member.claude().ok());
-        assertTrue(member.gh().ok());
+    void aMemberWithNoComputerIsNotHeld() {
+        assertTrue(db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:999", null, SEEN_SINCE, "alm", RunKind.PLAN))
+                .isEmpty());
     }
 
     @Test
-    void readinessOfMemberWithOnlyAStaleWorkerIsReady() {
+    void aStaleReportIsNotABlocker() {
         db.transaction(tx -> Workers.touch(tx, workerId, SEEN_SINCE.minusSeconds(1)));
-        db.transaction(tx -> Workers.saveReadiness(tx, workerId,
-                new Readiness(new Readiness.Check(false, "not installed"), new Readiness.Check(true, null), Map.of()), NOW));
+        db.transaction(tx -> Workers.saveReadiness(tx, workerId, CLAUDE_BROKEN, NOW));
 
-        Readiness member = db.transactionReturning(tx -> Workers.readinessOfMember(tx, "telegram:100", SEEN_SINCE));
-
-        assertTrue(member.claude().ok(), "a stale report is not 'Claude Code is broken'; that's the offline path's job");
+        assertTrue(blockerOf(null, "alm", RunKind.PLAN).isEmpty(),
+                "a stale report is not 'Claude Code is broken'; that's the offline path's job");
     }
 
     @Test
-    void readinessOfMemberWithARecentlySeenWorkerReturnsItsActualReport() {
-        db.transaction(tx -> Workers.touch(tx, workerId, NOW));
-        db.transaction(tx -> Workers.saveReadiness(tx, workerId,
-                new Readiness(new Readiness.Check(false, "not installed"), new Readiness.Check(true, null), Map.of()), NOW));
+    void aBlockerOnlyCountsForTheRunItHolds() {
+        live(workerId, new Readiness(new Readiness.Check(true, "2.1.280"), new Readiness.Check(false, "not logged in"),
+                Map.of("life", new Readiness.Check(false, "clone missing"))));
 
-        Readiness member = db.transactionReturning(tx -> Workers.readinessOfMember(tx, "telegram:100", SEEN_SINCE));
+        assertTrue(blockerOf(null, "alm", RunKind.PLAN).isEmpty(), "gh does not hold a plan, nor life's clone an alm run");
+        assertEquals("gh", blockerOf(null, "alm", RunKind.EXECUTE).orElseThrow().code());
+        assertEquals("clone", blockerOf(null, "life", RunKind.PLAN).orElseThrow().code());
+    }
 
-        assertFalse(member.claude().ok(), "the worker was seen recently, so its actual broken report is used");
+    @Test
+    void aPinnedTaskOnlyAsksItsOwnComputer() {
+        long brokenLaptop = workerId;
+        long workingDesktop = db.transactionReturning(tx -> Workers.insert(tx, "telegram:100", "desktop", "sha2", NOW));
+        live(brokenLaptop, CLAUDE_BROKEN);
+        live(workingDesktop, Readiness.READY);
+
+        assertEquals("claude", blockerOf(brokenLaptop, "alm", RunKind.EXECUTE).orElseThrow().code(),
+                "its worktree is on the laptop, so the working desktop cannot take it");
+    }
+
+    private static final Readiness CLAUDE_BROKEN =
+            new Readiness(new Readiness.Check(false, "not installed"), new Readiness.Check(true, null), Map.of());
+
+    private void live(long worker, Readiness readiness) {
+        db.transaction(tx -> Workers.touch(tx, worker, NOW));
+        db.transaction(tx -> Workers.saveReadiness(tx, worker, readiness, NOW));
+    }
+
+    private Optional<Readiness.Blocker> blockerOf(Long pinnedWorker, String project, RunKind kind) {
+        return db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:100", pinnedWorker, SEEN_SINCE, project, kind));
     }
 }

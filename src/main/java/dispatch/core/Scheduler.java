@@ -23,16 +23,23 @@ public final class Scheduler implements Runnable {
     private final Consumer<ClaimedRun> starter;
     private final Duration idlePoll;
     private final Duration workerSeenWithin;
+    private final TaskService tasks;
     private volatile boolean stopped;
 
     public Scheduler(Database db, int maxConcurrentRuns, Signal signal, Clock clock, Consumer<ClaimedRun> starter,
                      Duration idlePoll) {
-        this(db, maxConcurrentRuns, signal, clock, starter, idlePoll, null);
+        this(db, maxConcurrentRuns, signal, clock, starter, idlePoll, null, null);
     }
 
-    /** @param workerSeenWithin team mode: how recently a requester's computer must have reported; null in personal mode */
+    /**
+     * @param workerSeenWithin team mode: how recently a requester's computer must have reported; null in personal mode
+     * @param tasks            team mode: told what holds the queue whenever nothing could be claimed; null in personal mode
+     */
     public Scheduler(Database db, int maxConcurrentRuns, Signal signal, Clock clock, Consumer<ClaimedRun> starter,
-                     Duration idlePoll, Duration workerSeenWithin) {
+                     Duration idlePoll, Duration workerSeenWithin, TaskService tasks) {
+        if ((workerSeenWithin == null) != (tasks == null)) {
+            throw new IllegalArgumentException("team mode needs both workerSeenWithin and tasks, personal mode neither");
+        }
         this.db = db;
         this.maxConcurrentRuns = maxConcurrentRuns;
         this.signal = signal;
@@ -40,6 +47,7 @@ public final class Scheduler implements Runnable {
         this.starter = starter;
         this.idlePoll = idlePoll;
         this.workerSeenWithin = workerSeenWithin;
+        this.tasks = tasks;
     }
 
     @Override
@@ -54,6 +62,10 @@ public final class Scheduler implements Runnable {
                 Log.info("run.claimed", "task", run.taskId(), "run", run.seq(), "kind", run.kind());
                 starter.accept(run);
                 continue;
+            }
+            if (tasks != null) {
+                // Nothing claimable: say what, if anything, on a member's computer is holding their run.
+                db.transaction(tx -> tasks.reportBlocked(tx, seenSince));
             }
             try {
                 signal.await(idlePoll);

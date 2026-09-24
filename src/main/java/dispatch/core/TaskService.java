@@ -28,6 +28,7 @@ import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
 import dispatch.store.Workers;
+import dispatch.worker.Readiness;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -761,6 +762,10 @@ public final class TaskService {
                 if (requiresWorker && queuedTask != null && waitsForWorker(tx, queuedTask, workerSeenSince)) {
                     item.put("waitingForWorker", true);
                 }
+                String blocked = requiresWorker ? Tasks.blockedReason(tx, run.taskId()) : null;
+                if (blocked != null) {
+                    item.put("blocked", blocked);
+                }
             }
         }
         ArrayNode awaiting = payload.putArray("awaitingApproval");
@@ -773,6 +778,38 @@ public final class TaskService {
         active.values().stream().filter(task -> task.requester().ref().equals(viewerRef))
                 .forEach(task -> mine.addObject().put("taskId", task.id()).put("priority", task.priority().name()));
         return payload;
+    }
+
+    /**
+     * Tells each requester what on their computer holds their queued run — once per reason, not once per call — and
+     * forgets the reason once nothing holds it, so /status stops saying so. The scheduler calls this when it found
+     * nothing to claim, so it costs nothing while work is flowing.
+     *
+     * @param workerSeenSince how recently a computer must have reported to count, as the scheduler's claim uses
+     */
+    public void reportBlocked(Tx tx, Instant workerSeenSince) {
+        for (Runs.InProgress run : Runs.queued(tx)) {
+            Optional<Task> task = Tasks.find(tx, run.taskId());
+            if (task.isEmpty()) {
+                continue;
+            }
+            String requesterRef = task.get().requester().ref();
+            Optional<Readiness.Blocker> blocker = Workers.blockerOf(tx, requesterRef, Tasks.workerOf(tx, run.taskId()).orElse(null),
+                    workerSeenSince, run.project(), run.kind());
+            if (blocker.isEmpty()) {
+                Tasks.setBlockedReason(tx, run.taskId(), null);
+                continue;
+            }
+            String code = blocker.get().code();
+            if (code.equals(Tasks.blockedReason(tx, run.taskId()))) {
+                continue;
+            }
+            Tasks.setBlockedReason(tx, run.taskId(), code);
+            enqueue(tx, run.taskId(), OutboxKind.WORKER_BLOCKED, requesterRef, null,
+                    Json.object().put("taskId", run.taskId()).put("code", code).put("detail", blocker.get().detail()),
+                    clock.instant());
+            tx.afterCommit(() -> Log.info("task.blocked", "task", run.taskId(), "run", run.seq(), "reason", code));
+        }
     }
 
     /**

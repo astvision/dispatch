@@ -167,30 +167,72 @@ class TeamWorkersTest {
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 
+    @Test
+    void aMemberIsToldWhichThingIsWrongAndTheTaskStartsOnceItIsFixed() throws Exception {
+        WorkerClient laptop = pairWorker(100, "Bold", "bold-laptop");
+        // Connected, but its Claude Code cannot run: the readiness check finds no claude where it looks.
+        Thread broken = startLoop(laptop, "bold-laptop", "BOLD-TOKEN", dir.resolve("bin").resolve("no-claude-here"));
+        Path db = repos.stateDir.resolve("dispatch.db");
+        awaitRow(db, "SELECT claude_ok FROM worker WHERE name = 'bold-laptop'", "0");
+
+        giveTask(100, "Bold", "Fix the login timeout on staging");
+
+        JsonNode told = awaitMessageTo(100, "Claude Code");
+        assertTrue(told.get("text").asText().contains("#1"), told.toString());
+        assertEquals("QUEUED", SqlRows.single(db, "SELECT status FROM run WHERE task_id = 1").get("status"),
+                "nothing claims a run its computer cannot do");
+
+        // What the member does: fix Claude Code and restart the worker. The old loop's last long poll is let finish
+        // first, so it cannot be the one handed the job.
+        loops.getLast().stop();
+        broken.join(Duration.ofSeconds(40));
+        startLoop(laptop, "bold-laptop", "BOLD-TOKEN", claude);
+
+        awaitMessageTo(100, "The user reports that login");
+        assertTrue(Files.exists(worktree("bold-laptop", 1)), "the held run started by itself");
+        assertEquals("1", SqlRows.single(db, "SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_BLOCKED'").get("n"),
+                "told once");
+        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
+    }
+
     private long nextUpdateId() {
         return nextUpdateId++;
     }
 
     private void startWorker(long memberId, String memberName, String name, String token) throws Exception {
+        startLoop(pairWorker(memberId, memberName, name), name, token, claude);
+    }
+
+    private WorkerClient pairWorker(long memberId, String memberName, String name) throws Exception {
         telegram.pushUpdate(privateCommand(nextUpdateId(), memberId, memberName, "/worker"));
         String code = codeFrom(awaitMessageTo(memberId, "dispatch worker pair"));
         URI team = URI.create("http://127.0.0.1:" + app.workerPort());
         WorkerClient.Paired paired = WorkerClient.pair(HttpClient.newHttpClient(), team, code, name);
         workerKeys.put(name, paired.key());
-        WorkerClient client = new WorkerClient(HttpClient.newHttpClient(), team, paired.key());
-        WorkerClient.Setup setup = client.setup();
+        return new WorkerClient(HttpClient.newHttpClient(), team, paired.key());
+    }
 
-        Path stateDir = Files.createDirectories(dir.resolve("workers").resolve(name));
-        Map<String, String> environment = new HashMap<>(FakeClaude.environment());
-        environment.put("MEMBER_TOKEN", token);
+    /**
+     * Runs a worker loop for an already paired computer, as {@code dispatch worker} would.
+     *
+     * @param checkedClaude the claude its readiness checks look for; the agent itself always runs the fake one
+     */
+    private Thread startLoop(WorkerClient client, String name, String token, Path checkedClaude) throws Exception {
+        WorkerClient.Setup setup = client.setup();
+        Path stateDir = dir.resolve("workers").resolve(name);
+        Path clone = stateDir.resolve("repos").resolve("alm");
         Git git = new Git("git", null, Duration.ofSeconds(30));
         Workspaces workspaces = new Workspaces(stateDir, git);
-        workspaces.createDirectories();
-        Files.createDirectories(stateDir.resolve("repos"));
-        GitFixture.sh(dir, "git", "clone", "--quiet", repos.origin.toString(),
-                stateDir.resolve("repos").resolve("alm").toString());
-        WorkerConfig config = new WorkerConfig(team.toString(), name, 1, claude.toString(), gh.toString(), stateDir,
-                Map.of("alm", new WorkerConfig.Project(stateDir.resolve("repos").resolve("alm").toString(), null, null)));
+        if (!Files.exists(clone)) {
+            Files.createDirectories(stateDir);
+            workspaces.createDirectories();
+            Files.createDirectories(stateDir.resolve("repos"));
+            GitFixture.sh(dir, "git", "clone", "--quiet", repos.origin.toString(), clone.toString());
+        }
+        Map<String, String> environment = new HashMap<>(FakeClaude.environment());
+        environment.put("MEMBER_TOKEN", token);
+        WorkerConfig config = new WorkerConfig(team(), name, 1, checkedClaude.toString(), gh.toString(), stateDir,
+                Map.of("alm", new WorkerConfig.Project(clone.toString(), null, null)));
         Map<String, Agent> agents = Map.of("claude-code",
                 new ClaudeCodeAgent(claude.toString(), environment, Duration.ofSeconds(10)));
         Delivery delivery = new Delivery(git, new Gh(gh.toString(), null, Duration.ofSeconds(30)), setup.authorName(),
@@ -198,7 +240,13 @@ class TeamWorkersTest {
         WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery, Redactor.patternsOnly(),
                 new ActiveRuns(), Duration.ofMillis(200));
         loops.add(loop);
-        loopThreads.add(Thread.ofVirtual().name("worker-" + name).start(loop));
+        Thread thread = Thread.ofVirtual().name("worker-" + name).start(loop);
+        loopThreads.add(thread);
+        return thread;
+    }
+
+    private String team() {
+        return "http://127.0.0.1:" + app.workerPort();
     }
 
     private Path worktree(String worker, long taskId) {

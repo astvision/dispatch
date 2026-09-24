@@ -162,7 +162,8 @@ public final class App {
         Scheduler scheduler = new Scheduler(db, config.scheduler().maxConcurrentRuns(), schedulerSignal, clock,
                 run -> Thread.ofVirtual().name("run-" + run.taskId() + "." + run.seq())
                         .start(app[0].guarded(() -> coordinator.execute(run))),
-                Duration.ofSeconds(5), config.workers() == null ? null : dispatch.store.Workers.SEEN_WITHIN);
+                Duration.ofSeconds(5), config.workers() == null ? null : dispatch.store.Workers.SEEN_WITHIN,
+                config.workers() == null ? null : tasks);
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
         Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1));
         app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], activeRuns, workerApi, onFatal);

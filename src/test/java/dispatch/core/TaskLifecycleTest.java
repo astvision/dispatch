@@ -24,6 +24,7 @@ import dispatch.store.Tasks;
 import dispatch.store.Workers;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
+import dispatch.worker.Readiness;
 import dispatch.worker.WorkerKeys;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -180,6 +181,51 @@ class TaskLifecycleTest {
         JsonNode status = tasksStatusPayload();
         assertTrue(status.get("queued").get(0).get("waitingForWorker").asBoolean(),
                 "pinned to the silent laptop, not the live desktop: " + status);
+    }
+
+    @Test
+    void aHeldTaskTellsItsRequesterWhichThingIsWrongOnceAndStatusSaysWhy() {
+        tasks = teamTaskService();
+        long worker = liveWorkerReporting(BOLD, "ann-laptop", new Readiness(new Readiness.Check(false, "cannot run claude"),
+                new Readiness.Check(true, null), Map.of()));
+        long id = create(BOLD, "alm", "Fix login timeout", "98");
+
+        reportBlocked();
+        reportBlocked();
+
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_BLOCKED' AND task_id = ?", id).get("n"),
+                "said once, not on every idle poll");
+        Map<String, String> told = row("SELECT chat_ref, payload FROM outbox WHERE kind = 'WORKER_BLOCKED' AND task_id = ?", id);
+        assertEquals(BOLD.ref(), told.get("chat_ref"), "the requester, privately");
+        JsonNode payload = Json.read(told.get("payload"));
+        assertEquals(id, payload.get("taskId").asLong());
+        assertEquals("claude", payload.get("code").asText());
+        assertEquals("cannot run claude", payload.get("detail").asText());
+        assertEquals("claude", tasksStatusPayload().get("queued").get(0).get("blocked").asText());
+
+        db.transaction(tx -> Workers.saveReadiness(tx, worker, Readiness.READY, clock.instant()));
+        reportBlocked();
+        assertFalse(tasksStatusPayload().get("queued").get(0).has("blocked"), "fixed: /status stops saying so");
+
+        db.transaction(tx -> Workers.saveReadiness(tx, worker, new Readiness(new Readiness.Check(false, "cannot run claude"),
+                new Readiness.Check(true, null), Map.of()), clock.instant()));
+        reportBlocked();
+        assertEquals("2", row("SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_BLOCKED' AND task_id = ?", id).get("n"),
+                "broken again after being fixed is news again");
+    }
+
+    @Test
+    void aTaskWaitingOnlyForItsTurnIsNotReportedAsBlocked() {
+        tasks = teamTaskService();
+        // gh is broken, but a plan never touches GitHub: this task is not held by it.
+        liveWorkerReporting(BOLD, "ann-laptop", new Readiness(new Readiness.Check(true, "2.1.280"),
+                new Readiness.Check(false, "not logged in"), Map.of()));
+        long id = create(BOLD, "alm", "Fix login timeout", "99");
+
+        reportBlocked();
+
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'WORKER_BLOCKED' AND task_id = ?", id).get("n"));
+        assertFalse(tasksStatusPayload().get("queued").get(0).has("blocked"));
     }
 
     @Test
@@ -760,6 +806,19 @@ class TaskLifecycleTest {
     private TaskService teamTaskService() {
         return new TaskService(groups, projects, activeRuns, clock, schedulerWakes::incrementAndGet, outboxWakes::incrementAndGet,
                 false, draftId -> { }, true);
+    }
+
+    /** A computer of {@code who} that was just seen and whose last report is {@code readiness}. */
+    private long liveWorkerReporting(Requester who, String name, Readiness readiness) {
+        WorkerKeys keys = new WorkerKeys(db, clock);
+        long worker = keys.pair(keys.newCode(who), name).orElseThrow().workerId();
+        db.transaction(tx -> Workers.touch(tx, worker, clock.instant()));
+        db.transaction(tx -> Workers.saveReadiness(tx, worker, readiness, clock.instant()));
+        return worker;
+    }
+
+    private void reportBlocked() {
+        db.transaction(tx -> tasks.reportBlocked(tx, clock.instant().minus(Workers.SEEN_WITHIN)));
     }
 
     private JsonNode tasksStatusPayload() {

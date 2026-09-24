@@ -1,6 +1,7 @@
 package dispatch.store;
 
 import dispatch.domain.Requester;
+import dispatch.domain.RunKind;
 import dispatch.worker.Readiness;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -136,33 +137,32 @@ public final class Workers {
     }
 
     /**
-     * The best report among {@code memberRef}'s live, unrevoked workers (live per {@link #isLive}, typically called
-     * with {@code now.minus(SEEN_WITHIN)}): a member with one broken laptop and one working desktop is not reported
-     * as stuck. Prefers a worker whose report holds no blocker; if every live worker is broken, returns any one of
-     * their reports.
+     * What holds a run of {@code kind} on {@code project} for {@code memberRef}: empty when any computer that may take
+     * it — the pinned one, else any of the member's — can, otherwise the first of their blockers. The same rule as
+     * {@link Runs#claimNext}'s worker gate, so a run that is only waiting for its turn is never reported as held.
      *
-     * <p>If the member has no <em>live</em> worker — none at all, or every one gone stale — this returns
-     * {@link Readiness#READY} rather than a blocker: a stale report must not be read as "Claude Code is broken" when
-     * the actual state is "not connected", which the existing offline path already says.
+     * <p>Only live computers count (per {@link #isLive}, typically {@code now.minus(SEEN_WITHIN)}): with none, this is
+     * empty rather than a blocker, since a stale report must not be read as "Claude Code is broken" when the actual
+     * state is "not connected", which the offline path already says.
+     *
+     * @param pinnedWorkerId the computer holding the task's worktree, or null when it has none yet
      */
-    public static Readiness readinessOfMember(Tx tx, String memberRef, Instant seenSince) {
-        Readiness bestSoFar = Readiness.READY;
+    public static Optional<Readiness.Blocker> blockerOf(Tx tx, String memberRef, Long pinnedWorkerId, Instant seenSince,
+                                                        String project, RunKind kind) {
+        Optional<Readiness.Blocker> first = Optional.empty();
         for (Paired worker : ofMember(tx, memberRef)) {
-            if (!isLive(tx, worker.id(), seenSince)) {
+            if ((pinnedWorkerId != null && worker.id() != pinnedWorkerId) || !isLive(tx, worker.id(), seenSince)) {
                 continue;
             }
-            Readiness report = readiness(tx, worker.id());
-            if (hasNoBlocker(report)) {
-                return report;
+            Optional<Readiness.Blocker> blocker = readiness(tx, worker.id()).blocker(project, kind);
+            if (blocker.isEmpty()) {
+                return Optional.empty();
             }
-            bestSoFar = report;
+            if (first.isEmpty()) {
+                first = blocker;
+            }
         }
-        return bestSoFar;
-    }
-
-    private static boolean hasNoBlocker(Readiness readiness) {
-        return readiness.claude().ok() && readiness.gh().ok()
-                && readiness.projects().values().stream().allMatch(Readiness.Check::ok);
+        return first;
     }
 
     private static Paired map(Row row) throws SQLException {
