@@ -30,6 +30,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Agent sessions | A task has a planning session (the plan and its corrections) and a building session, which execution starts from the approved plan | 0017 |
 | Setup and management in a browser | `dispatch ui`, a separate process on 127.0.0.1 with a one-time link | 0018 |
 | Task privacy | Another member's task shows only its headline; only the requester acts on it, except cancel, which an admin may also do; a private message Telegram refuses falls back to a content-free group notice | 0020 |
+| Worker readiness | A member's computer reports on its poll whether `claude`, `gh` and each project's clone work; a run waits until a computer that may take it can, and its member is told the reason once (the assignee half is decided but not built yet) | 0022 |
 
 Also decided without an ADR:
 - Only members of a configured group act, for their groups' projects, in their own private chat with the bot; groups get announcements and read-only reports.
@@ -425,6 +426,8 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **M3f** leaner agent runs (built) | A planning and a building session per task (ADR 0017), plans asked for as JSON only, the model that actually answered shown on plans and results with a warning when it isn't the configured one, model and effort per phase, a CLAUDE.md hint in `dispatch check` |
 | **M3g** interaction and ops (built) | Follow-ups, `/retry`, DELIVER runs, attachments, idle sweep (with worktree recreation), `/projects`, auto-clone of missing repos |
 | **M4** team workers (built) | Members see only each other's headlines (ADR 0020); the runner split into `Coordinator` and `JobRunner` behind `Worker`; a member's computer pairs with a one-time code and a worker key, and runs their tasks over `RemoteWorkers`/`WorkerApi` with 60 s leases (`dispatch worker pair`, `dispatch worker run`); `dispatch worker init` pairs a computer, maps or clones its projects and installs the `dispatch-worker` service; `dispatch check` covers both the team machine and a member's computer (ADR 0021) |
+| **T-1** worker readiness (built) | Readiness on the worker's `/api/worker/next` poll, cached for a minute on the worker and stored per worker; the scheduler claims a run only when a computer that may take it is ready for its project and kind; one private `WORKER_BLOCKED` message per reason, and the reason on `/status` (ADR 0022) |
+| **T-2** assignment | A task's assignee separate from its requester, `@bot @dev …` intake in the group, fallback when an assignee leaves (ADR 0022) |
 | **M5** | `CodexAgent` |
 
 Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
