@@ -6,6 +6,9 @@ import dispatch.config.Config;
 import dispatch.config.GroupWriter;
 import dispatch.config.MemberWriter;
 import dispatch.core.ActiveRuns;
+import dispatch.core.Assistant;
+import dispatch.core.AssistantActions;
+import dispatch.core.AssistantHome;
 import dispatch.core.Coordinator;
 import dispatch.core.DraftExpiry;
 import dispatch.core.Sweeper;
@@ -56,6 +59,7 @@ public final class App {
     private final DraftExpiry draftExpiry;
     private final Sweeper sweeper;
     private final Splitter splitter;
+    private final Assistant assistant;
     private final ActiveRuns activeRuns;
     private final WorkerApi workerApi;
     private final UiServer miniApp;
@@ -72,7 +76,7 @@ public final class App {
      * @param miniApp   null unless the config has a {@code miniApp} block, and when this build bundles no pages
      */
     private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, Sweeper sweeper, Splitter splitter,
-                ActiveRuns activeRuns, WorkerApi workerApi, UiServer miniApp, Consumer<Throwable> onFatal) {
+                Assistant assistant, ActiveRuns activeRuns, WorkerApi workerApi, UiServer miniApp, Consumer<Throwable> onFatal) {
         this.db = db;
         this.poller = poller;
         this.scheduler = scheduler;
@@ -80,6 +84,7 @@ public final class App {
         this.draftExpiry = draftExpiry;
         this.sweeper = sweeper;
         this.splitter = splitter;
+        this.assistant = assistant;
         this.activeRuns = activeRuns;
         this.workerApi = workerApi;
         this.miniApp = miniApp;
@@ -162,13 +167,25 @@ public final class App {
         }
 
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
-        registerCommandMenus(api, renderer, groups, config.miniApp() != null);
+        AssistantActions assistantActions = new AssistantActions(tasks, groups, projects, clock, renderer.text("plan.youDecide"));
+        Assistant assistant = null;
+        if (config.workers() == null) {
+            // Personal mode only: in team mode this machine never runs Claude Code (ADR 0021), so it has no one to ask.
+            AssistantHome home = AssistantHome.of(stateDir, environment);
+            home.install();
+            assistant = new Assistant(db, tasks, assistantActions, groups, projects, agents.get("claude-code"), home,
+                    name -> projects.byName(name).map(workspaces::repo).filter(java.nio.file.Files::isDirectory), clock,
+                    Duration.ofSeconds(60), chatRef -> api.sendTyping(Long.parseLong(chatRef.substring(chatRef.indexOf(':') + 1))),
+                    outboxSignal::wake);
+        }
+        registerCommandMenus(api, renderer, groups, config.miniApp() != null, assistant != null);
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
         GroupLinks groupLinks = new GroupLinks(groups, GroupWriter.file(configFile, environment), clock, outboxSignal::wake);
         UpdateHandler handler = new UpdateHandler(db, tasks, new Membership(groups, members, clock, outboxSignal::wake), groups, projects,
                 api, renderer, redactor, botUsername, clock, outboxSignal::wake, workerKeys,
                 config.workers() == null ? null : config.workers().publicUrl(),
-                config.miniApp() == null ? null : config.miniApp().publicUrl(), groupLinks);
+                config.miniApp() == null ? null : config.miniApp().publicUrl(), groupLinks, assistant,
+                assistant == null ? null : assistantActions);
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         UiServer miniApp = null;
@@ -190,7 +207,8 @@ public final class App {
                 config.workers() == null ? null : tasks);
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
         Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1));
-        app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], activeRuns, workerApi, miniApp, onFatal);
+        app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], assistant, activeRuns, workerApi, miniApp,
+                onFatal);
         app[0].startThreads();
         Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "task_topics", taskTopics, "groups", groups.all().size(),
                 "projects", config.projects().size(), "state_dir", stateDir);
@@ -223,6 +241,9 @@ public final class App {
         scheduler.stop();
         sweeper.stop();
         splitter.stop();
+        if (assistant != null) {
+            assistant.stop();
+        }
         try {
             schedulerThread.join(Duration.ofSeconds(10));
             activeRuns.stopAll(ActiveRuns.StopReason.INTERRUPTED);
@@ -278,7 +299,7 @@ public final class App {
     }
 
     /** Best effort: a group's menu fails while the bot is not yet in it, and works again on the next start. */
-    private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups, boolean miniApp) {
+    private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups, boolean miniApp, boolean assistant) {
         for (Config.Group group : groups.all()) {
             if (group.chatId() == null) {
                 continue;
@@ -294,6 +315,9 @@ public final class App {
                     List.of("task", "status", "history", "stats", "cancel", "retry", "worker"));
             if (miniApp) {
                 privateCommands.add("manage");
+            }
+            if (assistant) {
+                privateCommands.add("new");
             }
             privateCommands.addAll(List.of("projects", "help"));
             api.setPrivateChatCommands(renderer.commands(privateCommands.toArray(String[]::new)));

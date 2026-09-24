@@ -8,6 +8,8 @@ import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.config.Config;
 import dispatch.core.AnswerResult;
+import dispatch.core.Assistant;
+import dispatch.core.AssistantActions;
 import dispatch.core.DraftChoice;
 import dispatch.core.DraftResult;
 import dispatch.core.GroupLinks;
@@ -24,6 +26,7 @@ import dispatch.domain.Phase;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Task;
+import dispatch.store.Conversations;
 import dispatch.store.Database;
 import dispatch.store.Kv;
 import dispatch.store.Outbox;
@@ -61,7 +64,7 @@ public final class UpdateHandler {
     private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
     private static final Set<String> COMMANDS =
-            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "projects", "help", "start");
+            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "projects", "help", "start", "new");
     private static final Duration UNKNOWN_NOTICE_INTERVAL = Duration.ofHours(24);
 
     private final Database db;
@@ -79,11 +82,14 @@ public final class UpdateHandler {
     private final String workerUrl;
     private final String miniAppUrl;
     private final GroupLinks groupLinks;
+    private final Assistant assistant;
+    private final AssistantActions assistantActions;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox) {
-        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null, null, null);
+        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null, null, null,
+                null, null);
     }
 
     /**
@@ -93,10 +99,12 @@ public final class UpdateHandler {
      * @param miniAppUrl where Telegram opens the Mini App; null when it is not configured, and /manage says so
      * @param groupLinks asks whoever may manage Dispatch which project an unknown group is for; null to leave every
      *                   unknown group, as before group linking
+     * @param assistant  answers a member's plain private messages (A-1); null to draft every one as a task, as before
      */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
-                         WorkerKeys workers, String workerUrl, String miniAppUrl, GroupLinks groupLinks) {
+                         WorkerKeys workers, String workerUrl, String miniAppUrl, GroupLinks groupLinks, Assistant assistant,
+                         AssistantActions assistantActions) {
         if (workers != null) {
             Objects.requireNonNull(workerUrl, "workerUrl is required when workers is configured");
         }
@@ -115,6 +123,8 @@ public final class UpdateHandler {
         this.workerUrl = workerUrl;
         this.miniAppUrl = miniAppUrl;
         this.groupLinks = groupLinks;
+        this.assistant = assistant;
+        this.assistantActions = assistantActions;
     }
 
     public void handle(JsonNode update) {
@@ -272,7 +282,11 @@ public final class UpdateHandler {
             if (replyToTask(tx, message, who, origin, chatRef)) {
                 return;
             }
-            if (privateChat) {
+            if (privateChat && assistant != null && !text(message).isBlank() && attachments(message).isEmpty()) {
+                // A conversation with the assistant, which proposes a task when the message is one (A-1). Files still make
+                // a draft directly: the assistant cannot see them.
+                assistant.submit(tx, who, text(message), origin, chatRef);
+            } else if (privateChat) {
                 // Anything else a member writes privately is a task to give (ADR 0012).
                 tasks.draft(tx, who, null, text(message), origin, attachments(message));
             } else {
@@ -342,6 +356,16 @@ public final class UpdateHandler {
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
             case "projects" -> projectList(tx, visible, origin, chatRef);
             case "help", "start" -> help(tx, visible, origin, chatRef, privateChat);
+            case "new" -> {
+                if (!privateChat) {
+                    privateOnly(tx, chatRef, origin);
+                } else if (assistant == null) {
+                    help(tx, visible, origin, chatRef, true);
+                } else {
+                    assistant.reset(tx, who.ref());
+                    enqueue(tx, OutboxKind.ASSISTANT_REPLY, chatRef, origin, Json.object().put("new", true));
+                }
+            }
             default -> {
                 // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
                 // it replies to a plan, otherwise a task when written privately.
@@ -692,6 +716,11 @@ public final class UpdateHandler {
             onLinkButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
             return;
         }
+        if (assistantActions != null && isPrivateChatOf(chat, from) && parts.length == 2 && parts[0].equals("as")
+                && taskId(parts[1]).isPresent()) {
+            onAssistantButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get());
+            return;
+        }
         if (servedChat && from.has("id") && parts.length == 5 && parts[0].equals("q")) {
             onQuestionButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), parts);
             return;
@@ -785,6 +814,35 @@ public final class UpdateHandler {
         ObjectNode payload = tasks.draftPayload(tx, draftId).orElseThrow();
         Renderer.Rendered prompt = renderer.render(OutboxKind.DRAFT_PROMPT, Json.read(redactor.redact(payload.toString())));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, prompt.html(), prompt.keyboard())));
+    }
+
+    /**
+     * A confirm button under the assistant's reply (A-1): runs that proposal once, then redraws the reply with every proposal
+     * taken so far marked and without its button.
+     */
+    private void onAssistantButton(Tx tx, JsonNode callback, Requester who, long actionId) {
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        long messageId = message.path("message_id").asLong();
+        String messageRef = Refs.message(chatId, messageId, null);
+        AssistantActions.Outcome outcome = assistantActions.run(tx, who, actionId, messageRef, Refs.chat(chatId));
+        answer(tx, callback.path("id").asText(), switch (outcome) {
+            case DONE -> "callback.assistantDone";
+            case USED -> "callback.assistantUsed";
+            case STALE -> "callback.wrongState";
+            case NOT_ALLOWED -> "callback.notAllowed";
+        });
+        Optional<Outbox.Sent> reply = Outbox.findSent(tx, messageRef).filter(sent -> sent.kind() == OutboxKind.ASSISTANT_REPLY);
+        if (reply.isEmpty() || outcome == AssistantActions.Outcome.NOT_ALLOWED) {
+            return;
+        }
+        ObjectNode payload = (ObjectNode) Json.read(reply.get().payload());
+        List<Long> ids = new ArrayList<>();
+        payload.withArray("actions").forEach(action -> ids.add(action.path("id").asLong()));
+        Set<Long> taken = Conversations.taken(tx, ids);
+        payload.withArray("actions").forEach(action -> ((ObjectNode) action).put("done", taken.contains(action.path("id").asLong())));
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.ASSISTANT_REPLY, Json.read(redactor.redact(payload.toString())));
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard())));
     }
 
     /** An admin's button on a join request: a group to add the person to, or "-" to deny. The request is redrawn with the decision. */

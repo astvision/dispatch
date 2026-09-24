@@ -24,6 +24,7 @@ import dispatch.domain.RunStatus;
 import dispatch.domain.SplitState;
 import dispatch.domain.Task;
 import dispatch.store.Attachments;
+import dispatch.store.Conversations;
 import dispatch.store.Drafts;
 import dispatch.store.Events;
 import dispatch.store.Outbox;
@@ -1157,6 +1158,11 @@ public final class TaskService {
             ((ObjectNode) payload.get("summary")).putNull("costUsd").putNull("averageCostUsd");
         }
         payload.set("people", view.equals("people") ? Statistics.people(given, runs, viewerRef) : Json.MAPPER.createArrayNode());
+        if (view.equals("me")) {
+            // What talking to the assistant cost (A-1): the viewer's own, so only in their own view (ADR 0020).
+            BigDecimal chat = Conversations.spentSince(tx, viewerRef, since);
+            payload.put("chatCostUsd", chat.signum() == 0 ? null : chat.toPlainString());
+        }
         return Optional.of(payload);
     }
 

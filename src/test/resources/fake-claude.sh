@@ -54,9 +54,10 @@ case "$prompt" in
     ;;
   *)
     if [ "$mode" = assistant ]; then
-      # The assistant's answer, and whether dispatch ask reached it with the member's scope.
+      # Asks for the member's tasks the way the assistant does, and proposes one draft; the reply says whether asking worked.
+      if dispatch ask tasks > fake-assistant.ask 2>&1; then asked=ok; else asked=failed; fi
       printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-assistant","permissionMode":"dontAsk"}'
-      printf '{"type":"result","subtype":"success","is_error":false,"session_id":"fake-assistant","total_cost_usd":0.004,"num_turns":1,"permission_denials":[],"structured_output":{"reply":"Сайн байна уу, %s","actions":[]}}\n' "$DISPATCH_ASK_MEMBER"
+      printf '{"type":"result","subtype":"success","is_error":false,"session_id":"fake-assistant","total_cost_usd":0.004,"num_turns":1,"permission_denials":[],"structured_output":{"reply":"Сайн байна уу (ask: %s)","actions":[{"type":"draft","text":"Дасгалын тэмдэглэл нэм"}]}}\n' "$asked"
       exit 0
     fi
     if [ "$mode" = split ]; then

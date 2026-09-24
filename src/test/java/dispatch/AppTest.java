@@ -171,7 +171,7 @@ class AppTest {
     @Test
     void messageWithSeveralTopicsIsSplitOnRequestAndEachPartIsGivenOnItsOwn() throws Exception {
         app = start();
-        telegram.pushUpdate(privateText(1, "staging дээр: login timeout-г 60 секунд болго, make help target нэм. бас тайлангийн "
+        telegram.pushUpdate(privateTask(1, 100, "Bold", "staging дээр: login timeout-г 60 секунд болго, make help target нэм. бас тайлангийн "
                 + "нэрийг \"Сарын тайлан\" болгож соль"));
         long prompt = awaitSentMessageId("DRAFT_PROMPT");
 
@@ -196,6 +196,26 @@ class AppTest {
         Map<String, String> task = SqlRows.single(db, "SELECT * FROM task WHERE id = 1");
         assertEquals("telegram:100/1#3", task.get("origin_ref"));
         assertEquals("staging дээр: тайлангийн нэрийг \"Сарын тайлан\" болгож соль", task.get("description"));
+        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
+    }
+
+    @Test
+    void aPlainPrivateMessageIsAnsweredByTheAssistantWhoseProposalATapTurnsIntoADraft() throws Exception {
+        app = start();
+        telegram.pushUpdate(privateText(1, "life-д дасгалын тэмдэглэл нэм"));
+
+        JsonNode reply = awaitMessageContaining("Сайн байна уу");
+        assertTrue(reply.get("text").asText().contains("(ask: ok)"), "the member's own dispatch ask answered: " + reply);
+        assertEquals(1, reply.get("reply_parameters").get("message_id").asLong(), "under the message");
+        String confirm = reply.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText();
+        long replyId = awaitSentMessageId("ASSISTANT_REPLY");
+
+        telegram.pushUpdate(privateCallback(2, 100, "Bold", confirm, replyId));
+
+        assertEquals(messages.getString("callback.assistantDone"), awaitCallbackAnswer());
+        awaitSentMessageId("DRAFT_PROMPT");
+        assertEquals("Дасгалын тэмдэглэл нэм",
+                SqlRows.single(repos.stateDir.resolve("dispatch.db"), "SELECT description FROM draft").get("description"));
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 
@@ -251,7 +271,7 @@ class AppTest {
         assertEquals(messages.getString("callback.joinApproved"), awaitCallbackAnswer());
         assertEquals(777, awaitMessageContaining("backend").get("chat_id").asLong(), "Sara is told she is in");
 
-        telegram.pushUpdate(privateTextFrom(3, 777, "Sara", "Fix the login timeout on staging"));
+        telegram.pushUpdate(privateTask(3, 777, "Sara", "Fix the login timeout on staging"));
 
         awaitSentMessageId("DRAFT_PROMPT");
         assertEquals("telegram:777", SqlRows.single(repos.stateDir.resolve("dispatch.db"), "SELECT requester_ref FROM draft").get("requester_ref"));
@@ -339,9 +359,9 @@ class AppTest {
         throw new AssertionError("no sent " + kind + " message");
     }
 
-    /** Bold writes the task privately and presses a priority button on the prompt (one project, so nothing else is asked). */
+    /** Bold gives the task privately with /task and presses a priority button on the prompt (one project, so nothing else is asked). */
     private void giveTask(long updateId, String text, String priority) throws InterruptedException {
-        telegram.pushUpdate(privateText(updateId, text));
+        telegram.pushUpdate(privateTask(updateId, 100, "Bold", text));
         long prompt = awaitSentMessageId("DRAFT_PROMPT");
         telegram.pushUpdate(privateCallback(updateId + 1, 100, "Bold", "draft:1:prio:" + priority, prompt));
         assertEquals(messages.getString("callback.taskCreated"), awaitCallbackAnswer());
@@ -353,6 +373,14 @@ class AppTest {
                 {"update_id":%d,"message":{"message_id":%d,"from":{"id":%d,"is_bot":false,"first_name":"%s"},
                  "chat":{"id":%d,"type":"private"},"date":1789640000,"text":%s}}"""
                 .formatted(updateId, updateId, fromId, name, fromId, Json.MAPPER.valueToTree(text)));
+    }
+
+    /** /task with {@code text} in the sender's private chat, as Telegram marks the command; its message id is the update id. */
+    private static JsonNode privateTask(long updateId, long fromId, String name, String text) {
+        JsonNode update = privateTextFrom(updateId, fromId, name, "/task " + text);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) update.get("message")).putArray("entities")
+                .add(Json.object().put("offset", 0).put("length", 5).put("type", "bot_command"));
+        return update;
     }
 
     /** Bold's private message; its message id is the update id. */

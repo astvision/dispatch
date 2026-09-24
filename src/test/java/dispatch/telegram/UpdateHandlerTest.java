@@ -105,7 +105,7 @@ class UpdateHandlerTest {
     private UpdateHandler handlerWithWorkers(dispatch.worker.WorkerKeys keys, Groups groupsOverride) {
         Membership membershipOverride = new Membership(groupsOverride, UpdateHandlerTest::noJoins, clock, () -> { });
         return new UpdateHandler(db, tasks, membershipOverride, groupsOverride, projects, api, renderer, redactor, BOT, clock,
-                () -> { }, keys, "https://team.example.com", null, null);
+                () -> { }, keys, "https://team.example.com", null, null, null, null);
     }
 
     @AfterEach
@@ -942,7 +942,7 @@ class UpdateHandlerTest {
     @Test
     void manageAnswersAMemberWithAButtonAndSaysSoWhenTheMiniAppIsOff() {
         UpdateHandler withMiniApp = new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
-                () -> { }, null, null, "https://dispatch.example.com", null);
+                () -> { }, null, null, "https://dispatch.example.com", null, null, null);
 
         withMiniApp.handle(message(570, 70, 100, "Bold", 100L, "private", "/manage", null));
         handler.handle(message(571, 71, 100, "Bold", 100L, "private", "/manage", null));
@@ -961,7 +961,7 @@ class UpdateHandlerTest {
     @Test
     void manageInsideATaskTopicIsACommandAndNotACorrection() {
         UpdateHandler withMiniApp = new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
-                () -> { }, null, null, "https://dispatch.example.com", null);
+                () -> { }, null, null, "https://dispatch.example.com", null, null, null);
         long taskId = taskAwaitingApproval(List.of());
         db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '56' WHERE id = ?", taskId));
 
@@ -1850,13 +1850,123 @@ class UpdateHandlerTest {
         };
         personalLinks = new GroupLinks(personalGroups, fakeWriter, clock, () -> { });
         return new UpdateHandler(db, personalTasks, new Membership(personalGroups, UpdateHandlerTest::noJoins, clock, () -> { }),
-                personalGroups, personalProjects, api, renderer, redactor, BOT, clock, () -> { }, null, null, null, personalLinks);
+                personalGroups, personalProjects, api, renderer, redactor, BOT, clock, () -> { }, null, null, null, personalLinks, null, null);
     }
 
     private static Config.Telegram withChat(Config.Telegram telegram, java.util.function.Predicate<Config.Group> which, long chatId) {
         return new Config.Telegram(telegram.admins(), telegram.groups().stream()
                 .map(group -> which.test(group) ? new Config.Group(group.name(), chatId, group.members(), group.projects()) : group)
                 .toList());
+    }
+
+    /** A handler whose assistant answers every turn with {@code answer}, recording each run it was asked for (A-1). */
+    private UpdateHandler assistantHandler(List<dispatch.agent.RunRequest> asked, JsonNode answer) {
+        dispatch.agent.Agent agent = request -> {
+            asked.add(request);
+            return new dispatch.agent.RunHandle() {
+                @Override
+                public ProcessHandle process() {
+                    return ProcessHandle.current();
+                }
+
+                @Override
+                public AgentResult await() {
+                    return new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", answer.toString(), null, new BigDecimal("0.004"), 1,
+                            List.of(), null, null, null);
+                }
+
+                @Override
+                public void cancel() {
+                }
+
+                @Override
+                public dispatch.agent.AgentActivity activity() {
+                    return new dispatch.agent.AgentActivity(0, null);
+                }
+            };
+        };
+        dispatch.core.AssistantActions actions = new dispatch.core.AssistantActions(tasks, groups, projects, clock, "Чи шийд");
+        dispatch.core.AssistantHome home = new dispatch.core.AssistantHome(dir.resolve("assistant"), dbFile, "java", "cp", "/bin");
+        home.install();
+        dispatch.core.Assistant assistant = new dispatch.core.Assistant(db, tasks, actions, groups, projects, agent, home,
+                project -> Optional.empty(), clock, Duration.ofSeconds(5), chatRef -> { }, () -> { });
+        return new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, FakeTelegram.BOT_USERNAME, clock,
+                () -> { }, null, null, null, null, assistant, actions);
+    }
+
+    private Map<String, String> awaitRow(String sql) throws InterruptedException {
+        Instant deadline = Instant.now().plusSeconds(5);
+        while (SqlRows.query(dbFile, sql).isEmpty()) {
+            assertTrue(Instant.now().isBefore(deadline), "timed out waiting for: " + sql);
+            Thread.sleep(20);
+        }
+        return row(sql);
+    }
+
+    @Test
+    void aPlainPrivateMessageGoesToTheAssistantAndATapRunsItsProposalOnce() throws Exception {
+        List<dispatch.agent.RunRequest> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        JsonNode answer = Json.read("""
+                {"reply":"life төсөлд даалгавар болгох уу?","actions":[{"type":"draft","project":"life","text":"Дасгалын тэмдэглэл нэм"}]}""");
+        UpdateHandler withAssistant = assistantHandler(asked, answer);
+
+        withAssistant.handle(message(700, 70, 100, "Bold", 100L, "private", "life-д дасгалын тэмдэглэл нэм", null));
+
+        Map<String, String> reply = awaitRow("SELECT id, reply_to_ref FROM outbox WHERE kind = 'ASSISTANT_REPLY'");
+        assertEquals("telegram:100/70", reply.get("reply_to_ref"));
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"), "the message itself is no draft");
+        db.transaction(tx -> Outbox.markSent(tx, Long.parseLong(reply.get("id")), 1, "telegram:100/88", clock.instant()));
+        String actionId = row("SELECT id FROM assistant_action").get("id");
+
+        withAssistant.handle(privateCallback(701, 100, "Bold", "as:" + actionId));
+
+        Map<String, String> draft = row("SELECT project, description, origin_ref FROM draft");
+        assertEquals("life", draft.get("project"));
+        assertEquals("Дасгалын тэмдэглэл нэм", draft.get("description"));
+        assertEquals("telegram:100/88#a" + actionId, draft.get("origin_ref"));
+        assertEquals(renderer.text("callback.assistantDone"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode edit = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(edit.get("text").asText().contains("✔️"), "the reply marks what was done: " + edit);
+        assertFalse(edit.has("reply_markup") && edit.get("reply_markup").path("inline_keyboard").size() > 0, "and drops its button");
+
+        withAssistant.handle(privateCallback(702, 100, "Bold", "as:" + actionId));
+        assertEquals("1", row("SELECT count(*) AS n FROM draft").get("n"), "a second tap does nothing");
+    }
+
+    @Test
+    void commandsFilesAndRepliesWithAMeaningStillGoWhereTheyWent() throws Exception {
+        List<dispatch.agent.RunRequest> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        UpdateHandler withAssistant = assistantHandler(asked, Json.read("{\"reply\":\"ок\",\"actions\":[]}"));
+        long taskId = taskAwaitingApproval(List.of());
+        long planId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'PLAN_READY'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, planId, 1, "telegram:100/2000", clock.instant()));
+
+        withAssistant.handle(privateCommand(710, 100, "Bold", "/task alm Fix the export"));
+        JsonNode photo = message(711, 711, 100, "Bold", 100L, "private", "", null);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) photo.get("message")).remove("text");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) photo.get("message")).put("caption", "See the screenshot")
+                .putArray("photo").add(Json.read("{\"file_id\":\"p\",\"width\":90,\"height\":60}"));
+        withAssistant.handle(photo);
+        withAssistant.handle(message(712, 712, 100, "Bold", 100L, "private", "Also cover the mobile login", """
+                {"message_id":2000,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":100,"type":"private"},
+                 "date":1789640000,"text":"plan"}"""));
+
+        assertEquals("2", row("SELECT count(*) AS n FROM draft").get("n"), "/task and a message with files draft directly");
+        assertEquals("Also cover the mobile login", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction"));
+        assertTrue(asked.isEmpty(), "none of them reached the assistant");
+    }
+
+    @Test
+    void newStartsAFreshConversation() {
+        List<dispatch.agent.RunRequest> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        UpdateHandler withAssistant = assistantHandler(asked, Json.read("{\"reply\":\"ок\",\"actions\":[]}"));
+        db.transaction(tx -> dispatch.store.Conversations.saveSession(tx, "telegram:100", java.util.UUID.randomUUID(), clock.instant()));
+
+        withAssistant.handle(privateCommand(720, 100, "Bold", "/new"));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM assistant_session").get("n"));
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'ASSISTANT_REPLY'").get("payload")).path("new").asBoolean());
     }
 
     private long taskAwaitingApproval() {

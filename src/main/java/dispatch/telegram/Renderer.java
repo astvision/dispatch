@@ -485,6 +485,9 @@ public final class Renderer {
         if (payload.path("failed").asBoolean(false)) {
             return plain(text("assistant.failed"));
         }
+        if (payload.path("new").asBoolean(false)) {
+            return plain(text("assistant.new"));
+        }
         StringBuilder html = new StringBuilder(escapeWithin(payload.path("reply").asText(), SUMMARY_LIMIT));
         List<List<Button>> keyboard = new ArrayList<>();
         JsonNode actions = payload.path("actions");
@@ -690,6 +693,9 @@ public final class Renderer {
             if (summary.hasNonNull("approvedWithoutCorrectionPercent")) {
                 html.append("\n").append(format("stats.firstTime", summary.path("approvedWithoutCorrectionPercent").asInt()));
             }
+        }
+        if (payload.hasNonNull("chatCostUsd")) {
+            html.append("\n").append(format("stats.chat", money(payload.get("chatCostUsd"))));
         }
         List<String> blocks = new ArrayList<>(List.of(html.toString()));
         for (JsonNode person : payload.path("people")) {

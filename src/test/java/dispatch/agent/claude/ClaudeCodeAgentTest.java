@@ -107,7 +107,7 @@ class ClaudeCodeAgentTest {
         AgentResult result = agent.start(request).await();
 
         assertEquals(AgentOutcome.SUCCEEDED, result.outcome(), result.error());
-        assertTrue(result.structuredOutput().contains("telegram:100"), "the run's own variables reach the agent: " + result.structuredOutput());
+        assertTrue(result.structuredOutput().contains("Дасгалын тэмдэглэл"), result.structuredOutput());
         List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
         assertEquals("dontAsk", valueAfter(args, "--permission-mode"), "anything not allowed is refused without asking");
         assertEquals("project", valueAfter(args, "--setting-sources"));
@@ -120,6 +120,7 @@ class ClaudeCodeAgentTest {
         assertEquals(clone.toString(), valueAfter(args, "--add-dir"));
         assertFalse(args.contains("--max-budget-usd"), "no cap, as the owner chose");
         String env = Files.readString(workdir.resolve("fake-claude.env"));
+        assertTrue(env.contains("DISPATCH_ASK_MEMBER=telegram:100"), "the run's own variables reach the agent");
         assertFalse(env.contains("telegram-secret"), "the bot's token still never reaches the agent");
     }
 

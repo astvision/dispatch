@@ -59,4 +59,13 @@ public final class Conversations {
         action.ifPresent(taken -> tx.update("UPDATE assistant_action SET used_at = ? WHERE id = ?", now, id));
         return action;
     }
+
+    /** Of {@code ids}, the actions already taken; their buttons are gone once the reply is redrawn. */
+    public static java.util.Set<Long> taken(Tx tx, java.util.List<Long> ids) {
+        if (ids.isEmpty()) {
+            return java.util.Set.of();
+        }
+        return java.util.Set.copyOf(tx.list("SELECT id FROM assistant_action WHERE used_at IS NOT NULL AND id IN (" + Tx.placeholders(ids.size()) + ")",
+                row -> row.longValue("id"), ids.toArray()));
+    }
 }

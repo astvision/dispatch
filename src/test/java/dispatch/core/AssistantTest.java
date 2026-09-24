@@ -140,6 +140,8 @@ class AssistantTest {
         assertEquals(agent.requests.getFirst().sessionId(), agent.requests.get(1).sessionId());
         assertEquals("auth.timeout нь config/auth.yaml-д байна.", replyText());
         assertEquals("2", row("SELECT count(*) AS n FROM assistant_turn").get("n"), "both runs' costs are counted");
+        JsonNode stats = db.transactionReturning(tx -> tasks.statsPayload(tx, BOLD.ref(), List.of("home"), "me", "month")).orElseThrow();
+        assertEquals("0.008", stats.path("chatCostUsd").asText(), "/stats shows what the conversation cost");
     }
 
     @Test
