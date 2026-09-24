@@ -218,7 +218,7 @@ public final class UpdateHandler {
                 // Anything else a member writes privately is a task to give (ADR 0012).
                 tasks.draft(tx, who, null, text(message), origin, attachments(message));
             } else {
-                withoutBotMentions(message).ifPresent(rest -> groupTask(tx, who, rest, message, origin, chatRef));
+                withoutBotMentions(message).ifPresent(rest -> groupTask(tx, who, null, rest, message, origin, chatRef));
             }
             return;
         }
@@ -229,7 +229,9 @@ public final class UpdateHandler {
         switch (command.name()) {
             case "task" -> {
                 if (!privateChat) {
-                    groupTask(tx, who, command.args(), message, origin, chatRef);
+                    Optional<Config.Project> named = firstWordProject(command.args(), groups.projectsOfChat(chatRef));
+                    groupTask(tx, who, named.map(Config.Project::name).orElse(null),
+                            named.isPresent() ? afterFirstWord(command.args()) : command.args(), message, origin, chatRef);
                     return;
                 }
                 giveTask(tx, who, command.args(), message, origin);
@@ -295,34 +297,49 @@ public final class UpdateHandler {
     /** /task [project] [text]: the first word names the project only if it is one of the member's; a replied message is the text. */
     private void giveTask(Tx tx, Requester who, String args, JsonNode message, String origin) {
         JsonNode repliedTo = message.path("reply_to_message");
-        String[] firstAndRest = args.split("\\s+", 2);
-        Set<String> mine = groups.projectsOfMember(who.ref());
-        Optional<Config.Project> named = projects.find(firstAndRest[0]).filter(project -> mine.contains(project.name()));
-        String own = named.isPresent() ? (firstAndRest.length > 1 ? firstAndRest[1].strip() : "") : args;
+        Optional<Config.Project> named = firstWordProject(args, groups.projectsOfMember(who.ref()));
+        String own = named.isPresent() ? afterFirstWord(args) : args;
         tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), withRepliedMessage(own, repliedTo), origin,
                 attachments(repliedTo, message));
     }
 
+    /** The project the first word of /task's arguments names, by name or alias, if it is one of {@code candidates}. */
+    private Optional<Config.Project> firstWordProject(String args, Set<String> candidates) {
+        return projects.find(args.split("\\s+", 2)[0]).filter(project -> candidates.contains(project.name()));
+    }
+
+    private static String afterFirstWord(String args) {
+        String[] firstAndRest = args.split("\\s+", 2);
+        return firstAndRest.length > 1 ? firstAndRest[1].strip() : "";
+    }
+
     /**
      * A task given in a linked group, by mentioning the bot or with /task (G-1b): a member of that group gets the usual draft
-     * in their private chat, with the group's project chosen if it has just one; a replied message is the text, or follows it.
+     * in their private chat, as private /task makes it. The project is the one named, else the group's only one; a replied
+     * message, unless the bot's own, comes first in the text and brings its files.
+     *
+     * @param projectKey a project of this group named with /task, null if none
      */
-    private void groupTask(Tx tx, Requester who, String own, JsonNode message, String origin, String chatRef) {
+    private void groupTask(Tx tx, Requester who, String projectKey, String own, JsonNode message, String origin, String chatRef) {
         Set<String> owned = groups.projectsOfChat(chatRef);
         if (owned.stream().noneMatch(project -> groups.isMemberOfProjectGroup(who.ref(), project))) {
             enqueue(tx, OutboxKind.NOT_ALLOWED, chatRef, origin, Json.object().put("name", who.name()));
             tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef));
             return;
         }
-        String replied = text(message.path("reply_to_message")).strip();
-        String text = own.isBlank() ? replied : replied.isEmpty() ? own : own + "\n\n" + replied;
+        JsonNode repliedTo = message.path("reply_to_message");
+        if (repliedTo.path("from").path("is_bot").asBoolean(false)) {
+            // Such as the bot's own ✉️ line: nothing to give as a task.
+            repliedTo = Json.object();
+        }
+        String text = withRepliedMessage(own, repliedTo);
         if (text.isBlank()) {
             enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object());
             return;
         }
-        String project = owned.size() == 1 ? owned.iterator().next() : null;
+        String project = projectKey != null ? projectKey : owned.size() == 1 ? owned.iterator().next() : null;
         String firstName = TelegramNames.clean(message.path("from").path("first_name").asText(""));
-        tasks.draft(tx, who, project, text, origin, attachments(message),
+        tasks.draft(tx, who, project, text, origin, attachments(repliedTo, message),
                 new TaskService.GroupOrigin(chatRef, firstName.isEmpty() ? who.name() : firstName));
     }
 

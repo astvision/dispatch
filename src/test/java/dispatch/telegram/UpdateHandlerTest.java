@@ -470,8 +470,55 @@ class UpdateHandlerTest {
         handler.handle(mention(523, 33, 200, "Ali", "@" + BOT + " also check mobile", replied));
 
         assertEquals("Login fails after 30s on staging", row("SELECT description FROM draft WHERE id = 1").get("description"));
-        assertEquals("also check mobile\n\nLogin fails after 30s on staging",
-                row("SELECT description FROM draft WHERE id = 2").get("description"));
+        assertEquals("Login fails after 30s on staging\n\nalso check mobile",
+                row("SELECT description FROM draft WHERE id = 2").get("description"), "as private /task orders it");
+    }
+
+    @Test
+    void mentionReplyingToAPhotoTakesThePhotoAlong() {
+        String replied = """
+                {"message_id":29,"from":{"id":300,"is_bot":false,"first_name":"Sara"},"chat":{"id":%d,"type":"supergroup"},
+                 "date":1789640000,"caption":"Login screen is blank",
+                 "photo":[{"file_id":"shot","width":1280,"height":853,"file_size":90000}]}""".formatted(GROUP);
+
+        handler.handle(mention(528, 38, 100, "Bold", "@" + BOT, replied));
+
+        assertEquals("Login screen is blank", row("SELECT description FROM draft").get("description"));
+        assertEquals("shot", row("SELECT file_ref FROM attachment WHERE draft_id = 1").get("file_ref"));
+    }
+
+    @Test
+    void mentionReplyingToTheBotsOwnMessageIsNotATask() {
+        String botLine = """
+                {"message_id":29,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":%d,"type":"supergroup"},
+                 "date":1789640000,"text":"✉️ Ali: хувийн чатад илгээлээ."}""".formatted(GROUP);
+
+        handler.handle(mention(529, 39, 100, "Bold", "@" + BOT, botLine));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+        assertEquals("TASK_USAGE", row("SELECT kind FROM outbox").get("kind"));
+    }
+
+    @Test
+    void taskCommandInAGroupWithSeveralProjectsNamesOneOfThem() {
+        Config.Project crm = new Config.Project("crm-backend", "crm", "https://github.com/acme/crm.git", null, "main",
+                "claude-code", null, null, List.of(), null, null, null);
+        Config.Project alm = projects.all().getFirst();
+        Projects two = new Projects(List.of(alm, crm), project -> Optional.empty());
+        Groups shared = new Groups(List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold")),
+                List.of("autoland-management", "crm-backend"))));
+        TaskService sharedTasks = new TaskService(shared, two, new ActiveRuns(), clock, () -> { }, () -> { });
+        UpdateHandler sharedHandler = new UpdateHandler(db, sharedTasks, new Membership(shared, UpdateHandlerTest::noJoins, clock, () -> { }),
+                shared, two, api, renderer, redactor, BOT, clock, () -> { });
+
+        sharedHandler.handle(message(530, 40, 100, "Bold", GROUP, "supergroup", "/task@" + BOT + " crm Fix it", null));
+        sharedHandler.handle(message(531, 41, 100, "Bold", GROUP, "supergroup", "/task@" + BOT + " nope Fix it", null));
+
+        assertEquals("crm-backend", row("SELECT project FROM draft WHERE id = 1").get("project"));
+        assertEquals("Fix it", row("SELECT description FROM draft WHERE id = 1").get("description"));
+        Map<String, String> unnamed = row("SELECT * FROM draft WHERE id = 2");
+        assertEquals(null, unnamed.get("project"), "two projects and none named: the prompt asks");
+        assertEquals("nope Fix it", unnamed.get("description"), "an unknown word stays in the text");
     }
 
     @Test

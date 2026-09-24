@@ -568,6 +568,18 @@ class RendererTest {
     }
 
     @Test
+    void groupHelpLeadsWithTaskCommandToTheBotThenTheMention() {
+        ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot").put("privateChat", false);
+        payload.putArray("projects").addObject().put("name", "life").putNull("alias");
+
+        String html = renderer.render(OutboxKind.HELP, payload).html();
+
+        int command = html.indexOf("/task@dispatch_backend_bot");
+        assertTrue(command >= 0, html);
+        assertTrue(html.indexOf("@dispatch_backend_bot-г", command) > command, "the mention comes second: " + html);
+    }
+
+    @Test
     void everyKindRendersWithinTelegramLimitsWithoutPlaceholders() {
         for (OutboxKind kind : OutboxKind.values()) {
             for (boolean fellBack : new boolean[] {false, true}) {
