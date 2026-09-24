@@ -49,9 +49,11 @@ When the bot is added to a group whose chat id is in no configured group (`my_ch
 
 A project button (`link:<chatId>:<index>`) writes the config under `ConfigFile.edit`'s lock and validates it:
 
-1. If the project's current group has no chat and holds only this project, set that group's `chatId`.
+1. If the project's current group holds only this project, set that group's `chatId` (replacing any earlier one: the
+   group follows the project, and the bot leaves the old chat, best-effort).
 2. Otherwise move the project: remove it from its current group's `projects`, and append a new group named after the
-   chat's title (`Setup.teamName`, made unique) with this `chatId`, the same members as the project's current group,
+   chat's title (`Setup.teamName`, cut to 40 characters, made unique ignoring case) with this `chatId`, the same members
+   as the project's current group,
    and `projects: [<project>]`. If a group with this `chatId` already exists (a second project for the same chat),
    append the project to it instead.
 
@@ -62,7 +64,8 @@ reason and changes nothing. A failed config write is logged and reported to the 
 
 The bot may already be in the group (Telegram then sends no "added" event): a command addressed to the bot in an
 unknown group, from someone who may manage Dispatch, sends the same prompt instead of leaving; from anyone else the bot
-leaves. An open prompt for a chat is not sent twice. Buttons carry the project's index into the list kept with the
+leaves. A prompt for a chat is not sent twice within a minute (one add can arrive as two updates); after that, adding
+the bot again or a command to it asks again. Buttons carry the project's index into the list kept with the
 prompt, so a long project name still fits Telegram's 64-byte limit.
 
 A chat that is linked cannot be linked again from the prompt; adding the bot to a chat that is already linked just

@@ -11,6 +11,7 @@ import dispatch.store.Kv;
 import dispatch.store.Outbox;
 import dispatch.store.Tx;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -30,6 +31,7 @@ public final class GroupLinks {
     }
 
     private static final String KEY_PREFIX = "group.link.";
+    private static final Duration REASK_AFTER = Duration.ofSeconds(60);
 
     private final Groups groups;
     private final GroupWriter writer;
@@ -43,12 +45,19 @@ public final class GroupLinks {
         this.wakeOutbox = wakeOutbox;
     }
 
-    /** Remembers an open prompt; false when one is already open for this chat (so it is not sent twice). */
+    /**
+     * Remembers an open prompt; false when one was asked for this chat less than {@link #REASK_AFTER} ago. That only folds
+     * the near-simultaneous events of one add (new_chat_members and my_chat_member); an older prompt, ignored or lost,
+     * is replaced so that adding the bot again, or a command to it, asks again rather than leaving it silent for good.
+     */
     public boolean open(Tx tx, long chatId, String title, List<String> projects) {
-        if (Kv.get(tx, key(chatId)).isPresent()) {
+        boolean recent = Kv.get(tx, key(chatId)).map(Json::read)
+                .map(stored -> clock.millis() - stored.path("askedAt").asLong() < REASK_AFTER.toMillis())
+                .orElse(false);
+        if (recent) {
             return false;
         }
-        ObjectNode prompt = Json.object().put("title", title);
+        ObjectNode prompt = Json.object().put("title", title).put("askedAt", clock.millis());
         projects.forEach(prompt.putArray("projects")::add);
         Kv.put(tx, key(chatId), prompt.toString());
         return true;
@@ -73,8 +82,12 @@ public final class GroupLinks {
             return Result.NOT_ALLOWED;
         }
         Optional<Prompt> prompt = prompt(tx, chatId);
-        if (prompt.isEmpty() || projectIndex < 0 || projectIndex >= prompt.get().projects().size()
-                || groups.isGroupChat(chatRef(chatId))) {
+        if (groups.isGroupChat(chatRef(chatId))) {
+            // Linked meanwhile (e.g. from a second prompt): this one can never be answered now.
+            forget(tx, chatId);
+            return Result.STALE;
+        }
+        if (prompt.isEmpty() || projectIndex < 0 || projectIndex >= prompt.get().projects().size()) {
             return Result.STALE;
         }
         String project = prompt.get().projects().get(projectIndex);

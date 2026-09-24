@@ -68,6 +68,8 @@ class UpdateHandlerTest {
     private dispatch.Redactor redactor;
     private Groups personalGroups;
     private TaskService personalTasks;
+    private GroupLinks personalLinks;
+    private boolean linkFails;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -1076,6 +1078,55 @@ class UpdateHandlerTest {
         assertFalse(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
     }
 
+    /** Ruling R6: the project's group follows it to the new chat, so the bot has nothing left to do in the old one. */
+    @Test
+    void relinkingAProjectToAnotherChatLeavesTheOldChat() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(730, 100, NEW_GROUP, "note", "member"));
+        handler.handle(callback(731, 100, "Bold", 100L, 1, "link:" + NEW_GROUP + ":0"));
+        long otherGroup = -4883391546L;
+        handler.handle(myChatMember(732, 100, otherGroup, "life", "member"));
+
+        handler.handle(callback(733, 100, "Bold", 100L, 2, "link:" + otherGroup + ":0"));
+
+        assertTrue(personalGroups.isGroupChat("telegram:" + otherGroup));
+        assertFalse(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
+        assertEquals(NEW_GROUP, telegram.awaitRequest("leaveChat", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+        Thread.sleep(100);
+        assertTrue(telegram.drain("leaveChat").isEmpty(), "only the old chat");
+    }
+
+    /** Ruling R7: the dedupe folds the near-simultaneous add events; an ignored prompt must not block the chat forever. */
+    @Test
+    void anUnansweredPromptIsAskedAgainOnlyOnceItIsAMinuteOld() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(734, 100, NEW_GROUP, "note", "member"));
+        telegram.awaitRequest("sendMessage", Duration.ofSeconds(2));
+
+        handler.handle(myChatMember(735, 100, NEW_GROUP, "note", "member"));
+        Thread.sleep(100);
+        assertTrue(telegram.drain("sendMessage").isEmpty(), "a second add within 60 s sends no second prompt");
+
+        clock.advance(Duration.ofSeconds(61));
+        handler.handle(myChatMember(736, 100, NEW_GROUP, "note", "member"));
+        assertEquals(100, telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+    }
+
+    @Test
+    void aFailedConfigWriteIsReportedAndTheQuestionStaysOpen() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(737, 100, NEW_GROUP, "note", "member"));
+        linkFails = true;
+
+        handler.handle(callback(738, 100, "Bold", 100L, 1, "link:" + NEW_GROUP + ":0"));
+
+        assertEquals(renderer.text("callback.groupLinkFailed"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertFalse(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'GROUP_LINKED'").get("n"));
+        assertTrue(db.transactionReturning(tx -> personalLinks.prompt(tx, NEW_GROUP)).isPresent(), "the prompt stays open");
+    }
+
     private UpdateHandler personalHandler() {
         return personalHandlerWithProject("life");
     }
@@ -1093,6 +1144,9 @@ class UpdateHandlerTest {
         GroupWriter fakeWriter = new GroupWriter() {
             @Override
             public Config.Telegram link(long chatId, String title, String linked) {
+                if (linkFails) {
+                    throw new dispatch.config.ConfigException("config file is read-only");
+                }
                 return config[0] = withChat(config[0], group -> group.projects().contains(linked), chatId);
             }
 
@@ -1106,9 +1160,9 @@ class UpdateHandlerTest {
                 return config[0] = withChat(config[0], group -> Long.valueOf(oldChatId).equals(group.chatId()), newChatId);
             }
         };
+        personalLinks = new GroupLinks(personalGroups, fakeWriter, clock, () -> { });
         return new UpdateHandler(db, personalTasks, new Membership(personalGroups, UpdateHandlerTest::noJoins, clock, () -> { }),
-                personalGroups, personalProjects, api, renderer, redactor, BOT, clock, () -> { }, null, null, null,
-                new GroupLinks(personalGroups, fakeWriter, clock, () -> { }));
+                personalGroups, personalProjects, api, renderer, redactor, BOT, clock, () -> { }, null, null, null, personalLinks);
     }
 
     private static Config.Telegram withChat(Config.Telegram telegram, java.util.function.Predicate<Config.Group> which, long chatId) {

@@ -1,6 +1,7 @@
 package dispatch.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -81,6 +82,60 @@ class GroupWriterTest {
 
         assertEquals(-1004883391545L, writer.migrate(-4883391545L, -1004883391545L).groups().getFirst().chatId());
         assertTrue(Files.readString(file).contains("chatId: -1004883391545"), "chat id written as a plain integer, not quoted");
+    }
+
+    /** Telegram titles go to 128 characters; the group name must stay within the loader's 40, suffix included. */
+    @Test
+    void aLongTitleYieldsAGroupNameWithinTheLimitEvenWithASuffix() throws IOException {
+        addSecondProject("crm");
+        addSecondProject("erp");
+        String title = "Acme backend and infrastructure team chat for the whole year";   // 60 characters
+        GroupWriter writer = GroupWriter.file(file, ENV);
+        writer.link(-1001L, title, "alm");
+
+        Config.Telegram telegram = writer.link(-1002L, title, "crm");
+
+        List<String> names = telegram.groups().stream().map(Config.Group::name).toList();
+        assertEquals(3, names.size(), names.toString());
+        names.forEach(name -> assertTrue(name.length() <= 40 && !name.contains("--"), name));
+        assertTrue(names.get(2).endsWith("-2"), names.toString());
+    }
+
+    /** The loader refuses group names that differ only in case, so the suffix must be chosen the same way. */
+    @Test
+    void aTitleClashingWithAGroupNameInAnotherCaseGetsADistinctName() throws IOException {
+        addSecondProject("crm");
+        Files.writeString(file, Files.readString(file).replace("- name: bold", "- name: Note"));
+
+        Config.Telegram telegram = GroupWriter.file(file, ENV).link(-4883391545L, "note", "alm");
+
+        assertEquals(List.of("Note", "note-2"), telegram.groups().stream().map(Config.Group::name).toList());
+    }
+
+    /** Ruling R6: a project whose own group already has a chat takes that group along to the new chat. */
+    @Test
+    void relinkingTheOnlyProjectOfALinkedGroupMovesTheGroupToTheNewChat() {
+        GroupWriter writer = GroupWriter.file(file, ENV);
+        writer.link(-4883391545L, "note", "alm");
+
+        Config.Telegram telegram = writer.link(-1002L, "other", "alm");
+
+        assertEquals(List.of(new Config.Group("bold", -1002L, List.of(new Config.Member(123456789, "Bold")), List.of("alm"))),
+                telegram.groups());
+    }
+
+    /** dispatch init marks a personal group as having no chat; once it has one, that comment would lie. */
+    @Test
+    void linkingInPlaceDropsInitsNoGroupChatComment() throws IOException {
+        Files.writeString(file, Files.readString(file)
+                .replace("- name: bold\n", "- name: bold     # a personal bot: no group chat, everything stays private\n"));
+
+        GroupWriter.file(file, ENV).link(-4883391545L, "note", "alm");
+
+        String text = Files.readString(file);
+        assertFalse(text.contains("no group chat"), text);
+        assertTrue(text.contains("- name: bold\n"), text);
+        assertTrue(text.contains("# A personal instance's config"), "other comments stay");
     }
 
     @Test

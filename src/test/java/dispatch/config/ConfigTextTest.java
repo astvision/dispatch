@@ -16,6 +16,21 @@ class ConfigTextTest {
             "agent: claude-code");
 
     @Test
+    void addGroupWritesTheProjectAsAYamlScalar() {
+        String before = """
+                telegram:
+                  groups:
+                    - name: bold
+                      projects:
+                        - '#life'
+                """;
+
+        String after = ConfigText.addGroup(before, "note", -1L, List.of(), "#life");
+
+        assertTrue(after.endsWith("      - '#life'\n"), after);
+    }
+
+    @Test
     void projectIsAddedToItsGroupAndTheProjectListWithoutReformattingAnything() {
         String before = """
                 team: bold

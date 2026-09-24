@@ -84,7 +84,7 @@ public final class ConfigText {
             block.append(" ".repeat(memberPrefix.length())).append("name: ").append(quoted(member.name())).append(lines.newline);
         }
         block.append(indent).append("projects:").append(lines.newline);
-        block.append(indent).append("  - ").append(project).append(lines.newline);
+        block.append(indent).append("  - ").append(yaml(project)).append(lines.newline);
         int insertAt = lines.startOfLineAfter(lastLine(lastItem));
         return new StringBuilder(text).insert(insertAt, block).toString();
     }

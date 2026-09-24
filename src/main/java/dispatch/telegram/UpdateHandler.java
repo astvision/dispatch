@@ -602,7 +602,11 @@ public final class UpdateHandler {
         if (choice.equals("-")) {
             result = groupLinks.decline(tx, presser, chatId);
         } else if (index.isPresent()) {
+            Optional<Long> announcedIn = chatOfPromptedProject(prompt, index.get());
             result = groupLinks.link(tx, presser, chatId, index.get().intValue());
+            if (result == GroupLinks.Result.LINKED) {
+                leaveIfUnlinked(tx, announcedIn.filter(old -> old != chatId));
+            }
         } else {
             answer(tx, callback.path("id").asText(), "callback.unknown");
             return;
@@ -628,6 +632,28 @@ public final class UpdateHandler {
         long promptChatId = message.path("chat").path("id").asLong();
         long messageId = message.path("message_id").asLong();
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(promptChatId, messageId, redrawn.html(), redrawn.keyboard())));
+    }
+
+    /** The chat the project behind a prompt's button is announced in before the link, if the index still names one. */
+    private Optional<Long> chatOfPromptedProject(Optional<GroupLinks.Prompt> prompt, long index) {
+        return prompt.map(GroupLinks.Prompt::projects)
+                .filter(projects -> index >= 0 && index < projects.size())
+                .map(projects -> projects.get((int) index))
+                .flatMap(project -> groups.all().stream().filter(group -> group.projects().contains(project)).findFirst())
+                .map(Config.Group::chatId);
+    }
+
+    /**
+     * A project re-linked elsewhere took its group along (ruling R6), so the bot leaves the old chat, best-effort. Checked
+     * after the running groups were replaced: a chat still linked (its group kept other projects) is not left.
+     */
+    private void leaveIfUnlinked(Tx tx, Optional<Long> oldChat) {
+        oldChat.ifPresent(old -> tx.afterCommit(() -> {
+            if (!groups.isGroupChat(Refs.chat(old))) {
+                Log.info("group.left_old_chat", "chat_id", old);
+                bestEffort("leaveChat", () -> api.leaveChat(old));
+            }
+        }));
     }
 
     private void leave(Tx tx, long chatId, JsonNode from) {

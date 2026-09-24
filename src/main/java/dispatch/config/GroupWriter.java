@@ -5,9 +5,13 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /** Links, unlinks and migrates a group's Telegram chat in the config file the instance runs with (ADR 0012, 0014). */
 public interface GroupWriter {
+
+    /** What {@code dispatch init} writes after a personal group's name ({@code Setup}); false once the group has a chat. */
+    String NO_CHAT_COMMENT = "# a personal bot: no group chat, everything stays private";
 
     /** @return telegram as the file holds it afterwards */
     Config.Telegram link(long chatId, String title, String project);
@@ -45,8 +49,7 @@ public interface GroupWriter {
     }
 
     /**
-     * The pure text edit behind {@link #link}, exposed so the Mini App's management API can run it inside its own
-     * version-checked save.
+     * The pure text edit behind {@link #link}.
      *
      * @throws ConfigException when no group owns {@code project}; the text is returned unchanged otherwise (e.g. the
      *                          project's group already holds this chat)
@@ -65,14 +68,18 @@ public interface GroupWriter {
                 return text;
             }
             // A chatless group left with nothing to hold has no reason to survive; one still linked to its own chat is
-            // never emptied here, same as the addGroup branch below: that is refused by validation instead.
+            // never emptied here: that is refused by validation instead.
             String edited = from.chatId() == null && from.projects().size() == 1
                     ? ConfigEdit.remove(text, At.of("telegram", "groups").item("name", from.name()))
                     : ConfigEdit.remove(text, At.of("telegram", "groups").item("name", from.name()).key("projects").value(project));
             return ConfigEdit.append(edited, At.of("telegram", "groups").item("name", already.name()).key("projects"), project);
         }
-        if (from.chatId() == null && from.projects().size() == 1) {
-            return ConfigEdit.set(text, At.of("telegram", "groups").item("name", from.name()).key("chatId"), chatId);
+        // A group holding only this project follows it, to its first chat or away from an earlier one (ruling R6):
+        // moving the project out instead would leave that group empty, which validation refuses.
+        if (from.projects().size() == 1) {
+            String uncommented = text.replaceFirst("(?m)^(\\s*-\\s+name:\\s*'?" + Pattern.quote(from.name()) + "'?)"
+                    + "\\s+" + Pattern.quote(NO_CHAT_COMMENT) + "$", "$1");
+            return ConfigEdit.set(uncommented, At.of("telegram", "groups").item("name", from.name()).key("chatId"), chatId);
         }
         String edited = ConfigEdit.remove(text, At.of("telegram", "groups").item("name", from.name()).key("projects").value(project));
         return ConfigText.addGroup(edited, uniqueName(slug(title), config), chatId, from.members(), project);
@@ -110,18 +117,24 @@ public interface GroupWriter {
         return ConfigEdit.set(text, At.of("telegram", "groups").item("name", group.name()).key("chatId"), newChatId);
     }
 
-    /** {@code name} suffixed with -2, -3, … until no group in {@code config} already has it. */
-    private static String uniqueName(String name, Config config) {
+    /**
+     * {@code slug}, then suffixed with -2, -3, … until no group in {@code config} has it in any case (the loader refuses
+     * names differing only in case), cut so that the name with its suffix fits {@link ConfigLoader#MAX_GROUP_NAME}.
+     */
+    private static String uniqueName(String slug, Config config) {
         List<String> taken = config.telegram().groups().stream().map(Config.Group::name).toList();
-        if (!taken.contains(name)) {
-            return name;
-        }
-        for (int i = 2; ; i++) {
-            String candidate = name + "-" + i;
-            if (!taken.contains(candidate)) {
+        for (int i = 1; ; i++) {
+            String suffix = i == 1 ? "" : "-" + i;
+            String candidate = cut(slug, ConfigLoader.MAX_GROUP_NAME - suffix.length()) + suffix;
+            if (taken.stream().noneMatch(candidate::equalsIgnoreCase)) {
                 return candidate;
             }
         }
+    }
+
+    /** {@code slug} at most {@code max} characters long, without the trailing '-' a cut can leave. */
+    private static String cut(String slug, int max) {
+        return slug.length() <= max ? slug : slug.substring(0, max).replaceAll("-+$", "");
     }
 
     /**

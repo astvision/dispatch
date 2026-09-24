@@ -30,7 +30,7 @@ public final class ConfigLoader {
     // (stateDir/repos/<name>), where either would resolve to a directory it does not own.
     private static final Pattern PROJECT_KEY = Pattern.compile("(?!\\.{1,2}$)[A-Za-z0-9._-]+");
     private static final Set<String> SUPPORTED_AGENTS = Set.of("claude-code");
-    private static final int MAX_GROUP_NAME = 40;
+    static final int MAX_GROUP_NAME = 40;
     /** Claude Code's --effort levels, in its own order. */
     private static final List<String> EFFORT_LEVELS = List.of("low", "medium", "high", "xhigh", "max");
     /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
