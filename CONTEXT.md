@@ -36,6 +36,14 @@ _Avoid_: Severity, importance, rank
 The agent's read-only analysis of a task: the cause and the changes it intends to make, sent to the requester. No code changes until the requester approves the plan.
 _Avoid_: Proposal, analysis
 
+**Assistant**:
+The bot's side of a member's private conversation: it answers questions about their tasks and code and proposes changes, but never makes one. Each member has their own, which forgets after `/new` or 12 hours of silence.
+_Avoid_: Agent (that runs tasks), chatbot, AI
+
+**Proposal**:
+A change the assistant suggests — a new task, an answer to a plan's question, approve, reject, cancel, retry or a follow-up — shown as a button. It happens only when the member taps it, once, and not at all if the task has moved on.
+_Avoid_: Action, suggestion, command
+
 **Correction**:
 The requester's reply to a plan asking for changes. It produces a revised plan.
 _Avoid_: Feedback, comment

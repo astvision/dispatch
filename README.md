@@ -238,9 +238,11 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 
 | You | Dispatch |
 |---|---|
-| write the task as a message (or forward one) | Asks with buttons for the project (skipped if you have only one) and the priority 🔴 🟡 🟢, then queues the task |
+| write anything as a plain message: a question ("юу хийгдэж байна?", "#12 яагаад унасан бэ?"), a request, or what to do with a task | Your assistant answers, reading your tasks and your projects' code. What it would change — a new task, an answer to a plan's question, approve, reject, cancel, retry, a follow-up — it lists under its reply with a **✅ N.** button each; nothing happens until you tap one, and a tap runs once. "сайн бодоорой" in the message makes a stronger model answer. If the assistant fails, it says so and offers your message as a task instead |
+| `/new` | Starts a fresh conversation; 12 hours of silence does the same |
+| `/task text` (or forward a message after `/task`) | Asks with buttons for the project (skipped if you have only one) and the priority 🔴 🟡 🟢, then queues the task |
 | send a photo or file with the task (as its caption) | The agent gets it to read. Files over 20 MB are skipped, and the prompt says so |
-| `/task alm Fix the login timeout` | The same, with the project already named |
+| `/task alm Fix the login timeout` | The same, with the project already named. A ✅ task button under the assistant's reply opens the same prompt |
 | **✂️ Салгах** on that prompt | Haiku lists the separate tasks in your message (about $0.015, a few seconds). **✂️ N даалгавар болгох** gives each its own prompt; **Нэг даалгавар** keeps the message as one task |
 | **Approve** on the plan | The agent implements it; Dispatch commits, pushes `dispatch/N` and sends you the draft PR link and summary |
 | reply to the plan, or write in the task's topic | A correction: the agent revises the plan in the same session |
@@ -254,7 +256,7 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 | `/retry N` | Repeats task N's failed step: a failed plan is planned again, a failed execution continues, a failed delivery is only delivered again |
 | `/status` | What is running (with the agent's latest action on your own tasks), queued and awaiting approval in your groups, with buttons to change your tasks' priority |
 | `/history`, `/history N` | The last 10 finished tasks with who gave them and when; task N's timeline |
-| `/stats` | Your numbers, each group's and per person, for 7 days, this month or all time |
+| `/stats` | Your numbers, each group's and per person, for 7 days, this month or all time; your own view also shows what talking to the assistant cost |
 | `/cancel N` | Cancels task N |
 | `/projects` | Your projects with their base branch, and why any cannot take tasks now |
 
