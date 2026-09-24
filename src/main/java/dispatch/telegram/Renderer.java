@@ -203,6 +203,7 @@ public final class Renderer {
             case GROUP_WORKING -> plain(format("group.working", escape(payload.path("requester").asText())));
             case UNKNOWN_USERNAME -> plain(format("group.unknownUsername", escape(payload.path("username").asText())));
             case GROUP_READD -> plain(format("group.readdAfterMigration", escape(payload.path("group").asText())));
+            case ASSISTANT_REPLY -> assistantReply(payload);
         };
     }
 
@@ -473,6 +474,50 @@ public final class Renderer {
         }
         keyboard.add(List.of(new Button(text("button.answerOwn"), data + "w"), new Button(text("button.youDecide"), data + "d")));
         return new Rendered(format("plan.question", taskId, index, payload.path("total").asInt(), question), keyboard, null);
+    }
+
+    /**
+     * The assistant's answer (A-1): its reply, then each proposed action spelled out in full with a numbered confirm button,
+     * since a button's label is cut short; one already carried out is marked and loses its button. Notes say why a proposal
+     * was not offered. Buttons carry the stored action's id only, well within Telegram's 64 bytes.
+     */
+    private Rendered assistantReply(JsonNode payload) {
+        if (payload.path("failed").asBoolean(false)) {
+            return plain(text("assistant.failed"));
+        }
+        StringBuilder html = new StringBuilder(escapeWithin(payload.path("reply").asText(), SUMMARY_LIMIT));
+        List<List<Button>> keyboard = new ArrayList<>();
+        JsonNode actions = payload.path("actions");
+        if (!actions.isEmpty()) {
+            html.append("\n\n").append(text("assistant.proposals"));
+        }
+        int number = 1;
+        for (JsonNode action : actions) {
+            String type = action.path("type").asText();
+            boolean done = action.path("done").asBoolean(false);
+            html.append('\n').append(done ? "✔️ " : number + ". ").append(assistantAction(action));
+            if (!done) {
+                String label = type.equals("draft") ? text("assistant.button.draft") : format("assistant.button." + type, taskId(action));
+                keyboard.add(List.of(new Button(label("✅ " + number + ". " + label), "as:" + action.path("id").asLong())));
+            }
+            number++;
+        }
+        for (JsonNode note : payload.path("notes")) {
+            html.append("\n").append(format("assistant.note." + note.path("reason").asText(), taskId(note)));
+        }
+        return new Rendered(html.toString(), keyboard, null);
+    }
+
+    private String assistantAction(JsonNode action) {
+        String title = escapeWithin(action.path("title").asText(), TITLE_LIMIT);
+        return switch (action.path("type").asText()) {
+            case "draft" -> format("assistant.item.draft", title,
+                    action.hasNonNull("project") ? " (" + escape(action.get("project").asText()) + ")" : "");
+            case "answer" -> format("assistant.item.answer", taskId(action), action.path("question").asInt(),
+                    escapeWithin(action.path("answer").asText(), DETAIL_LIMIT));
+            case "followUp" -> format("assistant.item.followUp", taskId(action), escapeWithin(action.path("text").asText(), DETAIL_LIMIT));
+            default -> format("assistant.item." + action.path("type").asText(), taskId(action), title);
+        };
     }
 
     /** A plan item's text; a question may be an object with answer options (G-1d). */

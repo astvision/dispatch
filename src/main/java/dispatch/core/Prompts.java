@@ -171,4 +171,26 @@ final class Prompts {
                 </message>
                 """.formatted(message);
     }
+
+    /**
+     * One message of the member's conversation with the assistant (A-1), after a snapshot of their tasks, so the common
+     * question "what is going on?" needs no tool call. Who they are and what the assistant may do are in its home's CLAUDE.md.
+     */
+    static String assistant(String snapshot, String message) {
+        return """
+                <dispatch-now>
+                %s
+                </dispatch-now>
+
+                <owner-message>
+                %s
+                </owner-message>
+                """.formatted(snapshot, message);
+    }
+
+    /** The same turn again, now on the stronger model, in the same session. */
+    static String assistantEscalated() {
+        return "Answer the owner's last message again, from the start: read what you need and think it through properly. "
+                + "Your answer replaces the previous one.";
+    }
 }

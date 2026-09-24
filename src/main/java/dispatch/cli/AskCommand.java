@@ -3,6 +3,7 @@ package dispatch.cli;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.core.ActiveRuns;
+import dispatch.core.AssistantHome;
 import dispatch.core.Groups;
 import dispatch.core.Projects;
 import dispatch.core.TaskService;
@@ -20,22 +21,17 @@ import java.util.stream.Collectors;
 
 /**
  * {@code dispatch ask}: what the bot's assistant reads about the member it talks to (A-1). Who is asking, which projects
- * they see and where the state file is come only from the environment the bot starts the assistant with: the one Bash
- * command the assistant may run takes no option, so the model cannot widen its own scope. The payloads are
+ * they see and where the state file is come only from the environment, which the member's own {@code dispatch} command
+ * sets ({@link AssistantHome}); the command takes no option, so the model cannot widen its own scope. The payloads are
  * {@link TaskService}'s, so someone else's task stops at its headline here too (ADR 0020).
  */
 public final class AskCommand {
 
-    static final String MEMBER = "DISPATCH_ASK_MEMBER";
-    static final String PROJECTS = "DISPATCH_ASK_PROJECTS";
-    static final String DATABASE = "DISPATCH_ASK_DB";
+    static final String MEMBER = AssistantHome.MEMBER_VARIABLE;
+    static final String PROJECTS = AssistantHome.PROJECTS_VARIABLE;
+    static final String DATABASE = AssistantHome.DATABASE_VARIABLE;
 
     private AskCommand() {
-    }
-
-    /** The environment the bot gives its assistant, so {@code dispatch ask} answers for {@code memberRef} alone. */
-    public static Map<String, String> environment(String memberRef, Set<String> visibleProjects, Path database) {
-        return Map.of(MEMBER, memberRef, PROJECTS, String.join(",", visibleProjects), DATABASE, database.toString());
     }
 
     /** Prints one JSON document; exit code 0 with the answer, 1 for a task not found, 2 outside the assistant. */

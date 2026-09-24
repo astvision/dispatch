@@ -88,5 +88,10 @@ public enum OutboxKind {
     /** To a linked group: an @username mentioned there is not in the username book, so it gives no task (G-1c). */
     UNKNOWN_USERNAME,
     /** To whoever may manage Dispatch in a linked group, privately: it became a supergroup the bot had just left. */
-    GROUP_READD
+    GROUP_READD,
+    /**
+     * The assistant's answer in a member's private chat (A-1): its reply, a confirm button per proposed action, and a note per
+     * proposal it could not offer; or, with {@code failed}, one line saying it could not answer, before the message's draft.
+     */
+    ASSISTANT_REPLY
 }

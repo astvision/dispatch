@@ -605,6 +605,31 @@ class RendererTest {
     }
 
     @Test
+    void theAssistantsReplySpellsOutEachProposalWithANumberedButtonAndItsNotes() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.ASSISTANT_REPLY, assistantPayload());
+
+        assertTrue(rendered.html().startsWith("#12 асуулттай байна &lt;prod?&gt;"), "the reply comes first, escaped: " + rendered.html());
+        assertTrue(rendered.html().contains("1. 💬 #12: 1-р асуултад «prod» гэж хариулах"), rendered.html());
+        assertTrue(rendered.html().contains("2. 📝 Даалгавар үүсгэх (life): «Дасгалын тэмдэглэл»"), rendered.html());
+        assertTrue(rendered.html().contains("#12-ийг асуултад нь хариулсны дараа"), "why approval was not offered: " + rendered.html());
+        assertEquals(List.of(List.of(new Renderer.Button("✅ 1. #12 хариулах", "as:5")),
+                List.of(new Renderer.Button("✅ 2. Даалгавар үүсгэх", "as:6"))), rendered.keyboard());
+
+        ObjectNode tapped = assistantPayload();
+        ((ObjectNode) tapped.withArray("actions").get(0)).put("done", true);
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.ASSISTANT_REPLY, tapped);
+        assertTrue(redrawn.html().contains("✔️ 💬 #12"), "a carried-out proposal is marked: " + redrawn.html());
+        assertEquals(List.of(List.of(new Renderer.Button("✅ 2. Даалгавар үүсгэх", "as:6"))), redrawn.keyboard(), "and loses its button");
+    }
+
+    @Test
+    void aFailedTurnSaysSoInOneLine() {
+        String html = renderer.render(OutboxKind.ASSISTANT_REPLY, Json.object().put("failed", true)).html();
+
+        assertTrue(html.contains("хариулж чадсангүй"), html);
+    }
+
+    @Test
     void aPrivateMessageThatFellBackToTheGroupShowsNoneOfItsContent() {
         ObjectNode plan = Json.object().put("taskId", 42).put("planSeq", 1).put("project", "alm")
                 .put("costUsd", "0.10").put("durationSeconds", 5);
@@ -804,6 +829,16 @@ class RendererTest {
         return payload;
     }
 
+    private static ObjectNode assistantPayload() {
+        ObjectNode payload = Json.object().put("reply", "#12 асуулттай байна <prod?>");
+        payload.putArray("actions").add(Json.object().put("id", 5).put("type", "answer").put("taskId", 12).put("title", "Timeout")
+                        .put("planSeq", 1).put("question", 1).put("option", 1).put("answer", "prod"))
+                .add(Json.object().put("id", 6).put("type", "draft").put("text", "Дасгалын тэмдэглэл").put("title", "Дасгалын тэмдэглэл")
+                        .put("project", "life"));
+        payload.putArray("notes").add(Json.object().put("type", "approve").put("taskId", 12).put("reason", "openQuestions"));
+        return payload;
+    }
+
     private static ObjectNode samplePayload(OutboxKind kind) {
         return switch (kind) {
             case TASK_QUEUED -> Json.object().put("taskId", 1).put("project", "autoland-management").put("requester", "Bold")
@@ -825,6 +860,7 @@ class RendererTest {
             case GROUP_WORKING -> Json.object().put("requester", "Bold");
             case UNKNOWN_USERNAME -> Json.object().put("username", "ali_dev");
             case GROUP_READD -> Json.object().put("group", "bold");
+            case ASSISTANT_REPLY -> assistantPayload();
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

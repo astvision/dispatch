@@ -161,6 +161,11 @@ public final class BotApi {
         call("setMessageReaction", body, requestTimeout);
     }
 
+    /** Shows "typing…" in the chat for about five seconds, or until the bot's next message there. */
+    public void sendTyping(long chatId) {
+        call("sendChatAction", Json.object().put("chat_id", chatId).put("action", "typing"), requestTimeout);
+    }
+
     public void editForumTopic(long chatId, long threadId, String name) {
         call("editForumTopic", Json.object().put("chat_id", chatId).put("message_thread_id", threadId).put("name", name), requestTimeout);
     }
