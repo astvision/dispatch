@@ -18,6 +18,7 @@ mode=plan
 case " $* " in
   *" --permission-mode auto "*) mode=auto ;;
   *" --no-session-persistence "*) mode=split ;;
+  *" --permission-mode dontAsk "*) mode=assistant ;;
 esac
 
 case "$prompt" in
@@ -52,6 +53,12 @@ case "$prompt" in
     wait
     ;;
   *)
+    if [ "$mode" = assistant ]; then
+      # The assistant's answer, and whether dispatch ask reached it with the member's scope.
+      printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-assistant","permissionMode":"dontAsk"}'
+      printf '{"type":"result","subtype":"success","is_error":false,"session_id":"fake-assistant","total_cost_usd":0.004,"num_turns":1,"permission_denials":[],"structured_output":{"reply":"Сайн байна уу, %s","actions":[]}}\n' "$DISPATCH_ASK_MEMBER"
+      exit 0
+    fi
     if [ "$mode" = split ]; then
       case "$prompt" in
         *SCENARIO:one-topic*)

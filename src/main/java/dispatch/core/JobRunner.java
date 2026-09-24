@@ -54,7 +54,7 @@ public final class JobRunner implements Worker {
             case PLAN -> plan(job, events, control);
             case EXECUTE -> implement(job, events, control);
             case DELIVER -> deliverAgain(job, control);
-            case SPLIT -> throw new IllegalStateException("a split is never a task's run");
+            case SPLIT, ASSISTANT -> throw new IllegalStateException(job.kind() + " is never a task's run");
         };
     }
 

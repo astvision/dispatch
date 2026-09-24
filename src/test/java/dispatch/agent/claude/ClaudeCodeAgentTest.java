@@ -99,6 +99,31 @@ class ClaudeCodeAgentTest {
     }
 
     @Test
+    void assistantTurnReadsOnlyAndMayRunNothingButDispatchAsk() throws Exception {
+        Path clone = Files.createDirectories(dir.resolve("clones/life"));
+        RunRequest request = new RunRequest(RunKind.ASSISTANT, workdir, "юу хийгдэж байна?", SESSION, true, List.of(clone),
+                null, "haiku", null, dir.resolve("assistant/100-1"), java.util.Map.of("DISPATCH_ASK_MEMBER", "telegram:100"));
+
+        AgentResult result = agent.start(request).await();
+
+        assertEquals(AgentOutcome.SUCCEEDED, result.outcome(), result.error());
+        assertTrue(result.structuredOutput().contains("telegram:100"), "the run's own variables reach the agent: " + result.structuredOutput());
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertEquals("dontAsk", valueAfter(args, "--permission-mode"), "anything not allowed is refused without asking");
+        assertEquals("project", valueAfter(args, "--setting-sources"));
+        assertTrue(args.contains("--strict-mcp-config"), args.toString());
+        assertEquals("Read,Grep,Glob,Bash", valueAfter(args, "--tools"));
+        assertEquals(List.of("Bash(dispatch ask *)"), args.subList(args.indexOf("--allowedTools") + 1, args.size()),
+                "the one allowed command, last because the flag takes every argument after it");
+        assertTrue(valueAfter(args, "--json-schema").contains("\"actions\""), args.toString());
+        assertEquals(SESSION.toString(), valueAfter(args, "--resume"));
+        assertEquals(clone.toString(), valueAfter(args, "--add-dir"));
+        assertFalse(args.contains("--max-budget-usd"), "no cap, as the owner chose");
+        String env = Files.readString(workdir.resolve("fake-claude.env"));
+        assertFalse(env.contains("telegram-secret"), "the bot's token still never reaches the agent");
+    }
+
+    @Test
     void splitRunAnswersWithTopicsWithoutToolsSkillsOrASavedSession() throws Exception {
         RunRequest request = new RunRequest(RunKind.SPLIT, workdir, "Split this message", null, false, List.of(),
                 new BigDecimal("0.25"), "haiku", null, dir.resolve("splits/7-1"));

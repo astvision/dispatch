@@ -8,5 +8,7 @@ public enum RunKind {
     /** Repeats only the commit/push/PR step after a delivery failure (M3). */
     DELIVER,
     /** Proposes how to split a draft's message into tasks (ADR 0013); belongs to no task and is never stored as a run. */
-    SPLIT
+    SPLIT,
+    /** One turn of a member's conversation with the bot's assistant (A-1); belongs to no task and is never stored as a run. */
+    ASSISTANT
 }

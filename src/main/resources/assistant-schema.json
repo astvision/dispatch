@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reply", "actions"],
+  "properties": {
+    "reply": {"type": "string", "minLength": 1, "description": "What the owner reads, in their language; short, with #N for tasks."},
+    "escalate": {"type": "boolean", "description": "true to answer this turn again with a stronger model, e.g. for a code question."},
+    "actions": {
+      "type": "array",
+      "maxItems": 3,
+      "description": "Changes proposed to the owner, each shown as a button they tap to confirm; empty when nothing is proposed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+          "type": {"enum": ["draft", "answer", "approve", "reject", "cancel", "retry", "followUp"]},
+          "task": {"type": "integer", "minimum": 1, "description": "The task number, for every type but draft."},
+          "project": {"type": "string", "description": "draft: the project's name or alias, when known."},
+          "text": {"type": "string", "description": "draft: the whole request; followUp: the instruction; answer: an own answer."},
+          "question": {"type": "integer", "minimum": 1, "description": "answer: the question's number, from 1."},
+          "option": {"type": "integer", "minimum": 1, "description": "answer: the chosen option's number, from 1."},
+          "decide": {"type": "boolean", "description": "answer: true to let the agent decide."}
+        }
+      }
+    }
+  }
+}

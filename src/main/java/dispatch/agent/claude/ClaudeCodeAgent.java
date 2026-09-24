@@ -32,6 +32,9 @@ public final class ClaudeCodeAgent implements Agent {
     /** Compacted to one line (and so validated as JSON) when the class loads, not on the first run. */
     private static final String PLAN_SCHEMA = Json.read(resource("/plan-schema.json")).toString();
     private static final String SPLIT_SCHEMA = Json.read(resource("/split-schema.json")).toString();
+    private static final String ASSISTANT_SCHEMA = Json.read(resource("/assistant-schema.json")).toString();
+    /** The one command the assistant may run: its view of the member's tasks (A-1). */
+    private static final String ASSISTANT_BASH = "Bash(dispatch ask *)";
     /** Replaces Claude Code's coding prompt, which a split does not need: it would multiply the split's cost (ADR 0013). */
     private static final String SPLIT_SYSTEM_PROMPT =
             "You split a developer's chat message into independent development tasks. Answer only through the structured output.";
@@ -53,6 +56,7 @@ public final class ClaudeCodeAgent implements Agent {
         ProcessBuilder builder = new ProcessBuilder(commandLine(request, permissionMode)).directory(request.workdir().toFile());
         builder.environment().clear();
         builder.environment().putAll(environment);
+        builder.environment().putAll(request.environment());
         WITHHELD_VARIABLES.forEach(builder.environment()::remove);
         Path stdoutLog = Path.of(request.logBase() + ".jsonl");
         Path stderrLog = Path.of(request.logBase() + ".stderr");
@@ -76,6 +80,8 @@ public final class ClaudeCodeAgent implements Agent {
         return switch (kind) {
             case PLAN, SPLIT -> "plan";
             case EXECUTE -> "auto";
+            // Anything not allowed up front is refused without asking: here, every Bash command but dispatch ask.
+            case ASSISTANT -> "dontAsk";
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
         };
     }
@@ -85,9 +91,12 @@ public final class ClaudeCodeAgent implements Agent {
                 "--output-format", "stream-json", "--verbose",
                 "--permission-mode", permissionMode,
                 "--permission-prompts", "none",
-                "--setting-sources", "project,local",
-                "--strict-mcp-config",
-                "--max-budget-usd", request.budgetUsd().toPlainString()));
+                // The assistant's home is Dispatch's own directory; nothing local to a person's checkout applies there.
+                "--setting-sources", request.kind() == RunKind.ASSISTANT ? "project" : "project,local",
+                "--strict-mcp-config"));
+        if (request.budgetUsd() != null) {
+            args.addAll(List.of("--max-budget-usd", request.budgetUsd().toPlainString()));
+        }
         if (request.kind() == RunKind.SPLIT) {
             // Nothing will continue a split: no transcript on disk, no skills listed in its prompt.
             args.addAll(List.of("--no-session-persistence", "--disable-slash-commands"));
@@ -113,6 +122,9 @@ public final class ClaudeCodeAgent implements Agent {
             case EXECUTE -> args.addAll(List.of("--tools", "Read,Edit,Write,Bash",
                     "--disallowedTools", "Bash(git commit *)", "Bash(git push *)", "Bash(gh *)"));
             case SPLIT -> args.addAll(List.of("--tools", "", "--json-schema", SPLIT_SCHEMA, "--system-prompt", SPLIT_SYSTEM_PROMPT));
+            // Reads code and asks for tasks, nothing else; --allowedTools takes every following argument too, so it is last.
+            case ASSISTANT -> args.addAll(List.of("--tools", "Read,Grep,Glob,Bash", "--json-schema", ASSISTANT_SCHEMA,
+                    "--allowedTools", ASSISTANT_BASH));
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
         }
         return args;
