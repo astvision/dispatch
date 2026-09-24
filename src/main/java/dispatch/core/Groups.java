@@ -87,6 +87,17 @@ public final class Groups {
         return telegram.groups();
     }
 
+    /** One member and no admins: a personal bot (ADR 0014). */
+    public boolean isPersonal() {
+        return admins().isEmpty() && all().stream().flatMap(group -> group.members().stream())
+                .mapToLong(Config.Member::id).distinct().count() == 1;
+    }
+
+    /** Who may change this Dispatch's setup from Telegram: an admin, or a personal bot's one member. */
+    public boolean mayManage(String requesterRef) {
+        return isAdmin(requesterRef) || (isPersonal() && isMember(requesterRef));
+    }
+
     private Optional<Config.Group> byChat(String chatRef) {
         return telegram.groups().stream().filter(group -> group.chatId() != null && chatRef(group.chatId()).equals(chatRef)).findFirst();
     }

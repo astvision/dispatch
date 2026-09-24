@@ -238,8 +238,9 @@ public final class ConfigLoader {
      */
     private static Config.Workers validateWorkers(Config.Workers workers, Config.Telegram telegram, List<String> errors) {
         if (workers == null) {
-            if (Config.isTeam(telegram)) {
-                errors.add("workers: required once a group has a chat; each member's tasks then run on their own computer "
+            boolean needsWorkers = Config.isTeam(telegram) && telegram.groups().stream().anyMatch(group -> group.chatId() != null);
+            if (needsWorkers) {
+                errors.add("workers: required once a team's group has a chat; each member's tasks then run on their own computer "
                         + "(publicUrl and port, see deploy/example.yaml)");
             }
             return null;
