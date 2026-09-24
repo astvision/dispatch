@@ -1,0 +1,513 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-24T15:44:35+00:00",
+  "title": "Design System: Dispatch Mini App",
+  "extensions": {
+    "colorMeta": {
+      "ground": {
+        "role": "neutral",
+        "displayName": "Telegram Ground (dark bg_color)",
+        "cssVar": "--ground",
+        "tonalRamp": [
+          "oklch(15% 0.025 250)",
+          "oklch(25% 0.025 250)",
+          "oklch(35% 0.025 250)",
+          "oklch(45% 0.025 250)",
+          "oklch(55% 0.025 250)",
+          "oklch(65% 0.025 250)",
+          "oklch(80% 0.025 250)",
+          "oklch(95% 0.025 250)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "slip": {
+        "role": "neutral",
+        "displayName": "Section Slip (dark section_bg_color)",
+        "cssVar": "--slip",
+        "tonalRamp": [
+          "oklch(15% 0.03 255)",
+          "oklch(25% 0.03 255)",
+          "oklch(35% 0.03 255)",
+          "oklch(45% 0.03 255)",
+          "oklch(55% 0.03 255)",
+          "oklch(65% 0.03 255)",
+          "oklch(80% 0.03 255)",
+          "oklch(95% 0.03 255)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Telegram Ink (dark text_color)",
+        "cssVar": "--ink",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(25% 0 0)",
+          "oklch(35% 0 0)",
+          "oklch(45% 0 0)",
+          "oklch(55% 0 0)",
+          "oklch(65% 0 0)",
+          "oklch(80% 0 0)",
+          "oklch(95% 0 0)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "hint": {
+        "role": "neutral",
+        "displayName": "Rail Steel (dark hint_color)",
+        "cssVar": "--hint",
+        "tonalRamp": [
+          "oklch(15% 0.035 250)",
+          "oklch(25% 0.035 250)",
+          "oklch(35% 0.035 250)",
+          "oklch(45% 0.035 250)",
+          "oklch(55% 0.035 250)",
+          "oklch(65% 0.035 250)",
+          "oklch(80% 0.035 250)",
+          "oklch(95% 0.035 250)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "link": {
+        "role": "secondary",
+        "displayName": "Link Blue (dark link_color)",
+        "cssVar": "--link",
+        "tonalRamp": [
+          "oklch(15% 0.12 245)",
+          "oklch(25% 0.12 245)",
+          "oklch(35% 0.12 245)",
+          "oklch(45% 0.12 245)",
+          "oklch(55% 0.12 245)",
+          "oklch(65% 0.12 245)",
+          "oklch(80% 0.12 245)",
+          "oklch(95% 0.12 245)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "button": {
+        "role": "primary",
+        "displayName": "Telegram Button Blue (dark button_color)",
+        "cssVar": "--button",
+        "tonalRamp": [
+          "oklch(15% 0.11 252)",
+          "oklch(25% 0.11 252)",
+          "oklch(35% 0.11 252)",
+          "oklch(45% 0.11 252)",
+          "oklch(55% 0.11 252)",
+          "oklch(65% 0.11 252)",
+          "oklch(80% 0.11 252)",
+          "oklch(95% 0.11 252)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "button-ink": {
+        "role": "neutral",
+        "displayName": "Button Ink (button_text_color)",
+        "cssVar": "--button-ink",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(25% 0 0)",
+          "oklch(35% 0 0)",
+          "oklch(45% 0 0)",
+          "oklch(55% 0 0)",
+          "oklch(65% 0 0)",
+          "oklch(80% 0 0)",
+          "oklch(95% 0 0)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Destructive Red (destructive_text_color)",
+        "cssVar": "--danger",
+        "tonalRamp": [
+          "oklch(15% 0.19 25)",
+          "oklch(25% 0.19 25)",
+          "oklch(35% 0.19 25)",
+          "oklch(45% 0.19 25)",
+          "oklch(55% 0.19 25)",
+          "oklch(65% 0.19 25)",
+          "oklch(80% 0.19 25)",
+          "oklch(95% 0.19 25)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Section Rule (section_separator_color)",
+        "cssVar": "--rule",
+        "tonalRamp": [
+          "oklch(15% 0.02 250)",
+          "oklch(25% 0.02 250)",
+          "oklch(35% 0.02 250)",
+          "oklch(45% 0.02 250)",
+          "oklch(55% 0.02 250)",
+          "oklch(65% 0.02 250)",
+          "oklch(80% 0.02 250)",
+          "oklch(95% 0.02 250)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "done": {
+        "role": "tertiary",
+        "displayName": "Done Green, dark scheme (world-owned)",
+        "cssVar": "--done",
+        "tonalRamp": [
+          "oklch(15% 0.15 145)",
+          "oklch(25% 0.15 145)",
+          "oklch(35% 0.15 145)",
+          "oklch(45% 0.15 145)",
+          "oklch(55% 0.15 145)",
+          "oklch(65% 0.15 145)",
+          "oklch(80% 0.15 145)",
+          "oklch(95% 0.15 145)"
+        ],
+        "note": "Hard-coded in world.ts per scheme; Telegram has no done colour."
+      },
+      "ground-light": {
+        "role": "neutral",
+        "displayName": "Settings Grey Ground (light secondary_bg_color)",
+        "cssVar": "--ground",
+        "tonalRamp": [
+          "oklch(15% 0.005 285)",
+          "oklch(25% 0.005 285)",
+          "oklch(35% 0.005 285)",
+          "oklch(45% 0.005 285)",
+          "oklch(55% 0.005 285)",
+          "oklch(65% 0.005 285)",
+          "oklch(80% 0.005 285)",
+          "oklch(95% 0.005 285)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "slip-light": {
+        "role": "neutral",
+        "displayName": "White Slip (light section_bg_color)",
+        "cssVar": "--slip",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(25% 0 0)",
+          "oklch(35% 0 0)",
+          "oklch(45% 0 0)",
+          "oklch(55% 0 0)",
+          "oklch(65% 0 0)",
+          "oklch(80% 0 0)",
+          "oklch(95% 0 0)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "ink-light": {
+        "role": "neutral",
+        "displayName": "Telegram Ink (light text_color)",
+        "cssVar": "--ink",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(25% 0 0)",
+          "oklch(35% 0 0)",
+          "oklch(45% 0 0)",
+          "oklch(55% 0 0)",
+          "oklch(65% 0 0)",
+          "oklch(80% 0 0)",
+          "oklch(95% 0 0)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "hint-light": {
+        "role": "neutral",
+        "displayName": "Rail Steel (light hint_color)",
+        "cssVar": "--hint",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(25% 0 0)",
+          "oklch(35% 0 0)",
+          "oklch(45% 0 0)",
+          "oklch(55% 0 0)",
+          "oklch(65% 0 0)",
+          "oklch(80% 0 0)",
+          "oklch(95% 0 0)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "button-light": {
+        "role": "primary",
+        "displayName": "Telegram Button Blue (light button_color)",
+        "cssVar": "--button",
+        "tonalRamp": [
+          "oklch(15% 0.14 250)",
+          "oklch(25% 0.14 250)",
+          "oklch(35% 0.14 250)",
+          "oklch(45% 0.14 250)",
+          "oklch(55% 0.14 250)",
+          "oklch(65% 0.14 250)",
+          "oklch(80% 0.14 250)",
+          "oklch(95% 0.14 250)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "link-light": {
+        "role": "secondary",
+        "displayName": "Link Blue (light link_color; equals button)",
+        "cssVar": "--link",
+        "tonalRamp": [
+          "oklch(15% 0.14 250)",
+          "oklch(25% 0.14 250)",
+          "oklch(35% 0.14 250)",
+          "oklch(45% 0.14 250)",
+          "oklch(55% 0.14 250)",
+          "oklch(65% 0.14 250)",
+          "oklch(80% 0.14 250)",
+          "oklch(95% 0.14 250)"
+        ],
+        "note": "Runtime value from Telegram's theme via ui/src/mini/world.ts; frontmatter hex is the default theme as rendered in .impeccable/review."
+      },
+      "done-light": {
+        "role": "tertiary",
+        "displayName": "Done Green, light scheme (world-owned)",
+        "cssVar": "--done",
+        "tonalRamp": [
+          "oklch(15% 0.15 145)",
+          "oklch(25% 0.15 145)",
+          "oklch(35% 0.15 145)",
+          "oklch(45% 0.15 145)",
+          "oklch(55% 0.15 145)",
+          "oklch(65% 0.15 145)",
+          "oklch(80% 0.15 145)",
+          "oklch(95% 0.15 145)"
+        ],
+        "note": "Hard-coded in world.ts per scheme; Telegram has no done colour."
+      },
+      "hint-ink": {
+        "role": "neutral",
+        "displayName": "Hint Ink",
+        "canonical": "color-mix(in srgb, var(--hint) 62%, var(--ink))",
+        "cssVar": "--hint-ink",
+        "note": "Derived in world.css; every secondary text line.",
+        "tonalRamp": [
+          "oklch(15% 0.025 250)",
+          "oklch(25% 0.025 250)",
+          "oklch(35% 0.025 250)",
+          "oklch(45% 0.025 250)",
+          "oklch(55% 0.025 250)",
+          "oklch(65% 0.025 250)",
+          "oklch(80% 0.025 250)",
+          "oklch(95% 0.025 250)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "List page titles (.mini-title)."
+      },
+      "title-sheet": {
+        "displayName": "Title Sheet",
+        "purpose": "Ticket title at the top of the sheet."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Pass ticket title; 15px two-line clamp on rail tickets."
+      },
+      "lane": {
+        "displayName": "Lane",
+        "purpose": "Lane headings and sheet section heads."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Wait line, quiet lane lines, plan text (max 68ch)."
+      },
+      "label-mono": {
+        "displayName": "Label Mono",
+        "purpose": "Printed ticket header, rail step line, served state and age."
+      },
+      "station-mono": {
+        "displayName": "Station Mono",
+        "purpose": "The route strip on a pass ticket."
+      }
+    },
+    "shadows": [
+      {
+        "name": "slip-lift",
+        "value": "0 1px 1px rgba(0,0,0,0.06), 0 8px 18px -10px rgba(0,0,0,0.35)",
+        "purpose": "Every ticket slip at rest."
+      },
+      {
+        "name": "served-stack",
+        "value": "0 -1px 0 rgba(0,0,0,0.08), 0 6px 12px -8px rgba(0,0,0,0.4)",
+        "purpose": "Served slips overlapping by 5px."
+      },
+      {
+        "name": "sheet",
+        "value": "0 -12px 32px -12px rgba(0,0,0,0.45)",
+        "purpose": "Ticket sheet over its 45% black scrim."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The world's only ease (--ease-out)."
+      },
+      {
+        "name": "sheet-up",
+        "value": "380ms",
+        "purpose": "Sheet rises from below; scrim fades in 240ms ease-out."
+      },
+      {
+        "name": "ticket-leave",
+        "value": "460ms",
+        "purpose": "Decided ticket drops 64px, scales to 0.6, fades; its slot collapses over 360ms after 180ms."
+      },
+      {
+        "name": "ticket-join",
+        "value": "620ms",
+        "purpose": "Ticket lands on the rail from 32px above at 1.1 scale; button-colour outline fades over 1600ms after 200ms."
+      },
+      {
+        "name": "press",
+        "value": "140ms",
+        "purpose": "Primary buttons and choices scale to 0.985 on press, only with prefers-reduced-motion: no-preference."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "content-max",
+        "value": "640px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one full-width action on a slip or in the sheet's decision bar.",
+      "html": "<button class=\"ds-btn-primary\">Хариулах</button>",
+      "css": ":host{--ground:#17212b;--slip:#232e3c;--ink:#f5f5f5;--hint:#708499;--link:#6ab3f3;--button:#5288c1;--button-ink:#fff;--danger:#dc4446;--rule:#333c44;--done:#5fbf6f;--hint-ink:color-mix(in srgb,var(--hint) 62%,var(--ink));--mono:ui-monospace,'SF Mono','Roboto Mono',Menlo,Consolas,monospace;--ease-out:cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;color:var(--ink)} .ds-btn-primary{display:block;width:100%;min-height:46px;border:0;border-radius:10px;background:var(--button);color:var(--button-ink);font:600 16px/1.2 inherit;font-family:inherit;cursor:pointer;transition:transform 140ms var(--ease-out)} .ds-btn-primary:active{transform:scale(.985)} .ds-btn-primary:focus-visible{outline:2px solid var(--button);outline-offset:2px} .ds-btn-primary:disabled{opacity:.45;cursor:default}"
+    },
+    {
+      "name": "Confirmed Reject",
+      "kind": "button",
+      "refersTo": "button-danger-confirm",
+      "description": "Destructive primary, only after a first tap and a consequence note.",
+      "html": "<button class=\"ds-btn-primary ds-danger\">Тийм, татгалзах</button>",
+      "css": ":host{--ground:#17212b;--slip:#232e3c;--ink:#f5f5f5;--hint:#708499;--link:#6ab3f3;--button:#5288c1;--button-ink:#fff;--danger:#dc4446;--rule:#333c44;--done:#5fbf6f;--hint-ink:color-mix(in srgb,var(--hint) 62%,var(--ink));--mono:ui-monospace,'SF Mono','Roboto Mono',Menlo,Consolas,monospace;--ease-out:cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;color:var(--ink)} .ds-btn-primary{display:block;width:100%;min-height:46px;border:0;border-radius:10px;background:var(--button);color:var(--button-ink);font:600 16px/1.2 inherit;font-family:inherit;cursor:pointer;transition:transform 140ms var(--ease-out)} .ds-btn-primary:active{transform:scale(.985)} .ds-btn-primary:focus-visible{outline:2px solid var(--button);outline-offset:2px} .ds-btn-primary:disabled{opacity:.45;cursor:default} .ds-danger{background:var(--danger)}"
+    },
+    {
+      "name": "Text Action",
+      "kind": "button",
+      "description": "Borderless secondary action; Татгалзах in mixed destructive tone, Хаах/Болих in link.",
+      "html": "<button class=\"ds-text-action\">Татгалзах</button><button class=\"ds-text-action ds-link\">Болих</button>",
+      "css": ":host{--ground:#17212b;--slip:#232e3c;--ink:#f5f5f5;--hint:#708499;--link:#6ab3f3;--button:#5288c1;--button-ink:#fff;--danger:#dc4446;--rule:#333c44;--done:#5fbf6f;--hint-ink:color-mix(in srgb,var(--hint) 62%,var(--ink));--mono:ui-monospace,'SF Mono','Roboto Mono',Menlo,Consolas,monospace;--ease-out:cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;color:var(--ink)} .ds-text-action{min-height:44px;border:0;background:none;color:color-mix(in srgb,var(--danger) 70%,var(--ink));font:inherit;font-size:15.5px;cursor:pointer;padding:0 12px} .ds-text-action.ds-link{color:var(--link)} .ds-text-action:focus-visible{outline:2px solid var(--button);outline-offset:2px}"
+    },
+    {
+      "name": "Question Choices",
+      "kind": "chip",
+      "refersTo": "choice",
+      "description": "A question's options as tap rows, with the aside pair below.",
+      "html": "<div class=\"ds-choices\"><button class=\"ds-choice\">Зөвхөн staging</button><button class=\"ds-choice\">Staging ба prod</button><div class=\"ds-aside\"><button class=\"ds-choice\">Өөрөөр</button><button class=\"ds-choice\">Та шийд</button></div></div>",
+      "css": ":host{--ground:#17212b;--slip:#232e3c;--ink:#f5f5f5;--hint:#708499;--link:#6ab3f3;--button:#5288c1;--button-ink:#fff;--danger:#dc4446;--rule:#333c44;--done:#5fbf6f;--hint-ink:color-mix(in srgb,var(--hint) 62%,var(--ink));--mono:ui-monospace,'SF Mono','Roboto Mono',Menlo,Consolas,monospace;--ease-out:cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;color:var(--ink)} .ds-choices{display:flex;flex-direction:column;gap:8px;max-width:360px;background:var(--slip);padding:12px} .ds-aside{display:grid;grid-template-columns:1fr 1fr;gap:8px} .ds-choice{min-height:46px;padding:10px 14px;border:1.5px solid var(--rule);border-radius:10px;background:var(--ground);color:var(--ink);font:inherit;font-size:15.5px;text-align:left;cursor:pointer;transition:transform 140ms var(--ease-out)} .ds-aside .ds-choice{text-align:center;color:var(--link)} .ds-choice:active{transform:scale(.985)} .ds-choice:focus-visible{outline:2px solid var(--button);outline-offset:2px}"
+    },
+    {
+      "name": "Pass Ticket",
+      "kind": "card",
+      "refersTo": "ticket-slip",
+      "description": "A slip waiting on the owner: printed header, title, wait line, station strip, one action.",
+      "html": "<article class=\"ds-ticket\" style=\"--tone:var(--button)\"><span class=\"ds-band\"></span><span class=\"ds-head\"><b>#42</b><span>alm</span><span class=\"ds-clock\"><span class=\"ds-state\">таныг хүлээж</span> 12:34</span></span><h3 class=\"ds-title\">Нэвтрэх хугацааг тохиргоогоор өөрчилдөг болгох</h3><p style=\"margin:6px 0 0;font-size:15px\"><b>2 асуулт:</b> Аль орчинд хэрэгжүүлэх вэ?</p><ol class=\"ds-stations\"><li data-at=\"past\"><span>1 Ноорог</span></li><li data-at=\"past\"><span>2 Төлөв</span></li><li data-at=\"now\"><span>3 Хариу</span></li><li><span>4 Ажил</span></li><li><span>5 PR</span></li></ol><button class=\"ds-btn-primary\" style=\"margin-top:16px\">Хариулах</button></article>",
+      "css": ":host{--ground:#17212b;--slip:#232e3c;--ink:#f5f5f5;--hint:#708499;--link:#6ab3f3;--button:#5288c1;--button-ink:#fff;--danger:#dc4446;--rule:#333c44;--done:#5fbf6f;--hint-ink:color-mix(in srgb,var(--hint) 62%,var(--ink));--mono:ui-monospace,'SF Mono','Roboto Mono',Menlo,Consolas,monospace;--ease-out:cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;color:var(--ink)} .ds-ticket{position:relative;display:block;width:100%;max-width:360px;text-align:left;font:inherit;color:var(--ink);background:var(--slip);border:0;border-radius:3px 3px 10px 10px;padding:16px 16px 16px 20px;box-shadow:0 1px 1px rgba(0,0,0,.06),0 8px 18px -10px rgba(0,0,0,.35)} .ds-ticket::before{content:'';position:absolute;left:0;right:0;top:-1px;height:7px;background:radial-gradient(circle at 5px 0, var(--ground) 3.2px, transparent 3.7px) 0 0 / 10px 7px repeat-x} .ds-band{position:absolute;left:0;top:7px;bottom:0;width:5px;border-bottom-left-radius:10px;background:var(--tone)} .ds-head{display:flex;gap:8px;align-items:baseline;font:12.5px/1.3 var(--mono);font-variant-numeric:tabular-nums;color:var(--hint-ink)} .ds-head b{color:var(--ink)} .ds-head .ds-clock{margin-left:auto} .ds-head .ds-state{color:var(--ink);font-weight:600} .ds-title{margin:8px 0 0;font-size:17px;font-weight:600;line-height:1.3} .ds-btn-primary{display:block;width:100%;min-height:46px;border:0;border-radius:10px;background:var(--button);color:var(--button-ink);font:600 16px/1.2 inherit;font-family:inherit;cursor:pointer;transition:transform 140ms var(--ease-out)} .ds-btn-primary:active{transform:scale(.985)} .ds-btn-primary:focus-visible{outline:2px solid var(--button);outline-offset:2px} .ds-btn-primary:disabled{opacity:.45;cursor:default} .ds-stations{list-style:none;display:flex;align-items:center;margin:12px 0 0;padding:7px 0 0;border-top:1px dashed var(--rule);font:11.5px/1 var(--mono);color:var(--hint-ink);white-space:nowrap} .ds-stations li+li::before{content:'›';margin:0 3px;color:var(--hint)} .ds-stations span{display:inline-block;padding:4px;border-radius:3px} .ds-stations li[data-at=past] span{text-decoration:line-through} .ds-stations li[data-at=now] span{background:var(--button);color:var(--button-ink);font-weight:700}"
+    },
+    {
+      "name": "Rail Ticket",
+      "kind": "custom",
+      "refersTo": "rail-ticket",
+      "description": "A ticket in progress hanging from the rail; hatched band while working.",
+      "html": "<div class=\"ds-rail\"><button class=\"ds-ticket ds-railt\" style=\"--tone:var(--link)\"><span class=\"ds-band ds-hatch\"></span><span class=\"ds-head\"><b>#39</b><span>alm</span><span class=\"ds-clock\"><span class=\"ds-state\">хийж байна</span> 23:07</span></span><span class=\"ds-title\" style=\"display:block;font-size:15px\">Төлбөрийн webhook-ийн давхардлыг арилгах</span><span class=\"ds-step\">23 · Edit src/payments/WebhookHandler.java</span></button></div>",
+      "css": ":host{--ground:#17212b;--slip:#232e3c;--ink:#f5f5f5;--hint:#708499;--link:#6ab3f3;--button:#5288c1;--button-ink:#fff;--danger:#dc4446;--rule:#333c44;--done:#5fbf6f;--hint-ink:color-mix(in srgb,var(--hint) 62%,var(--ink));--mono:ui-monospace,'SF Mono','Roboto Mono',Menlo,Consolas,monospace;--ease-out:cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;color:var(--ink)} .ds-ticket{position:relative;display:block;width:100%;max-width:360px;text-align:left;font:inherit;color:var(--ink);background:var(--slip);border:0;border-radius:3px 3px 10px 10px;padding:16px 16px 16px 20px;box-shadow:0 1px 1px rgba(0,0,0,.06),0 8px 18px -10px rgba(0,0,0,.35)} .ds-ticket::before{content:'';position:absolute;left:0;right:0;top:-1px;height:7px;background:radial-gradient(circle at 5px 0, var(--ground) 3.2px, transparent 3.7px) 0 0 / 10px 7px repeat-x} .ds-band{position:absolute;left:0;top:7px;bottom:0;width:5px;border-bottom-left-radius:10px;background:var(--tone)} .ds-head{display:flex;gap:8px;align-items:baseline;font:12.5px/1.3 var(--mono);font-variant-numeric:tabular-nums;color:var(--hint-ink)} .ds-head b{color:var(--ink)} .ds-head .ds-clock{margin-left:auto} .ds-head .ds-state{color:var(--ink);font-weight:600} .ds-title{margin:8px 0 0;font-size:17px;font-weight:600;line-height:1.3}  .ds-rail{display:flex;gap:12px;padding:22px 16px 14px;background:var(--ground) linear-gradient(var(--hint),var(--hint)) 0 7px/100% 2px no-repeat} .ds-railt{flex:0 0 236px;padding:14px 14px 14px 18px;cursor:pointer} .ds-railt::after{content:'';position:absolute;top:-16px;left:28px;width:2px;height:16px;background:var(--hint)} .ds-hatch{background:repeating-linear-gradient(180deg,var(--tone) 0 5px,transparent 5px 8px)} .ds-step{display:block;margin:8px 0 0;font:12.5px/1.35 var(--mono);color:var(--hint-ink);overflow-wrap:anywhere} .ds-railt:focus-visible{outline:2px solid var(--button);outline-offset:2px}"
+    },
+    {
+      "name": "Served Stack",
+      "kind": "custom",
+      "refersTo": "served-slip",
+      "description": "Recent finished tickets, each slip's perforated edge over the one before.",
+      "html": "<div class=\"ds-served\"><div class=\"ds-ticket ds-sv\" style=\"--tone:var(--done)\"><span class=\"ds-band\"></span><span class=\"ds-line\"><span class=\"ds-n\">#37</span>Хэрэглэгчийн профайлын зургийг шахах</span><span class=\"ds-when\"><b>хүргэсэн</b> · 40 мин</span></div><div class=\"ds-ticket ds-sv\" style=\"--tone:var(--danger)\"><span class=\"ds-band\"></span><span class=\"ds-line\"><span class=\"ds-n\">#36</span>Имэйл илгээлтийн давталтыг засах</span><span class=\"ds-when\"><b>амжилтгүй</b> · 3 цаг</span></div></div>",
+      "css": ":host{--ground:#17212b;--slip:#232e3c;--ink:#f5f5f5;--hint:#708499;--link:#6ab3f3;--button:#5288c1;--button-ink:#fff;--danger:#dc4446;--rule:#333c44;--done:#5fbf6f;--hint-ink:color-mix(in srgb,var(--hint) 62%,var(--ink));--mono:ui-monospace,'SF Mono','Roboto Mono',Menlo,Consolas,monospace;--ease-out:cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;color:var(--ink)} .ds-ticket{position:relative;display:block;width:100%;max-width:360px;text-align:left;font:inherit;color:var(--ink);background:var(--slip);border:0;border-radius:3px 3px 10px 10px;padding:16px 16px 16px 20px;box-shadow:0 1px 1px rgba(0,0,0,.06),0 8px 18px -10px rgba(0,0,0,.35)} .ds-ticket::before{content:'';position:absolute;left:0;right:0;top:-1px;height:7px;background:radial-gradient(circle at 5px 0, var(--ground) 3.2px, transparent 3.7px) 0 0 / 10px 7px repeat-x} .ds-band{position:absolute;left:0;top:7px;bottom:0;width:5px;border-bottom-left-radius:10px;background:var(--tone)} .ds-head{display:flex;gap:8px;align-items:baseline;font:12.5px/1.3 var(--mono);font-variant-numeric:tabular-nums;color:var(--hint-ink)} .ds-head b{color:var(--ink)} .ds-head .ds-clock{margin-left:auto} .ds-head .ds-state{color:var(--ink);font-weight:600} .ds-title{margin:8px 0 0;font-size:17px;font-weight:600;line-height:1.3}  .ds-served{display:flex;flex-direction:column;max-width:360px;background:var(--ground);padding:12px} .ds-sv{display:flex;flex-direction:column;gap:3px;padding:14px 14px 10px 18px;border-radius:2px 2px 6px 6px;box-shadow:0 -1px 0 rgba(0,0,0,.08),0 6px 12px -8px rgba(0,0,0,.4)} .ds-sv+.ds-sv{margin-top:-5px;margin-left:3px} .ds-sv .ds-band{border-bottom-left-radius:6px} .ds-line{font-size:15px} .ds-n{color:var(--hint-ink);font-size:13px;margin-right:6px;font-family:var(--mono)} .ds-when{font:12.5px var(--mono);color:var(--hint-ink)} .ds-when b{color:var(--ink)}"
+    },
+    {
+      "name": "Header Strip",
+      "kind": "nav",
+      "refersTo": "count-badge",
+      "description": "Bot avatar, name, and the count of tickets waiting at the pass.",
+      "html": "<header class=\"ds-strip\"><span class=\"ds-av\">D</span><span class=\"ds-name\"><strong>Dispatch</strong><span>@dispatcher_bot</span></span><span class=\"ds-count\"><b>2</b>хүлээж байна</span></header>",
+      "css": ":host{--ground:#17212b;--slip:#232e3c;--ink:#f5f5f5;--hint:#708499;--link:#6ab3f3;--button:#5288c1;--button-ink:#fff;--danger:#dc4446;--rule:#333c44;--done:#5fbf6f;--hint-ink:color-mix(in srgb,var(--hint) 62%,var(--ink));--mono:ui-monospace,'SF Mono','Roboto Mono',Menlo,Consolas,monospace;--ease-out:cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;color:var(--ink)} .ds-strip{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--ground)} .ds-av{width:36px;height:36px;border-radius:50%;background:#23827F;color:#fff;display:grid;place-items:center;font-weight:600} .ds-name{display:flex;flex-direction:column;flex:1} .ds-name strong{font-size:17px} .ds-name span{font-size:13px;color:var(--hint-ink)} .ds-count{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--hint-ink)} .ds-count b{min-width:28px;height:28px;padding:0 8px;border-radius:14px;display:grid;place-items:center;font:600 15px/1 var(--mono);background:var(--button);color:var(--button-ink)}"
+    },
+    {
+      "name": "Shelf",
+      "kind": "nav",
+      "refersTo": "shelf-link",
+      "description": "One wrapping row of links to every other page, after a hairline.",
+      "html": "<nav class=\"ds-shelf\"><button>Төслүүд</button><button>Миний даалгаврууд</button><button>Миний тохиргоо</button><button>Группүүд</button></nav>",
+      "css": ":host{--ground:#17212b;--slip:#232e3c;--ink:#f5f5f5;--hint:#708499;--link:#6ab3f3;--button:#5288c1;--button-ink:#fff;--danger:#dc4446;--rule:#333c44;--done:#5fbf6f;--hint-ink:color-mix(in srgb,var(--hint) 62%,var(--ink));--mono:ui-monospace,'SF Mono','Roboto Mono',Menlo,Consolas,monospace;--ease-out:cubic-bezier(0.16,1,0.3,1);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;color:var(--ink)} .ds-shelf{display:flex;flex-wrap:wrap;gap:0 4px;padding:10px 12px 0;border-top:1px solid var(--rule);background:var(--ground);max-width:390px} .ds-shelf button{min-height:44px;padding:0 10px;border:0;border-radius:8px;background:none;color:var(--link);font:inherit;font-size:15px;cursor:pointer} .ds-shelf button:focus-visible{outline:2px solid var(--button);outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Pass",
+    "overview": "Agent work is a row of printed kitchen-style tickets. What waits on the owner hangs full width at the pass, a steel bar across the screen; everything in progress hangs smaller from the rail and scrolls sideways; finished work lies in a short stack of served slips. Each ticket is a slip in Telegram's section colour with a perforated top edge, a printed monospace header (number, project, state word, running clock) over a system-sans body, and a coloured band down its left edge that states its condition together with a word.\n\nThe world has no colours of its own. Every surface, ink and accent is a Telegram theme parameter mapped to a world role at runtime (`ui/src/mini/world.ts`), so the Mini App reads as part of Telegram in light and dark. The one exception is the done green, which Telegram does not supply. The hex values in the frontmatter are Telegram's default themes as rendered in the finish review (`.impeccable/review/*.png`); they are reference renderings of the roles, not constants to hard-code. Density is calm: one decision per slip, one primary button per slip, nothing decorative that does not describe the ticket's state or route.\n\n**Scope.** This system covers the Telegram Mini App only: the `MiniApp` shell in `ui/src/App.tsx` (`MiniShell`, class `mini-world`) and `ui/src/mini/*` (home, ticket sheet, and the settings-style list pages). The browser `dispatch ui` (`WebUi` in `ui/src/App.tsx`) is not part of this world; it keeps antd's default look and its sidebar layout, and nothing here applies to it.",
+    "keyCharacteristics": [
+      "Telegram theme parameters are the palette; the world maps them to ground, slip, ink, hint, link, button, danger and rule.",
+      "Tickets are slips: perforated top edge, soft lift, squared top corners and rounded foot.",
+      "Printed monospace headers with tabular numerals wherever digits change.",
+      "State is always a band plus a word, never colour alone.",
+      "One steel line (hint colour) that tickets hang from: the pass bar and the rail.",
+      "Motion tells one story: a decided ticket leaves the pass and joins the rail."
+    ],
+    "rules": [
+      {
+        "name": "The Host Palette Rule",
+        "body": "Every colour comes from a Telegram theme parameter through `worldStyle()`; antd tokens are only the fallback for a parameter a client omits. The single invented colour is done green. A new colour needs a new role, not a new hex.",
+        "section": "colors"
+      },
+      {
+        "name": "The Band-and-Word Rule",
+        "body": "A ticket's state is shown by its left band and the state word printed in its header, together. Colour alone never carries state.",
+        "section": "colors"
+      },
+      {
+        "name": "The Mixed Hint Rule",
+        "body": "Raw `hint` is for lines and marks; secondary text uses Hint Ink (`hint` 62% into `ink`) so it stays readable on both ground and slip.",
+        "section": "colors"
+      },
+      {
+        "name": "The Printed Numerals Rule",
+        "body": "Any digit that changes (clocks, counts, step numbers, question n/N, list markers in the sheet) is set in the mono stack with `tabular-nums`, so a ticking clock never jitters.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Clock Rule",
+        "body": "A live ticket's clock counts in fixed slots (`4:07`, `1:04:07`), then whole days with the same word \"өдөр\"; finished tickets show age as \"12 мин\", \"3 цаг\", \"2 өдөр\".",
+        "section": "typography"
+      },
+      {
+        "name": "The Paper Rule",
+        "body": "Depth comes from the ground/slip flip and one soft lift. Nothing glows, nothing floats higher than the sheet.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** take every colour from `worldStyle()`'s variables (`--ground`, `--slip`, `--ink`, `--hint`, `--link`, `--button`, `--button-ink`, `--danger`, `--rule`, `--done`) and check the result in both Telegram schemes.",
+      "**Do** mark state with a 5px left band and the state word in the header, together; hatch the working band.",
+      "**Do** set every changing digit in the mono stack with tabular numerals.",
+      "**Do** hang moving and waiting tickets from the single steel line in hint colour.",
+      "**Do** give each slip at most one full-width primary action, and ask once more before anything that ends a task.",
+      "**Do** use Hint Ink (`hint` 62% into `ink`) for secondary text, not raw `hint`.",
+      "**Do** honour reduced motion by removing the motion, not shortening it."
+    ],
+    "donts": [
+      "**Don't** apply any of this to the browser `dispatch ui`; it keeps antd's default look.",
+      "**Don't** introduce colours outside Telegram's theme parameters except the done green.",
+      "**Don't** build home or ticket surfaces from tables, card grids, KPI tiles or a sidebar.",
+      "**Don't** print kitchen words or kitchen icons on the surface; the metaphor lives in form, not copy.",
+      "**Don't** put a small label above a lane or ticket title; the lane heading and the printed header already name it.",
+      "**Don't** use hard or offset shadows; slips lift with the soft shadows above only.",
+      "**Don't** load fonts, images or anything else from telegram.org or a font CDN; the system stacks are the type."
+    ]
+  }
+}

@@ -17,3 +17,9 @@ dev.yaml
 
 # A jar copied next to the launchers to run them from the checkout
 bin/dispatch.jar
+
+# impeccable scratch: decision pages, answer logs, review captures
+.impeccable/questions/
+.impeccable/review/
+.impeccable/decision-*.json
+.impeccable/mini-brief-body.md
