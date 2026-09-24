@@ -93,9 +93,9 @@ class WorkerLoopTest extends WorkerApiFixture {
         AtomicBoolean revoked = new AtomicBoolean();
         startLoop("ann-laptop", repos.repo("alm"), (http, team, key) -> new WorkerClient(http, team, key) {
             @Override
-            public Optional<Job> next() {
+            public Optional<Job> next(Readiness readiness) {
                 nextCalls.incrementAndGet();
-                return super.next();
+                return super.next(readiness);
             }
 
             @Override

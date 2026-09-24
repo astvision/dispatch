@@ -96,6 +96,21 @@ class RendererTest {
     }
 
     @Test
+    void aHeldTaskNamesWhichThingOnTheComputerIsWrong() {
+        String claude = renderer.render(OutboxKind.WORKER_BLOCKED,
+                Json.object().put("taskId", 7).put("code", "claude").put("detail", "cannot run <claude>")).html();
+        String gh = renderer.render(OutboxKind.WORKER_BLOCKED,
+                Json.object().put("taskId", 7).put("code", "gh").put("detail", "not logged in")).html();
+        String clone = renderer.render(OutboxKind.WORKER_BLOCKED,
+                Json.object().put("taskId", 7).put("code", "clone").put("detail", "no clone of alm")).html();
+
+        assertTrue(claude.contains("#7") && claude.contains("Claude Code"), claude);
+        assertTrue(claude.contains("cannot run &lt;claude&gt;"), "the detail is escaped: " + claude);
+        assertTrue(gh.contains("gh auth login"), gh);
+        assertTrue(clone.contains("dispatch worker init") && clone.contains("no clone of alm"), clone);
+    }
+
+    @Test
     void failureNamesTheReasonAndKeepsHugeDetailWithinTheLimit() {
         ObjectNode payload = Json.object().put("taskId", 42).put("reason", "TIMEOUT").put("detail", "x".repeat(6000));
 
@@ -388,6 +403,21 @@ class RendererTest {
         String html = renderer.render(OutboxKind.STATUS, payload).html();
 
         assertTrue(html.contains(messages.getString("status.waitingForWorker")), html);
+    }
+
+    @Test
+    void aQueuedRunHeldByItsComputerSaysWhyOnItsStatusLine() {
+        ObjectNode payload = Json.object();
+        payload.putArray("running");
+        payload.putArray("awaitingApproval");
+        payload.putArray("mine");
+        payload.putArray("queued").addObject().put("taskId", 7).put("project", "alm")
+                .put("title", "Fix the login timeout").put("kind", "PLAN").put("priority", "NORMAL")
+                .put("queuedAt", Instant.now().toString()).put("blocked", "gh");
+
+        String html = renderer.render(OutboxKind.STATUS, payload).html();
+
+        assertTrue(html.contains(messages.getString("status.blocked.gh")), html);
     }
 
     @Test
@@ -732,6 +762,7 @@ class RendererTest {
             case WORKER_REVOKED -> Json.object().put("workerId", 3).put("found", true);
             case WORKER_USAGE -> Json.object();
             case WORKER_WAITING -> Json.object().put("taskId", 7);
+            case WORKER_BLOCKED -> Json.object().put("taskId", 1).put("code", "claude").put("detail", "gone");
         };
     }
 }

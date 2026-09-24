@@ -43,6 +43,11 @@ public final class WorkerLoop implements Runnable {
      * margin.
      */
     private static final Duration STOP_TIMEOUT = Duration.ofSeconds(150);
+    /**
+     * How often {@link #readiness()} actually runs {@link WorkerChecks}: the poll runs every few seconds and these
+     * checks spawn processes (Claude Code, {@code gh}), so a report is cached rather than recomputed per request.
+     */
+    private static final Duration REFRESH = Duration.ofSeconds(60);
 
     private final WorkerConfig config;
     private final WorkerClient client;
@@ -52,9 +57,12 @@ public final class WorkerLoop implements Runnable {
     private final Redactor redactor;
     private final ActiveRuns activeRuns;
     private final LocalAgents agents;
+    private final WorkerChecks checks;
     private final Duration progressInterval;
     private final AtomicInteger running = new AtomicInteger();
     private volatile boolean stopped;
+    private Readiness cachedReadiness;
+    private Instant checkedAt;
 
     public WorkerLoop(WorkerConfig config, WorkerClient client, Map<String, Agent> agentsByType, Workspaces workspaces,
                       Delivery delivery, Redactor redactor, ActiveRuns activeRuns) {
@@ -76,7 +84,21 @@ public final class WorkerLoop implements Runnable {
         this.redactor = redactor;
         this.activeRuns = activeRuns;
         this.agents = new LocalAgents(config.stateDir());
+        this.checks = new WorkerChecks(config);
         this.progressInterval = progressInterval;
+    }
+
+    /**
+     * The report sent with each poll, recomputed at most every {@link #REFRESH}. Real wall-clock time, like
+     * {@link #progressInterval}'s own sleeps: this loop has no injected {@link java.time.Clock} to check against.
+     */
+    private Readiness readiness() {
+        Instant now = Instant.now();
+        if (cachedReadiness == null || checkedAt == null || checkedAt.isBefore(now.minus(REFRESH))) {
+            cachedReadiness = checks.readiness();
+            checkedAt = now;
+        }
+        return cachedReadiness;
     }
 
     /** One runner per job, so its attachment source knows which task's files it may fetch. */
@@ -96,7 +118,7 @@ public final class WorkerLoop implements Runnable {
                 continue;
             }
             try {
-                Optional<Job> job = client.next();
+                Optional<Job> job = client.next(readiness());
                 job.ifPresent(this::start);
             } catch (WorkerClient.RevokedException e) {
                 Log.error("worker.key_revoked", null, "detail", e.getMessage());

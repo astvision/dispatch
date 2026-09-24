@@ -610,7 +610,10 @@ Inside the existing `seenSince` branch, alongside the `last_seen_at` condition:
            AND w.last_seen_at >= :seenSince
            -- NULL claude_ok means the worker reported nothing, which counts as ready.
            AND (w.claude_ok IS NULL OR w.claude_ok = 1)
-           AND (w.gh_ok IS NULL OR w.gh_ok = 1 OR r.kind = 'PLAN')
+           -- Stated the same way round as Readiness.blocker: gh holds ONLY the kinds that deliver. `RunKind` has a
+           -- fourth value, SPLIT, which is never stored as a run — listing what gh blocks, rather than what it
+           -- does not, keeps this agreeing with the Java if that ever changes.
+           AND (w.gh_ok IS NULL OR w.gh_ok = 1 OR r.kind NOT IN ('EXECUTE', 'DELIVER'))
            AND NOT EXISTS (SELECT 1 FROM worker_project p
                             WHERE p.worker_id = w.id AND p.project = t.project AND p.ok = 0))
 ```
@@ -738,6 +741,40 @@ In `TaskService`, a method the Coordinator calls when a run could not be claimed
 
 > `Tasks.blockedReason` / `Tasks.setBlockedReason` are two one-line accessors to add to `dispatch.store.Tasks`
 > over the `blocked_reason` column from Task 2.
+
+- [ ] **Step 4b: Call it when the scheduler finds nothing to claim**
+
+`Runs.claimNext` answers empty both when nothing is queued and when everything queued is held, so something has to
+work out which. Do it on the idle path only, where it costs nothing while work is flowing. Add to `TaskService`:
+
+```java
+    /**
+     * Walks the queued runs nobody could claim and tells each member what is stopping theirs. Called when the
+     * scheduler found nothing to start, so it runs only while the queue is idle.
+     */
+    public void reportBlocked(Tx tx) {
+        for (Runs.InProgress run : Runs.queued(tx)) {
+            Tasks.find(tx, run.taskId()).ifPresent(task -> {
+                Readiness readiness = Workers.readinessOfMember(tx, task.requester().ref());
+                readiness.blocker(task.project(), run.kind())
+                        .ifPresentOrElse(blocker -> blocked(tx, task.id(), task.requester().ref(), blocker),
+                                () -> unblocked(tx, task.id()));
+            });
+        }
+    }
+```
+
+and in `Scheduler.run()`, where the claim came back empty (`Scheduler.java:57`, just before `signal.await`):
+
+```java
+            db.transaction(tasks::reportBlocked);
+```
+
+> `Workers.readinessOfMember(Tx, String memberRef)` is a Task 2 sibling of `readiness(Tx, long)`: the best report
+> among that member's live workers, so a member with one broken and one working computer is not told they are stuck.
+> Add it in this step if Task 2 did not. `Runs.queued(tx)` is the queued-run query `statusPayload` already uses.
+>
+> `Scheduler` has no `TaskService` today — pass one into its constructor from `App.java`, alongside `db`.
 
 - [ ] **Step 5: Show it in `/status`**
 

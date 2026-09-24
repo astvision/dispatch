@@ -142,6 +142,8 @@ public final class Renderer {
                     : format("worker.revokeNotFound", String.valueOf(payload.path("workerId").asInt())));
             case WORKER_USAGE -> plain(text("worker.usage"));
             case WORKER_WAITING -> plain(format("worker.waiting", taskId(payload)));
+            case WORKER_BLOCKED -> plain(format("blocked." + payload.path("code").asText(), taskId(payload),
+                    escape(payload.path("detail").asText(""))));
             case JOIN_REQUEST -> joinRequest(payload);
             case JOIN_REQUESTED -> plain(text("join.requested"));
             case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
@@ -433,6 +435,7 @@ public final class Renderer {
                 blocks.add(icon(run) + format("status.queuedLine", taskId(run), escape(run.path("project").asText()),
                         text("kind." + run.path("kind").asText()), age(Instant.parse(run.path("queuedAt").asText())))
                         + (run.path("waitingForWorker").asBoolean() ? " · " + text("status.waitingForWorker") : "")
+                        + (run.hasNonNull("blocked") ? " · " + text("status.blocked." + run.get("blocked").asText()) : "")
                         + "\n   " + escapeWithin(run.path("title").asText(), TITLE_LIMIT));
             }
         }

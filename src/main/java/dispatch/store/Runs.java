@@ -90,7 +90,16 @@ public final class Runs {
                           AND EXISTS (SELECT 1 FROM worker w
                                       WHERE w.member_ref = t.requester_ref AND w.revoked_at IS NULL
                                         AND w.last_seen_at > ?
-                                        AND (t.worker_id IS NULL OR t.worker_id = w.id))
+                                        AND (t.worker_id IS NULL OR t.worker_id = w.id)
+                                        -- NULL claude_ok means the worker reported nothing, which counts as ready.
+                                        AND (w.claude_ok IS NULL OR w.claude_ok = 1)
+                                        -- Stated the same way round as Readiness.blocker: gh holds ONLY the kinds that
+                                        -- deliver. RunKind has a fourth value, SPLIT, which is never stored as a run —
+                                        -- listing what gh blocks, rather than what it does not, keeps this agreeing
+                                        -- with the Java if that ever changes.
+                                        AND (w.gh_ok IS NULL OR w.gh_ok = 1 OR r.kind NOT IN ('EXECUTE', 'DELIVER'))
+                                        AND NOT EXISTS (SELECT 1 FROM worker_project p
+                                                         WHERE p.worker_id = w.id AND p.project = t.project AND p.ok = 0))
                           AND (SELECT count(*) FROM worker live
                                WHERE live.member_ref = t.requester_ref AND live.revoked_at IS NULL AND live.last_seen_at > ?)
                               > (SELECT count(*) FROM run member_run JOIN task member_task ON member_task.id = member_run.task_id
@@ -124,10 +133,21 @@ public final class Runs {
         next.ifPresent(run -> {
             tx.update("UPDATE run SET status = ?, started_at = ? WHERE task_id = ? AND seq = ? AND status = ?",
                     RunStatus.RUNNING, now, run.taskId(), run.seq(), RunStatus.QUEUED);
-            tx.update("UPDATE task SET started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ?",
+            // A started run is held by nothing, so a later block of this task is news again.
+            tx.update("UPDATE task SET started_at = COALESCE(started_at, ?), updated_at = ?, blocked_reason = NULL WHERE id = ?",
                     now, now, run.taskId());
         });
         return next;
+    }
+
+    /** Queued runs, oldest first, with the task details a readiness report needs. */
+    public static List<InProgress> queued(Tx tx) {
+        return tx.list("""
+                        SELECT r.task_id, r.seq, r.kind, r.status, r.queued_at, r.started_at, t.project, t.title
+                        FROM run r JOIN task t ON t.id = r.task_id
+                        WHERE r.status = ?
+                        ORDER BY r.queued_at, r.task_id, r.seq""",
+                Runs::mapInProgress, RunStatus.QUEUED);
     }
 
     public static Optional<Run> find(Tx tx, long taskId, int seq) {
@@ -147,10 +167,13 @@ public final class Runs {
                         WHERE r.status IN (?, ?) AND t.project IN (""" + Tx.placeholders(projects.size()) + """
                         )
                         ORDER BY r.queued_at, r.task_id, r.seq""",
-                row -> new InProgress(row.longValue("task_id"), row.intValue("seq"), row.enumValue("kind", RunKind.class),
-                        row.enumValue("status", RunStatus.class), row.instant("queued_at"), row.instant("started_at"),
-                        row.string("project"), row.string("title")),
-                params.toArray());
+                Runs::mapInProgress, params.toArray());
+    }
+
+    private static InProgress mapInProgress(Row row) throws SQLException {
+        return new InProgress(row.longValue("task_id"), row.intValue("seq"), row.enumValue("kind", RunKind.class),
+                row.enumValue("status", RunStatus.class), row.instant("queued_at"), row.instant("started_at"),
+                row.string("project"), row.string("title"));
     }
 
     public static List<Run> forTask(Tx tx, long taskId) {

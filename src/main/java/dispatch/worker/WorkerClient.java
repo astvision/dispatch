@@ -118,9 +118,10 @@ public class WorkerClient {
                 answer.get("authorEmail").asText(), projects);
     }
 
-    /** Waits up to 25 s for work; empty when the member has none. */
-    public Optional<Job> next() {
-        JsonNode answer = call(WorkerApi.NEXT, "{}", POLL_TIMEOUT);
+    /** Waits up to 25 s for work; empty when the member has none. {@code readiness} travels with this poll (ADR 0021). */
+    public Optional<Job> next(Readiness readiness) {
+        JsonNode answer = call(WorkerApi.NEXT, Json.write(Json.object().set("readiness", Json.MAPPER.valueToTree(readiness))),
+                POLL_TIMEOUT);
         if (answer.get("job").isNull()) {
             return Optional.empty();
         }

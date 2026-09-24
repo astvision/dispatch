@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,7 +32,11 @@ public final class WorkerChecks {
 
     private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(10);
 
-    private WorkerChecks() {
+    private final WorkerConfig config;
+
+    /** @param config the same config a {@link WorkerLoop} already loaded once, so {@link #readiness()} needs no file read */
+    public WorkerChecks(WorkerConfig config) {
+        this.config = config;
     }
 
     /** @param onEach sees each finding as soon as it is known, as {@link Checks#run} does */
@@ -125,10 +130,14 @@ public final class WorkerChecks {
     }
 
     private static void checkGh(WorkerConfig config, Consumer<Checks.Finding> add) {
-        add.accept(Setup.ghLoggedIn(config.ghCommand())
+        add.accept(ghAuthenticated(config)
                 ? new Checks.Finding(Checks.Level.OK, "gh", "gh: logged in")
                 : new Checks.Finding(Checks.Level.WARN, "gh", "gh: not logged in or not installed ("
                         + config.ghCommand() + "); pull requests will fail until you run: gh auth login"));
+    }
+
+    private static boolean ghAuthenticated(WorkerConfig config) {
+        return Setup.ghLoggedIn(config.ghCommand());
     }
 
     /**
@@ -152,7 +161,7 @@ public final class WorkerChecks {
                 continue;
             }
             Path path = Path.of(mine.path());
-            if (!Files.exists(path.resolve(".git"))) {
+            if (!cloneUsable(mine)) {
                 add.accept(new Checks.Finding(Checks.Level.FAIL, area, area + ": no git clone at " + path
                         + "; run: dispatch worker init"));
                 continue;
@@ -175,5 +184,27 @@ public final class WorkerChecks {
         config.projects().keySet().stream().filter(name -> !known.contains(name)).forEach(name ->
                 add.accept(new Checks.Finding(Checks.Level.WARN, "project " + name, "project " + name
                         + ": this computer has it, but the team does not; remove it from worker.yaml")));
+    }
+
+    /** Whether {@code project}'s clone is here at all — the same first thing {@link #checkProjects} asks per project. */
+    private static boolean cloneUsable(WorkerConfig.Project project) {
+        return Files.exists(Path.of(project.path()).resolve(".git"));
+    }
+
+    /** The same things `dispatch check` proves about this computer, as the team machine wants them. */
+    public Readiness readiness() {
+        Readiness.Check claude = Setup.claudeVersion(config.claudeCommand())
+                .map(line -> new Readiness.Check(true, line))
+                .orElseGet(() -> new Readiness.Check(false, "cannot run " + config.claudeCommand()));
+        Readiness.Check gh = ghAuthenticated(config)
+                ? new Readiness.Check(true, null)
+                : new Readiness.Check(false, "not logged in");
+        Map<String, Readiness.Check> projects = new LinkedHashMap<>();
+        for (Map.Entry<String, WorkerConfig.Project> entry : config.projects().entrySet()) {
+            projects.put(entry.getKey(), cloneUsable(entry.getValue())
+                    ? new Readiness.Check(true, null)
+                    : new Readiness.Check(false, "clone missing at " + entry.getValue().path()));
+        }
+        return new Readiness(claude, gh, projects);
     }
 }
