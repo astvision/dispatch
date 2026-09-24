@@ -33,7 +33,7 @@ public final class UiRoutes {
     public static UiRoutes management(Path configFile, Locations locations, Function<String, BotApi> bots, Service service,
                                       Map<String, String> environment, String version) {
         return new UiRoutes(new OverviewApi(configFile, locations, new Checks(bots), service, environment, version),
-                new ManageApi(configFile, service, environment));
+                new ManageApi(configFile, service, environment, bots));
     }
 
     /** @param adminsOnly whether a caller who may not manage is refused; false for {@code dispatch ui} */

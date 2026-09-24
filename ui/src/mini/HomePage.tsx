@@ -1,5 +1,5 @@
 import {
-  AppstoreOutlined, FileTextOutlined, PlusCircleOutlined, SearchOutlined, SettingOutlined, TeamOutlined,
+  AppstoreOutlined, FileTextOutlined, MessageOutlined, PlusCircleOutlined, SearchOutlined, SettingOutlined, TeamOutlined,
   UnorderedListOutlined, UserOutlined,
 } from "@ant-design/icons";
 import { Alert, Input, Spin, theme } from "antd";
@@ -78,6 +78,8 @@ export default function HomePage({ me, navigate }: { me: Me; navigate: (path: st
         <Section title="Dispatch">
           <Row leading={<Icon><TeamOutlined /></Icon>} title="Хүмүүс" subtitle="Гишүүд, админууд"
                onClick={() => navigate("/people")} />
+          <Row leading={<Icon><MessageOutlined /></Icon>} title="Группүүд" subtitle="Төсөл бүрийн мэдэгдлийн групп"
+               onClick={() => navigate("/groups")} />
           <Row leading={<Icon><SettingOutlined /></Icon>} title="Тохиргоо" subtitle="Хугацаа, төсөв, commit зохиогч"
                onClick={() => navigate("/settings")} />
           <Row leading={<Icon><FileTextOutlined /></Icon>} title="Лог" onClick={() => navigate("/logs")} />
