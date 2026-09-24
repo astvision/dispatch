@@ -16,10 +16,12 @@ import dispatch.store.Tasks;
 import dispatch.store.Workers;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
+import dispatch.worker.Readiness;
 import dispatch.worker.WorkerKeys;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -32,6 +34,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SchedulerTest {
+
+    private static final Requester BOLD = new Requester("telegram:100", "Bold");
 
     @TempDir
     Path dir;
@@ -230,6 +234,36 @@ class SchedulerTest {
         assertEquals(id, db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(), null)).orElseThrow().taskId());
     }
 
+    @Test
+    void aRunIsNotClaimedWhileItsMembersComputerCannotRunClaude() {
+        long taskId = queuedPlanFor(BOLD, "alm");
+        long workerId = pairedWorkerFor(BOLD);
+        db.transaction(tx -> Workers.touch(tx, workerId, clock.instant()));
+        db.transaction(tx -> Workers.saveReadiness(tx, workerId,
+                new Readiness(new Readiness.Check(false, "cannot run claude"), new Readiness.Check(true, null),
+                        Map.of("alm", new Readiness.Check(true, null))), clock.instant()));
+
+        assertTrue(claim().isEmpty());
+
+        db.transaction(tx -> Workers.saveReadiness(tx, workerId,
+                new Readiness(new Readiness.Check(true, "2.1.280"), new Readiness.Check(true, null),
+                        Map.of("alm", new Readiness.Check(true, null))), clock.instant()));
+
+        assertEquals(taskId, claim().orElseThrow().taskId(), "fixing it starts the run with no further action");
+    }
+
+    @Test
+    void ghDoesNotHoldAPlanningRun() {
+        long taskId = queuedPlanFor(BOLD, "alm");
+        long workerId = pairedWorkerFor(BOLD);
+        db.transaction(tx -> Workers.touch(tx, workerId, clock.instant()));
+        db.transaction(tx -> Workers.saveReadiness(tx, workerId,
+                new Readiness(new Readiness.Check(true, "2.1.280"), new Readiness.Check(false, "not logged in"),
+                        Map.of("alm", new Readiness.Check(true, null))), clock.instant()));
+
+        assertEquals(taskId, claim().orElseThrow().taskId(), "planning never touches GitHub");
+    }
+
     private long queuedTaskOf(String requesterRef) {
         return db.transactionReturning(tx -> {
             Requester requester = new Requester(requesterRef, "Ann");
@@ -244,6 +278,20 @@ class SchedulerTest {
         WorkerKeys keys = new WorkerKeys(db, clock);
         String code = keys.newCode(new Requester(memberRef, "Ann"));
         return keys.pair(code, name).orElseThrow().workerId();
+    }
+
+    /** As {@link #queuedTaskOf}, but for an explicit project — the readiness gate tests need one to hold a clone check on. */
+    private long queuedPlanFor(Requester requester, String project) {
+        return db.transactionReturning(tx -> {
+            long id = Tasks.insert(tx, new Tasks.NewTask(project, "t", "t", requester, "telegram:-1/" + UUID.randomUUID(),
+                    "telegram:-1", UUID.randomUUID(), "main", Priority.NORMAL), Phase.PLANNING, clock.instant());
+            Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, dispatch.domain.RunCause.TASK, "t", requester), clock.instant());
+            return id;
+        });
+    }
+
+    private long pairedWorkerFor(Requester requester) {
+        return pair(requester.ref(), "ann-laptop");
     }
 
     private long queue() {

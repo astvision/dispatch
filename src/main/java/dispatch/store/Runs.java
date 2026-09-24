@@ -90,7 +90,16 @@ public final class Runs {
                           AND EXISTS (SELECT 1 FROM worker w
                                       WHERE w.member_ref = t.requester_ref AND w.revoked_at IS NULL
                                         AND w.last_seen_at > ?
-                                        AND (t.worker_id IS NULL OR t.worker_id = w.id))
+                                        AND (t.worker_id IS NULL OR t.worker_id = w.id)
+                                        -- NULL claude_ok means the worker reported nothing, which counts as ready.
+                                        AND (w.claude_ok IS NULL OR w.claude_ok = 1)
+                                        -- Stated the same way round as Readiness.blocker: gh holds ONLY the kinds that
+                                        -- deliver. RunKind has a fourth value, SPLIT, which is never stored as a run —
+                                        -- listing what gh blocks, rather than what it does not, keeps this agreeing
+                                        -- with the Java if that ever changes.
+                                        AND (w.gh_ok IS NULL OR w.gh_ok = 1 OR r.kind NOT IN ('EXECUTE', 'DELIVER'))
+                                        AND NOT EXISTS (SELECT 1 FROM worker_project p
+                                                         WHERE p.worker_id = w.id AND p.project = t.project AND p.ok = 0))
                           AND (SELECT count(*) FROM worker live
                                WHERE live.member_ref = t.requester_ref AND live.revoked_at IS NULL AND live.last_seen_at > ?)
                               > (SELECT count(*) FROM run member_run JOIN task member_task ON member_task.id = member_run.task_id

@@ -4,6 +4,11 @@
 # planning run replays the recorded plan, and an execution run (auto mode) edits README.md and replays the recorded
 # execution unless an exec scenario (exec-fail, exec-fail-once, nochange, leaky-summary) says otherwise; those names never match the
 # general scenarios, so such a task still gets its plan first.
+# A worker's readiness check asks for --version before any run; answer it without recording anything or reading a prompt.
+if [ "$1" = "--version" ]; then
+  echo "2.1.280 (Claude Code)"
+  exit 0
+fi
 printf '%s\n' "$@" > fake-claude.args
 env > fake-claude.env
 prompt=$(cat)
