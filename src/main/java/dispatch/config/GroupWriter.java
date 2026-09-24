@@ -72,7 +72,7 @@ public interface GroupWriter {
             return ConfigEdit.append(edited, At.of("telegram", "groups").item("name", already.name()).key("projects"), project);
         }
         if (from.chatId() == null && from.projects().size() == 1) {
-            return ConfigEdit.set(text, At.of("telegram", "groups").item("name", from.name()).key("chatId"), Long.toString(chatId));
+            return ConfigEdit.set(text, At.of("telegram", "groups").item("name", from.name()).key("chatId"), chatId);
         }
         String edited = ConfigEdit.remove(text, At.of("telegram", "groups").item("name", from.name()).key("projects").value(project));
         return ConfigText.addGroup(edited, uniqueName(slug(title), config), chatId, from.members(), project);
@@ -107,7 +107,7 @@ public interface GroupWriter {
         if (group == null) {
             return text;
         }
-        return ConfigEdit.set(text, At.of("telegram", "groups").item("name", group.name()).key("chatId"), Long.toString(newChatId));
+        return ConfigEdit.set(text, At.of("telegram", "groups").item("name", group.name()).key("chatId"), newChatId);
     }
 
     /** {@code name} suffixed with -2, -3, … until no group in {@code config} already has it. */

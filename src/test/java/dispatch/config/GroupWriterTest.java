@@ -34,6 +34,7 @@ class GroupWriterTest {
         assertEquals(1, telegram.groups().size());
         assertEquals(-4883391545L, telegram.groups().getFirst().chatId());
         assertTrue(Files.readString(file).contains("# A personal instance's config"), "comments stay");
+        assertTrue(Files.readString(file).contains("chatId: -4883391545"), "chat id written as a plain integer, not quoted");
         assertNull(ConfigLoader.load(file, ENV).workers(), "still personal: no workers demanded");
     }
 
@@ -74,11 +75,12 @@ class GroupWriterTest {
     }
 
     @Test
-    void migrateFollowsTheNewChatId() {
+    void migrateFollowsTheNewChatId() throws IOException {
         GroupWriter writer = GroupWriter.file(file, ENV);
         writer.link(-4883391545L, "note", "alm");
 
         assertEquals(-1004883391545L, writer.migrate(-4883391545L, -1004883391545L).groups().getFirst().chatId());
+        assertTrue(Files.readString(file).contains("chatId: -1004883391545"), "chat id written as a plain integer, not quoted");
     }
 
     @Test
