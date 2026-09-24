@@ -60,6 +60,11 @@ say what was linked. **Холбохгүй** edits the prompt and leaves the grou
 manage Dispatch, or for a chat or project that no longer fits (already linked, project removed), answers with a short
 reason and changes nothing. A failed config write is logged and reported to the presser, as for a join approval.
 
+The bot may already be in the group (Telegram then sends no "added" event): a command addressed to the bot in an
+unknown group, from someone who may manage Dispatch, sends the same prompt instead of leaving; from anyone else the bot
+leaves. An open prompt for a chat is not sent twice. Buttons carry the project's index into the list kept with the
+prompt, so a long project name still fits Telegram's 64-byte limit.
+
 A chat that is linked cannot be linked again from the prompt; adding the bot to a chat that is already linked just
 logs, as today.
 
