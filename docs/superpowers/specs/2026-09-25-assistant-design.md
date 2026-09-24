@@ -37,8 +37,9 @@ prompt → answer). Those paths are unchanged; `/task …` still creates a draft
   starts a fresh one; a message after 12 hours of silence starts fresh automatically.
 - **Bot home:** `<stateDir>/assistant/` with `CLAUDE.md` (Mongolian persona and rules: "you propose, the owner
   decides"), `.claude/skills/taskmanager/`, and the project clones added read-only with `--add-dir`. Launched with
-  `--setting-sources project`, `--strict-mcp-config` and `--permission-mode` that allows only the listed tools — the
-  owner's personal settings, hooks and MCP servers are not loaded.
+  `--setting-sources project`, `--strict-mcp-config`, `--tools Read,Grep,Glob,Bash`,
+  `--allowedTools "Bash(dispatch ask *)"` and no permission prompts, so any other Bash command is refused — the owner's
+  personal settings, hooks and MCP servers are not loaded.
 - **Model:** Haiku. The structured reply may carry `escalate: true` (or the owner writes "сайн бодоорой"); the turn is
   then re-run on Sonnet in the same session.
 - **Presence:** `sendChatAction typing` while the turn runs; one reply message in Mongolian, proposed actions as buttons
