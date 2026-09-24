@@ -22,7 +22,9 @@ final class Prompts {
             - steps: the concrete changes you would make, in order
             - risks: what could break or needs attention, including every assumption you made
             - questions: only questions whose wrong answer would make the change wrong or harmful; otherwise make a \
-            reasonable assumption, list it under risks, and leave questions empty
+            reasonable assumption, list it under risks, and leave questions empty. Each question has its text and \
+            options: 2 to 4 short likely answers the requester can pick with one tap, each at most 40 characters, in \
+            the same language as the question
 
             Language: write all text in the natural language used inside <task> (a task written in Mongolian gets a \
             Mongolian plan, a task written in English gets an English plan). Keep code identifiers, file paths and \

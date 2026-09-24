@@ -612,6 +612,60 @@ class RendererTest {
         }
     }
 
+    @Test
+    void aQuestionStaysWithinTelegramLimitsAndItsButtonsCarryIndexesOnly() {
+        String longOption = "Зөвхөн staging орчинд, prod-д дараагийн долоо хоногт гаргана";
+        ObjectNode payload = questionPayload("Аль орчин? ".repeat(600), List.of(longOption, longOption, longOption, longOption))
+                .put("taskId", 9_999_999_999L).put("planSeq", 999).put("index", 12).put("total", 12);
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_QUESTION, payload);
+
+        assertTrue(rendered.html().length() <= 4096, "html length " + rendered.html().length());
+        assertEquals(6, rendered.keyboard().stream().mapToInt(List::size).sum(), "four options, write, decide");
+        for (List<Renderer.Button> row : rendered.keyboard()) {
+            for (Renderer.Button button : row) {
+                assertTrue(button.data().getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= 64, button.data());
+                assertTrue(button.data().matches("q:9999999999:999:12:[0-3wd]"), button.data());
+                assertTrue(button.text().length() <= 40, button.text());
+            }
+        }
+    }
+
+    @Test
+    void anAnsweredQuestionShowsItsAnswerWithoutButtons() {
+        ObjectNode payload = questionPayload("Which <env>?", List.of("staging")).put("answer", "prod & staging");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_QUESTION, payload);
+
+        assertEquals("✅ <b>#42</b> · асуулт 1/2\nWhich &lt;env&gt;?\n→ <i>prod &amp; staging</i>", rendered.html());
+        assertTrue(rendered.keyboard().isEmpty());
+    }
+
+    @Test
+    void theAnswerPromptAsksForAForcedReply() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_ANSWER_PROMPT, samplePayload(OutboxKind.PLAN_ANSWER_PROMPT));
+
+        assertEquals("✍️ <b>#1</b> · асуулт 2: хариултаа бичнэ үү.", rendered.html());
+        assertEquals("Хариулт", rendered.forceReply());
+    }
+
+    @Test
+    void aPlanWithQuestionObjectsListsTheirTextsAndPointsAtTheQuestionMessages() {
+        ObjectNode payload = planPayload(List.of("Do it"), List.of());
+        payload.with("plan").withArray("questions").addObject().put("text", "Which <env>?").putArray("options").add("staging");
+
+        String html = renderer.render(OutboxKind.PLAN_READY, payload).html();
+
+        assertTrue(html.contains("1. Which &lt;env&gt;?"), html);
+        assertTrue(html.contains("Доорх асуултуудад товчоор хариулна уу, эсвэл энэ мессежид хариулж засвар өгнө үү."), html);
+    }
+
+    private static ObjectNode questionPayload(String text, List<String> options) {
+        ObjectNode payload = Json.object().put("taskId", 42).put("planSeq", 1).put("index", 1).put("total", 2).put("text", text);
+        options.forEach(payload.putArray("options")::add);
+        return payload;
+    }
+
     private static ObjectNode planPayload(List<String> steps, List<String> questions) {
         ObjectNode payload = Json.object().put("taskId", 42).put("planSeq", 1).put("project", "autoland-management")
                 .put("costUsd", "0.168185").put("durationSeconds", 110);
@@ -784,6 +838,8 @@ class RendererTest {
             case WORKER_USAGE -> Json.object();
             case WORKER_WAITING -> Json.object().put("taskId", 7);
             case WORKER_BLOCKED -> Json.object().put("taskId", 1).put("code", "claude").put("detail", "gone");
+            case PLAN_QUESTION -> questionPayload("Which environments?", List.of("staging", "prod"));
+            case PLAN_ANSWER_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1).put("index", 2).put("questionRef", "telegram:100/5");
         };
     }
 }

@@ -12,6 +12,7 @@ import dispatch.domain.FailureReason;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
+import dispatch.domain.PlanQuestion;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Run;
@@ -24,6 +25,7 @@ import dispatch.store.Attachments;
 import dispatch.store.Drafts;
 import dispatch.store.Events;
 import dispatch.store.Outbox;
+import dispatch.store.PlanAnswers;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
@@ -437,7 +439,8 @@ public final class TaskService {
 
     /**
      * Approves the plan with run number {@code planSeq} and queues its execution (ADR 0006). Only the requester decides on
-     * their plan (ADR 0011). A plan with open questions cannot be approved: the answers come as replies, i.e. corrections.
+     * their plan (ADR 0011). A plan with open questions cannot be approved: the answers come as a correction, typed as a
+     * reply or given under the question messages (G-1d).
      */
     public ApproveResult approve(Tx tx, Requester who, long taskId, int planSeq) {
         Instant now = clock.instant();
@@ -524,6 +527,130 @@ public final class TaskService {
     public CorrectResult correctLatest(Tx tx, Requester who, long taskId, String text, String originRef, String chatRef) {
         int planSeq = Runs.latestSucceededPlanSeq(tx, taskId).orElse(0);
         return correct(tx, who, taskId, planSeq, text, originRef, chatRef);
+    }
+
+    /**
+     * The requester's answer to question {@code index} (1-based) of the plan with run number {@code planSeq} (G-1d). The
+     * question message is redrawn with it and the next unanswered question is sent; the last answer sends them all to
+     * the agent as one correction, exactly as a typed one. A question of an older plan, one already answered, or one of
+     * a task no longer awaiting approval is stale and changes nothing.
+     *
+     * @param questionRef the question message, redrawn with the answer
+     * @param originRef   the message the correction is acknowledged under
+     */
+    public AnswerResult answer(Tx tx, Requester who, long taskId, int planSeq, int index, String answer, String questionRef,
+                               String originRef, String chatRef) {
+        Optional<AnswerResult> refused = questionRefusal(tx, who, taskId, planSeq, index);
+        if (refused.isPresent()) {
+            tx.afterCommit(() -> Log.info("task.answer_refused", "task", taskId, "plan", planSeq, "question", index,
+                    "requester", who.ref(), "result", refused.get()));
+            return refused.get();
+        }
+        if (answer == null || answer.isBlank()) {
+            return AnswerResult.EMPTY;
+        }
+        Instant now = clock.instant();
+        Task task = Tasks.find(tx, taskId).orElseThrow();
+        List<PlanQuestion> questions = Plan.parse(task.planJson()).questionItems();
+        String text = answer.strip();
+        if (!PlanAnswers.record(tx, taskId, planSeq, index, text, who.ref(), questionRef, now)) {
+            return AnswerResult.STALE;
+        }
+        Outbox.enqueueEdit(tx, taskId, OutboxKind.PLAN_QUESTION, task.requester().ref(), questionRef,
+                questionPayload(taskId, planSeq, questions, index).put("answer", text), now);
+        tx.afterCommit(wakeOutbox);
+        tx.afterCommit(() -> Log.info("task.question_answered", "task", taskId, "plan", planSeq, "question", index,
+                "requester", who.ref()));
+        Map<Integer, String> answers = PlanAnswers.of(tx, taskId, planSeq);
+        for (int next = 1; next <= questions.size(); next++) {
+            if (!answers.containsKey(next)) {
+                enqueueQuestion(tx, task, planSeq, questions, next, now);
+                return AnswerResult.ANSWERED;
+            }
+        }
+        correct(tx, who, taskId, planSeq, answersText(questions, answers), originRef, chatRef);
+        return AnswerResult.ANSWERED;
+    }
+
+    /**
+     * The requester chose answer option {@code option} (0-based) of a question: {@link #answer} with that option's text.
+     * An option the question does not have is {@link AnswerResult#EMPTY}.
+     */
+    public AnswerResult chooseOption(Tx tx, Requester who, long taskId, int planSeq, int index, int option, String questionRef,
+                                     String originRef, String chatRef) {
+        String text = Tasks.find(tx, taskId)
+                .filter(task -> task.planJson() != null)
+                .map(task -> Plan.parse(task.planJson()).questionItems())
+                .filter(questions -> index >= 1 && index <= questions.size())
+                .map(questions -> questions.get(index - 1).options())
+                .filter(options -> option >= 0 && option < options.size())
+                .map(options -> options.get(option))
+                .orElse("");
+        return answer(tx, who, taskId, planSeq, index, text, questionRef, originRef, chatRef);
+    }
+
+    /** The requester wants to write their own answer to a question: they are asked for it as a forced reply under it (G-1d). */
+    public AnswerResult askForAnswer(Tx tx, Requester who, long taskId, int planSeq, int index, String questionRef) {
+        Optional<AnswerResult> refused = questionRefusal(tx, who, taskId, planSeq, index);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        Task task = Tasks.find(tx, taskId).orElseThrow();
+        Outbox.enqueue(tx, taskId, OutboxKind.PLAN_ANSWER_PROMPT, task.requester().ref(), questionRef,
+                Json.object().put("taskId", taskId).put("planSeq", planSeq).put("index", index).put("questionRef", questionRef),
+                clock.instant());
+        tx.afterCommit(wakeOutbox);
+        return AnswerResult.PROMPTED;
+    }
+
+    /**
+     * Sends question {@code index} of a plan to its requester's private chat only: its buttons are theirs alone, so it has
+     * no fallback to the group (G-1d).
+     */
+    static void enqueueQuestion(Tx tx, Task task, int planSeq, List<PlanQuestion> questions, int index, Instant now) {
+        Outbox.enqueue(tx, task.id(), OutboxKind.PLAN_QUESTION, task.requester().ref(), null,
+                questionPayload(task.id(), planSeq, questions, index), now);
+    }
+
+    private static ObjectNode questionPayload(long taskId, int planSeq, List<PlanQuestion> questions, int index) {
+        PlanQuestion question = questions.get(index - 1);
+        ObjectNode payload = Json.object().put("taskId", taskId).put("planSeq", planSeq).put("index", index)
+                .put("total", questions.size()).put("text", question.text());
+        question.options().forEach(payload.putArray("options")::add);
+        return payload;
+    }
+
+    /** Why question {@code index} of plan {@code planSeq} cannot be answered now; empty when it can. */
+    private Optional<AnswerResult> questionRefusal(Tx tx, Requester who, long taskId, int planSeq, int index) {
+        if (!groups.isMember(who.ref())) {
+            return Optional.of(AnswerResult.NOT_ALLOWED);
+        }
+        Optional<Task> found = Tasks.find(tx, taskId);
+        if (found.isEmpty()) {
+            return Optional.of(AnswerResult.NOT_FOUND);
+        }
+        Task task = found.get();
+        if (!isRequester(task, who)) {
+            return Optional.of(AnswerResult.NOT_REQUESTER);
+        }
+        OptionalInt latestPlan = Runs.latestSucceededPlanSeq(tx, taskId);
+        if (task.phase() != Phase.AWAITING_APPROVAL || latestPlan.isEmpty() || latestPlan.getAsInt() != planSeq) {
+            return Optional.of(AnswerResult.STALE);
+        }
+        int total = Plan.parse(task.planJson()).questionItems().size();
+        if (index < 1 || index > total || PlanAnswers.of(tx, taskId, planSeq).containsKey(index)) {
+            return Optional.of(AnswerResult.STALE);
+        }
+        return Optional.empty();
+    }
+
+    /** The correction that carries every answer, in the requester's language like the buttons they pressed. */
+    private static String answersText(List<PlanQuestion> questions, Map<Integer, String> answers) {
+        StringBuilder text = new StringBuilder("Асуултын хариулт:");
+        for (int index = 1; index <= questions.size(); index++) {
+            text.append('\n').append(index).append(". ").append(questions.get(index - 1).text()).append(" → ").append(answers.get(index));
+        }
+        return text.toString();
     }
 
     public Optional<Task> taskOfTopic(Tx tx, String requesterRef, String topicRef) {

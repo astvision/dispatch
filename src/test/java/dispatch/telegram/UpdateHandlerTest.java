@@ -1507,7 +1507,8 @@ class UpdateHandlerTest {
     private long taskAwaitingApproval(List<String> questions) {
         task("Fix the login timeout");
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
-        Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), questions);
+        Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(),
+                questions.stream().map(text -> new dispatch.domain.PlanQuestion(text, List.of())).toList());
         transitions.planSucceeded(run.taskId(), run.seq(), plan,
                 new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", plan.toJson(), null, new BigDecimal("0.1"), 3, List.of(), null, null, null));
         return run.taskId();

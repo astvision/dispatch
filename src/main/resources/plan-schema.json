@@ -7,6 +7,23 @@
     "findings": {"type": "array", "items": {"type": "string"}, "description": "Relevant facts from the code; for a bug, its root cause"},
     "steps": {"type": "array", "items": {"type": "string"}, "description": "The concrete changes to make, in order"},
     "risks": {"type": "array", "items": {"type": "string"}, "description": "What could break or needs attention"},
-    "questions": {"type": "array", "items": {"type": "string"}, "description": "Questions that must be answered before implementing; empty if none"}
+    "questions": {
+      "type": "array",
+      "description": "Questions that must be answered before implementing; empty if none",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "options"],
+        "properties": {
+          "text": {"type": "string", "description": "The question"},
+          "options": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {"type": "string", "maxLength": 40},
+            "description": "2 to 4 short likely answers the requester can pick with one tap, each at most 40 characters"
+          }
+        }
+      }
+    }
   }
 }

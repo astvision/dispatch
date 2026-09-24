@@ -7,6 +7,7 @@ import dispatch.Json;
 import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.config.Config;
+import dispatch.core.AnswerResult;
 import dispatch.core.DraftChoice;
 import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
@@ -45,9 +46,9 @@ import java.util.Set;
  * crash makes Telegram deliver it again and nothing is lost or applied twice (ADR 0010). The configured groups and
  * members' private chats with the bot are served (ADR 0011, 0012); other groups are left, other private chats ignored. A
  * group sees only its own projects, a member those of all their groups. Besides commands and buttons, a reply to a plan
- * message is a correction and a reply to a task's result is a follow-up. A member who mentions the bot in their linked
- * group gives a task, drafted in their private chat all the same (G-1b); one who mentions a fellow member there gives it
- * to them, drafted in theirs (G-1c).
+ * message is a correction, one to a plan's question message answers it (G-1d) and one to a task's result is a follow-up.
+ * A member who mentions the bot in their linked group gives a task, drafted in their private chat all the same (G-1b);
+ * one who mentions a fellow member there gives it to them, drafted in theirs (G-1c).
  */
 public final class UpdateHandler {
 
@@ -224,6 +225,9 @@ public final class UpdateHandler {
         if (topicTask.isPresent() && parsed.map(command -> !COMMANDS.contains(command.name())).orElse(true)) {
             // Inside a task's own topic, anything that is not a command is about that task: a follow-up once it has finished,
             // otherwise a correction of its plan, which is refused with the reason when no plan is waiting.
+            if (replyToQuestion(tx, message, who, origin, chatRef)) {
+                return;
+            }
             Task task = topicTask.get();
             if (task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED) {
                 tasks.followUp(tx, who, task.id(), text(message), origin, chatRef);
@@ -496,6 +500,9 @@ public final class UpdateHandler {
         if (!repliedTo.has("message_id")) {
             return false;
         }
+        if (replyToQuestion(tx, message, who, origin, chatRef)) {
+            return true;
+        }
         long chatId = message.path("chat").path("id").asLong();
         String repliedRef = Refs.message(chatId, repliedTo.get("message_id").asLong(), null);
         Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef);
@@ -511,6 +518,68 @@ public final class UpdateHandler {
         int planSeq = Json.read(sent.get().payload()).path("planSeq").asInt();
         tasks.correct(tx, who, sent.get().taskId(), planSeq, text(message), origin, chatRef);
         return true;
+    }
+
+    /**
+     * A reply to a plan's question message, or to the prompt asking for an answer to one, answers that question (G-1d);
+     * false for any other message.
+     */
+    private boolean replyToQuestion(Tx tx, JsonNode message, Requester who, String origin, String chatRef) {
+        JsonNode repliedTo = message.path("reply_to_message");
+        if (!repliedTo.has("message_id")) {
+            return false;
+        }
+        String repliedRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
+        Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef)
+                .filter(found -> found.kind() == OutboxKind.PLAN_QUESTION || found.kind() == OutboxKind.PLAN_ANSWER_PROMPT);
+        if (sent.isEmpty()) {
+            return false;
+        }
+        JsonNode question = Json.read(sent.get().payload());
+        String questionRef = sent.get().kind() == OutboxKind.PLAN_QUESTION ? repliedRef : question.path("questionRef").asText();
+        long taskId = sent.get().taskId();
+        AnswerResult result = tasks.answer(tx, who, taskId, question.path("planSeq").asInt(), question.path("index").asInt(),
+                text(message), questionRef, origin, chatRef);
+        if (result == AnswerResult.STALE) {
+            enqueue(tx, OutboxKind.CORRECTION_REFUSED, chatRef, origin, Json.object().put("taskId", taskId).put("reason", "stale"));
+        }
+        return true;
+    }
+
+    /** A button under a plan's question: an option's index, "w" to write one's own answer or "d" to let the agent decide (G-1d). */
+    private void onQuestionButton(Tx tx, JsonNode callback, Requester who, String[] parts) {
+        String callbackId = callback.path("id").asText();
+        Optional<Long> taskId = taskId(parts[1]);
+        Optional<Long> planSeq = taskId(parts[2]);
+        Optional<Long> index = taskId(parts[3]);
+        Optional<Long> option = taskId(parts[4]);
+        boolean known = parts[4].equals("w") || parts[4].equals("d") || option.isPresent();
+        if (taskId.isEmpty() || planSeq.isEmpty() || index.isEmpty() || !known) {
+            answer(tx, callbackId, "callback.unknown");
+            return;
+        }
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        String questionRef = Refs.message(chatId, message.path("message_id").asLong(), null);
+        String chatRef = Refs.chat(chatId);
+        int seq = planSeq.get().intValue();
+        int question = index.get().intValue();
+        AnswerResult result = switch (parts[4]) {
+            case "w" -> tasks.askForAnswer(tx, who, taskId.get(), seq, question, questionRef);
+            case "d" -> tasks.answer(tx, who, taskId.get(), seq, question, renderer.text("plan.youDecide"), questionRef, questionRef,
+                    chatRef);
+            default -> tasks.chooseOption(tx, who, taskId.get(), seq, question, option.get().intValue(), questionRef, questionRef,
+                    chatRef);
+        };
+        answer(tx, callbackId, switch (result) {
+            case ANSWERED -> "callback.answered";
+            case PROMPTED -> "callback.writeAnswer";
+            case EMPTY -> "callback.unknown";
+            case NOT_ALLOWED -> "callback.notAllowed";
+            case NOT_FOUND -> "callback.notFound";
+            case NOT_REQUESTER -> "callback.notRequester";
+            case STALE -> "callback.stale";
+        });
     }
 
     private void onCallback(Tx tx, JsonNode callback) {
@@ -536,6 +605,10 @@ public final class UpdateHandler {
         if (groupLinks != null && isPrivateChatOf(chat, from) && parts.length == 3 && parts[0].equals("link") && taskId(parts[1]).isPresent()) {
             // The prompt only ever goes to a private chat; parts[1] is the negative group chat id, which taskId also parses.
             onLinkButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
+            return;
+        }
+        if (servedChat && from.has("id") && parts.length == 5 && parts[0].equals("q")) {
+            onQuestionButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), parts);
             return;
         }
         boolean known = parts.length == 3 && Set.of("approve", "reject", "prio").contains(parts[0]);

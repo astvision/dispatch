@@ -122,7 +122,9 @@ public final class OutboxSender implements Runnable {
             replyTo = null;
         }
         try {
-            long sentId = rendered.document() == null
+            long sentId = rendered.forceReply() != null
+                    ? api.sendForceReply(chatId, thread, rendered.html(), replyTo, rendered.forceReply())
+                    : rendered.document() == null
                     ? api.sendMessage(chatId, thread, rendered.html(), replyTo, rendered.keyboard())
                     : api.sendDocument(chatId, thread, rendered.document().fileName(),
                             rendered.document().markdown().getBytes(StandardCharsets.UTF_8), rendered.html(), replyTo, rendered.keyboard());

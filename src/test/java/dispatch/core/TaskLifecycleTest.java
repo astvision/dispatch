@@ -49,7 +49,7 @@ class TaskLifecycleTest {
     private static final Plan PLAN = new Plan("Make the auth timeout configurable", List.of("AuthClient.java:14 hard-codes 30s"),
             List.of("Read auth.timeout", "Add AuthClientTimeoutTest"), List.of(), List.of());
     private static final Plan PLAN_WITH_QUESTION = new Plan("Make the auth timeout configurable", List.of(),
-            List.of("Read auth.timeout"), List.of(), List.of("Which environments need a longer timeout?"));
+            List.of("Read auth.timeout"), List.of(), List.of(new dispatch.domain.PlanQuestion("Which environments need a longer timeout?", List.of())));
 
     @TempDir
     Path dir;

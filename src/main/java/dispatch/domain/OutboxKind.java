@@ -10,6 +10,13 @@ public enum OutboxKind {
     DRAFT_PROMPT,
     DRAFT_EXPIRED,
     PLAN_READY,
+    /**
+     * To the requester privately: one open question of a plan, with its answer options as buttons; sent one at a time and
+     * redrawn with the answer (G-1d).
+     */
+    PLAN_QUESTION,
+    /** To the requester privately: asks for their own answer to a question, as a forced reply (G-1d). */
+    PLAN_ANSWER_PROMPT,
     EXECUTION_QUEUED,
     CORRECTION_QUEUED,
     CORRECTION_REFUSED,

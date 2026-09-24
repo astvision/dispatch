@@ -89,6 +89,25 @@ public final class BotApi {
         return call("sendMessage", body, requestTimeout).path("message_id").asLong();
     }
 
+    /**
+     * A message that opens the reply field under itself, so whatever is written next replies to it (G-1d). Kept apart from
+     * {@link #sendMessage}: its markup replaces the inline keyboard.
+     *
+     * @param placeholder shown in the empty input field
+     * @return the sent message's id
+     */
+    public long sendForceReply(long chatId, Long threadId, String html, Long replyToMessageId, String placeholder) {
+        ObjectNode body = Json.object().put("chat_id", chatId).put("text", html).put("parse_mode", "HTML");
+        if (threadId != null) {
+            body.put("message_thread_id", threadId);
+        }
+        if (replyToMessageId != null) {
+            body.set("reply_parameters", replyParameters(replyToMessageId));
+        }
+        body.putObject("reply_markup").put("force_reply", true).put("input_field_placeholder", placeholder);
+        return call("sendMessage", body, requestTimeout).path("message_id").asLong();
+    }
+
     /** @return the sent message's id */
     public long sendDocument(long chatId, Long threadId, String fileName, byte[] content, String captionHtml, Long replyToMessageId,
                              List<List<Renderer.Button>> buttons) {
