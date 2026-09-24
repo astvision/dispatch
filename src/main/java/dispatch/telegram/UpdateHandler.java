@@ -64,7 +64,7 @@ public final class UpdateHandler {
     private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
     private static final Set<String> COMMANDS =
-            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "projects", "help", "start", "new");
+            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "projects", "help", "start");
     private static final Duration UNKNOWN_NOTICE_INTERVAL = Duration.ofHours(24);
 
     private final Database db;
@@ -303,6 +303,12 @@ public final class UpdateHandler {
         if (!command.addressedTo(botUsername)) {
             return;
         }
+        if (command.name().equals("new") && privateChat && assistant != null) {
+            // Only where there is a conversation to restart; anywhere else /new is any unknown command, as before.
+            assistant.reset(tx, who.ref());
+            enqueue(tx, OutboxKind.ASSISTANT_REPLY, chatRef, origin, Json.object().put("new", true));
+            return;
+        }
         switch (command.name()) {
             case "task" -> {
                 if (!privateChat) {
@@ -356,16 +362,6 @@ public final class UpdateHandler {
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
             case "projects" -> projectList(tx, visible, origin, chatRef);
             case "help", "start" -> help(tx, visible, origin, chatRef, privateChat);
-            case "new" -> {
-                if (!privateChat) {
-                    privateOnly(tx, chatRef, origin);
-                } else if (assistant == null) {
-                    help(tx, visible, origin, chatRef, true);
-                } else {
-                    assistant.reset(tx, who.ref());
-                    enqueue(tx, OutboxKind.ASSISTANT_REPLY, chatRef, origin, Json.object().put("new", true));
-                }
-            }
             default -> {
                 // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
                 // it replies to a plan, otherwise a task when written privately.
@@ -839,8 +835,8 @@ public final class UpdateHandler {
         ObjectNode payload = (ObjectNode) Json.read(reply.get().payload());
         List<Long> ids = new ArrayList<>();
         payload.withArray("actions").forEach(action -> ids.add(action.path("id").asLong()));
-        Set<Long> taken = Conversations.taken(tx, ids);
-        payload.withArray("actions").forEach(action -> ((ObjectNode) action).put("done", taken.contains(action.path("id").asLong())));
+        Map<Long, String> taken = Conversations.outcomes(tx, ids);
+        payload.withArray("actions").forEach(action -> ((ObjectNode) action).put("outcome", taken.get(action.path("id").asLong())));
         Renderer.Rendered redrawn = renderer.render(OutboxKind.ASSISTANT_REPLY, Json.read(redactor.redact(payload.toString())));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard())));
     }

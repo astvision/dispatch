@@ -94,8 +94,8 @@ class AssistantTest {
         assertEquals(List.of(dir.resolve("clones/life")), request.readOnlyDirs(), "the member's project clones, to read");
         assertTrue(request.prompt().contains("юу хийгдэж байна?"), request.prompt());
         assertTrue(request.prompt().contains("Fix the login timeout"), "a snapshot of their tasks comes first: " + request.prompt());
-        assertTrue(request.environment().get("PATH").startsWith(dir.resolve("assistant/bin/telegram-100").toString()));
-        String command = Files.readString(dir.resolve("assistant/bin/telegram-100/dispatch"));
+        assertTrue(request.environment().get("PATH").startsWith(dir.resolve("assistant-bin/telegram-100").toString()));
+        String command = Files.readString(dir.resolve("assistant-bin/telegram-100/dispatch"));
         assertTrue(command.contains("export DISPATCH_ASK_MEMBER='telegram:100'"), "the member's own dispatch ask: " + command);
         assertTrue(Files.readString(dir.resolve("assistant/CLAUDE.md")).contains("You propose, the owner decides"));
         assertTrue(Files.readString(dir.resolve("assistant/.claude/skills/taskmanager/SKILL.md")).contains("name: taskmanager"),
@@ -202,22 +202,57 @@ class AssistantTest {
     }
 
     @Test
-    void oneMembersMessagesAreAnsweredOneAtATimeInOrder() throws Exception {
+    void oneMembersMessagesAreAnsweredOneAtATimeInTheOrderWritten() throws Exception {
         agent.gate = new CountDownLatch(1);
         agent.answers.add(reply("нэг"));
         agent.answers.add(reply("хоёр"));
 
-        Thread first = Thread.ofVirtual().start(() -> assistant.answer(BOLD, "нэг", CHAT + "/1", CHAT));
-        assertTrue(agent.started.poll(5, TimeUnit.SECONDS) != null);
-        Thread second = Thread.ofVirtual().start(() -> assistant.answer(BOLD, "хоёр", CHAT + "/2", CHAT));
+        // Submitted back to back, as the poller does: the second must neither overtake nor overlap the first.
+        db.transaction(tx -> {
+            assistant.submit(tx, BOLD, "нэг", CHAT + "/1", CHAT);
+            assistant.submit(tx, BOLD, "хоёр", CHAT + "/2", CHAT);
+        });
 
+        assertEquals("нэг", agent.started.poll(5, TimeUnit.SECONDS).prompt().contains("нэг") ? "нэг" : "хоёр");
         assertEquals(null, agent.started.poll(300, TimeUnit.MILLISECONDS), "the second waits while the first runs");
         agent.gate.countDown();
-        first.join();
-        second.join();
+        assistant.awaitIdle();
         assertEquals(List.of("нэг", "хоёр"), SqlRows.query(dbFile, "SELECT payload FROM outbox WHERE kind = 'ASSISTANT_REPLY' ORDER BY id")
                 .stream().map(sent -> Json.read(sent.get("payload")).path("reply").asText()).toList());
         assertTrue(agent.requests.get(1).resume(), "and resumes the session the first one saved");
+    }
+
+    @Test
+    void newDuringARunningTurnIsNotUndoneByIt() throws Exception {
+        agent.gate = new CountDownLatch(1);
+        agent.answers.add(reply("нэг"));
+        agent.answers.add(reply("хоёр"));
+        db.transaction(tx -> assistant.submit(tx, BOLD, "нэг", CHAT + "/1", CHAT));
+        agent.started.poll(5, TimeUnit.SECONDS);
+
+        db.transaction(tx -> assistant.reset(tx, BOLD.ref()));
+        agent.gate.countDown();
+        assistant.awaitIdle();
+        agent.gate = null;
+        say("хоёр");
+
+        assertFalse(agent.requests.get(1).resume(), "the turn that was running when /new came does not bring its session back");
+    }
+
+    @Test
+    void aMessageStillWaitingWhenDispatchStopsIsOfferedAsADraft() throws Exception {
+        agent.gate = new CountDownLatch(1);
+        agent.answers.add(reply("нэг"));
+        db.transaction(tx -> {
+            assistant.submit(tx, BOLD, "нэг", CHAT + "/1", CHAT);
+            assistant.submit(tx, BOLD, "Export товч нэм", CHAT + "/2", CHAT);
+        });
+        agent.started.poll(5, TimeUnit.SECONDS);
+
+        assistant.stop(Duration.ofSeconds(5));
+
+        assertEquals("Export товч нэм", row("SELECT description FROM draft WHERE origin_ref = 'telegram:100/2'").get("description"),
+                "its update is already committed, so it must not be lost");
     }
 
     private void say(String text) {
@@ -293,6 +328,10 @@ class AssistantTest {
         @Override
         public void cancel() {
             cancelled.countDown();
+            if (gate != null) {
+                // A real agent ends when stopped, held or not.
+                gate.countDown();
+            }
         }
 
         @Override

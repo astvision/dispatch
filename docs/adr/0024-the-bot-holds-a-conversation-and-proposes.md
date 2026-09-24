@@ -19,7 +19,7 @@ The assistant runs with `--permission-mode dontAsk`, `--setting-sources project`
 `Read,Grep,Glob,Bash,Skill`, and one allowed Bash command, `dispatch ask *`: everything else is refused without asking.
 It reads the member's project clones (`--add-dir`) and, through `dispatch ask tasks` / `dispatch ask task N`, their
 tasks under the ADR 0020 rules. Who is asking is not the model's to choose: each member gets their own `dispatch`
-script in the home's `bin/`, first on the run's PATH, which sets the member, their projects and the state file itself
+script in `<stateDir>/assistant-bin/`, first on the run's PATH, which sets the member, their projects and the state file itself
 and runs only `ask`; a scope the model writes in front of the command is overwritten.
 
 Personal instances only: a team's machine never runs Claude Code (ADR 0021), so a team bot drafts as before.
@@ -33,6 +33,8 @@ We rejected:
 
 ## Consequences
 
+- Turn logs and the members' scripts live beside the home (`assistant-logs/`, `assistant-bin/`), not in it: every
+  member's session may read its home without asking.
 - `RunKind.ASSISTANT`, never stored as a run; migration 020 adds `assistant_session`, `assistant_turn` and
   `assistant_action`.
 - Approval needs a plan without open questions (ADR 0011): "answer and approve" becomes the answer now and the approval

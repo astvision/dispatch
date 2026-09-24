@@ -241,14 +241,15 @@ public final class App {
         scheduler.stop();
         sweeper.stop();
         splitter.stop();
-        if (assistant != null) {
-            assistant.stop();
-        }
         try {
             schedulerThread.join(Duration.ofSeconds(10));
             activeRuns.stopAll(ActiveRuns.StopReason.INTERRUPTED);
             if (!activeRuns.awaitIdle(STOP_TIMEOUT)) {
                 Log.warn("dispatch.runs_still_active", "waited_seconds", STOP_TIMEOUT.toSeconds());
+            }
+            if (assistant != null) {
+                // Before storage closes: messages it could not answer are offered as drafts.
+                assistant.stop(Duration.ofSeconds(10));
             }
             if (workerApi != null) {
                 // After runs are idle, so a worker still reporting a run's outcome during shutdown gets through first.

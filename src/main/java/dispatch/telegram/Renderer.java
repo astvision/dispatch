@@ -33,6 +33,9 @@ public final class Renderer {
     private static final int BUTTON_LIMIT = 40;
     /** Ten parts of this length still fit one message. */
     private static final int TOPIC_LIMIT = 300;
+    /** The assistant's reply and each of its (at most three) proposals, escaped; together well under 4096. */
+    private static final int ASSISTANT_REPLY_LIMIT = 2000;
+    private static final int ASSISTANT_ITEM_LIMIT = 500;
 
     /**
      * An inline button: either one that calls back with {@code data}, or one that opens the Mini App at
@@ -488,7 +491,8 @@ public final class Renderer {
         if (payload.path("new").asBoolean(false)) {
             return plain(text("assistant.new"));
         }
-        StringBuilder html = new StringBuilder(escapeWithin(payload.path("reply").asText(), SUMMARY_LIMIT));
+        // Sized so a reply with three spelled-out proposals and their notes stays within one message.
+        StringBuilder html = new StringBuilder(escapeWithin(payload.path("reply").asText(), ASSISTANT_REPLY_LIMIT));
         List<List<Button>> keyboard = new ArrayList<>();
         JsonNode actions = payload.path("actions");
         if (!actions.isEmpty()) {
@@ -497,8 +501,10 @@ public final class Renderer {
         int number = 1;
         for (JsonNode action : actions) {
             String type = action.path("type").asText();
-            boolean done = action.path("done").asBoolean(false);
-            html.append('\n').append(done ? "✔️ " : number + ". ").append(assistantAction(action));
+            // Taken: ✔️ when it was carried out, ✖️ when the task had moved on or it was not allowed.
+            String outcome = action.path("outcome").asText("");
+            boolean done = !outcome.isEmpty();
+            html.append('\n').append(!done ? number + ". " : outcome.equals("DONE") ? "✔️ " : "✖️ ").append(assistantAction(action));
             if (!done) {
                 String label = type.equals("draft") ? text("assistant.button.draft") : format("assistant.button." + type, taskId(action));
                 keyboard.add(List.of(new Button(label("✅ " + number + ". " + label), "as:" + action.path("id").asLong())));
@@ -517,8 +523,9 @@ public final class Renderer {
             case "draft" -> format("assistant.item.draft", title,
                     action.hasNonNull("project") ? " (" + escape(action.get("project").asText()) + ")" : "");
             case "answer" -> format("assistant.item.answer", taskId(action), action.path("question").asInt(),
-                    escapeWithin(action.path("answer").asText(), DETAIL_LIMIT));
-            case "followUp" -> format("assistant.item.followUp", taskId(action), escapeWithin(action.path("text").asText(), DETAIL_LIMIT));
+                    escapeWithin(action.path("answer").asText(), ASSISTANT_ITEM_LIMIT));
+            case "followUp" -> format("assistant.item.followUp", taskId(action),
+                    escapeWithin(action.path("text").asText(), ASSISTANT_ITEM_LIMIT));
             default -> format("assistant.item." + action.path("type").asText(), taskId(action), title);
         };
     }

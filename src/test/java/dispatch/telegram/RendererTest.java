@@ -616,10 +616,27 @@ class RendererTest {
                 List.of(new Renderer.Button("✅ 2. Даалгавар үүсгэх", "as:6"))), rendered.keyboard());
 
         ObjectNode tapped = assistantPayload();
-        ((ObjectNode) tapped.withArray("actions").get(0)).put("done", true);
+        ((ObjectNode) tapped.withArray("actions").get(0)).put("outcome", "DONE");
         Renderer.Rendered redrawn = renderer.render(OutboxKind.ASSISTANT_REPLY, tapped);
         assertTrue(redrawn.html().contains("✔️ 💬 #12"), "a carried-out proposal is marked: " + redrawn.html());
         assertEquals(List.of(List.of(new Renderer.Button("✅ 2. Даалгавар үүсгэх", "as:6"))), redrawn.keyboard(), "and loses its button");
+        ((ObjectNode) tapped.withArray("actions").get(0)).put("outcome", "STALE");
+        assertTrue(renderer.render(OutboxKind.ASSISTANT_REPLY, tapped).html().contains("✖️ 💬 #12"), "one that did nothing is not ticked");
+    }
+
+    @Test
+    void theLongestAssistantReplyStillFitsOneMessage() {
+        String longest = "ы<".repeat(3000);
+        ObjectNode payload = Json.object().put("reply", longest);
+        for (int id = 1; id <= 3; id++) {
+            payload.withArray("actions").add(Json.object().put("id", id).put("type", "followUp").put("taskId", 123456).put("title", longest)
+                    .put("text", longest));
+        }
+        for (int note = 0; note < 3; note++) {
+            payload.withArray("notes").add(Json.object().put("type", "approve").put("taskId", 123456).put("reason", "openQuestions"));
+        }
+
+        assertTrue(renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html().length() <= 4096);
     }
 
     @Test

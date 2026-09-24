@@ -49,13 +49,24 @@ public final class AssistantHome {
 
     /** The running JVM's own home: this process's java and class path, and {@code environment}'s PATH. */
     public static AssistantHome of(Path stateDir, Map<String, String> environment) {
-        String java = ProcessHandle.current().info().command().orElse("java");
-        return new AssistantHome(stateDir.resolve("assistant"), stateDir.resolve("dispatch.db"), java,
-                System.getProperty("java.class.path"), environment.getOrDefault("PATH", "/usr/bin:/bin"));
+        String javaCommand = ProcessHandle.current().info().command().orElse("java");
+        // Absolute, since the member's command runs from the home: a relative jar path (java -jar dispatch.jar) would not resolve.
+        String classPath = java.util.Arrays.stream(System.getProperty("java.class.path").split(java.io.File.pathSeparator))
+                .map(entry -> Path.of(entry).toAbsolutePath().toString()).collect(java.util.stream.Collectors.joining(java.io.File.pathSeparator));
+        return new AssistantHome(stateDir.resolve("assistant"), stateDir.resolve("dispatch.db"), javaCommand, classPath,
+                environment.getOrDefault("PATH", "/usr/bin:/bin"));
     }
 
     public Path dir() {
         return dir;
+    }
+
+    /**
+     * Where each turn's raw output goes: beside the home, not in it, because every member's session may read its home
+     * without asking, and these logs hold other members' conversations. ponytail: never pruned; a sweep if they grow.
+     */
+    public Path logsDir() {
+        return dir.resolveSibling("assistant-logs");
     }
 
     /** Writes CLAUDE.md and the skill over whatever an older Dispatch left there. */
@@ -70,7 +81,8 @@ public final class AssistantHome {
      * Written on each turn, so the projects they see follow the config.
      */
     public Map<String, String> environmentFor(String memberRef, Set<String> visibleProjects) {
-        Path bin = dir.resolve("bin").resolve(memberRef.replaceAll("[^A-Za-z0-9-]", "-"));
+        // Outside the home too, for the same reason: each member's command names the projects they see.
+        Path bin = dir.resolveSibling("assistant-bin").resolve(memberRef.replaceAll("[^A-Za-z0-9-]", "-"));
         Path command = bin.resolve("dispatch");
         write(command, """
                 #!/bin/sh

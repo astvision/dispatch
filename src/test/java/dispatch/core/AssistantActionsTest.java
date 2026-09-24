@@ -113,6 +113,27 @@ class AssistantActionsTest {
     }
 
     @Test
+    void onlyTheCurrentQuestionIsAnsweredAndNeverWithMoreTextThanTheReplyShows() {
+        long taskId = planned(ALI, twoQuestions());
+
+        assertEquals("order", reason(check(ALI, Json.object().put("type", "answer").put("task", taskId).put("question", 2).put("option", 1))),
+                "the chat asks one question at a time");
+        assertEquals("tooLong", reason(check(ALI, Json.object().put("type", "answer").put("task", taskId).put("question", 1)
+                .put("text", "x".repeat(AssistantActions.SHOWN_TEXT + 1)))), "the member confirms only what they can read");
+    }
+
+    @Test
+    void aTapThatFoundTheTaskMovedOnIsRecordedAsSuch() {
+        long taskId = planned(ALI, noQuestions());
+        long id = propose(ALI, check(ALI, Json.object().put("type", "approve").put("task", taskId)));
+        db.transaction(tx -> tasks.reject(tx, ALI, taskId, 1));
+
+        run(ALI, id);
+
+        assertEquals("STALE", SqlRows.single(dbFile, "SELECT outcome FROM assistant_action WHERE id = ?", id).get("outcome"));
+    }
+
+    @Test
     void aPlanWithOpenQuestionsIsNotProposedForApproval() {
         long taskId = planned(ALI, twoQuestions());
 

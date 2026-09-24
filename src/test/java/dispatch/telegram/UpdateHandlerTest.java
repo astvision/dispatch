@@ -1859,6 +1859,8 @@ class UpdateHandlerTest {
                 .toList());
     }
 
+    private dispatch.core.Assistant lastAssistant;
+
     /** A handler whose assistant answers every turn with {@code answer}, recording each run it was asked for (A-1). */
     private UpdateHandler assistantHandler(List<dispatch.agent.RunRequest> asked, JsonNode answer) {
         dispatch.agent.Agent agent = request -> {
@@ -1890,6 +1892,7 @@ class UpdateHandlerTest {
         home.install();
         dispatch.core.Assistant assistant = new dispatch.core.Assistant(db, tasks, actions, groups, projects, agent, home,
                 project -> Optional.empty(), clock, Duration.ofSeconds(5), chatRef -> { }, () -> { });
+        lastAssistant = assistant;
         return new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, FakeTelegram.BOT_USERNAME, clock,
                 () -> { }, null, null, null, null, assistant, actions);
     }
@@ -1952,6 +1955,7 @@ class UpdateHandlerTest {
                 {"message_id":2000,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":100,"type":"private"},
                  "date":1789640000,"text":"plan"}"""));
 
+        lastAssistant.awaitIdleForTests();
         assertEquals("2", row("SELECT count(*) AS n FROM draft").get("n"), "/task and a message with files draft directly");
         assertEquals("Also cover the mobile login", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction"));
         assertTrue(asked.isEmpty(), "none of them reached the assistant");

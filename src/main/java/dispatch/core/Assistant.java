@@ -30,15 +30,18 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
  * The bot's assistant (A-1): a member's plain private message is answered by a Claude Code session of their own, which
  * reads their tasks and code and proposes actions they confirm with a tap. Each message is one turn, run on its own
- * virtual thread outside any transaction; one member's turns run one at a time, in order, so their session is never
- * resumed twice at once. A turn that fails offers the message as a task draft instead, so nothing is lost.
+ * virtual thread outside any transaction; one member's turns run one at a time, in the order written, from a queue of
+ * their own, so their session is never resumed twice at once. A turn that fails offers the message as a task draft instead, so nothing is lost.
  */
 public final class Assistant {
 
@@ -64,7 +67,10 @@ public final class Assistant {
     private final Duration timeout;
     private final Consumer<String> typing;
     private final Runnable wakeOutbox;
-    private final Map<String, ReentrantLock> turns = new ConcurrentHashMap<>();
+    /** One queue per member: their messages are answered one at a time, in the order they were written. */
+    private final Map<String, ExecutorService> turns = new ConcurrentHashMap<>();
+    /** Bumped by /new, so a turn still running then does not put back the session it started with. */
+    private final Map<String, AtomicLong> generations = new ConcurrentHashMap<>();
     private final Set<RunHandle> running = ConcurrentHashMap.newKeySet();
     private volatile boolean stopped;
 
@@ -97,43 +103,75 @@ public final class Assistant {
      * @param chatRef   their private chat
      */
     public void submit(Tx tx, Requester who, String text, String originRef, String chatRef) {
-        tx.afterCommit(() -> Thread.ofVirtual().name("assistant-" + who.ref()).start(() -> answer(who, text, originRef, chatRef)));
+        // Queued from the poller's one thread, after commit, so the queue holds the member's messages in order.
+        tx.afterCommit(() -> queueOf(who.ref()).execute(() -> answer(who, text, originRef, chatRef)));
     }
 
-    /** /new: the member's next message starts a fresh session. */
+    /** /new: the member's next message starts a fresh session, even while a turn is still running. */
     public void reset(Tx tx, String memberRef) {
         Conversations.forgetSession(tx, memberRef);
+        generation(memberRef).incrementAndGet();
     }
 
-    /** Stops running turns without recording anything, since storage is about to close. */
-    public void stop() {
+    /**
+     * Stops running turns and answers each message still waiting as a failed turn, so it is offered as a draft rather
+     * than lost: its update is already committed. Returns once they are recorded, or after {@code timeout}.
+     */
+    public void stop(Duration timeout) {
         stopped = true;
         running.forEach(RunHandle::cancel);
-    }
-
-    /** One turn, on the calling thread, after the member's earlier turns. */
-    void answer(Requester who, String text, String originRef, String chatRef) {
-        ReentrantLock lock = turns.computeIfAbsent(who.ref(), ref -> new ReentrantLock(true));
-        lock.lock();
-        try {
-            if (stopped) {
+        turns.values().forEach(ExecutorService::shutdown);
+        Instant deadline = Instant.now().plus(timeout);
+        for (ExecutorService queue : turns.values()) {
+            try {
+                if (!queue.awaitTermination(Math.max(0, Duration.between(Instant.now(), deadline).toMillis()), TimeUnit.MILLISECONDS)) {
+                    Log.warn("assistant.turns_still_running", "waited_seconds", timeout.toSeconds());
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 return;
             }
-            Consumer<Tx> outcome = turn(who, text, originRef, chatRef);
-            if (!stopped) {
-                db.transaction(outcome);
-            }
+        }
+    }
+
+    /** Waits until every message submitted so far is answered; for tests in other packages. */
+    public void awaitIdleForTests() throws Exception {
+        awaitIdle();
+    }
+
+    /** Waits until every message submitted so far is answered; for tests. */
+    void awaitIdle() throws Exception {
+        for (ExecutorService queue : List.copyOf(turns.values())) {
+            queue.submit(() -> { }).get(30, TimeUnit.SECONDS);
+        }
+    }
+
+    private ExecutorService queueOf(String memberRef) {
+        return turns.computeIfAbsent(memberRef,
+                ref -> Executors.newSingleThreadExecutor(Thread.ofVirtual().name("assistant-" + ref).factory()));
+    }
+
+    private AtomicLong generation(String memberRef) {
+        return generations.computeIfAbsent(memberRef, ref -> new AtomicLong());
+    }
+
+    /** One turn, on the calling thread. */
+    void answer(Requester who, String text, String originRef, String chatRef) {
+        try {
+            Consumer<Tx> outcome = stopped
+                    ? tx -> failed(tx, who, text, originRef, chatRef, List.of(), "Dispatch stopped before answering")
+                    : turn(who, text, originRef, chatRef);
+            db.transaction(outcome);
         } catch (RuntimeException e) {
             // Storage itself is failing; the message is not answered, and the log says why.
             Log.error("assistant.not_recorded", e, "member", who.ref());
-        } finally {
-            lock.unlock();
         }
     }
 
     /** What the turn ended with, to record in one transaction. */
     private Consumer<Tx> turn(Requester who, String text, String originRef, String chatRef) {
         Instant started = clock.instant();
+        long generation = generation(who.ref()).get();
         Set<String> visible = groups.projectsOfMember(who.ref());
         record Context(Optional<UUID> session, String snapshot) {
         }
@@ -152,7 +190,7 @@ public final class Assistant {
                 output = ask(who, session, true, ESCALATED_MODEL, Prompts.assistantEscalated(), visible, environment, spent);
             }
             JsonNode answer = output;
-            return tx -> answered(tx, who, session, answer, originRef, chatRef, spent);
+            return tx -> answered(tx, who, generation, session, answer, originRef, chatRef, spent);
         } catch (TurnFailed e) {
             return tx -> failed(tx, who, text, originRef, chatRef, spent, e.getMessage());
         } catch (RuntimeException e) {
@@ -171,7 +209,7 @@ public final class Assistant {
                          Map<String, String> environment, List<Spent> spent) throws TurnFailed {
         List<Path> clones = visible.stream().sorted().map(cloneOf).flatMap(Optional::stream).toList();
         RunRequest request = new RunRequest(RunKind.ASSISTANT, home.dir(), prompt, session, resume, clones, null, model, null,
-                home.dir().resolve("logs").resolve(who.ref().replaceAll("[^A-Za-z0-9-]", "-") + "-" + clock.millis()), environment);
+                home.logsDir().resolve(who.ref().replaceAll("[^A-Za-z0-9-]", "-") + "-" + clock.millis()), environment);
         RunHandle handle;
         try {
             handle = agent.start(request);
@@ -225,9 +263,12 @@ public final class Assistant {
         return output;
     }
 
-    private void answered(Tx tx, Requester who, UUID session, JsonNode output, String originRef, String chatRef, List<Spent> spent) {
+    private void answered(Tx tx, Requester who, long generation, UUID session, JsonNode output, String originRef, String chatRef,
+                          List<Spent> spent) {
         Instant now = clock.instant();
-        Conversations.saveSession(tx, who.ref(), session, now);
+        if (generation(who.ref()).get() == generation) {
+            Conversations.saveSession(tx, who.ref(), session, now);
+        }
         spent.forEach(turn -> Conversations.recordTurn(tx, who.ref(), turn.model(), turn.costUsd(), now));
         ObjectNode payload = Json.object().put("reply", output.path("reply").asText().strip());
         ArrayNode proposed = payload.putArray("actions");

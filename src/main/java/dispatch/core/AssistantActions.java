@@ -6,9 +6,11 @@ import dispatch.Json;
 import dispatch.config.Config;
 import dispatch.domain.Phase;
 import dispatch.domain.Requester;
+import dispatch.domain.RunKind;
 import dispatch.domain.Task;
 import dispatch.store.Conversations;
 import dispatch.store.Outbox;
+import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
 import java.time.Clock;
@@ -36,6 +38,9 @@ public final class AssistantActions {
         STALE,
         NOT_ALLOWED
     }
+
+    /** What a reply shows of an answer or a follow-up; a longer one is refused, so the member confirms all of it. */
+    static final int SHOWN_TEXT = 400;
 
     private final TaskService tasks;
     private final Groups groups;
@@ -75,7 +80,7 @@ public final class AssistantActions {
             case "approve", "reject" -> decision(tx, task, type, payload);
             case "cancel" -> task.phase().isActive() ? new Checked(true, payload) : note(payload, "phase");
             case "retry" -> task.phase() == Phase.FAILED ? new Checked(true, payload) : note(payload, "phase");
-            case "followUp" -> followUp(task, action, payload);
+            case "followUp" -> followUp(tx, task, action, payload);
             default -> note(payload, "unknown");
         };
     }
@@ -91,7 +96,12 @@ public final class AssistantActions {
         if (taken.isEmpty()) {
             return Outcome.USED;
         }
-        JsonNode action = taken.get();
+        Outcome outcome = carryOut(tx, who, taken.get(), actionId, messageRef, chatRef);
+        Conversations.recordOutcome(tx, actionId, outcome.name());
+        return outcome;
+    }
+
+    private Outcome carryOut(Tx tx, Requester who, JsonNode action, long actionId, String messageRef, String chatRef) {
         long taskId = action.path("taskId").asLong();
         int planSeq = action.path("planSeq").asInt();
         return switch (action.path("type").asText()) {
@@ -162,6 +172,12 @@ public final class AssistantActions {
         if (!question.path("answer").isNull()) {
             return note(payload, "answered");
         }
+        // The chat asks one question at a time; answering a later one first would ask the current one again.
+        for (JsonNode earlier : plan.get().withArray("questions")) {
+            if (earlier.path("index").asInt() < index && earlier.path("answer").isNull()) {
+                return note(payload, "order");
+            }
+        }
         payload.put("planSeq", plan.get().path("planSeq").asInt()).put("question", index);
         JsonNode options = question.path("options");
         int option = action.path("option").asInt(0);
@@ -172,7 +188,11 @@ public final class AssistantActions {
             return new Checked(true, payload.put("answer", youDecide));
         }
         String text = action.path("text").asText("").strip();
-        return text.isEmpty() ? note(payload, "empty") : new Checked(true, payload.put("answer", text));
+        return text.isEmpty() ? note(payload, "empty") : shown(text) ? new Checked(true, payload.put("answer", text)) : note(payload, "tooLong");
+    }
+
+    private static boolean shown(String text) {
+        return text.codePointCount(0, text.length()) <= SHOWN_TEXT;
     }
 
     /** Approval needs a plan without open questions: answering them makes the agent plan again, and that plan is approved. */
@@ -191,12 +211,17 @@ public final class AssistantActions {
         return new Checked(true, payload.put("planSeq", plan.get().path("planSeq").asInt()));
     }
 
-    private static Checked followUp(Task task, JsonNode action, ObjectNode payload) {
+    /** A follow-up continues the task's building session, so the task must have got as far as execution. */
+    private static Checked followUp(Tx tx, Task task, JsonNode action, ObjectNode payload) {
         String text = action.path("text").asText("").strip();
-        if (task.phase() != Phase.COMPLETED && task.phase() != Phase.FAILED) {
+        boolean finished = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED;
+        if (!finished || !Runs.agentStartedBefore(tx, task.id(), RunKind.EXECUTE, Integer.MAX_VALUE)) {
             return note(payload, "phase");
         }
-        return text.isEmpty() ? note(payload, "empty") : new Checked(true, payload.put("text", text));
+        if (text.isEmpty()) {
+            return note(payload, "empty");
+        }
+        return shown(text) ? new Checked(true, payload.put("text", text)) : note(payload, "tooLong");
     }
 
     private Outcome answered(Tx tx, Requester who, JsonNode action, long taskId, int planSeq, String messageRef, String chatRef) {

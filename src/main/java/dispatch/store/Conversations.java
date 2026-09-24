@@ -60,12 +60,21 @@ public final class Conversations {
         return action;
     }
 
-    /** Of {@code ids}, the actions already taken; their buttons are gone once the reply is redrawn. */
-    public static java.util.Set<Long> taken(Tx tx, java.util.List<Long> ids) {
+    /** How a taken action ended. */
+    public static void recordOutcome(Tx tx, long id, String outcome) {
+        tx.update("UPDATE assistant_action SET outcome = ? WHERE id = ?", outcome, id);
+    }
+
+    /** Of {@code ids}, the actions already taken, with how each ended; their buttons are gone once the reply is redrawn. */
+    public static java.util.Map<Long, String> outcomes(Tx tx, java.util.List<Long> ids) {
         if (ids.isEmpty()) {
-            return java.util.Set.of();
+            return java.util.Map.of();
         }
-        return java.util.Set.copyOf(tx.list("SELECT id FROM assistant_action WHERE used_at IS NOT NULL AND id IN (" + Tx.placeholders(ids.size()) + ")",
-                row -> row.longValue("id"), ids.toArray()));
+        java.util.Map<Long, String> taken = new java.util.HashMap<>();
+        tx.list("SELECT id, outcome FROM assistant_action WHERE used_at IS NOT NULL AND id IN (" + Tx.placeholders(ids.size()) + ")",
+                        row -> java.util.Map.entry(row.longValue("id"), row.string("outcome") == null ? "DONE" : row.string("outcome")),
+                        ids.toArray())
+                .forEach(entry -> taken.put(entry.getKey(), entry.getValue()));
+        return taken;
     }
 }
