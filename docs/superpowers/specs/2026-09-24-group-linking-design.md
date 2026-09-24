@@ -47,7 +47,7 @@ When the bot is added to a group whose chat id is in no configured group (`my_ch
   The prompt goes to the adder's private chat; if Telegram refuses it (they never pressed Start), the bot leaves.
 - **Added by anyone else:** the bot leaves, as today.
 
-A project button (`link:<chatId>:<project>`) writes the config under `ConfigFile.edit`'s lock and validates it:
+A project button (`link:<chatId>:<index>`) writes the config under `ConfigFile.edit`'s lock and validates it:
 
 1. If the project's current group has no chat and holds only this project, set that group's `chatId`.
 2. Otherwise move the project: remove it from its current group's `projects`, and append a new group named after the
@@ -104,7 +104,7 @@ group's `chatId` to the new id and replaces its groups, instead of logging an er
 |---|---|
 | A personal config with group chats and no `workers` loads; a team config with a chat still needs `workers` | `ConfigLoaderTest` |
 | The owner adding the bot gets the prompt and the bot stays; anyone else adding it makes it leave | `UpdateHandlerTest` |
-| Linking sets `chatId` in place, or moves the project into a new group, or appends to the chat's group; the file stays valid and keeps its comments | `GroupLinkerTest` |
+| Linking sets `chatId` in place, or moves the project into a new group, or appends to the chat's group; the file stays valid and keeps its comments | `GroupWriterTest` |
 | After linking, the next task's announcement reaches the group, with no restart | end to end, `FakeTelegram` |
 | A migrated chat id is rewritten | `UpdateHandlerTest` |
 | Groups list and unlink | `ManageApiTest`, Mini App tests |
