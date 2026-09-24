@@ -1,0 +1,39 @@
+{
+  "skill_name": "taskmanager",
+  "snapshot": {"now": "2026-09-25T10:00:00Z",
+    "awaitingApproval": [{"taskId": 12, "project": "life", "title": "Login timeout-г тохируулдаг болгох", "priority": "NORMAL", "mine": true, "openQuestions": 1, "question": "Аль орчинд?"}],
+    "running": [{"taskId": 14, "project": "autoland-management", "title": "Тайлангийн нэрийг солих", "kind": "EXECUTE", "mine": true, "lastAction": "Edit: report.py"}],
+    "queued": [{"taskId": 15, "project": "autoland-management", "title": "Export товч нэмэх", "kind": "PLAN", "mine": true}],
+    "projects": [{"name": "life", "alias": null}, {"name": "autoland-management", "alias": "alm"}]},
+  "evals": [
+    {"id": 1, "name": "status-question-is-no-task", "prompt": "юу хийгдэж байна?",
+     "expected_output": "Answers from the snapshot, naming #14 running and #12 waiting; proposes nothing.",
+     "assertions": [{"text": "proposes no action", "check": "no_actions"}, {"text": "mentions #12 and #14", "check": "reply_mentions", "values": ["12", "14"]}]},
+    {"id": 2, "name": "request-becomes-draft-in-named-project", "prompt": "life-д дасгалын тэмдэглэл хөтлөх хуудас нэм",
+     "expected_output": "Proposes one draft for project life with the request as text.",
+     "assertions": [{"text": "exactly one draft", "check": "action_types", "values": ["draft"]}, {"text": "draft project is life", "check": "draft_project", "values": ["life"]}]},
+    {"id": 3, "name": "project-by-alias", "prompt": "alm дээр login хуудасны алдааны мессежийг монгол болго",
+     "expected_output": "Draft for autoland-management, named through its alias alm.",
+     "assertions": [{"text": "exactly one draft", "check": "action_types", "values": ["draft"]}, {"text": "draft project is autoland-management (or its alias)", "check": "draft_project", "values": ["autoland-management", "alm"]}]},
+    {"id": 4, "name": "answer-is-proposed-not-claimed", "prompt": "#12-ийн асуултад эхний сонголтоор хариулаад зөвшөөр",
+     "expected_output": "Reads #12, proposes answer question 1 option 1; does not propose approve (open question), explains a new plan comes; never claims it answered.",
+     "assertions": [{"text": "proposes answering #12 question 1 with option 1", "check": "has_answer", "values": [12, 1, 1]}, {"text": "does not propose approving a plan with an open question", "check": "no_type", "values": ["approve"]}, {"text": "does not claim it was done", "check": "no_claim"}]},
+    {"id": 5, "name": "ambiguous-task-asks-first", "prompt": "тэр даалгаврыг цуцал",
+     "expected_output": "Several tasks fit, so it asks which one and proposes nothing.",
+     "assertions": [{"text": "proposes no action", "check": "no_actions"}, {"text": "asks a question", "check": "asks"}]},
+    {"id": 6, "name": "clear-cancel", "prompt": "#15-г цуцал, хэрэггүй болсон",
+     "expected_output": "Proposes cancel #15 without claiming it happened.",
+     "assertions": [{"text": "proposes cancelling #15", "check": "has_task_action", "values": ["cancel", 15]}, {"text": "does not claim it was done", "check": "no_claim"}]},
+    {"id": 7, "name": "small-talk", "prompt": "баярлалаа, сайн ажиллаж байна шүү",
+     "expected_output": "Short friendly reply, no actions.",
+     "assertions": [{"text": "proposes no action", "check": "no_actions"}]},
+    {"id": 8, "name": "unknown-project-asks", "prompt": "crm төсөлд хэрэглэгчийн жагсаалт экспортлох боломж нэм",
+     "expected_output": "crm is not one of the owner's projects: asks which project (or proposes a draft without project), never invents crm.",
+     "assertions": [{"text": "never uses a project the owner does not have", "check": "no_invented_project"}]}
+  ],
+  "ask_fixtures": {
+    "task 12": {"taskId": 12, "project": "life", "title": "Login timeout-г тохируулдаг болгох", "phase": "AWAITING_APPROVAL", "mine": true,
+      "plan": {"planSeq": 1, "understanding": "Login timeout-г тохиргооноос уншдаг болгоно", "steps": ["auth.yaml-д timeout нэмэх"], "risks": [],
+        "questions": [{"index": 1, "text": "Аль орчинд?", "options": ["staging", "prod"], "answer": null}]}, "runs": []}
+  }
+}

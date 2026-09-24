@@ -122,8 +122,8 @@ public final class ClaudeCodeAgent implements Agent {
             case EXECUTE -> args.addAll(List.of("--tools", "Read,Edit,Write,Bash",
                     "--disallowedTools", "Bash(git commit *)", "Bash(git push *)", "Bash(gh *)"));
             case SPLIT -> args.addAll(List.of("--tools", "", "--json-schema", SPLIT_SCHEMA, "--system-prompt", SPLIT_SYSTEM_PROMPT));
-            // Reads code and asks for tasks, nothing else; --allowedTools takes every following argument too, so it is last.
-            case ASSISTANT -> args.addAll(List.of("--tools", "Read,Grep,Glob,Bash", "--json-schema", ASSISTANT_SCHEMA,
+            // Reads code, asks for tasks and loads its taskmanager skill (A-1), nothing else; --allowedTools takes every following argument too, so it is last.
+            case ASSISTANT -> args.addAll(List.of("--tools", "Read,Grep,Glob,Bash,Skill", "--json-schema", ASSISTANT_SCHEMA,
                     "--allowedTools", ASSISTANT_BASH));
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
         }

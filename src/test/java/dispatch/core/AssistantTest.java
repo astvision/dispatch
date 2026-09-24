@@ -98,6 +98,8 @@ class AssistantTest {
         String command = Files.readString(dir.resolve("assistant/bin/telegram-100/dispatch"));
         assertTrue(command.contains("export DISPATCH_ASK_MEMBER='telegram:100'"), "the member's own dispatch ask: " + command);
         assertTrue(Files.readString(dir.resolve("assistant/CLAUDE.md")).contains("You propose, the owner decides"));
+        assertTrue(Files.readString(dir.resolve("assistant/.claude/skills/taskmanager/SKILL.md")).contains("name: taskmanager"),
+                "the home carries its taskmanager skill");
         Map<String, String> sent = row("SELECT kind, chat_ref, reply_to_ref, payload FROM outbox WHERE kind = 'ASSISTANT_REPLY'");
         assertEquals(CHAT, sent.get("chat_ref"));
         assertEquals(CHAT + "/1", sent.get("reply_to_ref"));

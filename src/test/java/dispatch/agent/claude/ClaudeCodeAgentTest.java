@@ -112,7 +112,7 @@ class ClaudeCodeAgentTest {
         assertEquals("dontAsk", valueAfter(args, "--permission-mode"), "anything not allowed is refused without asking");
         assertEquals("project", valueAfter(args, "--setting-sources"));
         assertTrue(args.contains("--strict-mcp-config"), args.toString());
-        assertEquals("Read,Grep,Glob,Bash", valueAfter(args, "--tools"));
+        assertEquals("Read,Grep,Glob,Bash,Skill", valueAfter(args, "--tools"));
         assertEquals(List.of("Bash(dispatch ask *)"), args.subList(args.indexOf("--allowedTools") + 1, args.size()),
                 "the one allowed command, last because the flag takes every argument after it");
         assertTrue(valueAfter(args, "--json-schema").contains("\"actions\""), args.toString());
