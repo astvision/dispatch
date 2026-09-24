@@ -1,34 +1,17 @@
-import { Alert, Button, Card, Popconfirm, Space, Table, Typography } from "antd";
+import { Button, Card, Popconfirm, Space, Table, Typography } from "antd";
 import { useState } from "react";
-import { addProject, editProject, probeProject, removeProject, type ManagedProject, type PhaseChoice, type ProjectView } from "../api";
-import FolderBrowser from "../setup/FolderBrowser";
-import { useAction } from "../useAction";
+import { addProject, editProject, removeProject, type ManagedProject, type PhaseChoice } from "../api";
+import AddProject from "./AddProject";
 import ManagedPage from "./ManagedPage";
-import ProjectForm from "./ProjectForm";
+import ProjectForm, { fieldsOf } from "./ProjectForm";
 import { useManagedConfig } from "./useManagedConfig";
 
 const phaseText = (phase: PhaseChoice | null) => (phase ? [phase.model, phase.effort].filter(Boolean).join(", ") : "");
-
-function fieldsOf(project: ManagedProject) {
-  return { name: project.name, baseBranch: project.baseBranch, alias: project.alias, model: project.model, effort: project.effort,
-    plan: project.plan, execute: project.execute };
-}
 
 export default function ProjectsPage() {
   const { config, loadError, reload, save, saving, saveError, saved } = useManagedConfig();
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [probe, setProbe] = useState<ProjectView | null>(null);
-  const probing = useAction();
-
-  const pick = async (folder: string) => {
-    const found = await probing.run(() => probeProject(folder));
-    if (found) setProbe(found);
-  };
-  const stopAdding = () => {
-    setAdding(false);
-    setProbe(null);
-  };
 
   return (
     <ManagedPage title="the projects" config={config} loadError={loadError} saveError={saveError} saved={saved} reload={reload}>
@@ -67,24 +50,13 @@ export default function ProjectsPage() {
                              }} />
               </Card>
             )}
-            {adding && !probe && (
-              <Card title="Choose a clone" extra={<Button onClick={stopAdding}>Cancel</Button>}>
-                <FolderBrowser onPick={(folder) => void pick(folder)} />
-                {probing.error && <Alert type="error" showIcon message={probing.error.message} style={{ marginTop: 12 }} />}
-              </Card>
-            )}
-            {adding && probe && (
-              <Card title={probe.folder}>
-                {probe.originHadCredentials && <Alert type="warning" showIcon style={{ marginBottom: 12 }}
-                                                      message="origin's URL holds credentials; it is not copied into the config" />}
-                <ProjectForm initial={{ name: probe.name, baseBranch: probe.baseBranch ?? "", alias: null, model: null, effort: null,
-                                        plan: null, execute: null }}
-                             nameEditable groups={current.groups.map((group) => group.name)} busy={saving} submitLabel="Add project"
-                             onCancel={stopAdding}
-                             onSubmit={async (fields, group) => {
-                               if (await save((version) => addProject(version, probe.folder, group, fields))) stopAdding();
-                             }} />
-              </Card>
+            {adding && (
+              <AddProject groups={current.groups.map((group) => group.name)} busy={saving} onCancel={() => setAdding(false)}
+                          onAdd={async (folder, group, fields) => {
+                            const added = await save((version) => addProject(version, folder, group, fields));
+                            if (added) setAdding(false);
+                            return added;
+                          }} />
             )}
           </>
         );

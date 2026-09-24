@@ -66,7 +66,7 @@ which a browser never sends — the script that reads it has to run first; those
 themselves.
 
 The bot token, the secrets file, the setup routes and replacing the token are not reachable from this port. A member
-reaches their own tasks; only an admin (or a personal bot's one member) reaches the management pages and the group's
+reaches their own tasks and the names, aliases and base branches of their own groups' projects; only an admin (or a personal bot's one member) reaches the management pages and the group's
 tasks, and another member's task shows only its headline. `dispatch check` reports whether the Mini App is off, and
 whether its public URL reaches this Dispatch.
 

@@ -171,7 +171,7 @@ public final class App {
         UiServer miniApp = null;
         if (config.miniApp() != null) {
             try {
-                miniApp = dispatch.ui.MiniApp.start(config, configFile, db, tasks, groups, BotApi::create, environment, clock, "/ui")
+                miniApp = dispatch.ui.MiniApp.start(config, configFile, db, tasks, groups, botUsername, BotApi::create, environment, clock, "/ui")
                         .orElse(null);
             } catch (java.io.IOException e) {
                 throw new IllegalStateException("cannot listen on 127.0.0.1:" + config.miniApp().port()

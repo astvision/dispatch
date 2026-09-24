@@ -150,8 +150,11 @@ listens only on the machine it runs on. Anyone with its link can act as you, lik
 
 ### Manage it from Telegram
 
-The same pages open inside Telegram: send `/manage` to the bot and tap the button it answers with, so members follow their tasks
-from a phone. It is **off unless you turn it on**, and turning it on puts a shell-equivalent API on the internet: read
+The same pages open inside Telegram: send `/manage` to the bot and tap the button it answers with. It opens on the
+bot's projects, laid out like BotFather's: search, then a row per project. Tap one for its tasks and, for an admin, a row
+per setting (base branch, alias, model and effort, per phase), each changed on its own screen, and Remove. Admins also
+get **Add a project**, the group's tasks, and the People, Settings, Logs and Overview pages; a member gets their groups'
+projects and their own tasks. A saved change says to restart until you do, from any screen. It is **off unless you turn it on**, and turning it on puts a shell-equivalent API on the internet: read
 [SECURITY.md](SECURITY.md) first.
 
 Publish one `https://` address that forwards to a local port — a Cloudflare Tunnel, a Tailscale Funnel or a reverse

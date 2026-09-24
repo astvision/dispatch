@@ -281,6 +281,15 @@ export interface Me {
   ref: string;
   name: string;
   admin: boolean;
+  /** The bot's own @username, without the @. */
+  bot: string;
+}
+
+/** A project of the viewer's own groups, as the Mini App's home lists it. */
+export interface ProjectSummary {
+  name: string;
+  alias: string | null;
+  baseBranch: string;
 }
 
 export type TaskState = "running" | "queued" | "awaitingApproval" | "finished";
@@ -340,6 +349,7 @@ export interface Timeline {
 }
 
 export const getMe = (signal?: AbortSignal) => get<Me>("/api/me", signal);
+export const listProjects = (signal?: AbortSignal) => get<{ projects: ProjectSummary[] }>("/api/projects", signal);
 export const listTasks = (scope: "me" | "group", signal?: AbortSignal) =>
   post<{ tasks: TaskRow[] }>("/api/tasks/list", { scope }, signal);
 export const taskTimeline = (taskId: number, signal?: AbortSignal) => post<Timeline>("/api/tasks/timeline", { taskId }, signal);

@@ -13,9 +13,13 @@ import dispatch.ui.UiServer.Caller;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -37,10 +41,11 @@ public final class MiniApp {
      * refusing to start the bot over a missing web UI would stop tasks running for the sake of a page.
      *
      * @param configFile   where the management pages read and save the config
+     * @param botUsername  the bot's own @username, which the Mini App's header names
      * @param resourceRoot the classpath folder of the bundled pages, "/ui" in the release jar
      */
     public static Optional<UiServer> start(Config config, Path configFile, Database db, TaskService tasks, Groups groups,
-                                           Function<String, BotApi> bots, Map<String, String> environment, Clock clock,
+                                           String botUsername, Function<String, BotApi> bots, Map<String, String> environment, Clock clock,
                                            String resourceRoot) throws IOException {
         Config.MiniApp miniApp = config.miniApp();
         if (!UiServer.hasUi(resourceRoot)) {
@@ -53,7 +58,8 @@ public final class MiniApp {
         Map<String, BiFunction<Caller, JsonNode, Object>> post = new HashMap<>(management.post(true));
         post.putAll(new TasksApi(db, tasks, groups).routes());
         Map<String, Function<Caller, Object>> get = new HashMap<>(management.get(true));
-        get.put("/api/me", MiniApp::me);
+        get.put("/api/me", caller -> me(caller, botUsername));
+        get.put("/api/projects", caller -> projects(caller, config.projects(), groups));
         return Optional.of(UiServer.start(miniApp.port(), resourceRoot,
                 port -> new TelegramAuth(config.secrets().telegramBotToken(), () -> groups, config.isTeam(),
                         miniApp.publicUrl(), port, clock),
@@ -64,8 +70,28 @@ public final class MiniApp {
      * Who Telegram says is looking, and what they may reach. The shell asks this instead of the setup state, which is
      * what {@code dispatch ui} asks and this server does not serve.
      */
-    private static Map<String, Object> me(Caller caller) {
-        return Map.of("ref", caller.ref(), "name", caller.name(), "admin", caller.admin());
+    private static Map<String, Object> me(Caller caller, String botUsername) {
+        return Map.of("ref", caller.ref(), "name", caller.name(), "admin", caller.admin(), "bot", botUsername);
+    }
+
+    /**
+     * The projects of the caller's own groups, as the home screen lists them: a member cannot read the config, and
+     * needs no more of it than this. They are the projects this bot was started with, which is what it takes tasks for.
+     */
+    private static Map<String, Object> projects(Caller caller, List<Config.Project> all, Groups groups) {
+        Set<String> visible = groups.projectsOfMember(caller.ref());
+        List<Map<String, Object>> listed = new ArrayList<>();
+        for (Config.Project project : all) {
+            if (!visible.contains(project.name())) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("name", project.name());
+            row.put("alias", project.alias());
+            row.put("baseBranch", project.baseBranch());
+            listed.add(row);
+        }
+        return Map.of("projects", listed);
     }
 
     private static String version() {
