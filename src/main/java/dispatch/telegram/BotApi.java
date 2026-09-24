@@ -250,7 +250,14 @@ public final class BotApi {
         ArrayNode keyboard = markup.putArray("inline_keyboard");
         for (List<Renderer.Button> buttons : rows) {
             ArrayNode row = keyboard.addArray();
-            buttons.forEach(button -> row.addObject().put("text", button.text()).put("callback_data", button.data()));
+            for (Renderer.Button button : buttons) {
+                ObjectNode entry = row.addObject().put("text", button.text());
+                if (button.webAppUrl() != null) {
+                    entry.putObject("web_app").put("url", button.webAppUrl());
+                } else {
+                    entry.put("callback_data", button.data());
+                }
+            }
         }
         return markup;
     }

@@ -1,7 +1,6 @@
 package dispatch.ui;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dispatch.cli.Checks;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
 import dispatch.cli.Locations;
@@ -13,11 +12,12 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.BindException;
 import java.net.URI;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 /** `dispatch ui`: serves the web UI on 127.0.0.1 and prints its one-time login link (ADR 0018). */
 public final class UiCommand {
@@ -43,17 +43,15 @@ public final class UiCommand {
             throw new CliException("this build has no web UI; install the release jar, or build it with the UI: "
                     + "(cd ui && npm ci && npm run build) && ./mvnw -Pui package");
         }
-        OverviewApi overview = new OverviewApi(options.configFile().toAbsolutePath(), locations, new Checks(bots), service,
-                processEnvironment, version());
+        Path configFile = options.configFile().toAbsolutePath();
+        UiRoutes management = UiRoutes.management(configFile, locations, bots, service, processEnvironment, version());
         UiServer server;
         try {
-            SetupApi setup = new SetupApi(options.configFile().toAbsolutePath(), locations, bots, service, ServiceCommand.runningJar(),
-                    processEnvironment);
-            ManageApi manage = new ManageApi(options.configFile().toAbsolutePath(), service, processEnvironment);
-            Map<String, Function<JsonNode, Object>> postRoutes = new HashMap<>(setup.routes());
-            postRoutes.putAll(manage.routes());
-            server = UiServer.start(options.port(), resourceRoot, Map.<String, Supplier<Object>>of("/api/overview", overview::get),
-                    postRoutes);
+            SetupApi setup = new SetupApi(configFile, locations, bots, service, ServiceCommand.runningJar(), processEnvironment);
+            Map<String, BiFunction<UiServer.Caller, JsonNode, Object>> postRoutes =
+                    new HashMap<>(UiRoutes.anyCaller(setup.routes(), false));
+            postRoutes.putAll(management.post(false));
+            server = UiServer.start(options.port(), resourceRoot, management.get(false), postRoutes);
         } catch (BindException e) {
             throw new CliException("port " + options.port() + " is in use; choose another with --port");
         } catch (IOException e) {

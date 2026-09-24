@@ -55,5 +55,7 @@ public enum OutboxKind {
     /** To the requester, once: their task waits because none of their computers is connected. */
     WORKER_WAITING,
     /** To the requester privately, once per reason: their computer is connected but cannot do the task, and why. */
-    WORKER_BLOCKED
+    WORKER_BLOCKED,
+    /** /manage: a button that opens the Mini App, or a note that it is not turned on here (ADR 0019). */
+    MANAGE
 }

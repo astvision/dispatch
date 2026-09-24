@@ -1,6 +1,6 @@
 # Dispatch management pages and the Telegram Mini App
 
-Status: approved design, 2026-09-22. Extends `2026-09-22-web-ui-design.md`, whose milestone UI-3 this splits into UI-3a and UI-3b. Next: implementation plan for UI-3a.
+Status: delivered, 2026-09-23. Extends `2026-09-22-web-ui-design.md`, whose milestone UI-3 this splits into UI-3a and UI-3b; both are built.
 
 ## Goal
 
@@ -46,8 +46,8 @@ Without `miniApp`, nothing listens and the bot shows no Manage button. `ConfigLo
 
 ### Opening it
 
-- At start, and whenever members change, the bot sets the chat menu button of each member's private chat to a Web App button "Manage" pointing at `publicUrl` (`setChatMenuButton` with `chat_id`). Everyone else keeps the default menu.
-- `/manage` answers a member with the same Web App button, and anyone else as the bot answers non-members today.
+- `/manage` answers a member with a Web App button pointing at `publicUrl`, and anyone else as the bot answers non-members today.
+- **Not the chat menu button.** This was built as `setChatMenuButton` with a Web App button and withdrawn after the live run: Telegram's menu button is either the command list or a web app, so it silently replaced `/task`, `/status` and the rest. Dispatch does not touch the menu button at all (ADR 0019).
 
 ### Restart
 
@@ -127,4 +127,4 @@ As in the web UI spec (JSON errors, messages for people). Mini App additions: 40
 | Milestone | Delivers | Done when |
 |---|---|---|
 | UI-3a | Advanced setup (both setups); `ManageApi` and the pages: Projects, People, Settings, Logs, Restart and the save flow, in `dispatch ui`; Playwright | `InitCommandTest` passes; Playwright passes; saving keeps `.bak` and refuses a config changed on disk; a live run edits a real config |
-| UI-3b | `miniApp` config, the server in `dispatch run`, `TelegramAuth` with member and admin roles, My tasks and admin Tasks with Cancel and Retry, the Manage menu button and `/manage`, theme and phone layout, `dispatch check`, ADR 0019, docs | The auth and role tests pass; a live run opens the pages from a phone through a tunnel as an admin and as a member |
+| UI-3b (delivered) | `miniApp` config, the server in `dispatch run`, `TelegramAuth` with member and admin roles, My tasks and admin Tasks with Cancel and Retry, `/manage` with a Web App button, theme and phone layout, `dispatch check`, ADR 0019, docs | The auth and role tests pass; a live run opens the pages from a phone through a tunnel as an admin and as a member |

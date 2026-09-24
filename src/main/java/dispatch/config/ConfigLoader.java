@@ -64,6 +64,7 @@ public final class ConfigLoader {
         Config.Telegram telegram = validateTelegram(raw.telegram(), projects, errors);
         Config.Delivery delivery = validateDelivery(raw.delivery(), errors);
         Config.Workers workers = validateWorkers(raw.workers(), telegram, errors);
+        Config.MiniApp miniApp = validateMiniApp(raw.miniApp(), errors);
 
         String token = env.get("TELEGRAM_BOT_TOKEN");
         if (isBlank(token)) {
@@ -75,7 +76,7 @@ public final class ConfigLoader {
             throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));
         }
         return new Config(raw.team(), stateDir, telegram, raw.scheduler(), worktrees, raw.limits(), Map.copyOf(agents),
-                projects, delivery, workers, new Config.Secrets(token, ghToken));
+                projects, delivery, workers, miniApp, new Config.Secrets(token, ghToken));
     }
 
     private static ConfigFile read(Path file) {
@@ -255,6 +256,26 @@ public final class ConfigLoader {
         return workers;
     }
 
+    /**
+     * The Mini App is off unless its block is there, in a team and in personal mode alike (spec: Config): it puts the
+     * management pages on the internet, so nobody gets it by upgrading.
+     */
+    private static Config.MiniApp validateMiniApp(Config.MiniApp miniApp, List<String> errors) {
+        if (miniApp == null) {
+            return null;
+        }
+        if (isBlank(miniApp.publicUrl())) {
+            errors.add("miniApp.publicUrl: required, the https URL Telegram opens the Mini App at");
+        } else if (!isWorkerUrl(miniApp.publicUrl())) {
+            errors.add("miniApp.publicUrl: must start with https:// (plain http only for 127.0.0.1), got '"
+                    + miniApp.publicUrl() + "'");
+        }
+        if (miniApp.port() < 1 || miniApp.port() > 65535) {
+            errors.add("miniApp.port: must be from 1 to 65535, got " + miniApp.port());
+        }
+        return miniApp;
+    }
+
     /** Worker keys travel on every request: https everywhere, except loopback, which tests pair over. */
     public static boolean isWorkerUrl(String url) {
         try {
@@ -410,6 +431,7 @@ public final class ConfigLoader {
             Config.Limits limits,
             Map<String, Config.Agent> agents,
             List<Config.Project> projects,
-            Config.Workers workers) {
+            Config.Workers workers,
+            Config.MiniApp miniApp) {
     }
 }

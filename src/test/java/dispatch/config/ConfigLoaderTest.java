@@ -427,6 +427,67 @@ class ConfigLoaderTest {
         assertTrue(error.getMessage().contains("workers.port: must be from 1 to 65535, got 0"), error.getMessage());
     }
 
+    @Test
+    void aConfigWithAMiniAppBlockIsLoaded() throws IOException {
+        Config config = ConfigLoader.load(write(VALID + MINI_APP_BLOCK), ENV);
+
+        assertEquals("https://dispatch.example.com", config.miniApp().publicUrl());
+        assertEquals(7879, config.miniApp().port());
+    }
+
+    @Test
+    void theMiniAppIsOffWithoutItsBlock() throws IOException {
+        Config team = ConfigLoader.load(write(VALID), ENV);
+        Config personal = ConfigLoader.load(write(VALID.replace("      chatId: -1001234567890\n", "").replace(WORKERS_BLOCK, "")), ENV);
+
+        assertNull(team.miniApp(), "off by default in a team");
+        assertNull(personal.miniApp(), "off by default in personal mode, where it is not required either");
+    }
+
+    @Test
+    void everyBadMiniAppValueIsReported() throws IOException {
+        Path file = write(VALID + """
+                miniApp:
+                  publicUrl: http://dispatch.example.com
+                  port: 70000
+                """);
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(file, ENV));
+
+        assertTrue(error.getMessage().contains("miniApp.publicUrl: must start with https://"), error.getMessage());
+        assertTrue(error.getMessage().contains("miniApp.port: must be from 1 to 65535, got 70000"), error.getMessage());
+    }
+
+    @Test
+    void aMiniAppWithoutAPortIsReportedAsAPortProblem() throws IOException {
+        Path file = write(VALID + """
+                miniApp:
+                  publicUrl: https://dispatch.example.com
+                """);
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(file, ENV));
+
+        assertTrue(error.getMessage().contains("miniApp.port: must be from 1 to 65535, got 0"), error.getMessage());
+    }
+
+    @Test
+    void aMiniAppWithoutAPublicUrlIsRefused() throws IOException {
+        Path file = write(VALID + """
+                miniApp:
+                  port: 7879
+                """);
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(file, ENV));
+
+        assertTrue(error.getMessage().contains("miniApp.publicUrl: required"), error.getMessage());
+    }
+
+    private static final String MINI_APP_BLOCK = """
+            miniApp:
+              publicUrl: https://dispatch.example.com
+              port: 7879
+            """;
+
     private static final String CRM_REPO = "    repo: https://github.com/acme/crm.git\n";
 
     /** VALID's group has a chat, which makes it a team (ADR 0021); its workers block, ready to strip or replace. */

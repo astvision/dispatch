@@ -106,7 +106,7 @@ public final class Main {
         App app;
         try {
             // Instants stay UTC everywhere; the zone (TZ) only affects clock times shown in chat.
-            app = App.start(prepared.config(), MemberWriter.file(configFile, prepared.environment()),
+            app = App.start(prepared.config(), configFile, MemberWriter.file(configFile, prepared.environment()),
                     BotApi.create(prepared.config().secrets().telegramBotToken()), prepared.environment(), Clock.systemDefaultZone(), fatal -> {
                         Log.error("dispatch.fatal", fatal);
                         System.exit(1);

@@ -50,6 +50,26 @@ Requests with another Host (DNS rebinding) or, for changes, another Origin are r
 browser. Whoever has the link or a session acts as you, with what you may do in a shell: don't paste the link where
 others see it, and stop `dispatch ui` when you are done. Setup's folder browser lists folder names on the machine that runs Dispatch and says which are git clones; it never shows a file's contents. The Logs page shows the service log with Dispatch's secrets and common token formats masked. A save keeps the previous config as `dispatch.yaml.bak`, with the config's own permissions.
 
+## The Telegram Mini App
+
+Off unless the config has a `miniApp` block, in a team and in personal mode alike — **turning it on puts a
+shell-equivalent API on the internet.** The management pages edit the config, restart the service and read the log, so
+whoever reaches them can do what you can do in a shell. What stands between them and that is Telegram's signature on
+every request, a one-hour freshness limit and your admin list (ADR 0019).
+
+Dispatch listens only on `127.0.0.1:<miniApp.port>`; the `https://` address you publish is your tunnel's or your
+reverse proxy's, and Dispatch runs no tunnel software itself. Every request to a route carries the launch data Telegram
+signed with the bot token, checked before anything else: the signature, an `auth_date` at most an hour old, the user
+against your groups, and the `Host`. There is no cookie and no session, so there is nothing for a cross-site request to
+ride on. The bundled page and its assets load unsigned, because Telegram puts the launch data in the URL fragment,
+which a browser never sends — the script that reads it has to run first; those files are static and reach no route by
+themselves.
+
+The bot token, the secrets file, the setup routes and replacing the token are not reachable from this port. A member
+reaches their own tasks; only an admin (or a personal bot's one member) reaches the management pages and the group's
+tasks, and another member's task shows only its headline. `dispatch check` reports whether the Mini App is off, and
+whether its public URL reaches this Dispatch.
+
 ## State on disk
 
 The state directory holds the SQLite database, git worktrees and raw agent transcripts: under `runs/`, including everything the agent read, and under `splits/`, including every message a member asked to split.

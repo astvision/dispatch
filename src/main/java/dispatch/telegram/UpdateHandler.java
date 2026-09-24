@@ -50,7 +50,7 @@ public final class UpdateHandler {
     private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
     private static final Set<String> COMMANDS =
-            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "projects", "help", "start");
+            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "projects", "help", "start");
 
     private final Database db;
     private final TaskService tasks;
@@ -65,21 +65,23 @@ public final class UpdateHandler {
     private final Runnable wakeOutbox;
     private final WorkerKeys workers;
     private final String workerUrl;
+    private final String miniAppUrl;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox) {
-        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null);
+        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, null, null, null);
     }
 
     /**
-     * @param redactor  masks messages this handler edits directly, as the outbox sender does for everything it sends
-     * @param workers   null in personal mode, where a member has nothing to pair
-     * @param workerUrl the URL members' computers reach this machine on; null in personal mode
+     * @param redactor   masks messages this handler edits directly, as the outbox sender does for everything it sends
+     * @param workers    null in personal mode, where a member has nothing to pair
+     * @param workerUrl  the URL members' computers reach this machine on; null in personal mode
+     * @param miniAppUrl where Telegram opens the Mini App; null when it is not configured, and /manage says so
      */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
-                         WorkerKeys workers, String workerUrl) {
+                         WorkerKeys workers, String workerUrl, String miniAppUrl) {
         if (workers != null) {
             Objects.requireNonNull(workerUrl, "workerUrl is required when workers is configured");
         }
@@ -96,6 +98,7 @@ public final class UpdateHandler {
         this.wakeOutbox = wakeOutbox;
         this.workers = workers;
         this.workerUrl = workerUrl;
+        this.miniAppUrl = miniAppUrl;
     }
 
     public void handle(JsonNode update) {
@@ -247,6 +250,13 @@ public final class UpdateHandler {
                     return;
                 }
                 worker(tx, who, command.args(), origin, chatRef);
+            }
+            case "manage" -> {
+                if (!privateChat) {
+                    privateOnly(tx, chatRef, origin);
+                    return;
+                }
+                manage(tx, who, origin, chatRef);
             }
             case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
@@ -549,6 +559,15 @@ public final class UpdateHandler {
                 .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias())
                         .put("baseBranch", project.baseBranch()).put("unavailable", projects.unavailableReason(project).orElse(null)));
         enqueue(tx, OutboxKind.PROJECTS, chatRef, origin, payload);
+    }
+
+    /** /manage answers a member with a button that opens the Mini App, and everyone else as other commands do. */
+    private void manage(Tx tx, Requester who, String origin, String chatRef) {
+        if (!groups.isMember(who.ref()) && !groups.isAdmin(who.ref())) {
+            enqueue(tx, OutboxKind.NOT_ALLOWED, chatRef, origin, Json.object().put("name", who.name()));
+            return;
+        }
+        enqueue(tx, OutboxKind.MANAGE, chatRef, origin, Json.object().put("url", miniAppUrl));
     }
 
     /** /worker gives a one-time pairing code and lists the member's computers; /worker revoke N takes one away. */

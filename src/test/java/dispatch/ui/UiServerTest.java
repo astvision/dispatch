@@ -16,8 +16,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,12 +29,13 @@ class UiServerTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        server = UiServer.start(0, "/ui-test", Map.<String, Supplier<Object>>of(
-                "/api/ping", () -> Map.of("ok", true),
-                "/api/refused", () -> {
+        server = UiServer.start(0, "/ui-test", Map.<String, Function<UiServer.Caller, Object>>of(
+                "/api/ping", caller -> Map.of("ok", true),
+                "/api/who", caller -> caller,
+                "/api/refused", caller -> {
                     throw new CliException("no config at x; create one with: dispatch init");
                 },
-                "/api/broken", Object::new));
+                "/api/broken", caller -> new Object()));
     }
 
     @AfterEach
@@ -129,6 +130,26 @@ class UiServerTest {
     }
 
     @Test
+    void aRouteIsToldWhoIsAsking() throws Exception {
+        String cookie = login();
+
+        HttpResponse<String> response = get(path("/api/who"), cookie);
+
+        assertTrue(response.body().contains("\"ref\":\"local\""), response.body());
+        assertTrue(response.body().contains("\"admin\":true"), "whoever holds the link acts as the owner: " + response.body());
+    }
+
+    @Test
+    void aPageStillNeedsASession() throws Exception {
+        HttpResponse<String> index = get(path("/"), null);
+        HttpResponse<String> script = get(path("/assets/app.js"), null);
+
+        assertEquals(401, index.statusCode());
+        assertTrue(index.body().contains("dispatch ui"), index.body());
+        assertEquals(401, script.statusCode(), "an asset is no way around the session either");
+    }
+
+    @Test
     void aRouteThatCannotBeSerializedAnswers500() throws Exception {
         String cookie = login();
 
@@ -171,9 +192,10 @@ class UiServerTest {
 
     @Test
     void postRoutesGetTheJsonBodyAndAnswerWithTheirStatus() throws Exception {
-        try (UiServer posting = UiServer.start(0, "/ui-test", Map.of(), Map.<String, Function<JsonNode, Object>>of(
-                "/api/echo", body -> Map.of("got", body.path("name").asText()),
-                "/api/busy", body -> {
+        try (UiServer posting = UiServer.start(0, "/ui-test", Map.of(),
+                Map.<String, BiFunction<UiServer.Caller, JsonNode, Object>>of(
+                "/api/echo", (caller, body) -> Map.of("got", body.path("name").asText()),
+                "/api/busy", (caller, body) -> {
                     throw new ApiException(409, "conflict", "Dispatch is running with this bot; stop it first");
                 }))) {
             String cookie = cookie(get(posting.loginUri(), null).headers().firstValue("Set-Cookie").orElseThrow());

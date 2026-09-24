@@ -36,6 +36,11 @@ public final class Checks {
     private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(30);
     /** A probe only has to reach a server on this machine, or a proxy in front of it. */
     private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(5);
+    /**
+     * The Mini App route a probe asks for. It is a GET route and the probe sends a POST, which does not matter:
+     * {@code UiServer} authenticates before it looks a route up, so an unsigned request is the same 401 either way.
+     */
+    private static final String ME = "/api/me";
 
     public enum Level { OK, WARN, FAIL }
 
@@ -82,6 +87,7 @@ public final class Checks {
         } else {
             checkGh(run, config.delivery().ghCommand(), config.secrets().ghToken() != null, configFile);
         }
+        checkMiniApp(run, config.miniApp());
         return run.findings;
     }
 
@@ -207,13 +213,45 @@ public final class Checks {
         }
     }
 
+    /**
+     * Whether the Mini App is off, or on and reachable (spec: Security). The public URL is only probed once the local
+     * port answered as Dispatch, for the same reason as the workers check above.
+     */
+    private void checkMiniApp(Run run, Config.MiniApp miniApp) {
+        if (miniApp == null) {
+            run.add(Level.OK, "miniApp", "miniApp: off; nothing is served to Telegram and the bot shows no Manage button");
+            return;
+        }
+        String local = "http://127.0.0.1:" + miniApp.port();
+        switch (probe(local, ME)) {
+            case DISPATCH -> {
+                run.add(Level.OK, "miniApp", "miniApp: 127.0.0.1:" + miniApp.port() + " answers as this Dispatch");
+                if (probe(miniApp.publicUrl(), ME) == Answer.DISPATCH) {
+                    run.add(Level.OK, "miniApp", "miniApp: " + miniApp.publicUrl() + " reaches this Dispatch");
+                } else {
+                    run.add(Level.WARN, "miniApp", "miniApp: " + miniApp.publicUrl()
+                            + " does not answer over HTTPS as this Dispatch; Telegram cannot open the Mini App until your "
+                            + "tunnel or reverse proxy forwards it to 127.0.0.1:" + miniApp.port());
+                }
+            }
+            case OTHER -> run.add(Level.WARN, "miniApp", "miniApp: something other than Dispatch answers on 127.0.0.1:"
+                    + miniApp.port() + "; stop it or set another miniApp.port");
+            case NONE -> run.add(Level.OK, "miniApp", "miniApp: nothing listens on 127.0.0.1:" + miniApp.port()
+                    + " yet; it starts with dispatch run");
+        }
+    }
+
     /** What answered a worker request that carried no key. */
     private enum Answer { DISPATCH, OTHER, NONE }
 
     private Answer probe(String base) {
+        return probe(base, WorkerApi.PROJECTS);
+    }
+
+    private Answer probe(String base, String path) {
         HttpResponse<String> answer;
         try {
-            answer = http.send(HttpRequest.newBuilder(WorkerApi.url(base, WorkerApi.PROJECTS)).timeout(PROBE_TIMEOUT)
+            answer = http.send(HttpRequest.newBuilder(WorkerApi.url(base, path)).timeout(PROBE_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString());
         } catch (IOException | IllegalArgumentException e) {

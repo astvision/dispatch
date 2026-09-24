@@ -77,7 +77,7 @@ class TeamWorkersTest {
         repos = GitFixture.create(dir, "alm");
         claude = FakeClaude.install(Files.createDirectories(dir.resolve("bin")));
         gh = FakeGh.install(dir.resolve("bin"));
-        app = App.start(teamConfig(), (group, member) -> {
+        app = App.start(teamConfig(), dir.resolve("dispatch.yaml"), (group, member) -> {
             throw new AssertionError("no one joins in this test");
         }, new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(60)), FakeClaude.environment(),
                 Clock.systemUTC(), fatalErrors::add);
@@ -389,6 +389,6 @@ class TeamWorkersTest {
                 List.of(new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, null,
                         List.of(), null, null, null)),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", gh.toString()),
-                new Config.Workers("http://127.0.0.1:0", 0), new Config.Secrets(FakeTelegram.TOKEN, null));
+                new Config.Workers("http://127.0.0.1:0", 0), null, new Config.Secrets(FakeTelegram.TOKEN, null));
     }
 }

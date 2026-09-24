@@ -26,6 +26,7 @@ import dispatch.telegram.Poller;
 import dispatch.telegram.Renderer;
 import dispatch.telegram.TelegramException;
 import dispatch.telegram.UpdateHandler;
+import dispatch.ui.UiServer;
 import dispatch.worker.RemoteWorkers;
 import dispatch.worker.WorkerApi;
 import dispatch.worker.WorkerKeys;
@@ -55,6 +56,7 @@ public final class App {
     private final Splitter splitter;
     private final ActiveRuns activeRuns;
     private final WorkerApi workerApi;
+    private final UiServer miniApp;
     private final Consumer<Throwable> onFatal;
     private final AtomicBoolean stopping = new AtomicBoolean();
     private Thread pollerThread;
@@ -63,9 +65,12 @@ public final class App {
     private Thread draftExpiryThread;
     private Thread sweeperThread;
 
-    /** @param workerApi null in personal mode, where no computer ever reaches this machine */
+    /**
+     * @param workerApi null in personal mode, where no computer ever reaches this machine
+     * @param miniApp   null unless the config has a {@code miniApp} block, and when this build bundles no pages
+     */
     private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, Sweeper sweeper, Splitter splitter,
-                ActiveRuns activeRuns, WorkerApi workerApi, Consumer<Throwable> onFatal) {
+                ActiveRuns activeRuns, WorkerApi workerApi, UiServer miniApp, Consumer<Throwable> onFatal) {
         this.db = db;
         this.poller = poller;
         this.scheduler = scheduler;
@@ -75,6 +80,7 @@ public final class App {
         this.splitter = splitter;
         this.activeRuns = activeRuns;
         this.workerApi = workerApi;
+        this.miniApp = miniApp;
         this.onFatal = onFatal;
     }
 
@@ -82,9 +88,12 @@ public final class App {
      * Opens state, checks the bot token, recovers runs interrupted by a previous process, then starts polling, scheduling
      * and sending. {@code onFatal} receives errors that stop a core loop (e.g. storage failures).
      */
-    /** @param members adds people whom an admin let join to the config (ADR 0015) */
-    public static App start(Config config, MemberWriter members, BotApi api, Map<String, String> environment, Clock clock,
-                            Consumer<Throwable> onFatal) {
+    /**
+     * @param members    adds people whom an admin let join to the config (ADR 0015)
+     * @param configFile the file {@code config} was read from; the Mini App's management pages save into it
+     */
+    public static App start(Config config, Path configFile, MemberWriter members, BotApi api, Map<String, String> environment,
+                            Clock clock, Consumer<Throwable> onFatal) {
         Path stateDir = config.stateDir();
         Git git = new Git("git", config.secrets().ghToken(), Duration.ofMinutes(5));
         Workspaces workspaces = new Workspaces(stateDir, git);
@@ -151,12 +160,24 @@ public final class App {
         }
 
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
-        registerCommandMenus(api, renderer, groups);
+        registerCommandMenus(api, renderer, groups, config.miniApp() != null);
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
         UpdateHandler handler = new UpdateHandler(db, tasks, new Membership(groups, members, clock, outboxSignal::wake), groups, projects,
                 api, renderer, redactor, botUsername, clock, outboxSignal::wake, workerKeys,
-                config.workers() == null ? null : config.workers().publicUrl());
+                config.workers() == null ? null : config.workers().publicUrl(),
+                config.miniApp() == null ? null : config.miniApp().publicUrl());
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
+
+        UiServer miniApp = null;
+        if (config.miniApp() != null) {
+            try {
+                miniApp = dispatch.ui.MiniApp.start(config, configFile, db, tasks, groups, BotApi::create, environment, clock, "/ui")
+                        .orElse(null);
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("cannot listen on 127.0.0.1:" + config.miniApp().port()
+                        + " for the Telegram Mini App: " + e.getMessage(), e);
+            }
+        }
 
         App[] app = new App[1];
         Scheduler scheduler = new Scheduler(db, config.scheduler().maxConcurrentRuns(), schedulerSignal, clock,
@@ -166,7 +187,7 @@ public final class App {
                 config.workers() == null ? null : tasks);
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
         Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1));
-        app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], activeRuns, workerApi, onFatal);
+        app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], activeRuns, workerApi, miniApp, onFatal);
         app[0].startThreads();
         Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "task_topics", taskTopics, "groups", groups.all().size(),
                 "projects", config.projects().size(), "state_dir", stateDir);
@@ -181,6 +202,11 @@ public final class App {
     /** The port members' computers connect to; 0 in personal mode. Tests start with port 0 and ask afterwards. */
     public int workerPort() {
         return workerApi == null ? 0 : workerApi.port();
+    }
+
+    /** The port the tunnel forwards the Mini App to; 0 when it is off. Tests start with port 0 and ask afterwards. */
+    public int miniAppPort() {
+        return miniApp == null ? 0 : miniApp.port();
     }
 
     /** Graceful stop: no new updates or runs; active runs end as interrupted and are reported (ADR 0008). */
@@ -203,6 +229,9 @@ public final class App {
             if (workerApi != null) {
                 // After runs are idle, so a worker still reporting a run's outcome during shutdown gets through first.
                 workerApi.close();
+            }
+            if (miniApp != null) {
+                miniApp.close();
             }
             draftExpiry.stop();
             draftExpiryThread.join(Duration.ofSeconds(10));
@@ -246,7 +275,7 @@ public final class App {
     }
 
     /** Best effort: a group's menu fails while the bot is not yet in it, and works again on the next start. */
-    private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups) {
+    private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups, boolean miniApp) {
         for (Config.Group group : groups.all()) {
             if (group.chatId() == null) {
                 continue;
@@ -259,7 +288,13 @@ public final class App {
             }
         }
         try {
-            api.setPrivateChatCommands(commands(renderer, "task", "status", "history", "stats", "cancel", "retry", "worker", "projects", "help"));
+            List<String> privateCommands = new java.util.ArrayList<>(
+                    List.of("task", "status", "history", "stats", "cancel", "retry", "worker"));
+            if (miniApp) {
+                privateCommands.add("manage");
+            }
+            privateCommands.addAll(List.of("projects", "help"));
+            api.setPrivateChatCommands(commands(renderer, privateCommands.toArray(String[]::new)));
         } catch (TelegramException e) {
             Log.warn("telegram.command_menu_failed", "scope", "all_private_chats", "error", e.getMessage());
         }

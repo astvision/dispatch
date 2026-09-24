@@ -68,6 +68,7 @@ class AppTest {
                         List.of(), null, null, null)),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", gh.toString()),
                 null,
+                null,
                 new Config.Secrets(FakeTelegram.TOKEN, null));
     }
 
@@ -82,6 +83,7 @@ class AppTest {
     @Test
     void taskGivenPrivatelyBecomesAPrivatePlanThatTheRequesterRejects() throws Exception {
         app = start();
+        assertEquals(0, app.miniAppPort(), "no miniApp block, so nothing extra listens and the bot is as it was");
         JsonNode groupMenu = telegram.awaitRequest("setMyCommands", WAIT).json();
         assertEquals(GROUP, groupMenu.get("scope").get("chat_id").asLong());
         assertFalse(groupMenu.get("commands").toString().contains("\"task\""), groupMenu.toString());
@@ -205,7 +207,7 @@ class AppTest {
                 new Config.Telegram(List.of(), List.of(new Config.Group("bold", null, List.of(new Config.Member(100, "Bold")), List.of("alm")))),
                 config.scheduler(), config.worktrees(), config.limits(), config.agents(),
                 List.of(new Config.Project("alm", null, null, mine.toString(), "main", "claude-code", null, "high", List.of(), null, null, null)),
-                config.delivery(), config.workers(), config.secrets());
+                config.delivery(), config.workers(), config.miniApp(), config.secrets());
         app = start();
         assertEquals("all_private_chats", telegram.awaitRequest("setMyCommands", WAIT).json().get("scope").get("type").asText(),
                 "no group menu without a group chat");
@@ -232,7 +234,7 @@ class AppTest {
         config = new Config("backend", repos.stateDir, new Config.Telegram(List.of(100L),
                 List.of(new Config.Group("backend", GROUP, List.copyOf(members), List.of("autoland-management")))),
                 config.scheduler(), config.worktrees(), config.limits(), config.agents(), config.projects(), config.delivery(),
-                config.workers(), config.secrets());
+                config.workers(), config.miniApp(), config.secrets());
         app = start((group, member) -> {
             members.add(member);
             return new Config.Telegram(List.of(100L), List.of(new Config.Group("backend", GROUP, List.copyOf(members), List.of("autoland-management"))));
@@ -273,6 +275,20 @@ class AppTest {
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 
+    /**
+     * The Mini App is opened from /manage, and Dispatch never touches the chat menu button at all: Telegram's menu
+     * button is either the commands or a web app, so setting it would take a member's command list away.
+     */
+    @Test
+    void theChatMenuButtonIsLeftAlone() throws Exception {
+        app = start();
+        telegram.awaitRequest("setMyCommands", WAIT);
+        telegram.awaitRequest("setMyCommands", WAIT);
+
+        assertTrue(telegram.drain("setChatMenuButton").isEmpty(), "a member keeps whatever menu button they had");
+        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
+    }
+
     private App start() {
         return start((group, member) -> {
             throw new AssertionError("no one joins in this test");
@@ -281,7 +297,8 @@ class AppTest {
 
     private App start(MemberWriter members) {
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(60));
-        return App.start(config, members, api, FakeClaude.environment(), Clock.systemUTC(), fatalErrors::add);
+        return App.start(config, dir.resolve("dispatch.yaml"), members, api, FakeClaude.environment(), Clock.systemUTC(),
+                fatalErrors::add);
     }
 
     /** The next sendMessage call whose text contains {@code fragment}; earlier calls are skipped. */

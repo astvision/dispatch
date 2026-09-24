@@ -95,7 +95,7 @@ class UpdateHandlerTest {
     private UpdateHandler handlerWithWorkers(dispatch.worker.WorkerKeys keys, Groups groupsOverride) {
         Membership membershipOverride = new Membership(groupsOverride, UpdateHandlerTest::noJoins, clock, () -> { });
         return new UpdateHandler(db, tasks, membershipOverride, groupsOverride, projects, api, renderer, redactor, BOT, clock,
-                () -> { }, keys, "https://team.example.com");
+                () -> { }, keys, "https://team.example.com", null);
     }
 
     @AfterEach
@@ -444,6 +444,37 @@ class UpdateHandlerTest {
         Map<String, String> help = row("SELECT * FROM outbox WHERE reply_to_ref = 'telegram:100/62'");
         assertEquals("HELP", help.get("kind"));
         assertTrue(Json.read(help.get("payload")).get("privateChat").asBoolean());
+    }
+
+    @Test
+    void manageAnswersAMemberWithAButtonAndSaysSoWhenTheMiniAppIsOff() {
+        UpdateHandler withMiniApp = new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
+                () -> { }, null, null, "https://dispatch.example.com");
+
+        withMiniApp.handle(message(570, 70, 100, "Bold", 100L, "private", "/manage", null));
+        handler.handle(message(571, 71, 100, "Bold", 100L, "private", "/manage", null));
+        withMiniApp.handle(message(572, 72, 100, "Bold", GROUP, "supergroup", "/manage", null));
+
+        Map<String, String> answered = row("SELECT * FROM outbox WHERE reply_to_ref = 'telegram:100/70'");
+        assertEquals("MANAGE", answered.get("kind"));
+        assertEquals("https://dispatch.example.com", Json.read(answered.get("payload")).get("url").asText());
+        Map<String, String> off = row("SELECT * FROM outbox WHERE reply_to_ref = 'telegram:100/71'");
+        assertEquals("MANAGE", off.get("kind"));
+        assertTrue(Json.read(off.get("payload")).path("url").isNull(), "no miniApp block, so there is no button to give");
+        assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/72").get("kind"));
+    }
+
+    /** Without "manage" in COMMANDS this would be swallowed as a correction of the topic's plan. */
+    @Test
+    void manageInsideATaskTopicIsACommandAndNotACorrection() {
+        UpdateHandler withMiniApp = new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
+                () -> { }, null, null, "https://dispatch.example.com");
+        long taskId = taskAwaitingApproval(List.of());
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '56' WHERE id = ?", taskId));
+
+        withMiniApp.handle(topicMessage(573, 73, 100, "Bold", 56, "/manage"));
+
+        assertEquals("MANAGE", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:100/73@56'").get("kind"));
     }
 
     @Test

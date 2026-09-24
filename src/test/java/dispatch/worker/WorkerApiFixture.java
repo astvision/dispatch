@@ -346,7 +346,7 @@ abstract class WorkerApiFixture {
                 List.of(new Config.Project("alm", null, almRepo(), null, "main", "claude-code", "opus",
                         "high", List.of(), null, null, null)),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", "gh"),
-                new Config.Workers(publicUrl, 0), new Config.Secrets("token", null));
+                new Config.Workers(publicUrl, 0), null, new Config.Secrets("token", null));
     }
 
     Groups groups() {
