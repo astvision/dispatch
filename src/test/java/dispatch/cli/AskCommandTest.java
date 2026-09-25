@@ -84,6 +84,8 @@ class AskCommandTest {
         JsonNode awaiting = answer.json().path("active").path("awaitingApproval").get(0);
         assertEquals(mine, awaiting.path("taskId").asLong());
         assertEquals(1, awaiting.path("openQuestions").asInt(), "my own task says what it waits on");
+        assertEquals("[\"correct\",\"answer\",\"reject\",\"priority\",\"cancel\"]", awaiting.path("actions").toString(),
+                "the assistant reads what its member may do");
         JsonNode queued = answer.json().path("active").path("queued").get(0);
         assertEquals(theirs, queued.path("taskId").asLong());
         assertFalse(queued.path("mine").asBoolean());
@@ -118,14 +120,25 @@ class AskCommandTest {
     }
 
     @Test
-    void aTaskOutsideTheMembersProjectsIsNotFound() {
-        long taskId = create(ALI, "Fix the login timeout");
+    void someoneElsesTaskOutsideTheMembersProjectsIsNotFound() {
+        long taskId = create(BOLD, "Fix the login timeout");
 
         Answer answer = run(Map.of(AskCommand.MEMBER, ALI.ref(), AskCommand.PROJECTS, "other", AskCommand.DATABASE, dbFile.toString()),
                 new Cli.Ask(taskId));
 
         assertEquals(1, answer.exitCode());
         assertEquals("not_found", answer.json().path("error").asText());
+    }
+
+    @Test
+    void aMembersOwnTaskIsTheirsEvenOutsideTheirProjects() {
+        long taskId = create(ALI, "Fix the login timeout");
+
+        Answer answer = run(Map.of(AskCommand.MEMBER, ALI.ref(), AskCommand.PROJECTS, "other", AskCommand.DATABASE, dbFile.toString()),
+                new Cli.Ask(taskId));
+
+        assertEquals(0, answer.exitCode(), "ADR 0027: a requester's own task stays theirs after leaving its group");
+        assertFalse(answer.json().path("headline").asBoolean(false));
     }
 
     @Test

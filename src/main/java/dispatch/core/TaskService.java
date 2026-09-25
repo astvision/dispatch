@@ -42,6 +42,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -858,9 +860,29 @@ public final class TaskService {
         return task == null ? null : task.requester().name();
     }
 
-    /** Whether {@code viewerRef} gave the task; a group chat (null viewer) owns nothing, so it sees headlines only (ADR 0020). */
-    private static boolean ownedBy(Task task, String viewerRef) {
-        return task != null && viewerRef != null && task.requester().ref().equals(viewerRef);
+    /** Whether {@code viewer} gave the task and so sees all of it; a group chat owns nothing (ADR 0020). */
+    private static boolean isOwn(TaskAccess.Viewer viewer, Task task) {
+        return task != null && viewer.sees(task) == TaskAccess.Sight.FULL;
+    }
+
+    /** What {@code viewer} may do with each listed task now; nothing for a group chat, which acts on no task (ADR 0027). */
+    private Map<Long, List<TaskAccess.Action>> actionsOf(Tx tx, TaskAccess.Viewer viewer, Collection<Task> listed) {
+        Map<Long, List<TaskAccess.Action>> actions = new HashMap<>();
+        if (viewer.ref() == null) {
+            return actions;
+        }
+        // ponytail: one verdict per listed task (a few indexed reads each); batch the run reads if a list ever holds hundreds.
+        for (Task task : listed) {
+            actions.put(task.id(), access.of(tx, viewer.ref(), task).allowed());
+        }
+        return actions;
+    }
+
+    private static void putActions(ObjectNode item, List<TaskAccess.Action> actions) {
+        ArrayNode listed = item.putArray("actions");
+        if (actions != null) {
+            actions.forEach(action -> listed.add(action.json()));
+        }
     }
 
     /** Why a member may see a task but not act on it: it is someone else's (ADR 0020). */
@@ -892,46 +914,51 @@ public final class TaskService {
     }
 
     /**
-     * Posts what Dispatch is doing on {@code visibleProjects}: running runs with their agent's latest action, then queued
-     * runs, then plans awaiting approval.
-     *
-     * @param viewerRef the member asking in their private chat, whose active tasks get priority buttons; null in a group
+     * Posts what Dispatch is doing on the tasks {@code viewer} sees: running runs with their agent's latest action, then
+     * queued runs, then plans awaiting approval.
      */
-    public void status(Tx tx, Set<String> visibleProjects, String viewerRef, String originRef, String chatRef) {
-        enqueue(tx, null, OutboxKind.STATUS, chatRef, originRef, statusPayload(tx, visibleProjects, viewerRef), clock.instant());
+    public void status(Tx tx, TaskAccess.Viewer viewer, String originRef, String chatRef) {
+        enqueue(tx, null, OutboxKind.STATUS, chatRef, originRef, statusPayload(tx, viewer), clock.instant());
     }
 
-    /** The content of a status message, also used to update one in place after a priority change. */
-    public ObjectNode statusPayload(Tx tx, Set<String> visibleProjects, String viewerRef) {
+    /**
+     * The content of a status message, also used to update one in place after a priority change. Every task carries what
+     * the viewer may do with it now ({@code actions}); {@code mine} lists the tasks whose priority they may change, which a
+     * private chat offers as buttons.
+     */
+    public ObjectNode statusPayload(Tx tx, TaskAccess.Viewer viewer) {
         ObjectNode payload = Json.object();
         Map<Long, Task> active = new LinkedHashMap<>();
         for (Task task : Tasks.active(tx)) {
-            if (visibleProjects.contains(task.project())) {
+            if (viewer.sees(task) != TaskAccess.Sight.NONE) {
                 active.put(task.id(), task);
             }
         }
+        Map<Long, List<TaskAccess.Action>> actions = actionsOf(tx, viewer, active.values());
         ArrayNode running = payload.putArray("running");
         ArrayNode queued = payload.putArray("queued");
         Instant workerSeenSince = requiresWorker ? clock.instant().minus(Workers.SEEN_WITHIN) : null;
-        for (Runs.InProgress run : Runs.inProgress(tx, visibleProjects)) {
+        for (Runs.InProgress run : Runs.inProgress(tx, viewer.projects(), viewer.ref())) {
+            Task task = active.get(run.taskId());
+            boolean own = isOwn(viewer, task);
             boolean isRunning = run.status() == RunStatus.RUNNING;
             ObjectNode item = (isRunning ? running : queued).addObject().put("taskId", run.taskId()).put("project", run.project())
-                    .put("title", run.title()).put("kind", run.kind().name()).put("priority", priority(active.get(run.taskId())))
+                    .put("title", run.title()).put("kind", run.kind().name()).put("priority", priority(task))
                     // Who gave it: the name for an admin's Tasks page to show (ADR 0020 allows it), and a flag for the
                     // Mini App's My tasks page, which keeps only the viewer's own and cannot go by name — two members
                     // may share a first name.
-                    .put("requester", requesterName(active.get(run.taskId())))
-                    .put("mine", ownedBy(active.get(run.taskId()), viewerRef));
+                    .put("requester", requesterName(task))
+                    .put("mine", own);
+            putActions(item, actions.get(run.taskId()));
             if (isRunning) {
                 item.put("startedAt", text(run.startedAt()));
-                if (ownedBy(active.get(run.taskId()), viewerRef)) {
+                if (own) {
                     activeRuns.activity(run.taskId()).ifPresent(activity ->
                             item.put("steps", activity.steps()).put("lastAction", activity.lastAction()));
                 }
             } else {
                 item.put("queuedAt", text(run.queuedAt()));
-                Task queuedTask = active.get(run.taskId());
-                boolean waitingForWorker = requiresWorker && queuedTask != null && waitsForWorker(tx, queuedTask, workerSeenSince);
+                boolean waitingForWorker = requiresWorker && task != null && waitsForWorker(tx, task, workerSeenSince);
                 if (waitingForWorker) {
                     item.put("waitingForWorker", true);
                 }
@@ -943,11 +970,13 @@ public final class TaskService {
             }
         }
         ArrayNode awaiting = payload.putArray("awaitingApproval");
-        for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL, visibleProjects)) {
+        for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL, viewer.projects(), viewer.ref())) {
+            boolean own = isOwn(viewer, task);
             ObjectNode item = awaiting.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                     .put("priority", task.priority().name()).put("requester", task.requester().name())
-                    .put("mine", ownedBy(task, viewerRef)).put("since", text(task.updatedAt()));
-            if (ownedBy(task, viewerRef)) {
+                    .put("mine", own).put("since", text(task.updatedAt()));
+            putActions(item, actions.get(task.id()));
+            if (own) {
                 // What the Mini App's home shows on the requester's own waiting task: the question it waits on, if any.
                 currentPlan(tx, task.id()).ifPresent(plan -> {
                     List<JsonNode> open = new ArrayList<>();
@@ -963,9 +992,10 @@ public final class TaskService {
                 });
             }
         }
-        ArrayNode mine = payload.putArray("mine");
-        active.values().stream().filter(task -> task.requester().ref().equals(viewerRef))
-                .forEach(task -> mine.addObject().put("taskId", task.id()).put("priority", task.priority().name()));
+        ArrayNode prioritized = payload.putArray("mine");
+        // A private chat's priority buttons: the tasks whose priority task access lets this viewer change.
+        active.values().stream().filter(task -> actions.getOrDefault(task.id(), List.of()).contains(TaskAccess.Action.PRIORITY))
+                .forEach(task -> prioritized.addObject().put("taskId", task.id()).put("priority", task.priority().name()));
         return payload;
     }
 
@@ -1002,47 +1032,49 @@ public final class TaskService {
     }
 
     /**
-     * Posts the most recently finished tasks of {@code visibleProjects}, newest first; the total cost is shown only on
-     * the viewer's own tasks, everyone else's carry just the headline (ADR 0020).
+     * Posts the most recently finished tasks {@code viewer} sees, newest first; the total cost is shown only on the viewer's
+     * own tasks, everyone else's carry just the headline (ADR 0020).
      */
-    public void history(Tx tx, Set<String> visibleProjects, String viewerRef, String originRef, String chatRef) {
-        enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, historyPayload(tx, visibleProjects, viewerRef), clock.instant());
+    public void history(Tx tx, TaskAccess.Viewer viewer, String originRef, String chatRef) {
+        enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, historyPayload(tx, viewer), clock.instant());
     }
 
     /** The content of a history message; also what the Mini App's task list reads (spec: Task pages). */
-    public ObjectNode historyPayload(Tx tx, Set<String> visibleProjects, String viewerRef) {
-        List<Task> finished = Tasks.finished(tx, visibleProjects, HISTORY_SIZE);
+    public ObjectNode historyPayload(Tx tx, TaskAccess.Viewer viewer) {
+        List<Task> finished = Tasks.finished(tx, viewer.projects(), viewer.ref(), HISTORY_SIZE);
         Map<Long, BigDecimal> costs = Runs.costs(tx, finished.stream().map(Task::id).toList());
+        Map<Long, List<TaskAccess.Action>> actions = actionsOf(tx, viewer, finished);
         ObjectNode payload = Json.object();
         ArrayNode listed = payload.putArray("tasks");
         for (Task task : finished) {
-            boolean mine = ownedBy(task, viewerRef);
-            BigDecimal cost = mine ? costs.get(task.id()) : null;
-            listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
-                    .put("mine", mine)
+            boolean own = isOwn(viewer, task);
+            BigDecimal cost = own ? costs.get(task.id()) : null;
+            ObjectNode item = listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
+                    .put("mine", own)
                     .put("phase", task.phase().name()).put("priority", task.priority().name())
                     .put("requester", task.requester().name()).put("createdAt", text(task.createdAt())).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
                     .put("costUsd", cost == null ? null : cost.toPlainString()).put("completedAt", text(task.completedAt()));
+            putActions(item, actions.get(task.id()));
         }
         return payload;
     }
 
     /**
-     * Posts one task's timeline: its runs in order, how it ended, and what it cost. Tasks outside {@code visibleProjects}
-     * are not found. Someone else's task stops at the headline: no runs, no cost (ADR 0020).
+     * Posts one task's timeline: its runs in order, how it ended, and what it cost. A task {@code viewer} does not see is
+     * not found. Someone else's task stops at the headline: no runs, no cost (ADR 0020).
      */
-    public void timeline(Tx tx, Set<String> visibleProjects, String viewerRef, long taskId, String originRef, String chatRef) {
-        Optional<ObjectNode> payload = timelinePayload(tx, visibleProjects, viewerRef, taskId);
+    public void timeline(Tx tx, TaskAccess.Viewer viewer, long taskId, String originRef, String chatRef) {
+        Optional<ObjectNode> payload = timelinePayload(tx, viewer, taskId);
         enqueue(tx, null, payload.isPresent() ? OutboxKind.TASK_TIMELINE : OutboxKind.TASK_NOT_FOUND, chatRef, originRef,
                 payload.orElseGet(() -> Json.object().put("taskId", taskId)), clock.instant());
     }
 
     /**
-     * One task's timeline, or empty when it is not in {@code visibleProjects} — so a task's existence does not leak.
-     * Someone else's task stops at the headline here too (ADR 0020), which is what keeps that rule in one place.
+     * One task's timeline, or empty when {@code viewer} does not see it — so a task's existence does not leak. Someone
+     * else's task stops at the headline here too (ADR 0020).
      */
-    public Optional<ObjectNode> timelinePayload(Tx tx, Set<String> visibleProjects, String viewerRef, long taskId) {
-        Optional<Task> found = Tasks.find(tx, taskId).filter(task -> visibleProjects.contains(task.project()));
+    public Optional<ObjectNode> timelinePayload(Tx tx, TaskAccess.Viewer viewer, long taskId) {
+        Optional<Task> found = Tasks.find(tx, taskId).filter(task -> viewer.sees(task) != TaskAccess.Sight.NONE);
         if (found.isEmpty()) {
             return Optional.empty();
         }
@@ -1052,7 +1084,8 @@ public final class TaskService {
                 .put("prUrl", task.prUrl())
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
                 .put("completedAt", text(task.completedAt()));
-        if (!ownedBy(task, viewerRef)) {
+        putActions(payload, actionsOf(tx, viewer, List.of(task)).get(task.id()));
+        if (!isOwn(viewer, task)) {
             return Optional.of(payload.put("headline", true).putNull("costUsd"));
         }
         ArrayNode runs = payload.putArray("runs");

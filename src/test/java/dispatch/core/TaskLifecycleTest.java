@@ -785,7 +785,7 @@ class TaskLifecycleTest {
 
     private JsonNode tasksStatusPayload() {
         // The fixture's alm project is named "autoland-management"; "alm" is only its alias (ADR: project key vs. name).
-        return db.transactionReturning(tx -> tasks.statusPayload(tx, Set.of("autoland-management"), BOLD.ref()));
+        return db.transactionReturning(tx -> tasks.statusPayload(tx, new TaskAccess.Viewer(BOLD.ref(), Set.of("autoland-management"))));
     }
 
     private long create(Requester who, String project, String text, String messageId) {

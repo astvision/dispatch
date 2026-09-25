@@ -176,7 +176,7 @@ public final class Assistant {
         record Context(Optional<UUID> session, String snapshot) {
         }
         Context context = db.transactionReturning(tx -> new Context(
-                Conversations.session(tx, who.ref(), started.minus(IDLE_RESET)), snapshot(tx, visible, who.ref(), started)));
+                Conversations.session(tx, who.ref(), started.minus(IDLE_RESET)), snapshot(tx, new TaskAccess.Viewer(who.ref(), visible), started)));
         UUID session = context.session().orElseGet(UUID::randomUUID);
         boolean thinkHard = text.toLowerCase(Locale.ROOT).contains(THINK_HARD);
         List<Spent> spent = new ArrayList<>();
@@ -309,8 +309,8 @@ public final class Assistant {
      * What the member's tasks look like right now, so a plain "what is going on?" needs no tool call: their own running,
      * queued and waiting tasks, and the projects a task can be given for.
      */
-    private String snapshot(Tx tx, Set<String> visible, String memberRef, Instant now) {
-        ObjectNode status = tasks.statusPayload(tx, visible, memberRef);
+    private String snapshot(Tx tx, TaskAccess.Viewer viewer, Instant now) {
+        ObjectNode status = tasks.statusPayload(tx, viewer);
         ObjectNode snapshot = Json.object().put("now", now.toString());
         for (String list : List.of("awaitingApproval", "running", "queued")) {
             ArrayNode mine = snapshot.putArray(list);
@@ -321,7 +321,7 @@ public final class Assistant {
             });
         }
         ArrayNode listed = snapshot.putArray("projects");
-        projects.all().stream().filter(project -> visible.contains(project.name()))
+        projects.all().stream().filter(project -> viewer.projects().contains(project.name()))
                 .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
         return snapshot.toString();
     }

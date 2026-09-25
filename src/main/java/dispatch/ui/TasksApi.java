@@ -10,6 +10,7 @@ import dispatch.core.CancelResult;
 import dispatch.core.Groups;
 import dispatch.core.RejectResult;
 import dispatch.core.RetryResult;
+import dispatch.core.TaskAccess;
 import dispatch.core.TaskService;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
@@ -41,11 +42,13 @@ public final class TasksApi {
     private final Database db;
     private final TaskService tasks;
     private final Groups groups;
+    private final TaskAccess access;
 
     public TasksApi(Database db, TaskService tasks, Groups groups) {
         this.db = db;
         this.tasks = tasks;
         this.groups = groups;
+        this.access = new TaskAccess(groups);
     }
 
     public Map<String, BiFunction<Caller, JsonNode, Object>> routes() {
@@ -69,10 +72,10 @@ public final class TasksApi {
         if (wholeGroup && !caller.admin()) {
             throw new ApiException(403, "not_admin", NOT_ADMIN);
         }
-        Set<String> visible = groups.projectsOfMember(caller.ref());
+        TaskAccess.Viewer viewer = access.member(caller.ref());
         return db.transactionReturning(tx -> {
-            ObjectNode active = tasks.statusPayload(tx, visible, caller.ref());
-            ObjectNode finished = tasks.historyPayload(tx, visible, caller.ref());
+            ObjectNode active = tasks.statusPayload(tx, viewer);
+            ObjectNode finished = tasks.historyPayload(tx, viewer);
             ObjectNode answer = Json.object();
             ArrayNode listed = answer.putArray("tasks");
             for (ObjectNode task : merge(active, finished)) {
@@ -86,8 +89,7 @@ public final class TasksApi {
 
     ObjectNode timeline(Caller caller, JsonNode body) {
         long taskId = taskId(body);
-        Set<String> visible = groups.projectsOfMember(caller.ref());
-        return db.transactionReturning(tx -> tasks.timelinePayload(tx, visible, caller.ref(), taskId))
+        return db.transactionReturning(tx -> tasks.timelinePayload(tx, access.member(caller.ref()), taskId))
                 .orElseThrow(() -> new ApiException(404, "not_found", "no task #" + taskId + " here"));
     }
 
@@ -210,8 +212,7 @@ public final class TasksApi {
 
     /** The caller's own task with its plan; a task outside their groups is not found, so its existence does not leak. */
     private ObjectNode ownTask(Tx tx, Caller caller, long taskId) {
-        Set<String> visible = groups.projectsOfMember(caller.ref());
-        ObjectNode task = tasks.timelinePayload(tx, visible, caller.ref(), taskId).orElseThrow(() -> notFound(taskId));
+        ObjectNode task = tasks.timelinePayload(tx, access.member(caller.ref()), taskId).orElseThrow(() -> notFound(taskId));
         if (task.path("headline").asBoolean(false)) {
             throw new ApiException(403, "not_yours", NOT_YOURS);
         }
