@@ -112,16 +112,18 @@ class GroupWriterTest {
         assertEquals(List.of("Note", "note-2"), telegram.groups().stream().map(Config.Group::name).toList());
     }
 
-    /** Ruling R6: a project whose own group already has a chat takes that group along to the new chat. */
+    /** ADR 0025: a project may have several group chats; linking another one adds it and keeps the first. */
     @Test
-    void relinkingTheOnlyProjectOfALinkedGroupMovesTheGroupToTheNewChat() {
+    void linkingALinkedProjectToASecondChatAddsAGroupAndKeepsTheFirst() throws IOException {
         GroupWriter writer = GroupWriter.file(file, ENV);
         writer.link(-4883391545L, "note", "alm");
 
-        Config.Telegram telegram = writer.link(-1002L, "other", "alm");
+        Config.Telegram telegram = writer.link(-1002L, "ТӨБЗГ (Local)", "alm");
 
-        assertEquals(List.of(new Config.Group("bold", -1002L, List.of(new Config.Member(123456789, "Bold")), List.of("alm"))),
-                telegram.groups());
+        Config.Member bold = new Config.Member(123456789, "Bold");
+        assertEquals(List.of(new Config.Group("bold", -4883391545L, List.of(bold), List.of("alm")),
+                new Config.Group("tubzg-local", -1002L, List.of(bold), List.of("alm"))), telegram.groups());
+        assertEquals(telegram, ConfigLoader.load(file, ENV).telegram(), "the file loads as written");
     }
 
     /** dispatch init marks a personal group as having no chat; once it has one, that comment would lie. */

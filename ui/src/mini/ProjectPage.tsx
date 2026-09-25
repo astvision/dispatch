@@ -2,6 +2,7 @@ import { Result, theme } from "antd";
 import { useState } from "react";
 import { removeProject, type ManagedProject, type Me, type PhaseChoice, type ProjectSummary } from "../api";
 import { EFFORTS, MODELS } from "../options";
+import { openTelegramLink } from "./backButton";
 import { MiniManaged, useMiniConfig, useProjects } from "./data";
 import { Header, Row, Section } from "./List";
 import { fieldPath, PROJECTS_PATH, type Field } from "./paths";
@@ -79,8 +80,26 @@ function Settings({ project, navigate }: { project: ManagedProject; navigate: (p
   );
 }
 
+/** Telegram's start parameter allows only these; the bot matches the name or the alias (UpdateHandler.addLink). */
+const START_PARAMETER = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Adding the bot to a group through this link links that group to the project, without the bot asking (ADR 0025). None
+ * when neither the name nor the alias fits a start parameter.
+ */
+function AddToGroup({ project, bot }: { project: ManagedProject; bot: string }) {
+  const key = [project.name, project.alias].find((candidate) => candidate && START_PARAMETER.test(candidate));
+  if (!key) return null;
+  return (
+    <Section title="Telegram">
+      <Row title="Telegram группт нэмэх" subtitle="Нэмсэн группт энэ төслийн даалгавар гарна"
+        onClick={() => openTelegramLink(`https://t.me/${bot}?startgroup=${key}`)} />
+    </Section>
+  );
+}
+
 /** An admin also changes the project here, a row per setting, and may remove it. */
-function AdminProject({ name, navigate }: { name: string; navigate: (path: string) => void }) {
+function AdminProject({ name, bot, navigate }: { name: string; bot: string; navigate: (path: string) => void }) {
   const { config, loadError, reload, save, saving, saveError } = useMiniConfig();
   return (
     <MiniManaged config={config} loadError={loadError} saveError={saveError} reload={reload}>
@@ -92,6 +111,7 @@ function AdminProject({ name, navigate }: { name: string; navigate: (path: strin
             <ProjectHeader project={project} />
             <ProjectTasks name={name} scope="group" />
             <Settings project={project} navigate={navigate} />
+            <AddToGroup project={project} bot={bot} />
             <Section>
               <RemoveRows busy={saving} onRemove={async () => {
                 if (await save((version) => removeProject(version, name))) navigate(PROJECTS_PATH);
@@ -105,5 +125,5 @@ function AdminProject({ name, navigate }: { name: string; navigate: (path: strin
 }
 
 export default function ProjectPage({ me, name, navigate }: { me: Me; name: string; navigate: (path: string) => void }) {
-  return me.admin ? <AdminProject name={name} navigate={navigate} /> : <MemberProject name={name} />;
+  return me.admin ? <AdminProject name={name} bot={me.bot} navigate={navigate} /> : <MemberProject name={name} />;
 }

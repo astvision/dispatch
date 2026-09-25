@@ -576,14 +576,13 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void someoneOutsideTheGroupMentioningTheBotIsNotAllowed() {
+    void someoneOutsideTheGroupMentioningTheBotGetsNothingAndTheGroupHearsNothing() {
+        // Sara is a member, but of another group; 999 of none. A refusal in a busy group would only be noise.
         handler.handle(mention(525, 35, 300, "Sara", "@" + BOT + " Drop the tables", null));
+        handler.handle(mention(526, 36, 999, "Stranger", "@" + BOT + " nice bot", null));
 
         assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
-        Map<String, String> refused = row("SELECT * FROM outbox");
-        assertEquals("NOT_ALLOWED", refused.get("kind"));
-        assertEquals("telegram:" + GROUP, refused.get("chat_ref"));
-        assertEquals("telegram:" + GROUP + "/35", refused.get("reply_to_ref"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"), "no NOT_ALLOWED line in the group");
     }
 
     @Test
@@ -686,14 +685,25 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void anAuthorOutsideTheChatsProjectGroupsIsIgnoredSilently() {
+    void anAuthorOutsideTheChatsProjectGroupsGivesTheMentionedDeveloperADraft() {
+        // A manager who is not a member assigns work by mentioning the developer; the developer decides.
         db.transaction(tx -> dispatch.store.TelegramUsers.record(tx, 200, "ali_dev", clock.instant()));
 
-        handler.handle(people(544, 54, 300, "Sara", "@ali_dev fix it", null, "@ali_dev"));
-        handler.handle(people(545, 55, 999, "Stranger", "@ali_dev fix it", null, "@ali_dev"));
+        handler.handle(people(544, 54, 999, "Stranger", "@ali_dev fix the QR filter", null, "@ali_dev"));
+
+        Map<String, String> draft = row("SELECT * FROM draft");
+        assertEquals("telegram:200", draft.get("requester_ref"), "the developer is the requester, never the outsider");
+        assertEquals("fix the QR filter\n\nХүсэлт: Stranger", draft.get("description"));
+        assertEquals("1", row("SELECT count(*) AS n FROM draft").get("n"));
+    }
+
+    @Test
+    void anOutsidersUnknownUsernamesAreNotAnswered() {
+        handler.handle(people(545, 55, 999, "Stranger", "@nobody fix it", null, "@nobody"));
+        handler.handle(people(546, 56, 300, "Sara", "@ali_dev fix it", null, "@ali_dev"));
 
         assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
-        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"), "no NOT_ALLOWED for ordinary chat");
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"), "ordinary chat among outsiders stays quiet");
     }
 
     @Test
@@ -1601,9 +1611,9 @@ class UpdateHandlerTest {
         assertFalse(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
     }
 
-    /** Ruling R6: the project's group follows it to the new chat, so the bot has nothing left to do in the old one. */
+    /** ADR 0025: a project may have several group chats; each task is announced in the one it was given in. */
     @Test
-    void relinkingAProjectToAnotherChatLeavesTheOldChat() throws Exception {
+    void linkingAProjectToASecondChatKeepsTheFirstAndEachTaskIsAnnouncedWhereItWasGiven() throws Exception {
         UpdateHandler handler = personalHandler();
         handler.handle(myChatMember(730, 100, NEW_GROUP, "note", "member"));
         handler.handle(callback(731, 100, "Bold", 100L, 1, "link:" + NEW_GROUP + ":0"));
@@ -1613,10 +1623,69 @@ class UpdateHandlerTest {
         handler.handle(callback(733, 100, "Bold", 100L, 2, "link:" + otherGroup + ":0"));
 
         assertTrue(personalGroups.isGroupChat("telegram:" + otherGroup));
+        assertTrue(personalGroups.isGroupChat("telegram:" + NEW_GROUP), "the first chat stays linked");
+        Thread.sleep(100);
+        assertTrue(telegram.drain("leaveChat").isEmpty(), "the bot stays in both");
+        db.transaction(tx -> personalTasks.create(tx, BOLD, "life", "From the second", Priority.NORMAL, "telegram:" + otherGroup + "/9"));
+        db.transaction(tx -> personalTasks.create(tx, BOLD, "life", "Given privately", Priority.NORMAL, "telegram:100/77"));
+        assertEquals("telegram:" + otherGroup, row("SELECT chat_ref FROM task WHERE title = 'From the second'").get("chat_ref"));
+        assertEquals("telegram:" + NEW_GROUP, row("SELECT chat_ref FROM task WHERE title = 'Given privately'").get("chat_ref"));
+    }
+
+    /** ADR 0025: adding the bot through a project's add link (?startgroup=life) links the group without asking. */
+    @Test
+    void addingTheBotThroughAProjectsAddLinkLinksTheGroupWithoutAsking() throws Exception {
+        UpdateHandler handler = personalHandler();
+
+        handler.handle(message(740, 40, 100, "Bold", NEW_GROUP, "group", "/start@" + BOT + " life", null));
+
+        assertTrue(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
+        assertEquals("GROUP_LINKED", row("SELECT kind FROM outbox WHERE chat_ref = ?", "telegram:" + NEW_GROUP).get("kind"));
+        Thread.sleep(100);
+        assertTrue(telegram.drain("sendMessage").isEmpty(), "no private question");
+        assertTrue(telegram.drain("leaveChat").isEmpty());
+    }
+
+    /** The add event usually arrives before /start: its prompt, already sent, is closed as linked. */
+    @Test
+    void anAddLinkArrivingAfterThePromptClosesThePrompt() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(741, 100, NEW_GROUP, "note", "member"));
+        long promptId = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().path("message_id").asLong(1);
+
+        handler.handle(message(742, 41, 100, "Bold", NEW_GROUP, "group", "/start@" + BOT + " life", null));
+
+        assertTrue(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
+        JsonNode redrawn = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(100, redrawn.get("chat_id").asLong());
+        assertEquals(0, redrawn.get("reply_markup").get("inline_keyboard").size(), "no buttons left to press");
+        assertTrue(promptId >= 0);
+    }
+
+    @Test
+    void projectsGivesTheManagerEachProjectsAddLink() {
+        personalHandler().handle(privateCommand(745, 100, "Bold", "/projects"));
+
+        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'PROJECTS'").get("payload"));
+        String link = "https://t.me/" + BOT + "?startgroup=life";
+        assertEquals(link, payload.at("/projects/0/addToGroup").asText());
+        assertTrue(renderer.render(dispatch.domain.OutboxKind.PROJECTS, payload).html().contains("href=\"" + link + "\""));
+    }
+
+    @Test
+    void anAddLinkNamingNoProjectAsksAsAPlainAddDoes() throws Exception {
+        personalHandler().handle(message(743, 42, 100, "Bold", NEW_GROUP, "group", "/start@" + BOT + " nosuch", null));
+
+        assertFalse(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
+        assertEquals(100, telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().get("chat_id").asLong());
+    }
+
+    @Test
+    void someoneElsesAddLinkMakesTheBotLeave() throws Exception {
+        personalHandler().handle(message(744, 43, 999, "Eve", NEW_GROUP, "group", "/start@" + BOT + " life", null));
+
         assertFalse(personalGroups.isGroupChat("telegram:" + NEW_GROUP));
         assertEquals(NEW_GROUP, telegram.awaitRequest("leaveChat", Duration.ofSeconds(2)).json().get("chat_id").asLong());
-        Thread.sleep(100);
-        assertTrue(telegram.drain("leaveChat").isEmpty(), "only the old chat");
     }
 
     /** Ruling R7: the dedupe folds the near-simultaneous add events; an ignored prompt must not block the chat forever. */
@@ -1835,7 +1904,14 @@ class UpdateHandlerTest {
                 if (config[0].groups().stream().noneMatch(group -> group.projects().contains(linked))) {
                     throw new GroupWriter.UnknownProject(linked);
                 }
-                return config[0] = withChat(config[0], group -> group.projects().contains(linked), chatId);
+                Config.Group owner = config[0].groups().stream().filter(group -> group.projects().contains(linked)).findFirst().orElseThrow();
+                if (owner.chatId() == null) {
+                    return config[0] = withChat(config[0], group -> group == owner, chatId);
+                }
+                // ADR 0025: a second chat for the project is a group of its own; the first keeps its chat.
+                List<Config.Group> added = new java.util.ArrayList<>(config[0].groups());
+                added.add(new Config.Group("chat" + chatId, chatId, owner.members(), List.of(linked)));
+                return config[0] = new Config.Telegram(config[0].admins(), List.copyOf(added));
             }
 
             @Override

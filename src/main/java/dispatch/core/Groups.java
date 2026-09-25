@@ -62,13 +62,20 @@ public final class Groups {
     }
 
     /**
-     * The chat of the group that owns {@code project}, which config validation guarantees exists; empty when that group has
-     * no chat (ADR 0014).
+     * The chat a task of {@code project} is announced in: the one it was given in when that is one of the project's group
+     * chats (a project may have several, ADR 0025), else the project's first. Empty when none of its groups has a chat
+     * (ADR 0014). Config validation guarantees some group owns the project.
+     *
+     * @param originRef the message that gave the task, e.g. {@code telegram:-100/12}
      */
-    public Optional<String> chatOfProject(String project) {
-        Config.Group owner = telegram.groups().stream().filter(group -> group.projects().contains(project)).findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("project " + project + " belongs to no group"));
-        return Optional.ofNullable(owner.chatId()).map(Groups::chatRef);
+    public Optional<String> chatOfTask(String project, String originRef) {
+        List<String> chats = telegram.groups().stream().filter(group -> group.projects().contains(project))
+                .map(Config.Group::chatId).filter(java.util.Objects::nonNull).map(Groups::chatRef).toList();
+        if (telegram.groups().stream().noneMatch(group -> group.projects().contains(project))) {
+            throw new IllegalArgumentException("project " + project + " belongs to no group");
+        }
+        String originChat = originRef == null ? "" : originRef.split("/", 2)[0];
+        return chats.contains(originChat) ? Optional.of(originChat) : chats.stream().findFirst();
     }
 
     public boolean isMemberOfProjectGroup(String requesterRef, String project) {

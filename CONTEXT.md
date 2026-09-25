@@ -21,7 +21,7 @@ The member who created a task. Its plan is theirs to approve, correct or reject,
 _Avoid_: Owner, author, assignee
 
 **Project**:
-A repository a group hands tasks for, together with how Dispatch works on it: its short alias, base branch and agent. Each project belongs to exactly one group.
+A repository a group hands tasks for, together with how Dispatch works on it: its short alias, base branch and agent. A project belongs to at least one group, and may have several, one per Telegram group it is announced in.
 _Avoid_: Repo, service, workspace
 
 **Task**:

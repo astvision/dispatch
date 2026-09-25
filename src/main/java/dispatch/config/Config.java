@@ -78,7 +78,7 @@ public record Config(
     }
 
     /**
-     * A group with its members and the projects it owns; every project belongs to exactly one group (ADR 0012). A
+     * A group with its members and the projects it owns; every project belongs to at least one group (ADR 0012), and may belong to several, one per chat (ADR 0025). A
      * personal bot's group may link a chat too, for announcements (ADR 0014).
      *
      * @param chatId the group chat for announcements; null when the group has none, so its tasks stay in private chats

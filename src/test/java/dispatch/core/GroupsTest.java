@@ -19,10 +19,10 @@ class GroupsTest {
     void groupWithoutAChatHasNoChatToAnnounceIn() {
         Groups personal = new Groups(List.of(new Config.Group("bold", null, List.of(new Config.Member(1, "Bold")), List.of("alm"))));
 
-        assertEquals(java.util.Optional.empty(), personal.chatOfProject("alm"));
+        assertEquals(java.util.Optional.empty(), personal.chatOfTask("alm", "telegram:1/5"));
         assertEquals(Set.of("alm"), personal.projectsOfMember("telegram:1"));
         assertFalse(personal.isGroupChat("telegram:null"));
-        assertEquals(java.util.Optional.of("telegram:-100"), groups.chatOfProject("crm"));
+        assertEquals(java.util.Optional.of("telegram:-100"), groups.chatOfTask("crm", "telegram:1/5"));
     }
 
     @Test
@@ -65,8 +65,22 @@ class GroupsTest {
     }
 
     @Test
+    void aTaskIsAnnouncedInTheProjectsChatItCameFromElseItsFirst() {
+        // ADR 0025: prop has two group chats.
+        Groups several = new Groups(List.of(
+                new Config.Group("dev", -100L, List.of(new Config.Member(1, "Bold")), List.of("prop")),
+                new Config.Group("qa", -300L, List.of(new Config.Member(1, "Bold")), List.of("prop")),
+                new Config.Group("other", -400L, List.of(new Config.Member(1, "Bold")), List.of("life"))));
+
+        assertEquals(java.util.Optional.of("telegram:-300"), several.chatOfTask("prop", "telegram:-300/12"));
+        assertEquals(java.util.Optional.of("telegram:-100"), several.chatOfTask("prop", "telegram:1/5"), "given privately");
+        assertEquals(java.util.Optional.of("telegram:-100"), several.chatOfTask("prop", "telegram:-400/7"), "another project's chat");
+        assertEquals(Set.of("prop"), several.projectsOfChat("telegram:-300"));
+    }
+
+    @Test
     void eachProjectHasTheChatOfItsGroup() {
-        assertEquals(java.util.Optional.of("telegram:-200"), groups.chatOfProject("life"));
+        assertEquals(java.util.Optional.of("telegram:-200"), groups.chatOfTask("life", "telegram:1/5"));
         assertTrue(groups.isMemberOfProjectGroup("telegram:3", "life"));
         assertFalse(groups.isMemberOfProjectGroup("telegram:3", "alm"));
     }

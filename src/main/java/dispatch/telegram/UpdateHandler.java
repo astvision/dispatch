@@ -65,6 +65,8 @@ public final class UpdateHandler {
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
     private static final Set<String> COMMANDS =
             Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "projects", "help", "start");
+    /** What Telegram accepts as a deep link's start parameter. */
+    private static final java.util.regex.Pattern START_PARAMETER = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,64}");
     private static final Duration UNKNOWN_NOTICE_INTERVAL = Duration.ofHours(24);
 
     private final Database db;
@@ -360,7 +362,7 @@ public final class UpdateHandler {
             }
             case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
-            case "projects" -> projectList(tx, visible, origin, chatRef);
+            case "projects" -> projectList(tx, who, privateChat, visible, origin, chatRef);
             case "help", "start" -> help(tx, visible, origin, chatRef, privateChat);
             default -> {
                 // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
@@ -433,7 +435,8 @@ public final class UpdateHandler {
      * Members of the chat's project groups mentioned in a linked group, by @username or by name, each get the message as a
      * task of their own, drafted in their private chat as G-1b drafts the author's (G-1c). The text is the message without
      * those mentions, after a replied message as private /task puts it, and ends with who asked unless they asked
-     * themselves. The author must be in one of those groups too; anyone else's chat is left alone, without a refusal.
+     * themselves. The author may be anyone in the chat, such as a manager who is not a member: the draft is the developer's
+     * own, so nothing starts until they choose to. Only a member's unknown @names are answered; an outsider's are left alone.
      */
     private void mentionTasks(Tx tx, Requester author, JsonNode message, String origin, String chatRef) {
         List<Mention> mentions = mentions(message);
@@ -441,16 +444,14 @@ public final class UpdateHandler {
             return;
         }
         Set<String> owned = groups.projectsOfChat(chatRef);
-        if (!inProjectGroup(author.ref(), owned)) {
-            // Ordinary chat of someone outside the project groups: nothing to do, and a line per message would be noise.
-            return;
-        }
+        // Outsiders tag each other all day: answering their unknown names would be noise.
+        boolean answersUnknown = inProjectGroup(author.ref(), owned);
         Map<Long, List<Mention>> developers = new LinkedHashMap<>();
         List<String> unknown = new ArrayList<>();
         for (Mention mention : mentions) {
             Optional<Long> userId = mention.userId() != null ? Optional.of(mention.userId()) : TelegramUsers.idOf(tx, mention.username());
             if (userId.isEmpty()) {
-                if (unknown.stream().noneMatch(name -> name.equalsIgnoreCase(mention.username()))) {
+                if (answersUnknown && unknown.stream().noneMatch(name -> name.equalsIgnoreCase(mention.username()))) {
                     unknown.add(mention.username());
                 }
             } else if (inProjectGroup(Refs.user(userId.get()), owned)) {
@@ -956,7 +957,10 @@ public final class UpdateHandler {
                 tx.afterCommit(() -> Log.info("group.members_added_ignored", "chat_id", chatId));
                 return;
             }
-            if (asks && mayLink(from)) {
+            Optional<String> added = addLinkProject(message);
+            if (added.isPresent() && mayLink(from)) {
+                linkFromAddLink(tx, message, added.get());
+            } else if (asks && mayLink(from)) {
                 askToLink(tx, chatId, chat.path("title").asText(), from.get("id").asLong());
             } else {
                 leave(tx, chatId, from);
@@ -981,6 +985,52 @@ public final class UpdateHandler {
     /** Whether {@code from} is asked which project an unknown group is for, instead of the bot leaving it. */
     private boolean mayLink(JsonNode from) {
         return groupLinks != null && from.has("id") && groups.mayManage(Refs.user(from.get("id").asLong()));
+    }
+
+    /**
+     * The project a group message "/start KEY" names, which is what Telegram sends right after the bot was added through
+     * that project's add link (?startgroup=KEY, ADR 0025). The key is the project's name or alias; empty for anything else.
+     */
+    private Optional<String> addLinkProject(JsonNode message) {
+        return Command.parse(message)
+                .filter(command -> command.name().equals("start") && command.addressedTo(botUsername))
+                .map(command -> command.args().strip())
+                .filter(key -> !key.isEmpty())
+                .flatMap(key -> projects.all().stream()
+                        .filter(project -> key.equalsIgnoreCase(project.name()) || key.equalsIgnoreCase(project.alias()))
+                        .map(Config.Project::name).findFirst());
+    }
+
+    /** Links the group to the add link's project at once, and closes the prompt its add event may have sent already. */
+    private void linkFromAddLink(Tx tx, JsonNode message, String project) {
+        long chatId = message.path("chat").path("id").asLong();
+        String title = message.path("chat").path("title").asText();
+        Requester who = new Requester(Refs.user(message.path("from").get("id").asLong()), displayName(message.path("from")));
+        Optional<GroupLinks.Prompt> open = groupLinks.prompt(tx, chatId);
+        GroupLinks.Result result = groupLinks.linkTo(tx, who, chatId, title, project);
+        if (result != GroupLinks.Result.LINKED) {
+            // The config could not be written (already logged): the manager can still link from a prompt.
+            askToLink(tx, chatId, title, message.path("from").get("id").asLong());
+            return;
+        }
+        tx.afterCommit(() -> setGroupMenu(chatId));
+        open.filter(prompt -> prompt.messageId() != null).ifPresent(prompt -> {
+            ObjectNode payload = Json.object().put("chatId", chatId).put("title", prompt.title()).put("status", "LINKED").put("project", project);
+            Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+            tx.afterCommit(() -> bestEffort("editMessageText",
+                    () -> api.editMessageText(prompt.sentTo(), prompt.messageId(), redrawn.html(), redrawn.keyboard())));
+        });
+    }
+
+    /**
+     * A project's add link, which adds the bot to a group the manager picks and links it there (ADR 0025); empty when
+     * neither its name nor its alias fits Telegram's start parameter (A-Z, a-z, 0-9, _ and -, at most 64).
+     */
+    static Optional<String> addLink(String botUsername, Config.Project project) {
+        return java.util.stream.Stream.of(project.name(), project.alias())
+                .filter(key -> key != null && START_PARAMETER.matcher(key).matches())
+                .findFirst()
+                .map(key -> "https://t.me/" + botUsername + "?startgroup=" + key);
     }
 
     /**
@@ -1035,11 +1085,9 @@ public final class UpdateHandler {
         Optional<GroupLinks.Prompt> prompt = groupLinks.prompt(tx, chatId);
         Optional<Long> index = taskId(choice);
         GroupLinks.Result result;
-        Optional<Long> announcedIn = Optional.empty();
         if (choice.equals("-")) {
             result = groupLinks.decline(tx, presser, chatId);
         } else if (index.isPresent()) {
-            announcedIn = chatOfPromptedProject(prompt, index.get());
             result = groupLinks.link(tx, presser, chatId, index.get());
         } else {
             answer(tx, callback.path("id").asText(), "callback.unknown");
@@ -1054,7 +1102,6 @@ public final class UpdateHandler {
             case NOT_ALLOWED -> "callback.notAdmin";
         });
         if (result == GroupLinks.Result.LINKED) {
-            leaveIfUnlinked(tx, announcedIn.filter(old -> old != chatId));
             tx.afterCommit(() -> setGroupMenu(chatId));
         }
         if (result != GroupLinks.Result.LINKED && result != GroupLinks.Result.DECLINED) {
@@ -1071,28 +1118,6 @@ public final class UpdateHandler {
         long promptChatId = message.path("chat").path("id").asLong();
         long messageId = message.path("message_id").asLong();
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(promptChatId, messageId, redrawn.html(), redrawn.keyboard())));
-    }
-
-    /** The chat the project behind a prompt's button is announced in before the link, if the index still names one. */
-    private Optional<Long> chatOfPromptedProject(Optional<GroupLinks.Prompt> prompt, long index) {
-        return prompt.map(GroupLinks.Prompt::projects)
-                .filter(projects -> index >= 0 && index < projects.size())
-                .map(projects -> projects.get((int) index))
-                .flatMap(project -> groups.all().stream().filter(group -> group.projects().contains(project)).findFirst())
-                .map(Config.Group::chatId);
-    }
-
-    /**
-     * A project re-linked elsewhere took its group along (ruling R6), so the bot leaves the old chat, best-effort. Checked
-     * after the running groups were replaced: a chat still linked (its group kept other projects) is not left.
-     */
-    private void leaveIfUnlinked(Tx tx, Optional<Long> oldChat) {
-        oldChat.ifPresent(old -> tx.afterCommit(() -> {
-            if (!groups.isGroupChat(Refs.chat(old))) {
-                Log.info("group.left_old_chat", "chat_id", old);
-                bestEffort("leaveChat", () -> api.leaveChat(old));
-            }
-        }));
     }
 
     private void leave(Tx tx, long chatId, JsonNode from) {
@@ -1119,13 +1144,21 @@ public final class UpdateHandler {
         enqueue(tx, OutboxKind.HELP, chatRef, origin, payload);
     }
 
-    /** The chat's projects in config order, each with its base branch and, if it cannot take tasks now, why not. */
-    private void projectList(Tx tx, Set<String> visible, String origin, String chatRef) {
+    /**
+     * The chat's projects in config order, each with its base branch and, if it cannot take tasks now, why not. Someone who
+     * may link groups also gets each project's add link, privately: in a group it would invite anyone to try it.
+     */
+    private void projectList(Tx tx, Requester who, boolean privateChat, Set<String> visible, String origin, String chatRef) {
+        boolean withAddLinks = privateChat && groupLinks != null && groups.mayManage(who.ref());
         ObjectNode payload = Json.object();
         ArrayNode listed = payload.putArray("projects");
-        projects.all().stream().filter(project -> visible.contains(project.name()))
-                .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias())
-                        .put("baseBranch", project.baseBranch()).put("unavailable", projects.unavailableReason(project).orElse(null)));
+        projects.all().stream().filter(project -> visible.contains(project.name())).forEach(project -> {
+            ObjectNode line = listed.addObject().put("name", project.name()).put("alias", project.alias())
+                    .put("baseBranch", project.baseBranch()).put("unavailable", projects.unavailableReason(project).orElse(null));
+            if (withAddLinks) {
+                addLink(botUsername, project).ifPresent(link -> line.put("addToGroup", link));
+            }
+        });
         enqueue(tx, OutboxKind.PROJECTS, chatRef, origin, payload);
     }
 

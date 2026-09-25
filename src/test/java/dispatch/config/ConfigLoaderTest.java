@@ -110,7 +110,7 @@ class ConfigLoaderTest {
 
         String message = error.getMessage();
         assertTrue(message.contains("telegram.groups[0].projects[1]: 'billing' is not a configured project"), message);
-        assertTrue(message.contains("'autoland-management' is listed in more than one group"), message);
+        assertFalse(message.contains("autoland-management"), "a project may be in several groups (ADR 0025): " + message);
         assertTrue(message.contains("projects[1]: 'crm' is not listed in any group"), message);
         assertTrue(message.contains("telegram.groups[1].chatId: -1001234567890 is used by more than one group"), message);
     }

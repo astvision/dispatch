@@ -112,10 +112,25 @@ public final class GroupLinks {
         if (prompt.isEmpty() || projectIndex < 0 || projectIndex >= prompt.get().projects().size()) {
             return Result.STALE;
         }
-        String project = prompt.get().projects().get((int) projectIndex);
+        return write(tx, presser, chatId, prompt.get().title(), prompt.get().projects().get((int) projectIndex));
+    }
+
+    /**
+     * Links the chat straight to {@code project}, as adding the bot through the project's add link asks (ADR 0025), and
+     * forgets any prompt the add event opened meanwhile; the caller closes it where it was delivered.
+     */
+    public Result linkTo(Tx tx, Requester presser, long chatId, String title, String project) {
+        if (!groups.mayManage(presser.ref())) {
+            tx.afterCommit(() -> Log.warn("group.link_not_allowed", "chat_id", chatId, "presser", presser.ref()));
+            return Result.NOT_ALLOWED;
+        }
+        return write(tx, presser, chatId, title, project);
+    }
+
+    private Result write(Tx tx, Requester presser, long chatId, String title, String project) {
         Config.Telegram updated;
         try {
-            updated = writer.link(chatId, prompt.get().title(), project);
+            updated = writer.link(chatId, title, project);
         } catch (GroupWriter.UnknownProject e) {
             // Removed from the config since the prompt listed it: no answer to this prompt can link anything now.
             forget(tx, chatId);
