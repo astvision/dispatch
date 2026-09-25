@@ -1,0 +1,4 @@
+{"type":"init","timestamp":"2026-09-25T08:31:00.000Z","session_id":"5d7e8f90-1a2b-4c3d-8e9f-0a1b2c3d4e5f","model":"gemini-2.5-pro"}
+{"type":"message","timestamp":"2026-09-25T08:31:00.010Z","role":"user","content":"Implement the approved plan"}
+{"type":"error","timestamp":"2026-09-25T08:31:01.000Z","severity":"warning","message":"Retrying after a rate limit"}
+{"type":"result","timestamp":"2026-09-25T08:31:04.000Z","status":"error","error":{"type":"quota_exceeded","message":"Quota exceeded for gemini-2.5-pro; try again later"}}

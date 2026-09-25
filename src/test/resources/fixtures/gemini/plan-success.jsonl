@@ -1,0 +1,9 @@
+{"type":"init","timestamp":"2026-09-25T08:30:00.000Z","session_id":"0b9d2c1e-7a53-4b5e-9d1a-2f6a8e4c3b21","model":"gemini-2.5-pro"}
+{"type":"message","timestamp":"2026-09-25T08:30:00.010Z","role":"user","content":"Plan a fix for the bug in calc.py."}
+{"type":"tool_use","timestamp":"2026-09-25T08:30:02.000Z","tool_name":"read_file","tool_id":"read_file-1","parameters":{"file_path":"/var/lib/dispatch/demo/worktrees/1/calc.py"}}
+{"type":"tool_result","timestamp":"2026-09-25T08:30:02.050Z","tool_id":"read_file-1","status":"success","output":"def add(a, b):\n    return a - b\n"}
+{"type":"tool_use","timestamp":"2026-09-25T08:30:03.000Z","tool_name":"run_shell_command","tool_id":"run_shell_command-2","parameters":{"command":"git log -1 --oneline"}}
+{"type":"tool_result","timestamp":"2026-09-25T08:30:03.010Z","tool_id":"run_shell_command-2","status":"error","error":{"type":"execution_denied","message":"Tool execution denied by policy."}}
+{"type":"message","timestamp":"2026-09-25T08:30:05.000Z","role":"assistant","content":"```json\n{\"understanding\":\"add() subtracts instead of adding\",","delta":true}
+{"type":"message","timestamp":"2026-09-25T08:30:05.100Z","role":"assistant","content":"\"findings\":[\"calc.py:2 returns a - b\"],\"steps\":[\"Return a + b in add()\"],\"risks\":[],\"questions\":[]}\n```","delta":true}
+{"type":"result","timestamp":"2026-09-25T08:30:05.200Z","status":"success","stats":{"total_tokens":2210,"input_tokens":2000,"output_tokens":210,"cached":0,"input":2000,"duration_ms":5200,"tool_calls":2,"models":{"gemini-2.5-pro":{"total_tokens":2210,"input_tokens":2000,"output_tokens":210,"cached":0,"input":2000}}}}
