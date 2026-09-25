@@ -4,14 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.config.Config;
-import dispatch.domain.Phase;
 import dispatch.domain.Requester;
-import dispatch.domain.RunKind;
-import dispatch.domain.Task;
 import dispatch.store.Conversations;
 import dispatch.store.Outbox;
-import dispatch.store.Runs;
-import dispatch.store.Tasks;
 import dispatch.store.Tx;
 import java.time.Clock;
 import java.util.Optional;
@@ -47,6 +42,7 @@ public final class AssistantActions {
     private final Projects projects;
     private final Clock clock;
     private final String youDecide;
+    private final TaskAccess access;
 
     /** @param youDecide what a "you decide" answer says, in the same words as the chat's own button */
     public AssistantActions(TaskService tasks, Groups groups, Projects projects, Clock clock, String youDecide) {
@@ -55,6 +51,7 @@ public final class AssistantActions {
         this.projects = projects;
         this.clock = clock;
         this.youDecide = youDecide;
+        this.access = new TaskAccess(groups);
     }
 
     /** One of the assistant's proposed actions, as its structured output gave it. */
@@ -65,22 +62,17 @@ public final class AssistantActions {
         }
         long taskId = action.path("task").asLong(0);
         ObjectNode payload = Json.object().put("type", type).put("taskId", taskId);
-        Optional<Task> found = Tasks.find(tx, taskId)
-                .filter(task -> groups.projectsOfMember(who.ref()).contains(task.project()));
-        if (found.isEmpty()) {
-            return note(payload, "notFound");
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        if (verdict.sight() == TaskAccess.Sight.FULL) {
+            payload.put("title", verdict.task().title());
         }
-        Task task = found.get();
-        if (!task.requester().ref().equals(who.ref())) {
-            return note(payload, "notYours");
-        }
-        payload.put("title", task.title());
         return switch (type) {
-            case "answer" -> answer(tx, task, action, payload);
-            case "approve", "reject" -> decision(tx, task, type, payload);
-            case "cancel" -> task.phase().isActive() ? new Checked(true, payload) : note(payload, "phase");
-            case "retry" -> task.phase() == Phase.FAILED ? new Checked(true, payload) : note(payload, "phase");
-            case "followUp" -> followUp(tx, task, action, payload);
+            case "answer" -> answer(tx, verdict, action, payload);
+            case "approve" -> decision(verdict, TaskAccess.Action.APPROVE, payload);
+            case "reject" -> decision(verdict, TaskAccess.Action.REJECT, payload);
+            case "cancel" -> allowed(verdict.refusal(TaskAccess.Action.CANCEL), payload);
+            case "retry" -> allowed(verdict.refusal(TaskAccess.Action.RETRY), payload);
+            case "followUp" -> followUp(verdict, action, payload);
             default -> note(payload, "unknown");
         };
     }
@@ -154,14 +146,15 @@ public final class AssistantActions {
         return new Checked(true, payload.put("project", project));
     }
 
-    private Checked answer(Tx tx, Task task, JsonNode action, ObjectNode payload) {
-        Optional<ObjectNode> plan = task.phase() == Phase.AWAITING_APPROVAL ? tasks.currentPlan(tx, task.id()) : Optional.empty();
-        if (plan.isEmpty()) {
-            return note(payload, "phase");
+    private Checked answer(Tx tx, TaskAccess.Verdict verdict, JsonNode action, ObjectNode payload) {
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.ANSWER);
+        // "No question is open" is only a refusal once we know which question was named.
+        if (refused.isPresent() && refused.get() != TaskAccess.Refusal.ALREADY_ANSWERED) {
+            return note(payload, reason(refused.get()));
         }
         int index = action.path("question").asInt(0);
         JsonNode question = null;
-        for (JsonNode candidate : plan.get().withArray("questions")) {
+        for (JsonNode candidate : tasks.currentPlan(tx, verdict.task().id()).orElseThrow().withArray("questions")) {
             if (candidate.path("index").asInt() == index) {
                 question = candidate;
             }
@@ -169,16 +162,11 @@ public final class AssistantActions {
         if (question == null) {
             return note(payload, "noQuestion");
         }
-        if (!question.path("answer").isNull()) {
-            return note(payload, "answered");
+        Optional<TaskAccess.Refusal> answerRefused = verdict.answerRefusal(verdict.planSeq(), index);
+        if (answerRefused.isPresent()) {
+            return note(payload, reason(answerRefused.get()));
         }
-        // The chat asks one question at a time; answering a later one first would ask the current one again.
-        for (JsonNode earlier : plan.get().withArray("questions")) {
-            if (earlier.path("index").asInt() < index && earlier.path("answer").isNull()) {
-                return note(payload, "order");
-            }
-        }
-        payload.put("planSeq", plan.get().path("planSeq").asInt()).put("question", index);
+        payload.put("planSeq", verdict.planSeq()).put("question", index);
         JsonNode options = question.path("options");
         int option = action.path("option").asInt(0);
         if (option >= 1 && option <= options.size()) {
@@ -195,33 +183,42 @@ public final class AssistantActions {
         return text.codePointCount(0, text.length()) <= SHOWN_TEXT;
     }
 
-    /** Approval needs a plan without open questions: answering them makes the agent plan again, and that plan is approved. */
-    private Checked decision(Tx tx, Task task, String type, ObjectNode payload) {
-        Optional<ObjectNode> plan = task.phase() == Phase.AWAITING_APPROVAL ? tasks.currentPlan(tx, task.id()) : Optional.empty();
-        if (plan.isEmpty()) {
-            return note(payload, "phase");
+    /** Approval needs a plan without questions: answering them makes the agent plan again, and that plan is approved. */
+    private static Checked decision(TaskAccess.Verdict verdict, TaskAccess.Action action, ObjectNode payload) {
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(action);
+        if (refused.isPresent()) {
+            return note(payload, reason(refused.get()));
         }
-        boolean open = false;
-        for (JsonNode question : plan.get().withArray("questions")) {
-            open |= question.path("answer").isNull();
-        }
-        if (type.equals("approve") && open) {
-            return note(payload, "openQuestions");
-        }
-        return new Checked(true, payload.put("planSeq", plan.get().path("planSeq").asInt()));
+        return new Checked(true, payload.put("planSeq", verdict.planSeq()));
     }
 
     /** A follow-up continues the task's building session, so the task must have got as far as execution. */
-    private static Checked followUp(Tx tx, Task task, JsonNode action, ObjectNode payload) {
-        String text = action.path("text").asText("").strip();
-        boolean finished = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED;
-        if (!finished || !Runs.agentStartedBefore(tx, task.id(), RunKind.EXECUTE, Integer.MAX_VALUE)) {
-            return note(payload, "phase");
+    private static Checked followUp(TaskAccess.Verdict verdict, JsonNode action, ObjectNode payload) {
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.FOLLOW_UP);
+        if (refused.isPresent()) {
+            return note(payload, reason(refused.get()));
         }
+        String text = action.path("text").asText("").strip();
         if (text.isEmpty()) {
             return note(payload, "empty");
         }
         return shown(text) ? new Checked(true, payload.put("text", text)) : note(payload, "tooLong");
+    }
+
+    private static Checked allowed(Optional<TaskAccess.Refusal> refused, ObjectNode payload) {
+        return refused.map(refusal -> note(payload, reason(refusal))).orElseGet(() -> new Checked(true, payload));
+    }
+
+    /** The note (assistant.note.*) the reply shows for a proposal task access refuses. */
+    private static String reason(TaskAccess.Refusal refusal) {
+        return switch (refusal) {
+            case NOT_MEMBER, NOT_FOUND -> "notFound";
+            case NOT_REQUESTER -> "notYours";
+            case OPEN_QUESTIONS -> "openQuestions";
+            case OUT_OF_ORDER -> "order";
+            case ALREADY_ANSWERED -> "answered";
+            case WRONG_PHASE, STALE_PLAN, NOT_FAILED, NOT_EXECUTED -> "phase";
+        };
     }
 
     private Outcome answered(Tx tx, Requester who, JsonNode action, long taskId, int planSeq, String messageRef, String chatRef) {

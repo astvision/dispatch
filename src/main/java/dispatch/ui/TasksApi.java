@@ -143,14 +143,6 @@ public final class TasksApi {
         int planSeq = number(body, "planSeq");
         int index = number(body, "index");
         return db.transactionReturning(tx -> {
-            ObjectNode task = ownTask(tx, caller, taskId);
-            JsonNode plan = task.path("plan");
-            if (plan.path("planSeq").asInt() != planSeq || !task.path("phase").asText().equals("AWAITING_APPROVAL")) {
-                throw stale();
-            }
-            if (index != firstUnanswered(plan)) {
-                throw new ApiException(409, "out_of_order", "answer question " + firstUnanswered(plan) + " first; they go in order");
-            }
             String questionRef = Outbox.sentQuestion(tx, taskId, planSeq, index).orElse(null);
             String chatRef = caller.ref();
             AnswerResult result;
@@ -210,24 +202,19 @@ public final class TasksApi {
         };
     }
 
-    /** The caller's own task with its plan; a task outside their groups is not found, so its existence does not leak. */
+    /** The caller's own task with its plan, what they may do with it, and the question to answer now (ADR 0027). */
     private ObjectNode ownTask(Tx tx, Caller caller, long taskId) {
-        ObjectNode task = tasks.timelinePayload(tx, access.member(caller.ref()), taskId).orElseThrow(() -> notFound(taskId));
-        if (task.path("headline").asBoolean(false)) {
+        TaskAccess.Verdict verdict = access.of(tx, caller.ref(), taskId);
+        if (verdict.sight() == TaskAccess.Sight.NONE) {
+            throw notFound(taskId);
+        }
+        if (verdict.sight() == TaskAccess.Sight.HEADLINE) {
             throw new ApiException(403, "not_yours", NOT_YOURS);
         }
+        ObjectNode task = tasks.timelinePayload(tx, access.member(caller.ref()), taskId).orElseThrow(() -> notFound(taskId));
         task.remove("runs");
-        tasks.currentPlan(tx, taskId).ifPresent(plan -> task.set("plan", plan));
+        tasks.currentPlan(tx, taskId).ifPresent(plan -> task.set("plan", plan.put("current", verdict.currentQuestion())));
         return task;
-    }
-
-    private static int firstUnanswered(JsonNode plan) {
-        for (JsonNode question : plan.path("questions")) {
-            if (question.path("answer").isNull() || question.path("answer").isMissingNode()) {
-                return question.path("index").asInt();
-            }
-        }
-        return 0;
     }
 
     private static ApiException stale() {
