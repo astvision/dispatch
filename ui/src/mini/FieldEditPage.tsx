@@ -2,12 +2,13 @@ import { Button, Input, Result, Typography } from "antd";
 import { useState } from "react";
 import { editProject, type ManagedProject, type PhaseChoice, type ProjectFields } from "../api";
 import { fieldsOf } from "../manage/ProjectForm";
-import { EFFORTS, MODELS, PHASE_EFFORTS, PHASE_MODELS, withCurrent } from "../options";
+import { AGENTS, agentLabel, effortsFor, MODELS, PHASE_EFFORTS, PHASE_MODELS, withCurrent } from "../options";
 import { MiniManaged, useMiniConfig } from "./data";
 import { Row, Section } from "./List";
 import type { Field } from "./paths";
 
 const TITLES: Record<Field, string> = {
+  agent: "Агент",
   baseBranch: "Эхлэх салбар",
   alias: "Товч нэр",
   model: "Model",
@@ -79,6 +80,9 @@ function Editor({ project, field, busy, save, back }: {
   };
 
   switch (field) {
+    case "agent":
+      // The server then drops the model and effort chosen for the old agent (ADR 0026).
+      return <Choices options={AGENTS} value={project.agent} busy={busy} onPick={(agent) => void saveThenBack({ agent })} />;
     case "baseBranch":
       return <TextField id="field-base-branch" initial={project.baseBranch} required busy={busy}
                         hint="Шинэ даалгавар бүрийн worktree энэ салбараас эхэлнэ."
@@ -88,10 +92,17 @@ function Editor({ project, field, busy, save, back }: {
                         hint="Даалгаварт төслийг нэрлэх богино нэр. Хоосон бол байхгүй."
                         onSave={(value) => void saveThenBack({ alias: value === "" ? null : value })} />;
     case "model":
+      if (project.agent !== "claude-code") {
+        // Codex and Gemini CLI name their models in their own way, and a list here would soon be out of date.
+        return <TextField id="field-model" initial={project.model ?? ""} required={false} busy={busy}
+                          hint={`Хоосон бол ${agentLabel(project.agent)} өөрийн үндсэн model-ийг хэрэглэнэ.`}
+                          onSave={(value) => void saveThenBack({ model: value === "" ? null : value })} />;
+      }
       return <Choices options={withCurrent(MODELS, project.model)} value={project.model} busy={busy}
                       onPick={(model) => void save({ model })} />;
     case "effort":
-      return <Choices options={EFFORTS} value={project.effort} busy={busy} onPick={(effort) => void save({ effort })} />;
+      return <Choices options={effortsFor(project.agent)} value={project.effort} busy={busy}
+                      onPick={(effort) => void save({ effort })} />;
     case "plan":
     case "execute":
       return (

@@ -111,6 +111,23 @@ class JobRunnerTest {
         assertEquals(0, events.pid);
     }
 
+    /** A member's computer without the project's agent (ADR 0026) fails the run with what to install, instead of crashing. */
+    @Test
+    void aProjectWhoseAgentIsNotConfiguredHereFailsAsAgentWithWhatToDo() {
+        Job job = new Job(TASK, 1, RunKind.PLAN, new Job.Project("alm", repos.origin.toString(), null, "main", "codex", List.of()),
+                "main", null, null, null, SESSION, false, "Plan this: fix the login timeout", null, null,
+                Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(), "dispatch #7: Fix the login timeout",
+                List.of("Requested-by: Bold"), null);
+
+        JobResult result = runner.run(job, events, control);
+
+        assertEquals(JobResult.Outcome.FAILED, result.outcome());
+        assertEquals(FailureReason.AGENT, result.failureReason());
+        assertEquals("the project runs on codex, which is not configured on this computer; add it under agents "
+                + "(or codexCommand in worker.yaml) and restart", result.failureDetail());
+        assertEquals(0, events.pid, "no agent started");
+    }
+
     @Test
     void anAttachmentThatCannotBeDownloadedFailsTheJobBeforeItsAgent() throws Exception {
         Job job = new Job(TASK, 1, RunKind.PLAN, project(List.of()), "main", null, null, null, SESSION, false,

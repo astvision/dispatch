@@ -277,6 +277,21 @@ class SplitTest {
                 "left for the next start to report");
     }
 
+    /** ✂️ runs on Claude Code (ADR 0013): without it configured it is not offered, and a stale button changes nothing (ADR 0026). */
+    @Test
+    void withoutClaudeCodeTheScissorsAreNotOffered() {
+        TaskService noSplit = new TaskService(
+                new Groups(List.of(new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold")), List.of("crm")))),
+                new Projects(List.of(project("crm")), project -> Optional.empty()), new ActiveRuns(), clock, () -> { }, () -> { },
+                false, null, false);
+        assertEquals(DraftResult.DRAFTED, db.transactionReturning(tx -> noSplit.draft(tx, BOLD, null, MESSAGE, "telegram:100/40")));
+        long draftId = Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = ?", "telegram:100/40").get("id"));
+
+        assertFalse(db.transactionReturning(tx -> noSplit.draftPayload(tx, draftId)).orElseThrow().get("splittable").asBoolean());
+        assertEquals(DraftChoice.CANNOT_SPLIT, db.transactionReturning(tx -> noSplit.split(tx, BOLD, draftId, PROMPT)));
+        assertNull(row("SELECT split_state FROM draft WHERE id = ?", draftId).get("split_state"));
+    }
+
     private long draft(Requester who, String text, String originRef) {
         assertEquals(DraftResult.DRAFTED, db.transactionReturning(tx -> tasks.draft(tx, who, null, text, originRef)));
         return Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = ?", originRef).get("id"));

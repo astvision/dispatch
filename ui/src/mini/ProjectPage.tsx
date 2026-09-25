@@ -1,7 +1,7 @@
 import { Result, theme } from "antd";
 import { useState } from "react";
 import { removeProject, type ManagedProject, type Me, type PhaseChoice, type ProjectSummary } from "../api";
-import { EFFORTS, MODELS } from "../options";
+import { agentDefault, agentLabel, EFFORTS, effortsFor, MODELS } from "../options";
 import { openTelegramLink } from "./backButton";
 import { MiniManaged, useMiniConfig, useProjects } from "./data";
 import { Header, Row, Section } from "./List";
@@ -68,14 +68,22 @@ function RemoveRows({ onRemove, busy }: { onRemove: () => void; busy: boolean })
 
 function Settings({ project, navigate }: { project: ManagedProject; navigate: (path: string) => void }) {
   const open = (field: Field) => () => navigate(fieldPath(project.name, field));
+  const efforts = effortsFor(project.agent);
   return (
     <Section title="Тохиргоо">
+      <Row title="Агент" value={agentLabel(project.agent)} onClick={open("agent")} />
       <Row title="Эхлэх салбар" value={project.baseBranch} onClick={open("baseBranch")} />
       <Row title="Товч нэр" value={project.alias ?? "—"} onClick={open("alias")} />
-      <Row title="Model" value={label(MODELS, project.model)} onClick={open("model")} />
-      <Row title="Effort" value={label(EFFORTS, project.effort)} onClick={open("effort")} />
-      <Row title="Төлөвлөх" value={phaseLabel(project.plan)} onClick={open("plan")} />
-      <Row title="Хэрэгжүүлэх" value={phaseLabel(project.execute)} onClick={open("execute")} />
+      <Row title="Model" onClick={open("model")} value={project.agent === "claude-code" ? label(MODELS, project.model)
+        : project.model ?? agentDefault(project.agent)} />
+      {efforts.length > 0 && <Row title="Effort" value={label(efforts, project.effort)} onClick={open("effort")} />}
+      {/* Per-phase choices are Claude Code's model aliases and levels; the config file still takes them for any agent. */}
+      {project.agent === "claude-code" && (
+        <>
+          <Row title="Төлөвлөх" value={phaseLabel(project.plan)} onClick={open("plan")} />
+          <Row title="Хэрэгжүүлэх" value={phaseLabel(project.execute)} onClick={open("execute")} />
+        </>
+      )}
     </Section>
   );
 }

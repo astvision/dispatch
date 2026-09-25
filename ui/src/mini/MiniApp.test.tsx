@@ -206,6 +206,52 @@ describe("the Mini App", () => {
     })));
   });
 
+  it("shows the project's agent and switches it to Codex with one tap (ADR 0026)", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    vi.mocked(api.editProject).mockResolvedValue(saved);
+    window.history.pushState(null, "", "/p/crm");
+    render(<App />);
+
+    expect(await row("Агент")).toHaveTextContent("Claude Code");
+    fireEvent.click(await row("Агент"));
+    fireEvent.click(await row("Codex"));
+
+    await waitFor(() => expect(api.editProject).toHaveBeenCalledWith("v1", expect.objectContaining({ name: "crm", agent: "codex" })));
+  });
+
+  it("types a Codex project's model and offers Codex's own efforts", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    vi.mocked(api.getConfig).mockResolvedValue({ ...teamConfig, projects: teamConfig.projects.map((project) =>
+      project.name === "crm" ? { ...project, agent: "codex", model: null, plan: null } : project) });
+    vi.mocked(api.editProject).mockResolvedValue(saved);
+    window.history.pushState(null, "", "/p/crm/edit/effort");
+    const { unmount } = render(<App />);
+
+    expect(await row("Extra high")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Max/ })).not.toBeInTheDocument();
+    unmount();
+
+    window.history.pushState(null, "", "/p/crm/edit/model");
+    render(<App />);
+    fireEvent.change(await screen.findByRole("textbox", { name: /үндсэн model/ }), { target: { value: "gpt-5-codex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Хадгалах" }));
+
+    await waitFor(() => expect(api.editProject).toHaveBeenCalledWith("v1", expect.objectContaining({ model: "gpt-5-codex" })));
+  });
+
+  it("gives a Gemini project no effort and no per-phase rows", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    vi.mocked(api.getConfig).mockResolvedValue({ ...teamConfig, projects: teamConfig.projects.map((project) =>
+      project.name === "crm" ? { ...project, agent: "gemini", model: null, plan: null } : project) });
+    window.history.pushState(null, "", "/p/crm");
+    render(<App />);
+
+    expect(await row("Агент")).toHaveTextContent("Gemini CLI");
+    expect(screen.queryByRole("button", { name: /^Effort/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Төлөвлөх/ })).not.toBeInTheDocument();
+    expect(await row("Model")).toHaveTextContent("Gemini CLI's default");
+  });
+
   it("asks on the page before removing a project, then goes back to the projects", async () => {
     vi.mocked(api.getMe).mockResolvedValue(ADMIN);
     vi.mocked(api.removeProject).mockResolvedValue(saved);

@@ -19,7 +19,8 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Flow | Read-only plan, then member approval, then execution. Replies to a plan are corrections; replies to a result are follow-ups | 0006 |
 | Delivery | Dispatch makes one commit per run, pushes `dispatch/<id>` and opens a draft PR | 0007 |
 | Restarts | Active runs fail as interrupted; members `/retry` | 0008 |
-| Permissions | Plan mode for planning; auto mode plus deny rules for execution, with the agent's actual mode verified; the OS user is the hard boundary | 0009 |
+| Permissions | Plan mode for planning; auto mode plus deny rules for execution, with the agent's actual mode verified; the OS user is the hard boundary. Codex and Gemini CLI plan read-only and execute unsandboxed, as the same user | 0009, 0026 |
+| Agents | Each project runs on Claude Code, Codex or Gemini CLI; ✂️ splitting and the assistant stay on Claude Code and are not offered without it | 0026 |
 | Telegram | Offset advanced only after commit; outcome messages go through an outbox | 0010 |
 | Private details | Plan, corrections and full result go to the requester's private chat, with a one-line outcome in the group and a group fallback; only the requester decides on their plan | 0011 |
 | Groups, private tasks, priority | One bot serves several groups, each with members and projects; tasks are given privately with project and priority buttons; priority orders the queue | 0012 |
@@ -107,7 +108,7 @@ projects                   wherever each project's path points; Dispatch adds wo
 | `cli` | The `dispatch` command: `init` (the setup wizard, on a JLine terminal), `project add`, `check`, `ask tasks` / `ask task N` (the assistant's read-only view of its member's tasks), `service install/start/stop/status/uninstall` (systemd user unit, launchd agent, Task Scheduler task), and `run` (with `--log-file` for services); on a member's own computer, `worker init` (pair this computer, map its projects, install its service), `worker pair`, `worker run`, `worker service`. Per-OS default locations; the secrets file beside the config is merged under the process environment. `install.sh` and `install.ps1` download the release jar and launcher, or build them from source, and install them. |
 | `store` | SQLite access and migrations (`PRAGMA user_version`); conditional updates. One connection behind a lock. |
 | `core` | `TaskService`: the channel-neutral commands `draft / split / create / approve / reject / correct / followUp / retry / cancel / status / history / timeline / stats`. `Scheduler` picks runs; `Coordinator` drives one run: it reads the store and the config into an immutable `Job`, hands it to a `Worker` — in this process `JobRunner`, which does the worktree, the agent and the delivery and touches no store — and applies the returned `JobResult` through `RunTransitions`; `Splitter` runs splits beside them; `Assistant` answers a member's plain private messages in their own session, one turn at a time per member, and `AssistantActions` checks its proposals and runs a tapped one through `TaskService` (ADR 0024); `Recovery` handles startup; `Sweeper` removes idle worktrees — in a team those worktrees are on members' computers, where `dispatch.worker.WorkerSweeper` does the same job. |
-| `agent` | `Agent` interface and `ClaudeCodeAgent` (CLI subprocess + stream-json parser). Tests run the real adapter against a fake `claude` shell script that replays recorded output. `CodexAgent` comes later. |
+| `agent` | `Agent` interface with `ClaudeCodeAgent`, `CodexAgent` and `GeminiAgent`: each a CLI subprocess and a parser of its JSONL stream, on the shared `ProcessRun` (stdin, run log, stderr tail, cancelling the process tree). `Agents` builds the configured ones (ADR 0026). Tests run each real adapter against a fake CLI shell script that replays recorded or published output. |
 | `workspace` | Clone, fetch, worktree add/remove/recreate, `copyFiles`, commit, push, `gh pr create`, delivering a failed delivery again. |
 | `telegram` | Bot API client (`java.net.http` + Jackson, including file downloads for attachments), `Poller`, `UpdateHandler` (parses updates, calls `TaskService`), `OutboxSender`, status edits, `messages_mn.properties`. |
 | `ui` | `UiServer` (JDK HttpServer, loopback only), `UiAuth` (one-time link, session cookie, Host and Origin checks), `OverviewApi` (version, paths, service status, `Checks`), `SetupApi` (setup in the browser: the steps of `dispatch init` as POST calls, answers kept in memory until Write) and `Folders` (the folder browser), `ManageApi` (the management pages: the config with its SHA-256 version, saves of settings, projects and people through `ConfigEdit` with `dispatch.yaml.bak` and a stale-version check, the service log, Restart); `dispatch.cli.Setup` holds what `dispatch init` and `SetupApi` share: the token check, the setup updates, and rendering and writing the config. The React + Ant Design page in `ui/` is bundled into the jar by the `ui` profile. |
@@ -270,6 +271,20 @@ The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the
 | PLAN | `--permission-mode plan --tools Read,Bash --json-schema <plan schema, compacted to one line>` |
 | EXECUTE | `--permission-mode auto --tools Read,Edit,Write,Bash --disallowedTools "Bash(git commit *)" "Bash(git push *)" "Bash(gh *)"` |
 | SPLIT | `--permission-mode plan --tools "" --json-schema <topics schema> --system-prompt <one line> --no-session-persistence --disable-slash-commands --model haiku`, no session flags, run in `splits/` |
+
+`CodexAgent` passes the prompt on stdin (the final `-`) to (ADR 0026):
+
+| Always | `codex exec [resume <thread>] --json --ignore-user-config -c approval_policy="never" -c sandbox_mode=<mode>` + optional `-m <model>` and `-c model_reasoning_effort=<effort>`; `exec resume` has no `--sandbox`, so `-c` sets it for both. The thread a session started is kept in `<stateDir>/agent-sessions/codex/<session>` and resumed by it |
+|---|---|
+| PLAN | `sandbox_mode="read-only" --output-schema <logBase>.schema.json` (the plan schema without length and count limits) |
+| EXECUTE | `sandbox_mode="danger-full-access"` |
+
+`GeminiAgent` passes the prompt on stdin, followed by `-p <one line>` (ADR 0026):
+
+| Always | `gemini --output-format stream-json --skip-trust --approval-mode <mode>` + `--session-id <uuid>` on a session's first run, `--resume <uuid>` afterwards, in the same worktree (Gemini CLI keeps sessions per directory) + optional `-m <model>`, `--include-directories <attachments>` |
+|---|---|
+| PLAN | `--approval-mode default` (headless, every edit and shell command is denied) and `-p` asking for one JSON object matching the plan schema, taken from the answer even inside a ```json fence |
+| EXECUTE | `--approval-mode yolo` |
 
 - The agent's environment excludes `TELEGRAM_BOT_TOKEN` and `GH_TOKEN`; only Dispatch's own git/gh calls get the token. This is a guardrail: processes running as the same user can still read each other's environment.
 - The init event's `permissionMode` must equal the requested mode (`plan` or `auto`). Otherwise the run is stopped at once and fails as `AGENT`: Claude Code does not refuse a mode the model lacks.
@@ -442,13 +457,13 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **G-1** group linking (built) | `isTeam()`/`isPersonal()` on the config's own terms; the link prompt and callback when the bot is added to or commanded in an unknown group; config writes that move or extend a group, applied with no restart; the Mini App's Группүүд screen (list, unlink); a migrated chat id rewritten automatically (ADR 0023) |
 | **A-1** assistant (built) | Plain private messages to a per-member Claude Code session in `<stateDir>/assistant` with its `taskmanager` skill; `dispatch ask`; proposals as confirm buttons run once through `TaskService`; `/new`; chat spend in `/stats` (ADR 0024) |
 | **G-2** several groups per project (built) | A project listed in several groups; `Groups.chatOfTask` by the task's origin; linking a second chat adds a group instead of moving the first (replaces R6); `/start@bot <project>` from a project's add link links at once and closes an open prompt; the add link in `/projects` and on the Mini App's project page (ADR 0025) |
-| **M5** | `CodexAgent` |
+| **M5** several agents (built) | `CodexAgent` and `GeminiAgent` on a shared `ProcessRun`; `agent: codex` or `gemini` per project with per-agent effort; `dispatch project add --agent` and the Mini App's **Агент** row; ✂️ and the assistant only with Claude Code; `dispatch check` per agent (ADR 0026) |
 
-Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
+Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests, except `LiveAgentsTest`, which runs a real Codex or Gemini CLI through its adapter only when `DISPATCH_LIVE_CODEX=1` or `DISPATCH_LIVE_GEMINI=1` is set (ADR 0026).
 
 ## Derived decisions (not asked explicitly)
 
-1. Agents run as CLI subprocesses with the prompt on stdin. There is no SDK, because there is no Java SDK and a CLI keeps Claude and Codex uniform.
+1. Agents run as CLI subprocesses with the prompt on stdin. There is no SDK, because there is no Java SDK and a CLI keeps Claude Code, Codex and Gemini CLI uniform.
 2. Dispatch generates a task's planning session UUID when the task is created, and its building session UUID on the first execution run. Later runs of each phase resume that phase's session (ADR 0017).
 3. Runs load only project/local Claude settings and no MCP servers, so behaviour is the same on a laptop and a server. The repo's `CLAUDE.md` still applies. Verified in M1: the recorded runs report no plugins, no MCP servers and no personal skills; only Claude Code's built-in skills remain.
 4. The agent never receives `TELEGRAM_BOT_TOKEN` or `GH_TOKEN`.

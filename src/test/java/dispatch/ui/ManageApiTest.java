@@ -128,6 +128,23 @@ class ManageApiTest {
         assertFalse(Json.write(view).contains(TOKEN));
     }
 
+    /** ADR 0026: a config whose projects all run on Codex has no Claude Code, and its settings still show and save. */
+    @Test
+    void aConfigWithoutClaudeCodeShowsAndSavesItsSettings() throws Exception {
+        String codexOnly = original.replace("  claude-code:\n    command: 'claude'\n", "  codex:\n    command: 'codex'\n")
+                .replace("    agent: claude-code\n", "    agent: codex\n");
+        Files.writeString(config, codexOnly);
+
+        JsonNode view = call("/api/manage/config", "{}");
+        JsonNode saved = call("/api/manage/settings", settings(view.path("version").asText(), "3", "gh")
+                .replace("\"claudeCommand\":\"claude\",", ""));
+
+        assertTrue(view.path("settings").path("claudeCommand").isNull(), view.path("settings").toString());
+        assertTrue(saved.path("saved").asBoolean(), saved.toString());
+        assertEquals(codexOnly.replace("    budgetUsd: 2\n", "    budgetUsd: 3\n"), Files.readString(config),
+                "no Claude Code is added by a save that did not name one");
+    }
+
     @Test
     void savingSettingsChangesOnlyTheirValuesAndKeepsTheRestAsWritten() throws Exception {
         JsonNode saved = call("/api/manage/settings", settings(version(), "3", "/opt/gh/bin/gh"));
@@ -238,6 +255,37 @@ class ManageApiTest {
                  "plan":null,"execute":null}""".formatted(version()));
 
         assertEquals("claude-opus-5", load().projects().get(1).model());
+    }
+
+    /**
+     * ADR 0026: switching an existing project to another agent adds that agent's command when missing, and drops the
+     * model and effort chosen for the old one: Claude's "opus" names nothing for Codex, and Gemini CLI has no effort.
+     */
+    @Test
+    void switchingAProjectToCodexAddsCodexAndDropsClaudesModelAndEffort() throws Exception {
+        JsonNode view = call("/api/manage/config", "{}");
+        assertEquals("claude-code", view.path("projects").get(1).path("agent").asText());
+
+        call("/api/manage/projects/edit", """
+                {"version":"%s","name":"crm","baseBranch":"main","alias":null,"model":"opus","effort":"max",
+                 "plan":{"model":null,"effort":"high"},"execute":null,"agent":"codex"}""".formatted(version()));
+
+        Config.Project crm = load().projects().get(1);
+        assertEquals("codex", crm.agent());
+        assertNull(crm.model());
+        assertNull(crm.effort());
+        assertNull(crm.plan());
+        assertEquals("codex", load().agents().get("codex").command());
+        assertEquals("claude-code", load().projects().getFirst().agent(), "the other project keeps Claude Code");
+    }
+
+    @Test
+    void anUnknownAgentIsRefused() throws Exception {
+        CliException refused = assertThrows(CliException.class, () -> call("/api/manage/projects/edit", """
+                {"version":"%s","name":"crm","baseBranch":"main","alias":null,"model":null,"effort":null,
+                 "plan":null,"execute":null,"agent":"aider"}""".formatted(version())));
+
+        assertEquals("agent must be one of [claude-code, codex, gemini], or left out", refused.getMessage());
     }
 
     @Test

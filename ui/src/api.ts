@@ -194,9 +194,13 @@ export interface Settings {
   maxConcurrentRuns: number;
   authorName: string;
   authorEmail: string;
-  claudeCommand: string;
+  /** Null when no project runs on Claude Code and none is configured (ADR 0026). */
+  claudeCommand: string | null;
   ghCommand: string;
 }
+
+/** The CLI a project runs on (ADR 0026). */
+export type AgentType = "claude-code" | "codex" | "gemini";
 
 export interface ManagedProject {
   name: string;
@@ -209,6 +213,7 @@ export interface ManagedProject {
   effort: Effort | null;
   plan: PhaseChoice | null;
   execute: PhaseChoice | null;
+  agent: AgentType;
 }
 
 export interface MemberView {
@@ -250,6 +255,8 @@ export interface ProjectFields {
   effort: Effort | null;
   plan: PhaseChoice | null;
   execute: PhaseChoice | null;
+  /** Sent only to switch the project to another agent, which also clears its model and effort. */
+  agent?: AgentType;
 }
 
 export interface Logs {

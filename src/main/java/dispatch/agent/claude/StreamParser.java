@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.OutputParser;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.file.InvalidPathException;
@@ -21,7 +22,7 @@ import java.util.regex.Pattern;
  * event decide a run's outcome; tool calls in assistant events feed the live activity. Must never throw: it runs on the
  * thread that drains the agent's stdout.
  */
-final class StreamParser {
+final class StreamParser implements OutputParser {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_DENIAL_LENGTH = 200;
@@ -48,7 +49,8 @@ final class StreamParser {
         this.workdir = workdir;
     }
 
-    void accept(String line) {
+    @Override
+    public void accept(String line) {
         if (line.isBlank()) {
             return;
         }
@@ -79,7 +81,8 @@ final class StreamParser {
         }
     }
 
-    AgentActivity activity() {
+    @Override
+    public AgentActivity activity() {
         return activity;
     }
 
@@ -92,7 +95,13 @@ final class StreamParser {
         return initSeen && !expectedPermissionMode.equals(permissionMode);
     }
 
-    AgentResult result(int exitCode, String stderrTail) {
+    @Override
+    public String stopReason() {
+        return wrongPermissionMode() ? "wrong_permission_mode" : null;
+    }
+
+    @Override
+    public AgentResult result(int exitCode, String stderrTail) {
         String model = models.isEmpty() ? null : String.join(", ", models);
         // Claude Code does not always use the model it was given: runs started with Haiku were answered by Sonnet 5.
         String unexpectedModel = requestedModel != null && models.stream().anyMatch(answered -> !isRequested(requestedModel, answered))

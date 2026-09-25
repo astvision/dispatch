@@ -76,6 +76,34 @@ class ProjectAddCommandTest {
         assertTrue(output.contains("effort: must be one of low, medium, high, xhigh, max"), output);
     }
 
+    /** ADR 0026: --agent puts the project on Codex or Gemini, and adds that agent's command when the config has none. */
+    @Test
+    void agentPutsTheProjectOnCodexAndAddsCodexWhenMissing() {
+        int exit = add(new Cli.ProjectAdd(config, life, null, null, null, "gpt-5-codex", "xhigh", null, "codex"));
+
+        assertEquals(0, exit, terminal.output());
+        Config loaded = ConfigLoader.load(config, ENV);
+        assertEquals("codex", loaded.projects().get(1).agent());
+        assertEquals("codex", loaded.agents().get("codex").command(), "found on PATH, as claude is by default");
+        assertEquals("claude-code", loaded.projects().getFirst().agent(), "the other project keeps its agent");
+        assertTrue(terminal.output().contains("OK   added life: " + life), terminal.output());
+        assertTrue(terminal.output().contains("agent codex"), terminal.output());
+    }
+
+    @Test
+    void anUnknownAgentOrAnEffortItLacksIsRefusedWithoutTouchingTheConfig() throws IOException {
+        String before = Files.readString(config);
+
+        int unknown = add(new Cli.ProjectAdd(config, life, null, null, null, null, null, null, "aider"));
+        int geminiEffort = add(new Cli.ProjectAdd(config, life, null, null, null, null, "high", null, "gemini"));
+
+        assertEquals(List.of(1, 1), List.of(unknown, geminiEffort));
+        assertEquals(before, Files.readString(config));
+        assertTrue(terminal.output().contains("agents.aider: unsupported agent type (supported: claude-code, codex, gemini)"),
+                terminal.output());
+        assertTrue(terminal.output().contains("effort: gemini has no effort setting; remove it"), terminal.output());
+    }
+
     @Test
     void anUnwritableConfigDirectoryFailsCleanlyInsteadOfCrashing() throws IOException {
         Assumptions.assumeFalse(System.getProperty("os.name").toLowerCase().contains("win"), "POSIX permissions");

@@ -82,7 +82,8 @@ public final class TaskService {
 
     /**
      * @param taskTopics     the channel can give each task its own topic in the requester's private chat
-     * @param startSplit     starts splitting a draft's message in the background once ✂️ was pressed (ADR 0013)
+     * @param startSplit     starts splitting a draft's message in the background once ✂️ was pressed (ADR 0013); null
+     *                       when there is nothing to split with (no Claude Code configured, ADR 0026), and ✂️ is not offered
      * @param requiresWorker team mode: a task runs on its requester's own computer (W-3)
      */
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
@@ -223,7 +224,7 @@ public final class TaskService {
             payload.put("split", draft.splitState() == null ? null : draft.splitState().name());
             ArrayNode skipped = payload.putArray("skippedFiles");
             Attachments.forDraft(tx, draftId).stream().filter(Attachment::tooLarge).forEach(file -> skipped.add(file.name()));
-            payload.put("splittable", draft.status() == DraftStatus.OPEN && draft.parentId() == null
+            payload.put("splittable", startSplit != null && draft.status() == DraftStatus.OPEN && draft.parentId() == null
                     && (draft.splitState() == null || draft.splitState() == SplitState.FAILED));
             ArrayNode topics = payload.putArray("topics");
             draft.topics().forEach(topics::add);
@@ -245,7 +246,7 @@ public final class TaskService {
         if (refused.isPresent()) {
             return refused.get();
         }
-        if (!Drafts.startSplit(tx, draftId, promptRef, clock.instant())) {
+        if (startSplit == null || !Drafts.startSplit(tx, draftId, promptRef, clock.instant())) {
             return DraftChoice.CANNOT_SPLIT;
         }
         tx.afterCommit(() -> Log.info("split.started", "draft", draftId, "requester", who.ref()));

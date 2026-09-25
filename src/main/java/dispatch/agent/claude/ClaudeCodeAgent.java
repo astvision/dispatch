@@ -1,24 +1,16 @@
 package dispatch.agent.claude;
 
-import dispatch.Json;
-import dispatch.Log;
 import dispatch.agent.Agent;
-import dispatch.agent.AgentStartException;
+import dispatch.agent.ProcessRun;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
+import dispatch.agent.Schemas;
 import dispatch.domain.RunKind;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Runs Claude Code headless: {@code claude -p} with stream-json output, the prompt on stdin, and no permission prompts
@@ -27,12 +19,9 @@ import java.util.Set;
  */
 public final class ClaudeCodeAgent implements Agent {
 
-    /** Dispatch's own secrets; the agent process never needs them (ADR 0009). */
-    private static final Set<String> WITHHELD_VARIABLES = Set.of("TELEGRAM_BOT_TOKEN", "GH_TOKEN", "DISPATCH_WORKER_KEY");
-    /** Compacted to one line (and so validated as JSON) when the class loads, not on the first run. */
-    private static final String PLAN_SCHEMA = Json.read(resource("/plan-schema.json")).toString();
-    private static final String SPLIT_SCHEMA = Json.read(resource("/split-schema.json")).toString();
-    private static final String ASSISTANT_SCHEMA = Json.read(resource("/assistant-schema.json")).toString();
+    private static final String PLAN_SCHEMA = Schemas.PLAN;
+    private static final String SPLIT_SCHEMA = Schemas.SPLIT;
+    private static final String ASSISTANT_SCHEMA = Schemas.ASSISTANT;
     /** The one command the assistant may run: its view of the member's tasks (A-1). */
     private static final String ASSISTANT_BASH = "Bash(dispatch ask *)";
     /** Replaces Claude Code's coding prompt, which a split does not need: it would multiply the split's cost (ADR 0013). */
@@ -53,27 +42,8 @@ public final class ClaudeCodeAgent implements Agent {
     @Override
     public RunHandle start(RunRequest request) {
         String permissionMode = permissionMode(request.kind());
-        ProcessBuilder builder = new ProcessBuilder(commandLine(request, permissionMode)).directory(request.workdir().toFile());
-        builder.environment().clear();
-        builder.environment().putAll(environment);
-        builder.environment().putAll(request.environment());
-        WITHHELD_VARIABLES.forEach(builder.environment()::remove);
-        Path stdoutLog = Path.of(request.logBase() + ".jsonl");
-        Path stderrLog = Path.of(request.logBase() + ".stderr");
-        Process process;
-        try {
-            Files.createDirectories(stdoutLog.getParent());
-            builder.redirectError(stderrLog.toFile());
-            process = builder.start();
-        } catch (IOException e) {
-            throw new AgentStartException("cannot start " + command + ": " + e.getMessage(), e);
-        }
-        Log.info("agent.started", "agent", "claude-code", "pid", process.pid(), "kind", request.kind(),
-                "workdir", request.workdir(), "resume", request.resume());
-        // Before the prompt: until it has read the prompt, the agent cannot have exited, so its start time is still known.
-        ClaudeRun run = new ClaudeRun(process, permissionMode, request.model(), request.workdir(), stdoutLog, stderrLog, cancelGrace);
-        writePrompt(process, request.prompt());
-        return run;
+        return ProcessRun.start("claude-code", commandLine(request, permissionMode), request, environment, request.prompt(),
+                new StreamParser(permissionMode, request.model(), request.workdir()), cancelGrace);
     }
 
     private static String permissionMode(RunKind kind) {
@@ -128,28 +98,5 @@ public final class ClaudeCodeAgent implements Agent {
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
         }
         return args;
-    }
-
-    /** On its own thread: a large prompt must not block while the process has not started reading stdin yet. */
-    private static void writePrompt(Process process, String prompt) {
-        Thread.ofVirtual().name("agent-stdin-" + process.pid()).start(() -> {
-            try (OutputStream stdin = process.getOutputStream()) {
-                stdin.write(prompt.getBytes(StandardCharsets.UTF_8));
-            } catch (IOException e) {
-                // Usually the agent exited before reading; its exit code and stderr explain why.
-                Log.warn("agent.stdin_failed", "pid", process.pid(), "error", e.getMessage());
-            }
-        });
-    }
-
-    private static String resource(String name) {
-        try (InputStream in = ClaudeCodeAgent.class.getResourceAsStream(name)) {
-            if (in == null) {
-                throw new IllegalStateException("resource missing: " + name);
-            }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
     }
 }
