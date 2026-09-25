@@ -8,6 +8,7 @@ import dispatch.Log;
 import dispatch.config.Config;
 import dispatch.domain.Attachment;
 import dispatch.domain.Draft;
+import dispatch.domain.GroupAck;
 import dispatch.domain.DraftStatus;
 import dispatch.domain.FailureReason;
 import dispatch.domain.GroupReaction;
@@ -26,6 +27,7 @@ import dispatch.domain.Task;
 import dispatch.store.Attachments;
 import dispatch.store.Conversations;
 import dispatch.store.Drafts;
+import dispatch.store.MemberPrefs;
 import dispatch.store.Events;
 import dispatch.store.Outbox;
 import dispatch.store.PlanAnswers;
@@ -325,6 +327,32 @@ public final class TaskService {
         return Drafts.keepWhole(tx, draftId, clock.instant()) ? DraftChoice.KEPT_WHOLE : DraftChoice.CANNOT_SPLIT;
     }
 
+    /**
+     * 🗑 on a draft's prompt: its writer says it is not a task, e.g. a question that mentioned them in a group. The draft
+     * closes, and the 👀 its delivered prompt put on that group message comes off again (G-1e) — unless the message
+     * mentioned several members, whose drafts share its one reaction.
+     */
+    public DraftChoice discard(Tx tx, Requester who, long draftId) {
+        Instant now = clock.instant();
+        Optional<Draft> found = Drafts.find(tx, draftId);
+        Optional<DraftChoice> refused = refusal(found, who);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        if (!Drafts.discard(tx, draftId, now)) {
+            return DraftChoice.ALREADY_DISCARDED;
+        }
+        Draft draft = found.get();
+        String origin = draft.originRef();
+        boolean ownGroupMessage = draft.parentId() == null && !origin.contains("#") && !origin.startsWith(draft.chatRef() + "/");
+        if (ownGroupMessage && MemberPrefs.groupAck(tx, GroupAcks.userId(who.ref())) != GroupAck.SILENT) {
+            enqueue(tx, null, OutboxKind.GROUP_REACTION, origin.substring(0, origin.indexOf('/')), origin,
+                    Json.object().put("emoji", ""), now);
+        }
+        tx.afterCommit(() -> Log.info("draft.discarded", "draft", draftId, "requester", who.ref()));
+        return DraftChoice.DISCARDED;
+    }
+
     /** Closes drafts created before {@code createdBefore} that nobody answered, telling their writers. */
     public int expireDrafts(Tx tx, Instant createdBefore) {
         Instant now = clock.instant();
@@ -426,6 +454,7 @@ public final class TaskService {
             case CREATED -> Optional.of(DraftChoice.ALREADY_CREATED);
             case EXPIRED -> Optional.of(DraftChoice.EXPIRED);
             case SPLIT -> Optional.of(DraftChoice.ALREADY_SPLIT);
+            case DISCARDED -> Optional.of(DraftChoice.ALREADY_DISCARDED);
         };
     }
 

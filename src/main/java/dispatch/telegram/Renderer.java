@@ -264,6 +264,9 @@ public final class Renderer {
             case "EXPIRED" -> {
                 return plain(text("draft.expired") + "\n" + title);
             }
+            case "DISCARDED" -> {
+                return plain(text("draft.discarded") + "\n" + title);
+            }
             case "SPLIT" -> {
                 return plain(format("draft.split", topics.size()) + "\n" + numbered(topics));
             }
@@ -315,9 +318,12 @@ public final class Renderer {
             priorities.add(new Button(PRIORITY_ICONS.get(priority) + " " + text("priority." + priority), "draft:" + id + ":prio:" + priority));
         }
         keyboard.add(priorities);
+        List<Button> last = new ArrayList<>();
         if (payload.path("splittable").asBoolean()) {
-            keyboard.add(List.of(new Button(text("button.split"), "draft:" + id + ":split:ask")));
+            last.add(new Button(text("button.split"), "draft:" + id + ":split:ask"));
         }
+        last.add(new Button(text("button.discard"), "draft:" + id + ":discard:x"));
+        keyboard.add(last);
         return new Rendered(html, keyboard, null);
     }
 

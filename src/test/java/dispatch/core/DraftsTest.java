@@ -188,6 +188,30 @@ class DraftsTest {
     }
 
     @Test
+    void aDraftThatIsNotATaskIsDiscardedByItsWriterOnly() {
+        long draftId = draft(BOLD, "Is this a task, or are you doing it yourself?", "telegram:100/11");
+
+        assertEquals(DraftChoice.NOT_REQUESTER, db.transactionReturning(tx -> tasks.discard(tx, SARA, draftId)));
+        assertEquals(DraftChoice.DISCARDED, db.transactionReturning(tx -> tasks.discard(tx, BOLD, draftId)));
+
+        assertEquals("DISCARDED", row("SELECT status FROM draft").get("status"));
+        assertEquals("DISCARDED", db.transactionReturning(tx -> tasks.draftPayload(tx, draftId)).orElseThrow().get("status").asText());
+        assertEquals(DraftChoice.ALREADY_DISCARDED, db.transactionReturning(tx -> tasks.choosePriority(tx, BOLD, draftId, Priority.LOW)));
+        assertEquals(DraftChoice.ALREADY_DISCARDED, db.transactionReturning(tx -> tasks.discard(tx, BOLD, draftId)));
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
+    }
+
+    @Test
+    void aDiscardedDraftIsNotExpiredLater() {
+        long draftId = draft(BOLD, "Not a task", "telegram:100/12");
+        db.transaction(tx -> tasks.discard(tx, BOLD, draftId));
+        clock.advance(Duration.ofDays(2));
+
+        assertEquals(0, (int) db.transactionReturning(tx -> tasks.expireDrafts(tx, clock.instant().minus(Duration.ofDays(1)))));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'DRAFT_EXPIRED'").get("n"));
+    }
+
+    @Test
     void redeliveredMessageMakesOneDraft() {
         draft(BOLD, "Fix login timeout", "telegram:100/10");
 

@@ -16,5 +16,8 @@ public enum DraftChoice {
     KEPT_WHOLE,
     ALREADY_SPLIT,
     /** Nothing to split now: a part, a split already running or answered, or a message kept whole. */
-    CANNOT_SPLIT
+    CANNOT_SPLIT,
+    /** 🗑 was pressed: not a task, and the draft is closed. */
+    DISCARDED,
+    ALREADY_DISCARDED
 }

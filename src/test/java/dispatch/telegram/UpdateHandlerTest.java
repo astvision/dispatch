@@ -196,6 +196,22 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void theBinClosesADraftThatIsNotATaskAndRedrawsItsPrompt() throws Exception {
+        handler.handle(message(516, 17, 100, "Bold", 100L, "private", "Is this a task, or are you doing it yourself?", null));
+        long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
+
+        handler.handle(privateCallback(517, 100, "Bold", "draft:" + draftId + ":discard:x"));
+
+        assertEquals("DISCARDED", row("SELECT status FROM draft").get("status"));
+        assertEquals(renderer.text("callback.discarded"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode discarded = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(discarded.get("text").asText().startsWith(renderer.text("draft.discarded")), discarded.toString());
+        assertEquals(0, discarded.get("reply_markup").get("inline_keyboard").size());
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
+    }
+
+    @Test
     void scissorsStartTheSplitAndRedrawThePromptTheyWerePressedOn() throws Exception {
         handler.handle(message(507, 14, 100, "Bold", 100L, "private", "Fix the login timeout, add make help", null));
         long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));

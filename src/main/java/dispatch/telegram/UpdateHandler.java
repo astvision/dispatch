@@ -765,7 +765,8 @@ public final class UpdateHandler {
     }
 
     /**
-     * A button on a draft's prompt: project, priority, or ✂️ and its proposal's split and keep-whole choices (ADR 0013).
+     * A button on a draft's prompt: project, priority, 🗑 not a task, or ✂️ and its proposal's split and keep-whole choices
+     * (ADR 0013).
      * The prompt is redrawn to show the choice, the new task or the parts.
      */
     private void onDraftButton(Tx tx, JsonNode callback, Requester who, long draftId, String kind, String value) {
@@ -785,6 +786,8 @@ public final class UpdateHandler {
             choice = tasks.acceptSplit(tx, who, draftId);
         } else if (kind.equals("split") && value.equals("no")) {
             choice = tasks.keepWhole(tx, who, draftId);
+        } else if (kind.equals("discard")) {
+            choice = tasks.discard(tx, who, draftId);
         } else {
             answer(tx, callbackId, "callback.unknown");
             return;
@@ -803,8 +806,11 @@ public final class UpdateHandler {
             case KEPT_WHOLE -> "callback.keptWhole";
             case ALREADY_SPLIT -> "callback.alreadySplit";
             case CANNOT_SPLIT -> "callback.cannotSplit";
+            case DISCARDED -> "callback.discarded";
+            case ALREADY_DISCARDED -> "callback.alreadyDiscarded";
         });
-        if (!Set.of(DraftChoice.PROJECT_CHOSEN, DraftChoice.CREATED, DraftChoice.SPLITTING, DraftChoice.SPLIT, DraftChoice.KEPT_WHOLE)
+        if (!Set.of(DraftChoice.PROJECT_CHOSEN, DraftChoice.CREATED, DraftChoice.SPLITTING, DraftChoice.SPLIT, DraftChoice.KEPT_WHOLE,
+                        DraftChoice.DISCARDED)
                 .contains(choice)) {
             return;
         }

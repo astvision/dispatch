@@ -208,12 +208,14 @@ class RendererTest {
         assertTrue(rendered.html().contains("Fix the &lt;login&gt; timeout"), rendered.html());
         assertTrue(rendered.html().contains(messages.getString("draft.chooseProject")), rendered.html());
         List<List<Renderer.Button>> keyboard = rendered.keyboard();
-        assertEquals(3, keyboard.size());
+        assertEquals(4, keyboard.size());
         assertEquals(List.of(new Renderer.Button("alm", "draft:5:p:alm"), new Renderer.Button("crm", "draft:5:p:crm"),
                 new Renderer.Button("life", "draft:5:p:life")), keyboard.get(0));
         assertEquals(List.of(new Renderer.Button("billing", "draft:5:p:billing")), keyboard.get(1));
         assertEquals("draft:5:prio:URGENT", keyboard.get(2).get(0).data());
         assertEquals("draft:5:prio:LOW", keyboard.get(2).get(2).data());
+        assertEquals(List.of(new Renderer.Button(messages.getString("button.discard"), "draft:5:discard:x")), keyboard.get(3),
+                "not a task, e.g. a question that mentioned them");
     }
 
     @Test
@@ -223,7 +225,7 @@ class RendererTest {
 
         assertEquals("✓ crm", chosen.keyboard().getFirst().get(1).text());
         assertTrue(chosen.html().contains("crm"), chosen.html());
-        assertEquals(1, single.keyboard().size(), "priority only");
+        assertEquals(2, single.keyboard().size(), "priority, then 🗑 only");
         assertTrue(single.html().contains("life"), single.html());
     }
 
@@ -232,7 +234,8 @@ class RendererTest {
         Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT,
                 draftPayload(List.of("alm", "crm"), null, "OPEN", null).put("splittable", true));
 
-        assertEquals(List.of(new Renderer.Button(messages.getString("button.split"), "draft:5:split:ask")), rendered.keyboard().getLast());
+        assertEquals(List.of(new Renderer.Button(messages.getString("button.split"), "draft:5:split:ask"),
+                new Renderer.Button(messages.getString("button.discard"), "draft:5:discard:x")), rendered.keyboard().getLast());
         assertEquals("draft:5:prio:URGENT", rendered.keyboard().get(1).getFirst().data());
     }
 
@@ -242,7 +245,7 @@ class RendererTest {
                 draftPayload(List.of("alm", "crm"), "crm", "OPEN", null).put("split", "SPLITTING"));
 
         assertTrue(rendered.html().contains(messages.getString("draft.splitting")), rendered.html());
-        assertEquals("draft:5:prio:LOW", rendered.keyboard().getLast().getLast().data(), "no ✂️ while it runs");
+        assertFalse(rendered.keyboard().toString().contains(":split:"), "no ✂️ while it runs");
     }
 
     @Test
@@ -307,6 +310,15 @@ class RendererTest {
         assertTrue(approved.html().contains("backend") && approved.html().contains("Nomin"), approved.html());
         assertTrue(denied.html().contains("Nomin"), denied.html());
         assertTrue(approved.keyboard().isEmpty() && denied.keyboard().isEmpty());
+    }
+
+    @Test
+    void discardedDraftSaysSoWithoutButtons() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT, draftPayload(List.of("alm", "crm"), null, "DISCARDED", null));
+
+        assertTrue(rendered.html().startsWith(messages.getString("draft.discarded")) && rendered.html().contains("Fix the &lt;login&gt; timeout"),
+                rendered.html());
+        assertTrue(rendered.keyboard().isEmpty());
     }
 
     @Test

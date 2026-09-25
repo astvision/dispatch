@@ -139,6 +139,46 @@ class GroupAckTest {
         assertEquals("👎", lastReactionEmoji(id));
     }
 
+    /** The 👀 said a task was on its way; a discarded draft takes it back, leaving the group message as it was. */
+    @Test
+    void discardingAMentionDraftClearsTheReactionOnTheGroupMessage() {
+        long draftId = mentionDraft(GROUP + "/41");
+
+        assertEquals(DraftChoice.DISCARDED, db.transactionReturning(tx -> tasks.discard(tx, BOLD, draftId)));
+
+        Map<String, String> reaction = row("SELECT * FROM outbox WHERE kind = 'GROUP_REACTION'");
+        assertEquals(GROUP, reaction.get("chat_ref"));
+        assertEquals(GROUP + "/41", reaction.get("reply_to_ref"));
+        assertEquals("", Json.read(reaction.get("payload")).get("emoji").asText(), "an empty reaction clears it");
+    }
+
+    /** Several members mentioned in one message share its one reaction, which another's draft may still stand behind. */
+    @Test
+    void discardingOneOfSeveralMentionedMembersDraftsLeavesTheSharedReactionAlone() {
+        long draftId = mentionDraft(GROUP + "/42#100");
+        db.transaction(tx -> MemberPrefs.setGroupAck(tx, 100, GroupAck.REACTION, clock.instant()));
+
+        db.transaction(tx -> tasks.discard(tx, BOLD, draftId));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'GROUP_REACTION'").get("n"));
+    }
+
+    @Test
+    void discardingWhenSilentSendsNothingToTheGroup() {
+        db.transaction(tx -> MemberPrefs.setGroupAck(tx, 100, GroupAck.SILENT, clock.instant()));
+        long draftId = mentionDraft(GROUP + "/43");
+
+        db.transaction(tx -> tasks.discard(tx, BOLD, draftId));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'GROUP_REACTION'").get("n"));
+    }
+
+    private long mentionDraft(String origin) {
+        db.transaction(tx -> tasks.draft(tx, BOLD, "autoland-management", "Is this a task?", origin, List.of(),
+                new TaskService.GroupOrigin(GROUP, "Bold")));
+        return Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = ?", origin).get("id"));
+    }
+
     @Test
     void aTaskGivenDirectlyRatherThanByMentioningTheBotGetsNoReaction() {
         String origin = BOLD.ref() + "/40";

@@ -158,7 +158,11 @@ public final class BotApi {
      */
     public void setMessageReaction(long chatId, long messageId, String emoji) {
         ObjectNode body = Json.object().put("chat_id", chatId).put("message_id", messageId).put("is_big", false);
-        body.putArray("reaction").addObject().put("type", "emoji").put("emoji", emoji);
+        ArrayNode reaction = body.putArray("reaction");
+        // An empty emoji clears the bot's reaction, e.g. once a mention's draft is discarded as not a task.
+        if (!emoji.isEmpty()) {
+            reaction.addObject().put("type", "emoji").put("emoji", emoji);
+        }
         call("setMessageReaction", body, requestTimeout);
     }
 

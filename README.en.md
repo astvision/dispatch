@@ -251,6 +251,7 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 | `/task text` (or forward a message after `/task`) | Asks with buttons for the project (skipped if you have only one) and the priority 🔴 🟡 🟢, then queues the task |
 | send a photo or file with the task (as its caption) | The agent gets it to read. Files over 20 MB are skipped, and the prompt says so |
 | `/task alm Fix the login timeout` | The same, with the project already named. A ✅ task button under the assistant's reply opens the same prompt |
+| **🗑 Даалгавар биш** on that prompt | Closes the draft without a task, e.g. for a question that mentioned you in a group; the 👀 on that group message comes off again (unless it mentioned several members) |
 | **✂️ Салгах** on that prompt | Haiku lists the separate tasks in your message (about $0.015, a few seconds). **✂️ N даалгавар болгох** gives each its own prompt; **Нэг даалгавар** keeps the message as one task |
 | **Approve** on the plan | The agent implements it; Dispatch commits, pushes `dispatch/N` and sends you the draft PR link and summary |
 | reply to the plan, or write in the task's topic | A correction: the agent revises the plan in the same session |

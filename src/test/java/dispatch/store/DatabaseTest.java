@@ -177,6 +177,28 @@ class DatabaseTest {
         }
     }
 
+    /**
+     * The rebuild that adds DISCARDED drops the table attachment refers to; with foreign keys on, that commit failed on any
+     * state file with a file still waiting on its draft, and Dispatch would not start.
+     */
+    @Test
+    void version20DraftsWithAttachmentsSurviveTheRebuildThatAddsDiscarding() throws Exception {
+        Path file = databaseAtVersion(20,
+                "INSERT INTO draft (id, requester_ref, requester_name, chat_ref, origin_ref, description, status, created_at, updated_at) "
+                        + "VALUES (1, 'telegram:100', 'Bold', 'telegram:100', 'telegram:100/5', 'Fix it', 'OPEN', '2026-09-24T10:00:00Z', "
+                        + "'2026-09-24T10:00:00Z')",
+                "INSERT INTO attachment (draft_id, file_ref, name, size) VALUES (1, 'photo-1', 'screen.png', 10)");
+
+        try (Database upgraded = Database.open(file)) {
+            upgraded.migrate();
+            upgraded.transaction(tx -> tx.update("UPDATE draft SET status = 'DISCARDED' WHERE id = 1"));
+            assertEquals("DISCARDED", upgraded.transactionReturning(tx -> tx.one("SELECT status FROM draft", row -> row.string("status"))
+                    .orElseThrow()));
+            assertEquals("1", upgraded.transactionReturning(tx -> tx.one("SELECT draft_id FROM attachment", row -> row.string("draft_id"))
+                    .orElseThrow()));
+        }
+    }
+
     /** A state file as an older Dispatch left it: the first {@code version} migrations applied, then {@code inserts}. */
     private Path databaseAtVersion(int version, String... inserts) throws Exception {
         Path file = dir.resolve("v" + version + ".db");
@@ -184,7 +206,9 @@ class DatabaseTest {
              java.sql.Statement statement = connection.createStatement()) {
             String[] scripts = {"/db/001-init.sql", "/db/002-execution.sql", "/db/003-private-messages.sql", "/db/004-priority.sql",
                     "/db/005-drafts.sql", "/db/006-topics.sql", "/db/007-outbox-edits.sql", "/db/008-split-drafts.sql",
-                    "/db/009-join-requests.sql", "/db/010-build-session.sql", "/db/011-run-model.sql"};
+                    "/db/009-join-requests.sql", "/db/010-build-session.sql", "/db/011-run-model.sql", "/db/012-run-cause.sql",
+                    "/db/013-attachments.sql", "/db/014-agent-started.sql", "/db/015-workers.sql", "/db/016-worker-readiness.sql",
+                    "/db/017-telegram-usernames.sql", "/db/018-plan-answers.sql", "/db/019-member-prefs.sql", "/db/020-assistant.sql"};
             for (int i = 0; i < version; i++) {
                 try (java.io.InputStream script = getClass().getResourceAsStream(scripts[i])) {
                     String sqlText = new String(script.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);

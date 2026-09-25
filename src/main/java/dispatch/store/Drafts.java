@@ -98,6 +98,12 @@ public final class Drafts {
                 DraftStatus.EXPIRED, now, id, DraftStatus.OPEN) == 1;
     }
 
+    /** Closes an open draft its writer says is not a task; false when it was no longer open. */
+    public static boolean discard(Tx tx, long id, Instant now) {
+        return tx.update("UPDATE draft SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                DraftStatus.DISCARDED, now, id, DraftStatus.OPEN) == 1;
+    }
+
     private static Draft map(Row row) throws SQLException {
         return new Draft(
                 row.longValue("id"),

@@ -7,5 +7,7 @@ public enum DraftStatus {
     /** Nobody answered within a day. */
     EXPIRED,
     /** Split into parts, each a draft of its own (ADR 0013). */
-    SPLIT
+    SPLIT,
+    /** Its writer said it is not a task, e.g. a question that mentioned them in a group. */
+    DISCARDED
 }

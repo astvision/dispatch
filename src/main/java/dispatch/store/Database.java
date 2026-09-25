@@ -29,7 +29,7 @@ public final class Database implements AutoCloseable {
             "db/010-build-session.sql", "db/011-run-model.sql", "db/012-run-cause.sql",
             "db/013-attachments.sql", "db/014-agent-started.sql", "db/015-workers.sql",
             "db/016-worker-readiness.sql", "db/017-telegram-usernames.sql", "db/018-plan-answers.sql",
-            "db/019-member-prefs.sql", "db/020-assistant.sql");
+            "db/019-member-prefs.sql", "db/020-assistant.sql", "db/021-draft-discarded.sql");
 
     private final Connection connection;
     private final ReentrantLock lock = new ReentrantLock();
@@ -129,12 +129,24 @@ public final class Database implements AutoCloseable {
         }
     }
 
+    /**
+     * One migration in its own transaction, with foreign keys off while it runs: rebuilding a table another table refers
+     * to (SQLite cannot change a CHECK constraint any other way) drops the table they refer to. This is SQLite's own
+     * procedure for such changes; foreign_key_check before the commit still refuses a migration that breaks a reference.
+     */
     private void apply(int version, String resource) {
         String script = readResource(resource);
+        // A no-op inside a transaction, so it is set before one starts.
+        foreignKeys(false);
         setAutoCommit(false);
         try (Statement statement = connection.createStatement()) {
             for (String sql : statements(script)) {
                 statement.execute(sql);
+            }
+            try (ResultSet broken = statement.executeQuery("PRAGMA foreign_key_check")) {
+                if (broken.next()) {
+                    throw new SQLException("leaves a broken reference from " + broken.getString("table") + " to " + broken.getString("parent"));
+                }
             }
             statement.execute("PRAGMA user_version = " + version);
             connection.commit();
@@ -143,8 +155,17 @@ public final class Database implements AutoCloseable {
             throw new DatabaseException("migration " + resource + " failed", e);
         } finally {
             setAutoCommit(true);
+            foreignKeys(true);
         }
         Log.info("db.migrated", "version", version, "script", resource);
+    }
+
+    private void foreignKeys(boolean on) {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA foreign_keys = " + (on ? "ON" : "OFF"));
+        } catch (SQLException e) {
+            throw new DatabaseException("cannot turn foreign keys " + (on ? "on" : "off"), e);
+        }
     }
 
     /** ponytail: splits on ';' at line end; migrations must not contain triggers or ';' inside literals. */

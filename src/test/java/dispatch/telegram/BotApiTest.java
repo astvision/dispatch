@@ -60,6 +60,13 @@ class BotApiTest {
     }
 
     @Test
+    void anEmptyEmojiClearsTheReaction() throws Exception {
+        api.setMessageReaction(-100, 41, "");
+
+        assertEquals(0, telegram.awaitRequest("setMessageReaction", Duration.ofSeconds(1)).json().get("reaction").size());
+    }
+
+    @Test
     void theMenuButtonOpensTheMiniAppOrListsTheCommands() throws Exception {
         api.setMenuButton("Удирдах", "https://dispatch.example.com");
         api.setMenuButton("Удирдах", null);
