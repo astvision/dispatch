@@ -21,10 +21,14 @@ import java.util.TreeSet;
  */
 public final class AssistantHome {
 
-    /** Who {@code dispatch ask} answers for, which projects they see, and the state file; set only by the member's command. */
+    /**
+     * Who {@code dispatch ask} answers for, which projects they see, whether they are an admin, and the state file; set
+     * only by the member's command.
+     */
     public static final String MEMBER_VARIABLE = "DISPATCH_ASK_MEMBER";
     public static final String PROJECTS_VARIABLE = "DISPATCH_ASK_PROJECTS";
     public static final String DATABASE_VARIABLE = "DISPATCH_ASK_DB";
+    public static final String ADMIN_VARIABLE = "DISPATCH_ASK_ADMIN";
     /** The resources that make up the home, relative to {@code /assistant/} on the classpath. */
     private static final String FILE_LIST = "files.txt";
 
@@ -80,7 +84,7 @@ public final class AssistantHome {
      * The variables for one turn of {@code memberRef}'s conversation: a PATH whose {@code dispatch} answers for them alone.
      * Written on each turn, so the projects they see follow the config.
      */
-    public Map<String, String> environmentFor(String memberRef, Set<String> visibleProjects) {
+    public Map<String, String> environmentFor(String memberRef, Set<String> visibleProjects, boolean admin) {
         // Outside the home too, for the same reason: each member's command names the projects they see.
         Path bin = dir.resolveSibling("assistant-bin").resolve(memberRef.replaceAll("[^A-Za-z0-9-]", "-"));
         Path command = bin.resolve("dispatch");
@@ -91,11 +95,13 @@ public final class AssistantHome {
                 export %s=%s
                 export %s=%s
                 export %s=%s
+                export %s=%s
                 exec %s -XX:TieredStopAtLevel=1 -cp %s dispatch.Main "$@"
                 """.formatted(
                 MEMBER_VARIABLE, quote(memberRef),
                 PROJECTS_VARIABLE, quote(String.join(",", new TreeSet<>(visibleProjects))),
                 DATABASE_VARIABLE, quote(database.toString()),
+                ADMIN_VARIABLE, quote(admin ? "true" : "false"),
                 quote(javaCommand), quote(classPath)));
         try {
             Files.setPosixFilePermissions(command, PosixFilePermissions.fromString("rwx------"));

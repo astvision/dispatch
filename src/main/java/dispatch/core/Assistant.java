@@ -182,7 +182,7 @@ public final class Assistant {
         List<Spent> spent = new ArrayList<>();
         Thread typingLoop = Thread.ofVirtual().name("assistant-typing-" + who.ref()).start(() -> keepTyping(chatRef));
         try {
-            Map<String, String> environment = home.environmentFor(who.ref(), visible);
+            Map<String, String> environment = home.environmentFor(who.ref(), visible, groups.isAdmin(who.ref()));
             String prompt = Prompts.assistant(context.snapshot(), text);
             JsonNode output = ask(who, session, context.session().isPresent(), thinkHard ? ESCALATED_MODEL : MODEL, prompt,
                     visible, environment, spent);

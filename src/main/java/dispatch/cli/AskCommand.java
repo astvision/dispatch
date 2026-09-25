@@ -32,6 +32,7 @@ public final class AskCommand {
     static final String MEMBER = AssistantHome.MEMBER_VARIABLE;
     static final String PROJECTS = AssistantHome.PROJECTS_VARIABLE;
     static final String DATABASE = AssistantHome.DATABASE_VARIABLE;
+    static final String ADMIN = AssistantHome.ADMIN_VARIABLE;
 
     private AskCommand() {
     }
@@ -51,10 +52,11 @@ public final class AskCommand {
             out.println(error("not_configured", "dispatch ask answers only inside the bot's assistant"));
             return 2;
         }
-        // The member and their projects as the bot's groups have them: all task access needs to decide what they see and
-        // may do. The config itself is not the assistant's to read.
-        Groups asked = new Groups(List.of(new Config.Group("ask", null, List.of(new Config.Member(memberId.get(), "")),
-                List.copyOf(visible))));
+        boolean admin = "true".equals(env.get(ADMIN));
+        // The member, whether they are an admin, and their projects, as the bot's own groups have them: all task access
+        // needs to decide what they see and may do. The config itself is not the assistant's to read.
+        Groups asked = new Groups(new Config.Telegram(admin ? List.of(memberId.get()) : List.of(),
+                List.of(new Config.Group("ask", null, List.of(new Config.Member(memberId.get(), "")), List.copyOf(visible)))));
         TaskService tasks = new TaskService(asked, new Projects(List.of(), project -> Optional.empty()), new ActiveRuns(),
                 Clock.systemUTC(), () -> { }, () -> { });
         TaskAccess.Viewer viewer = new TaskAccess.Viewer(member, visible);

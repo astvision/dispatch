@@ -97,6 +97,7 @@ class AssistantTest {
         assertTrue(request.environment().get("PATH").startsWith(dir.resolve("assistant-bin/telegram-100").toString()));
         String command = Files.readString(dir.resolve("assistant-bin/telegram-100/dispatch"));
         assertTrue(command.contains("export DISPATCH_ASK_MEMBER='telegram:100'"), "the member's own dispatch ask: " + command);
+        assertTrue(command.contains("export DISPATCH_ASK_ADMIN='false'"), "Bold is not an admin here: " + command);
         assertTrue(Files.readString(dir.resolve("assistant/CLAUDE.md")).contains("You propose, the owner decides"));
         assertTrue(Files.readString(dir.resolve("assistant/.claude/skills/taskmanager/SKILL.md")).contains("name: taskmanager"),
                 "the home carries its taskmanager skill");

@@ -142,6 +142,24 @@ class AskCommandTest {
     }
 
     @Test
+    void anAdminMembersAskListsTheCancelTheyMayGiveATeammatesTask() {
+        long theirs = create(ALI, "Add the export button");
+
+        Answer asAdmin = run(Map.of(AskCommand.MEMBER, BOLD.ref(), AskCommand.PROJECTS, "alm", AskCommand.DATABASE, dbFile.toString(),
+                AskCommand.ADMIN, "true"), new Cli.Ask(null));
+        Answer withoutAdmin = run(Map.of(AskCommand.MEMBER, BOLD.ref(), AskCommand.PROJECTS, "alm", AskCommand.DATABASE, dbFile.toString()),
+                new Cli.Ask(null));
+
+        JsonNode queuedAsAdmin = asAdmin.json().path("active").path("queued").get(0);
+        assertEquals(theirs, queuedAsAdmin.path("taskId").asLong());
+        assertEquals("[\"cancel\"]", queuedAsAdmin.path("actions").toString(), "an admin may cancel a teammate's task");
+        JsonNode queuedWithoutAdmin = withoutAdmin.json().path("active").path("queued").get(0);
+        assertEquals(theirs, queuedWithoutAdmin.path("taskId").asLong());
+        assertEquals("[]", queuedWithoutAdmin.path("actions").toString(),
+                "without DISPATCH_ASK_ADMIN, a teammate's task is not this member's to act on");
+    }
+
+    @Test
     void withoutTheBotsEnvironmentItRefusesToGuessWhoIsAsking() {
         Answer answer = run(Map.of(AskCommand.DATABASE, dbFile.toString()), new Cli.Ask(null));
 
