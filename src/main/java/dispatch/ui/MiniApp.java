@@ -11,11 +11,13 @@ import dispatch.domain.GroupAck;
 import dispatch.store.Database;
 import dispatch.store.MemberPrefs;
 import dispatch.telegram.BotApi;
+import dispatch.telegram.TelegramException;
 import dispatch.ui.UiServer.Caller;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,11 +46,12 @@ public final class MiniApp {
      *
      * @param configFile   where the management pages read and save the config
      * @param botUsername  the bot's own @username, which the Mini App's header names
+     * @param botPhoto     the bot's profile photo as a data URI ({@link #botPhoto}), null for its initials instead
      * @param resourceRoot the classpath folder of the bundled pages, "/ui" in the release jar
      */
     public static Optional<UiServer> start(Config config, Path configFile, Database db, TaskService tasks, Groups groups,
-                                           String botUsername, Function<String, BotApi> bots, Map<String, String> environment, Clock clock,
-                                           String resourceRoot) throws IOException {
+                                           String botUsername, String botPhoto, Function<String, BotApi> bots,
+                                           Map<String, String> environment, Clock clock, String resourceRoot) throws IOException {
         Config.MiniApp miniApp = config.miniApp();
         if (!UiServer.hasUi(resourceRoot)) {
             Log.warn("miniapp.no_pages", "detail", "this build bundles no web UI, so the Mini App is not served; "
@@ -62,7 +65,7 @@ public final class MiniApp {
         post.putAll(new TasksApi(db, tasks, groups).routes());
         post.put("/api/me/prefs", (caller, body) -> setPrefs(caller, body, db, clock));
         Map<String, Function<Caller, Object>> get = new HashMap<>(management.get(true));
-        get.put("/api/me", caller -> me(caller, botUsername));
+        get.put("/api/me", caller -> me(caller, botUsername, botPhoto));
         get.put("/api/me/prefs", caller -> prefs(caller, db));
         get.put("/api/projects", caller -> projects(caller, config.projects(), groups));
         return Optional.of(UiServer.start(miniApp.port(), resourceRoot,
@@ -75,8 +78,30 @@ public final class MiniApp {
      * Who Telegram says is looking, and what they may reach. The shell asks this instead of the setup state, which is
      * what {@code dispatch ui} asks and this server does not serve.
      */
-    private static Map<String, Object> me(Caller caller, String botUsername) {
-        return Map.of("ref", caller.ref(), "name", caller.name(), "admin", caller.admin(), "bot", botUsername);
+    private static Map<String, Object> me(Caller caller, String botUsername, String botPhoto) {
+        Map<String, Object> me = new LinkedHashMap<>();
+        me.put("ref", caller.ref());
+        me.put("name", caller.name());
+        me.put("admin", caller.admin());
+        me.put("bot", botUsername);
+        me.put("botPhoto", botPhoto);
+        return me;
+    }
+
+    /**
+     * The bot's profile photo for the Mini App's header, read once at startup, so a new photo shows after a restart.
+     * A data URI keeps it on the one authenticated /api/me answer instead of a route of its own. Null when the bot has
+     * no photo or Telegram would not give it: the header falls back to initials, and nothing else depends on it.
+     */
+    public static String botPhoto(BotApi api, long botId) {
+        try {
+            return api.profilePhoto(botId, 160)
+                    .map(bytes -> "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(bytes))
+                    .orElse(null);
+        } catch (TelegramException e) {
+            Log.warn("miniapp.bot_photo_unavailable", "detail", e.getMessage());
+            return null;
+        }
     }
 
     /** How the caller's own group hears about their task: their own choice, everyone's to read and change (G-1e). */

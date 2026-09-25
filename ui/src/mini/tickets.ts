@@ -23,13 +23,6 @@ export function groupTickets(tasks: TaskRow[]): Tickets {
 /** Short enough to print on one line of a ticket: draft, plan, your answer, the work, the pull request. */
 export const STATIONS = ["Ноорог", "Төлөв", "Хариу", "Ажил", "PR"];
 
-/** The 0-based station a ticket stands at on the way from draft to pull request. */
-export function stationOf(task: TaskRow): number {
-  if (task.state === "awaitingApproval") return 2;
-  if (task.state === "finished") return 4;
-  return task.kind === "EXECUTE" ? 3 : 1;
-}
-
 export type Tone = "you" | "working" | "waiting" | "done" | "failed" | "quiet";
 
 /** The word printed beside a ticket's clock, and its band's colour: never the colour alone. */
@@ -85,9 +78,4 @@ export function ago(since: string | null | undefined, now: number): string {
   if (minutes < 60) return `${minutes} мин`;
   if (minutes < 60 * 24) return `${Math.floor(minutes / 60)} цаг`;
   return `${Math.floor(minutes / 1440)} өдөр`;
-}
-
-/** Whether the viewer asked for less motion; read when a motion starts, so a change in settings takes effect at once. */
-export function reducedMotion() {
-  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }

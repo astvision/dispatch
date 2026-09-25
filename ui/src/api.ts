@@ -284,6 +284,8 @@ export interface Me {
   admin: boolean;
   /** The bot's own @username, without the @. */
   bot: string;
+  /** The bot's profile photo as a data URI; null when it has none, and the header shows its initials. */
+  botPhoto?: string | null;
 }
 
 /** A project of the viewer's own groups, as the Mini App's home lists it. */

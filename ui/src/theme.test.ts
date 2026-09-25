@@ -1,34 +1,26 @@
 import { theme as antdTheme } from "antd";
 import { describe, expect, it } from "vitest";
+import { DARK, LIGHT } from "./mini/world";
 import { telegramTheme } from "./theme";
 
-describe("following Telegram's theme", () => {
+describe("the Mini App's theme", () => {
   it("leaves antd's own look alone outside Telegram", () => {
-    expect(telegramTheme(null, false)).toBeUndefined();
+    expect(telegramTheme(false, false)).toBeUndefined();
   });
 
-  it("uses the dark algorithm when Telegram is dark", () => {
-    const dark = telegramTheme({ bg_color: "#1c1c1e", button_color: "#2ea6ff" }, true);
-    const light = telegramTheme({ bg_color: "#ffffff" }, false);
+  it("uses the world's palette in the scheme Telegram is in", () => {
+    const dark = telegramTheme(true, true);
+    const light = telegramTheme(true, false);
 
     expect(dark?.algorithm).toBe(antdTheme.darkAlgorithm);
-    expect(dark?.token?.colorPrimary).toBe("#2ea6ff");
+    expect(dark?.token?.colorPrimary).toBe(DARK.button);
+    expect(dark?.token?.colorTextBase).toBe(DARK.ink);
     expect(light?.algorithm).toBe(antdTheme.defaultAlgorithm);
+    expect(light?.token?.colorBgContainer).toBe(LIGHT.slip);
   });
 
-  /** Feeding the algorithm Telegram's own neutrals collapsed its text scale and hid secondary text entirely. */
-  it("takes only the accent colours and leaves the neutral scale to the algorithm", () => {
-    const dark = telegramTheme({ bg_color: "#1c1c1e", text_color: "#f5f5f5", link_color: "#6ab3f3" }, true);
-
-    expect(dark?.token).not.toHaveProperty("colorBgBase");
-    expect(dark?.token).not.toHaveProperty("colorTextBase");
-    expect(dark?.token?.colorLink).toBe("#6ab3f3");
-  });
-
-  it("drops a colour Telegram did not send rather than inventing one", () => {
-    const partial = telegramTheme({ bg_color: "#ffffff" }, false);
-
-    expect(partial?.token).not.toHaveProperty("colorPrimary");
-    expect(partial?.token).not.toHaveProperty("colorLink");
+  /** antd writes colorTextLightSolid on its primary fill; white on amber would be unreadable. */
+  it("labels the amber primary in the dark ink", () => {
+    expect(telegramTheme(true, true)?.token?.colorTextLightSolid).toBe(DARK.buttonInk);
   });
 });

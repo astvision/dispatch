@@ -32,4 +32,14 @@ describe("reading what Telegram put in the fragment", () => {
     expect(readLaunch("#tgWebAppData=x&tgWebAppColorScheme=light").dark).toBe(false);
     expect(readLaunch("#tgWebAppData=x").dark).toBe(false);
   });
+
+  /** Telegram Desktop sent a dark theme without the scheme, and the page came up in light antd on a dark ground. */
+  it("tells the scheme from the background when the client leaves the scheme out", () => {
+    const theme = (bg: string) => `#tgWebAppData=x&tgWebAppThemeParams=${encodeURIComponent(JSON.stringify({ bg_color: bg }))}`;
+
+    expect(readLaunch(theme("#17212b")).dark).toBe(true);
+    expect(readLaunch(theme("#ffffff")).dark).toBe(false);
+    expect(readLaunch(theme("#17212b") + "&tgWebAppColorScheme=light").dark).toBe(false);
+    expect(readLaunch(theme("not-a-colour")).dark).toBe(false);
+  });
 });

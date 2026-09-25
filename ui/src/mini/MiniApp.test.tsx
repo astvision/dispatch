@@ -86,6 +86,20 @@ describe("the Mini App", () => {
     expect(screen.queryByRole("button", { name: /^Төсөл нэмэх/ })).not.toBeInTheDocument();
   });
 
+  it("gives a member the manual from Home, with Back to Home", async () => {
+    vi.mocked(api.getMe).mockResolvedValue({ ...MEMBER, botPhoto: "data:image/jpeg;base64,cGhvdG8=" });
+    const { container } = render(<App />);
+
+    expect(await screen.findByText(/@dispatch_task_bot/)).toBeInTheDocument();
+    expect(container.querySelector("header img")).toHaveAttribute("src", "data:image/jpeg;base64,cGhvdG8=");
+    fireEvent.click(screen.getByRole("button", { name: "Гарын авлага" }));
+
+    expect(await screen.findByRole("heading", { name: "Гарын авлага" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Командууд" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Буцах" }));
+    expect(await screen.findByRole("heading", { name: "Таны шийдвэр" })).toBeInTheDocument();
+  });
+
   it("shows the current group-ack choice checked and saves a new one on tap", async () => {
     vi.mocked(api.getMe).mockResolvedValue(MEMBER);
     vi.mocked(api.getPrefs).mockResolvedValue({ groupAck: "reactionAndLine" });

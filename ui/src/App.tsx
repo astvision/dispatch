@@ -1,31 +1,35 @@
 import { LeftOutlined } from "@ant-design/icons";
 import { Button, Layout, Menu, Result, Spin, theme, Typography } from "antd";
-import { useContext, useEffect, useState } from "react";
+import { lazy, Suspense, useContext, useEffect, useState } from "react";
 import { ApiError, getMe, type Me } from "./api";
-import LogsPage from "./manage/LogsPage";
-import PeoplePage from "./manage/PeoplePage";
-import ProjectsPage from "./manage/ProjectsPage";
-import SettingsPage from "./manage/SettingsPage";
-import AddProjectPage from "./mini/AddProjectPage";
-import { useTelegramBackButton } from "./mini/backButton";
+import { post, useTelegramBackButton } from "./mini/backButton";
 import { RestartContext, useRestartNeeded } from "./mini/data";
-import FieldEditPage from "./mini/FieldEditPage";
-import GroupsPage from "./mini/GroupsPage";
 import HomePage from "./mini/HomePage";
 import { ListStyles, Section } from "./mini/List";
 import { ADMIN_PAGES, parentOf, projectPath, screenOf, type PagePath, type Screen } from "./mini/paths";
-import PrefsPage from "./mini/PrefsPage";
-import ProjectPage from "./mini/ProjectPage";
-import MiniProjectsPage from "./mini/ProjectsPage";
-import TasksPage from "./mini/TasksPage";
 import "./mini/world.css";
-import { worldStyle } from "./mini/world";
-import OverviewPage from "./OverviewPage";
+import { paletteFor, worldStyle } from "./mini/world";
 import RestartNotice from "./RestartNotice";
-import SetupPage from "./setup/SetupPage";
-import { inTelegram, prefersDark, themeParams } from "./telegram";
+import { inTelegram, prefersDark } from "./telegram";
 import { usePath } from "./usePath";
 import { useSetupState } from "./useSetupState";
+
+// Only the shell and Home load up front; every other page comes when it is opened, so the Mini App starts quickly
+// over the owner's tunnel.
+const LogsPage = lazy(() => import("./manage/LogsPage"));
+const PeoplePage = lazy(() => import("./manage/PeoplePage"));
+const ProjectsPage = lazy(() => import("./manage/ProjectsPage"));
+const SettingsPage = lazy(() => import("./manage/SettingsPage"));
+const AddProjectPage = lazy(() => import("./mini/AddProjectPage"));
+const FieldEditPage = lazy(() => import("./mini/FieldEditPage"));
+const GroupsPage = lazy(() => import("./mini/GroupsPage"));
+const GuidePage = lazy(() => import("./mini/GuidePage"));
+const PrefsPage = lazy(() => import("./mini/PrefsPage"));
+const ProjectPage = lazy(() => import("./mini/ProjectPage"));
+const MiniProjectsPage = lazy(() => import("./mini/ProjectsPage"));
+const TasksPage = lazy(() => import("./mini/TasksPage"));
+const OverviewPage = lazy(() => import("./OverviewPage"));
+const SetupPage = lazy(() => import("./setup/SetupPage"));
 
 const MANAGE_PAGES = [
   { key: "/", label: "Overview" },
@@ -66,7 +70,7 @@ function Shell({ pages, selected, onSelect, children }: {
         <Typography.Title level={4} style={{ padding: "16px 24px", margin: 0 }}>Dispatch</Typography.Title>
         <Menu mode="inline" selectedKeys={[selected]} items={pages} onClick={({ key }) => onSelect(key)} />
       </Layout.Sider>
-      <Layout.Content style={{ padding: 24, maxWidth: 1200 }}>{children}</Layout.Content>
+      <Layout.Content style={{ padding: 24, maxWidth: 1200 }}><Suspense fallback={<Spin />}>{children}</Suspense></Layout.Content>
     </Layout>
   );
 }
@@ -87,6 +91,7 @@ function MiniPage({ path }: { path: PagePath }) {
   }
   if (path === "/groups") return <GroupsPage />;
   if (path === "/prefs") return <PrefsPage />;
+  if (path === "/guide") return <GuidePage />;
   return <div style={{ paddingTop: 12 }}><Page path={path === "/overview" ? "/" : path} /></div>;
 }
 
@@ -121,20 +126,22 @@ function MiniShell({ back, children }: { back: (() => void) | null; children: Re
   const { token } = theme.useToken();
   const restart = useContext(RestartContext);
   useTelegramBackButton(back);
-  const world = worldStyle(themeParams, prefersDark, token);
-  const ground = String((world as Record<string, string>)["--ground"]);
-  const ink = String((world as Record<string, string>)["--ink"]);
+  const { ground, ink } = paletteFor(prefersDark);
 
   // The page needs a surface of its own: antd paints its components, not the document, and a transparent body left
-  // antd's dark text on whatever the webview happened to paint. Set on body too, so overscroll matches.
+  // antd's dark text on whatever the webview happened to paint. Set on body too, so overscroll matches. Telegram's own
+  // header and background take the ground, so its bar does not sit in another colour above the page.
   useEffect(() => {
     document.body.style.background = ground;
     document.body.style.color = ink;
     document.body.style.margin = "0";
+    post("web_app_set_header_color", { color: ground });
+    post("web_app_set_background_color", { color: ground });
+    post("web_app_set_bottom_bar_color", { color: ground });
   }, [ground, ink]);
 
   return (
-    <main className="mini-world" style={{ ...world, padding: "8px 16px calc(24px + env(safe-area-inset-bottom))",
+    <main className="mini-world" style={{ ...worldStyle(prefersDark), padding: "8px 16px calc(24px + env(safe-area-inset-bottom))",
                                           fontFamily: token.fontFamily }}>
       <ListStyles />
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
@@ -143,7 +150,7 @@ function MiniShell({ back, children }: { back: (() => void) | null; children: Re
           <Button type="link" icon={<LeftOutlined />} onClick={back} aria-label="Буцах" style={{ paddingInline: 0 }}>Буцах</Button>
         )}
         {restart.installed !== null && <div style={{ marginTop: 8 }}><RestartNotice installed={restart.installed} /></div>}
-        {children}
+        <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}><Spin /></div>}>{children}</Suspense>
       </div>
     </main>
   );

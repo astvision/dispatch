@@ -32,11 +32,22 @@ export function readLaunch(hash: string): Launch {
   // The fragment is a query string of its own: #tgWebAppData=...&tgWebAppThemeParams=...&tgWebAppColorScheme=dark
   const fragment = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   const initData = fragment.get("tgWebAppData");
+  const theme = parseTheme(fragment.get("tgWebAppThemeParams"));
+  const scheme = fragment.get("tgWebAppColorScheme");
   return {
     initData: initData && initData.length > 0 ? initData : null,
-    theme: parseTheme(fragment.get("tgWebAppThemeParams")),
-    dark: fragment.get("tgWebAppColorScheme") === "dark",
+    theme,
+    // Some clients (Telegram Desktop) leave the scheme out; their background colour still says which one is on.
+    dark: scheme === "dark" || scheme === "light" ? scheme === "dark" : isDarkColour(theme?.bg_color),
   };
+}
+
+/** Whether a "#rrggbb" colour is on the dark side; false for anything else, which keeps the light default. */
+export function isDarkColour(hex: string | undefined): boolean {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex ?? "");
+  if (!match) return false;
+  const [r, g, b] = match.slice(1).map((part) => parseInt(part, 16));
+  return 0.299 * r + 0.587 * g + 0.114 * b < 128;
 }
 
 function parseTheme(raw: string | null): ThemeParams | null {

@@ -163,11 +163,14 @@ listens only on the machine it runs on. Anyone with its link can act as you, lik
 
 ### Manage it from Telegram
 
-The same pages open inside Telegram: send `/manage` to the bot and tap the button it answers with. It opens on your
-tasks: those waiting on you first (a plan to approve, or its questions to answer), then what is running with its latest
-step, then the last few finished. Tap a waiting task to read its plan, answer its questions (a choice, your own words, or
-"you decide") and approve or reject it, with the same rules as the chat's buttons; the chat keeps working either way. A
-row at the bottom leads to the rest. **Төслүүд** lists the bot's projects, laid out like BotFather's: search, then a row
+The same pages open inside Telegram: tap **Удирдах**, the chat's menu button left of the input field (the commands are
+still suggested when you type `/`), or send `/manage` and tap the button it answers with. The first screen is laid out
+like BotFather's: the bot's profile photo and name (the photo is read at startup, so a new one shows after a restart), a
+search over your tasks, then sections of rows: those waiting on you (a plan to approve, or its questions to answer), what
+is running with its latest step, the last few finished, and a menu of the other pages, including **Гарын авлага**, a
+short manual of the chat, the tasks and the commands. Tap a task to read its plan, answer its questions (a choice, your
+own words, or "you decide") and approve or reject it, with the same rules as the chat's buttons; the chat keeps working
+either way. **Төслүүд** lists the bot's projects, laid out like BotFather's: search, then a row
 per project. Tap one for its tasks and, for an admin, a row
 per setting (base branch, alias, model and effort, per phase), each changed on its own screen, and Remove. Admins also
 get **Add a project**, the group's tasks, and the People, Settings, Logs and Overview pages; a member gets their groups'

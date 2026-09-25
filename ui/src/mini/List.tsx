@@ -18,7 +18,10 @@ export function avatarColour(name: string) {
   return AVATAR_COLOURS[Math.abs(hash) % AVATAR_COLOURS.length];
 }
 
-export function Avatar({ name, size = 40 }: { name: string; size?: number }) {
+export function Avatar({ name, size = 40, photo }: { name: string; size?: number; photo?: string | null }) {
+  if (photo) {
+    return <img src={photo} alt="" width={size} height={size} style={{ flex: "none", borderRadius: "50%", objectFit: "cover" }} />;
+  }
   const initials = name.replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").slice(0, 2).map((word) => word[0]).join("")
     .toUpperCase() || "?";
   return (
@@ -32,12 +35,12 @@ export function Avatar({ name, size = 40 }: { name: string; size?: number }) {
 }
 
 /** The top of a screen: its avatar, its name, and one line about it. */
-export function Header({ name, title, subtitle }: { name: string; title: string; subtitle?: ReactNode }) {
+export function Header({ name, title, subtitle, photo }: { name: string; title: string; subtitle?: ReactNode; photo?: string | null }) {
   const { token } = theme.useToken();
   return (
     <header style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "20px 16px 8px",
                      textAlign: "center" }}>
-      <Avatar name={name} size={80} />
+      <Avatar name={name} size={80} photo={photo} />
       <Typography.Title level={3} style={{ margin: "4px 0 0", overflowWrap: "anywhere" }}>{title}</Typography.Title>
       {subtitle && <div style={{ color: token.colorTextSecondary, fontSize: 14, maxWidth: "40ch" }}>{subtitle}</div>}
     </header>
@@ -48,7 +51,7 @@ export function Header({ name, title, subtitle }: { name: string; title: string;
 export function Section({ title, children }: { title?: string; children: ReactNode }) {
   const { token } = theme.useToken();
   return (
-    <section style={{ marginTop: 20 }}>
+    <section style={{ marginTop: 20 }} aria-label={title}>
       {title && <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 4px 8px", color: `var(--ink, ${token.colorText})` }}>{title}</h2>}
       <div style={{ background: `var(--slip, ${token.colorBgContainer})`, borderRadius: 12, overflow: "hidden" }}>{children}</div>
     </section>
