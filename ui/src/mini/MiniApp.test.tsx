@@ -122,6 +122,22 @@ describe("the Mini App", () => {
     expect(window.location.pathname).toBe("/p/alm");
   });
 
+  it("gives an admin the project's add link, opened inside Telegram (ADR 0025)", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    const postEvent = vi.fn();
+    (window as unknown as { TelegramWebviewProxy?: unknown }).TelegramWebviewProxy = { postEvent };
+    window.history.pushState(null, "", "/p/alm");
+    try {
+      render(<App />);
+
+      fireEvent.click(await row("Telegram группт нэмэх"));
+
+      expect(postEvent).toHaveBeenCalledWith("web_app_open_tg_link", JSON.stringify({ path_full: "/dispatch_task_bot?startgroup=alm" }));
+    } finally {
+      delete (window as unknown as { TelegramWebviewProxy?: unknown }).TelegramWebviewProxy;
+    }
+  });
+
   it("shows a member a project without its settings", async () => {
     vi.mocked(api.getMe).mockResolvedValue(MEMBER);
     window.history.pushState(null, "", "/p/alm");

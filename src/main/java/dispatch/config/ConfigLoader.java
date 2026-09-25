@@ -154,12 +154,16 @@ public final class ConfigLoader {
             if (owned.isEmpty()) {
                 errors.add(at + ".projects: at least one project is required");
             }
+            // A project may be in several groups, one per chat it is announced in (ADR 0025), but only once in each.
+            Set<String> ownedHere = new HashSet<>();
             for (int p = 0; p < owned.size(); p++) {
                 String name = owned.get(p);
                 if (!projectNames.contains(name)) {
                     errors.add(at + ".projects[" + p + "]: '" + name + "' is not a configured project");
-                } else if (listings.merge(name, 1, Integer::sum) == 2) {
-                    errors.add("telegram.groups: '" + name + "' is listed in more than one group; a project belongs to exactly one");
+                } else if (!ownedHere.add(name)) {
+                    errors.add(at + ".projects[" + p + "]: '" + name + "' is listed twice");
+                } else {
+                    listings.merge(name, 1, Integer::sum);
                 }
             }
             normalized.add(new Config.Group(group.name(), group.chatId(), List.copyOf(members), List.copyOf(owned)));

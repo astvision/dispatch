@@ -62,27 +62,32 @@ public interface GroupWriter {
      *                          project's group already holds this chat)
      */
     static String linkText(String text, Config config, long chatId, String title, String project) {
-        Config.Group from = config.telegram().groups().stream()
-                .filter(group -> group.projects().contains(project))
-                .findFirst()
-                .orElseThrow(() -> new UnknownProject(project));
+        List<Config.Group> owners = config.telegram().groups().stream().filter(group -> group.projects().contains(project)).toList();
+        if (owners.isEmpty()) {
+            throw new UnknownProject(project);
+        }
+        // A chatless group of the project is filled first; otherwise the chat is one more for it (ADR 0025).
+        Config.Group from = owners.stream().filter(group -> group.chatId() == null).findFirst().orElse(owners.getFirst());
         Config.Group already = config.telegram().groups().stream()
                 .filter(group -> Long.valueOf(chatId).equals(group.chatId()))
                 .findFirst()
                 .orElse(null);
         if (already != null) {
-            if (already.name().equals(from.name())) {
+            if (already.projects().contains(project)) {
                 return text;
             }
-            // A chatless group left with nothing to hold has no reason to survive; one still linked to its own chat is
-            // never emptied here: that is refused by validation instead.
-            String edited = from.chatId() == null && from.projects().size() == 1
+            // Only a chatless group gives the project up: a linked one keeps announcing it in its own chat. A chatless
+            // group left with nothing to hold has no reason to survive.
+            String edited = from.chatId() != null ? text
+                    : from.projects().size() == 1
                     ? ConfigEdit.remove(text, At.of("telegram", "groups").item("name", from.name()))
                     : ConfigEdit.remove(text, At.of("telegram", "groups").item("name", from.name()).key("projects").value(project));
             return ConfigEdit.append(edited, At.of("telegram", "groups").item("name", already.name()).key("projects"), project);
         }
-        // A group holding only this project follows it, to its first chat or away from an earlier one (ruling R6):
-        // moving the project out instead would leave that group empty, which validation refuses.
+        if (from.chatId() != null) {
+            return ConfigText.addGroup(text, uniqueName(slug(title), config), chatId, from.members(), project);
+        }
+        // A chatless group holding only this project takes the chat: moving the project out would leave it empty.
         if (from.projects().size() == 1) {
             String uncommented = text.replaceFirst("(?m)^(\\s*-\\s+name:\\s*'?" + Pattern.quote(from.name()) + "'?)"
                     + "\\s+" + Pattern.quote(NO_CHAT_COMMENT) + "$", "$1");

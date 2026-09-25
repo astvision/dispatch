@@ -552,7 +552,8 @@ class TaskLifecycleTest {
         assertEquals(CorrectResult.NOT_ALLOWED, db.transactionReturning(tx -> tasks.correct(tx, STRANGER, id, 1, "do it", CHAT + "/87", CHAT)));
         assertEquals(CorrectResult.EMPTY, db.transactionReturning(tx -> tasks.correct(tx, BOLD, id, 1, " \n ", CHAT + "/88", CHAT)));
 
-        assertEquals("NOT_ALLOWED", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", CHAT + "/87").get("kind"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = ?", CHAT + "/87").get("n"),
+                "a refusal in a group chat is only logged");
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = ?", CHAT + "/88").get("n"));
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
     }
@@ -731,7 +732,10 @@ class TaskLifecycleTest {
         assertEquals(CHAT + "/45", refused.get("reply_to_ref"));
         assertEquals("REJECTED", Json.read(refused.get("payload")).get("phase").asText());
         assertEquals(CHAT + "/46", row("SELECT reply_to_ref FROM outbox WHERE kind = 'TASK_NOT_FOUND'").get("reply_to_ref"));
-        assertEquals(CHAT + "/47", row("SELECT reply_to_ref FROM outbox WHERE kind = 'NOT_ALLOWED'").get("reply_to_ref"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'NOT_ALLOWED'").get("n"), "only logged in a group chat");
+        assertEquals(CancelResult.NOT_ALLOWED, db.transactionReturning(tx -> tasks.cancel(tx, STRANGER, rejected, "telegram:999/48", "telegram:999")));
+        assertEquals("telegram:999/48", row("SELECT reply_to_ref FROM outbox WHERE kind = 'NOT_ALLOWED'").get("reply_to_ref"),
+                "privately, still told");
     }
 
     @Test

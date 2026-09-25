@@ -14,7 +14,7 @@ telegram:
           name: Bold
         - id: 222333444
           name: Ali
-      projects:                   # every project belongs to exactly one group
+      projects:                   # a project may be in several groups, one per chat (ADR 0025)
         - autoland-management
 
 delivery:                         # Dispatch commits, pushes dispatch/<task> and opens a draft PR (ADR 0007)

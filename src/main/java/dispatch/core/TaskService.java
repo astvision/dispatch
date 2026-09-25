@@ -388,7 +388,7 @@ public final class TaskService {
 
     private long insertTask(Tx tx, Requester who, Config.Project project, String description, Priority priority, String originRef,
                             Instant now) {
-        Optional<String> groupChat = groups.chatOfProject(project.name());
+        Optional<String> groupChat = groups.chatOfTask(project.name(), originRef);
         // Without a group chat the task belongs to the requester's private chat, where nothing needs announcing (ADR 0014).
         long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, groupChat.orElse(who.ref()),
                 UUID.randomUUID(), project.baseBranch(), priority), Phase.PLANNING, now);
@@ -1166,10 +1166,17 @@ public final class TaskService {
         return Optional.of(payload);
     }
 
-    /** Tells {@code who} in {@code chatRef} that they may not give Dispatch tasks, and logs it; also for a group's task (G-1b). */
+    /**
+     * Tells {@code who} in {@code chatRef} that they may not give Dispatch tasks, and logs it. In a group chat it is only
+     * logged: a busy group's chatter with the bot would otherwise be answered with a refusal line each time (G-1b).
+     */
     public void notAllowed(Tx tx, Requester who, String originRef, String chatRef, Instant now) {
-        enqueue(tx, null, OutboxKind.NOT_ALLOWED, chatRef, originRef, Json.object().put("name", who.name()), now);
-        tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef));
+        boolean inGroup = groups.isGroupChat(chatRef);
+        if (!inGroup) {
+            enqueue(tx, null, OutboxKind.NOT_ALLOWED, chatRef, originRef, Json.object().put("name", who.name()), now);
+        }
+        tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef,
+                "answered", !inGroup));
     }
 
     /**

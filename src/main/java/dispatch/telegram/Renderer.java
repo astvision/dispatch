@@ -836,6 +836,9 @@ public final class Renderer {
             if (project.hasNonNull("unavailable")) {
                 line += "\n   " + format("projects.unavailable", escapeWithin(project.get("unavailable").asText(), DETAIL_LIMIT));
             }
+            if (project.hasNonNull("addToGroup")) {
+                line += "\n   " + format("projects.addToGroup", escape(project.get("addToGroup").asText()));
+            }
             blocks.add(line);
         }
         return plain(joinWithin(blocks, "\n"));

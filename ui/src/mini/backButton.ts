@@ -64,6 +64,15 @@ function post(eventType: string, eventData: object) {
   }
 }
 
+/** Opens a t.me link inside Telegram (e.g. a bot's ?startgroup= link), or in a new tab when not opened by Telegram. */
+export function openTelegramLink(url: string) {
+  if (bridge.TelegramWebviewProxy || window.parent !== window) {
+    post("web_app_open_tg_link", { path_full: url.replace(/^https:\/\/t\.me/, "") });
+  } else {
+    window.open(url, "_blank", "noopener");
+  }
+}
+
 function sync() {
   const visible = top() !== null;
   if (visible === shown) return;
