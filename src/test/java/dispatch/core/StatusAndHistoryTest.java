@@ -11,6 +11,7 @@ import dispatch.agent.AgentResult;
 import dispatch.agent.RunHandle;
 import dispatch.config.Config;
 import dispatch.domain.ClaimedRun;
+import dispatch.domain.FailureReason;
 import dispatch.domain.Plan;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
@@ -295,6 +296,11 @@ class StatusAndHistoryTest {
 
     @Test
     void aRequesterWhoLeftTheGroupStillSeesTheirOwnTasksButNoLongerTheGroupsOthers() {
+        // Driven to their final state before the next task is created: claim() takes the oldest queued run overall.
+        long finished = completed("Ship the changelog", "3");
+        long stillAwaiting = create("Plan the migration", "4");
+        claim();
+        transitions.planSucceeded(stillAwaiting, 1, PLAN, result("0.16"));
         long bolds = create("Add make help", "1");
         long alis = createFor(ALI, "life", "Rename the report", "2");
         groups.replace(new Config.Telegram(List.of(), List.of(
@@ -310,6 +316,12 @@ class StatusAndHistoryTest {
         assertTrue(db.transactionReturning(tx -> tasks.timelinePayload(tx, bold, bolds)).isPresent());
         assertTrue(db.transactionReturning(tx -> tasks.timelinePayload(tx, bold, alis)).isEmpty(),
                 "the group's other tasks are no longer his to see");
+        JsonNode history = db.transactionReturning(tx -> tasks.historyPayload(tx, bold)).path("tasks");
+        assertEquals(1, history.size(), history.toString());
+        assertEquals(finished, history.get(0).path("taskId").asLong(), "his finished task follows him too");
+        JsonNode awaitingApproval = db.transactionReturning(tx -> tasks.statusPayload(tx, bold)).path("awaitingApproval");
+        assertEquals(1, awaitingApproval.size(), awaitingApproval.toString());
+        assertEquals(stillAwaiting, awaitingApproval.get(0).path("taskId").asLong(), "and the plan still waiting for him");
     }
 
     @Test
@@ -339,6 +351,26 @@ class StatusAndHistoryTest {
                 "completed, and its execution never started an agent here: nothing to retry or follow up");
     }
 
+    @Test
+    void aFailedExecutionWhoseAgentStartedOffersRetryAndFollowUp() {
+        long id = executingWithAgentStarted("Add make help", "110");
+        transitions.failed(id, 2, FailureReason.AGENT, "boom", result("0.20"));
+
+        JsonNode history = db.transactionReturning(tx -> tasks.historyPayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE)));
+
+        assertEquals("[\"retry\",\"followUp\"]", history.path("tasks").get(0).path("actions").toString());
+    }
+
+    @Test
+    void aCompletedExecutionWhoseAgentStartedOffersOnlyFollowUp() {
+        long id = executingWithAgentStarted("Add make help", "111");
+        transitions.completed(id, 2, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
+
+        JsonNode history = db.transactionReturning(tx -> tasks.historyPayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE)));
+
+        assertEquals("[\"followUp\"]", history.path("tasks").get(0).path("actions").toString());
+    }
+
     private long createFor(Requester who, String project, String text, String messageId) {
         db.transaction(tx -> tasks.create(tx, who, project, text, Priority.NORMAL, who.ref() + "/" + messageId));
         return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", who.ref() + "/" + messageId).get("id"));
@@ -361,6 +393,17 @@ class StatusAndHistoryTest {
 
     private long completed(String text, String messageId) {
         return completedFor(BOLD, text, messageId);
+    }
+
+    /** A task whose approved plan's execution run (seq 2) is running, with its agent started (ADR 0027: retry/follow-up). */
+    private long executingWithAgentStarted(String text, String messageId) {
+        long id = create(text, messageId);
+        claim();
+        transitions.planSucceeded(id, 1, PLAN, result("0.16"));
+        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+        claim();
+        transitions.agentStarted(id, 2, null, null);
+        return id;
     }
 
     private long completedFor(Requester who, String text, String messageId) {

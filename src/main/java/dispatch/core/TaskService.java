@@ -559,8 +559,8 @@ public final class TaskService {
     /**
      * The requester's answer to question {@code index} (1-based) of the plan with run number {@code planSeq} (G-1d). The
      * question message is redrawn with it and the next unanswered question is sent; the last answer sends them all to
-     * the agent as one correction, exactly as a typed one. A question already answered, one of an older plan, or one of a
-     * task no longer awaiting approval changes nothing.
+     * the agent as one correction, exactly as a typed one. A question already answered, one of an older plan, a later
+     * question while an earlier one is still open, or one of a task no longer awaiting approval changes nothing.
      *
      * @param questionRef the question message, redrawn with the answer
      * @param originRef   the message the correction is acknowledged under

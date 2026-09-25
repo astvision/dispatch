@@ -166,9 +166,13 @@ public final class TaskAccess {
         this.groups = groups;
     }
 
-    /** A member looking at tasks: their groups' projects, and their own tasks wherever they are. */
+    /**
+     * A member looking at tasks: their groups' projects, and their own tasks wherever they are — but someone in no group
+     * has left none of their tasks "theirs": ADR 0027 keeps a requester's own task in full only while they are in any
+     * group, so a non-member's ref is dropped and they see nothing of their own past tasks.
+     */
     public Viewer member(String memberRef) {
-        return new Viewer(memberRef, groups.projectsOfMember(memberRef));
+        return new Viewer(groups.isMember(memberRef) ? memberRef : null, groups.projectsOfMember(memberRef));
     }
 
     /** A group chat looking at tasks: its own projects', as headlines. */
@@ -185,9 +189,11 @@ public final class TaskAccess {
         Sight sight = task == null ? Sight.NONE : member(memberRef).sees(task);
         boolean member = groups.isMember(memberRef);
         boolean admin = groups.isAdmin(memberRef);
-        // Only a plan waiting for a decision has questions and answers that matter. The questions are counted, not
-        // re-validated: a plan stored before questions had options holds them as plain strings.
-        boolean awaiting = task != null && task.phase() == Phase.AWAITING_APPROVAL;
+        // Only a plan waiting for a decision has questions and answers that matter, and only for a member who sees it in
+        // full: every lesser sight is refused before the phase rules run, and the admin-cancel rule reads neither the
+        // questions nor the current question. The questions are counted, not re-validated: a plan stored before
+        // questions had options holds them as plain strings.
+        boolean awaiting = task != null && sight == Sight.FULL && task.phase() == Phase.AWAITING_APPROVAL;
         int planSeq = awaiting ? Runs.latestSucceededPlanSeq(tx, task.id()).orElse(0) : 0;
         int questions = awaiting && task.planJson() != null ? Json.read(task.planJson()).path("questions").size() : 0;
         Set<Integer> answered = planSeq > 0 ? PlanAnswers.of(tx, task.id(), planSeq).keySet() : Set.of();

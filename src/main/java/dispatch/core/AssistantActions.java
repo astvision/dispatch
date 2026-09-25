@@ -63,7 +63,8 @@ public final class AssistantActions {
         long taskId = action.path("task").asLong(0);
         ObjectNode payload = Json.object().put("type", type).put("taskId", taskId);
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        if (verdict.sight() == TaskAccess.Sight.FULL) {
+        // A headline includes the title too (ADR 0020): only NONE, where there is nothing to show, leaves it out.
+        if (verdict.sight() != TaskAccess.Sight.NONE) {
             payload.put("title", verdict.task().title());
         }
         return switch (type) {

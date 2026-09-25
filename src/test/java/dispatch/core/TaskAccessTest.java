@@ -49,6 +49,8 @@ class TaskAccessTest {
     private static final Requester TUYA = new Requester("telegram:500", "Tuya");
     /** An admin in no group. */
     private static final Requester ADMIN = new Requester("telegram:400", "Admin");
+    /** An admin, and a member of the task's own group. */
+    private static final Requester OYUN = new Requester("telegram:600", "Oyun");
     private static final Requester STRANGER = new Requester("telegram:999", "Eve");
     private static final Plan PLAN = new Plan("Make the auth timeout configurable", List.of(), List.of("Read auth.timeout"),
             List.of(), List.of());
@@ -85,9 +87,9 @@ class TaskAccessTest {
         db = Database.open(dbFile);
         db.migrate();
         clock = new TestClock(Instant.parse("2026-09-25T10:00:00Z"));
-        groups = new Groups(new Config.Telegram(List.of(300L, 400L), List.of(
-                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
-                        List.of("alm", "crm")),
+        groups = new Groups(new Config.Telegram(List.of(300L, 400L, 600L), List.of(
+                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali"),
+                        new Config.Member(600, "Oyun")), List.of("alm", "crm")),
                 new Config.Group("mobile", -300L, List.of(new Config.Member(300, "Sara"), new Config.Member(500, "Tuya")),
                         List.of("life")))));
         tasks = new TaskService(groups, new Projects(List.of(project("alm"), project("crm"), project("life")),
@@ -112,6 +114,8 @@ class TaskAccessTest {
                         Refusal.WRONG_PHASE),
                 row("a member of the group approves someone else's plan", t -> t.awaiting(PLAN), ALI, Action.APPROVE,
                         Refusal.NOT_REQUESTER),
+                row("an admin of the task's group approves someone else's plan", t -> t.awaiting(PLAN), OYUN, Action.APPROVE,
+                        Refusal.NOT_REQUESTER),
                 row("a member of another group approves it", t -> t.awaiting(PLAN), TUYA, Action.APPROVE, Refusal.NOT_FOUND),
                 row("an admin of another group approves it", t -> t.awaiting(PLAN), SARA, Action.APPROVE, Refusal.NOT_FOUND),
                 row("an admin in no group approves it", t -> t.awaiting(PLAN), ADMIN, Action.APPROVE, Refusal.NOT_MEMBER),
@@ -132,6 +136,8 @@ class TaskAccessTest {
                 row("the requester cancels a finished task", TaskAccessTest::rejected, BOLD, Action.CANCEL, Refusal.WRONG_PHASE),
                 row("a member of the group cancels someone else's task", TaskAccessTest::planning, ALI, Action.CANCEL,
                         Refusal.NOT_REQUESTER),
+                row("an admin of the task's group cancels someone else's task", TaskAccessTest::planning, OYUN, Action.CANCEL,
+                        null),
                 row("a member of another group cancels it", TaskAccessTest::planning, TUYA, Action.CANCEL, Refusal.NOT_FOUND),
                 row("an admin of another group cancels it without seeing it", TaskAccessTest::planning, SARA, Action.CANCEL, null),
                 row("an admin in no group cancels it", TaskAccessTest::planning, ADMIN, Action.CANCEL, null),
@@ -150,6 +156,10 @@ class TaskAccessTest {
                 row("the requester follows up a plan that failed", TaskAccessTest::failedPlan, BOLD, Action.FOLLOW_UP,
                         Refusal.NOT_EXECUTED),
                 row("the requester follows up an active task", TaskAccessTest::executing, BOLD, Action.FOLLOW_UP,
+                        Refusal.WRONG_PHASE),
+                row("the requester follows up a rejected task", TaskAccessTest::rejected, BOLD, Action.FOLLOW_UP,
+                        Refusal.WRONG_PHASE),
+                row("the requester follows up a cancelled task", TaskAccessTest::cancelled, BOLD, Action.FOLLOW_UP,
                         Refusal.WRONG_PHASE),
                 row("a requester who left the group approves their own plan", TaskAccessTest::afterLeavingTheGroup, BOLD,
                         Action.APPROVE, null),
@@ -181,7 +191,9 @@ class TaskAccessTest {
                 Arguments.of("another group's chat does not see it", (Looking) a -> a.chat("telegram:-300"),
                         (Given) TaskAccessTest::planning, Sight.NONE),
                 Arguments.of("a requester who left the group still sees their own task in full", (Looking) a -> a.member(BOLD.ref()),
-                        (Given) TaskAccessTest::afterLeavingTheGroup, Sight.FULL));
+                        (Given) TaskAccessTest::afterLeavingTheGroup, Sight.FULL),
+                Arguments.of("a requester in no group no longer sees their own task", (Looking) a -> a.member(BOLD.ref()),
+                        (Given) TaskAccessTest::leftEveryGroup, Sight.NONE));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -320,12 +332,30 @@ class TaskAccessTest {
         return id;
     }
 
+    private long cancelled() {
+        long id = planning();
+        db.transaction(tx -> tasks.cancel(tx, BOLD, id, BOLD.ref() + "/cancel", BOLD.ref()));
+        return id;
+    }
+
     /** Bold's crm plan waits for him after crm moved to a group he is not in; he is still in another group. */
     private long afterLeavingTheGroup() {
         long id = awaiting("crm", PLAN);
-        groups.replace(new Config.Telegram(List.of(300L, 400L), List.of(
-                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold")), List.of("alm")),
+        groups.replace(new Config.Telegram(List.of(300L, 400L, 600L), List.of(
+                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(600, "Oyun")),
+                        List.of("alm")),
                 new Config.Group("sales", -200L, List.of(new Config.Member(200, "Ali")), List.of("crm")),
+                new Config.Group("mobile", -300L, List.of(new Config.Member(300, "Sara"), new Config.Member(500, "Tuya")),
+                        List.of("life")))));
+        return id;
+    }
+
+    /** Bold's task, after he is removed from every group; the other groups are unchanged. */
+    private long leftEveryGroup() {
+        long id = create("alm");
+        groups.replace(new Config.Telegram(List.of(300L, 400L, 600L), List.of(
+                new Config.Group("backend", -100L, List.of(new Config.Member(200, "Ali"), new Config.Member(600, "Oyun")),
+                        List.of("alm", "crm")),
                 new Config.Group("mobile", -300L, List.of(new Config.Member(300, "Sara"), new Config.Member(500, "Tuya")),
                         List.of("life")))));
         return id;

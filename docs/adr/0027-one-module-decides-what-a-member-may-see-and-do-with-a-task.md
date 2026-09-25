@@ -40,7 +40,8 @@ says whether the member may act, and the update decides who acted first.
 Every task the Mini App receives carries the actions its viewer may take now, straight from the verdict, and a plan its
 current question; the pages show buttons from that and hold no rules of their own. The status payload carries the same
 field, so Telegram's `/status` offers its priority buttons from it too. Refusals are not sent for display: a button that
-may not be pressed is not shown.
+may not be pressed is not offered, except the sheet's Approve, which stays visible but disabled, with its reason, while
+the plan asks questions.
 
 A plan's questions are answered **in order**: a later one is refused while an earlier one is open. Answering sends the
 first open question, so answering out of order would send an earlier question to the chat a second time. Only the Mini
@@ -63,5 +64,5 @@ We rejected:
 ## Consequences
 
 - The rules are tested once, as one table at the module's interface: who is asking, the task's phase, its runs and its
-  questions, against what they see and each action's verdict. Commands, channels and pages keep one refusal test each,
-  proving that they ask and relay the answer; the rule cases they used to repeat are gone.
+  questions, against what they see and each action's verdict. Commands, channels and pages keep the tests that prove they
+  ask and relay the answer; the rule cases the command tests used to repeat are gone.

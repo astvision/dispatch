@@ -21,7 +21,6 @@ import dispatch.ui.UiServer.Caller;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.BiFunction;
 
 /**
@@ -41,13 +40,11 @@ public final class TasksApi {
 
     private final Database db;
     private final TaskService tasks;
-    private final Groups groups;
     private final TaskAccess access;
 
     public TasksApi(Database db, TaskService tasks, Groups groups) {
         this.db = db;
         this.tasks = tasks;
-        this.groups = groups;
         this.access = new TaskAccess(groups);
     }
 
@@ -213,7 +210,8 @@ public final class TasksApi {
         }
         ObjectNode task = tasks.timelinePayload(tx, access.member(caller.ref()), taskId).orElseThrow(() -> notFound(taskId));
         task.remove("runs");
-        tasks.currentPlan(tx, taskId).ifPresent(plan -> task.set("plan", plan.put("current", verdict.currentQuestion())));
+        tasks.currentPlan(tx, taskId).ifPresent(plan -> task.set("plan",
+                plan.put("current", verdict.allows(TaskAccess.Action.ANSWER) ? verdict.currentQuestion() : 0)));
         return task;
     }
 
