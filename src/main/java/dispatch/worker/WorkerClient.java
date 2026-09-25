@@ -1,6 +1,7 @@
 package dispatch.worker;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.core.Job;
 import dispatch.core.JobResult;
@@ -120,10 +121,14 @@ public class WorkerClient {
                 answer.get("authorEmail").asText(), projects);
     }
 
-    /** Waits up to 25 s for work; empty when the member has none. {@code readiness} travels with this poll (ADR 0021). */
-    public Optional<Job> next(Readiness readiness) {
-        JsonNode answer = call(WorkerApi.NEXT, Json.write(Json.object().set("readiness", Json.MAPPER.valueToTree(readiness))),
-                POLL_TIMEOUT);
+    /**
+     * Waits up to 25 s for work; empty when the member has none. {@code readiness} travels with this poll (ADR 0021), and
+     * so does how many runs this computer takes at once, which the team machine claims its member's runs by.
+     */
+    public Optional<Job> next(Readiness readiness, int maxConcurrentRuns) {
+        ObjectNode poll = Json.object().put("maxConcurrentRuns", maxConcurrentRuns);
+        poll.set("readiness", Json.MAPPER.valueToTree(readiness));
+        JsonNode answer = call(WorkerApi.NEXT, Json.write(poll), POLL_TIMEOUT);
         if (answer.get("job").isNull()) {
             return Optional.empty();
         }

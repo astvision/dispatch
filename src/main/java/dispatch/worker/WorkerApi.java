@@ -270,8 +270,12 @@ public final class WorkerApi implements AutoCloseable {
         switch (path) {
             case PROJECTS -> json(exchange, 200, Json.write(projects(worker)));
             case NEXT -> {
+                Integer capacity = capacity(body);
                 readiness(body).ifPresent(reported ->
                         db.transaction(tx -> Workers.saveReadiness(tx, worker.id(), reported, clock.instant())));
+                if (capacity != null) {
+                    db.transaction(tx -> Workers.saveCapacity(tx, worker.id(), capacity));
+                }
                 Optional<Job> job = workers.next(worker);
                 ObjectNode answer = Json.object();
                 if (job.isPresent()) {
@@ -344,6 +348,18 @@ public final class WorkerApi implements AutoCloseable {
         reported.path("projects").properties().forEach(entry ->
                 projects.put(entry.getKey(), check(entry.getValue())));
         return Optional.of(new Readiness(check(reported.path("claude")), check(reported.path("gh")), projects));
+    }
+
+    /**
+     * How many runs the worker takes at once, checked before anything of this poll is stored; null from a worker older
+     * than this field, which the claim counts as one.
+     */
+    private static Integer capacity(JsonNode body) {
+        Integer capacity = optionalInt(body, "maxConcurrentRuns");
+        if (capacity != null && capacity < 1) {
+            throw new ApiException(400, "invalid", "maxConcurrentRuns: at least 1");
+        }
+        return capacity;
     }
 
     private static Readiness.Check check(JsonNode node) {

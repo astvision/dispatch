@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dispatch.core.Job;
 import dispatch.core.JobResult;
 import dispatch.domain.FailureReason;
+import dispatch.testing.SqlRows;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.util.List;
@@ -32,6 +33,17 @@ class WorkerLoopTest extends WorkerApiFixture {
         assertTrue(result.agent().structuredOutput().contains("understanding"), result.agent().structuredOutput());
         assertTrue(worktreeOf("ann-laptop", 7).resolve("fake-claude.args").toFile().exists(),
                 "the worktree is on this computer, not on the team machine");
+    }
+
+    @Test
+    void theLoopTellsTheTeamMachineHowManyRunsItTakesAtOnce() throws Exception {
+        startLoop("ann-laptop", repos.repo("alm"));
+
+        offer(planJob());
+        awaitResult();
+
+        assertEquals("1", SqlRows.single(dir.resolve("dispatch.db"), "SELECT max_runs FROM worker WHERE name = ?",
+                "ann-laptop").get("max_runs"), "worker.yaml's maxConcurrentRuns rides on every poll");
     }
 
     @Test
@@ -125,9 +137,9 @@ class WorkerLoopTest extends WorkerApiFixture {
         AtomicBoolean revoked = new AtomicBoolean();
         startLoop("ann-laptop", repos.repo("alm"), (http, team, key) -> new WorkerClient(http, team, key) {
             @Override
-            public Optional<Job> next(Readiness readiness) {
+            public Optional<Job> next(Readiness readiness, int maxConcurrentRuns) {
                 nextCalls.incrementAndGet();
-                return super.next(readiness);
+                return super.next(readiness, maxConcurrentRuns);
             }
 
             @Override

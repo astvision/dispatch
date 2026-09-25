@@ -362,7 +362,7 @@ In a team the same `JobRunner` runs on the member's computer inside `WorkerLoop`
 | Task topic deleted or not found | The task forgets its topic + WARN; its messages go to General, never to the group fallback. |
 | Invalid config | Startup fails, naming the field. |
 | SQLite error | Logged; the process exits non-zero and systemd restarts it (recovery above). |
-| A member's computer is offline | Their tasks stay queued; the requester is told once; they start when it connects. A task with a worktree waits for the computer that holds it, and while that computer is busy. |
+| A member's computer is offline | Their tasks stay queued; the requester is told once; they start when it connects. A task with a worktree waits for the computer that holds it, and while that computer already runs as many as its `worker.yaml` `maxConcurrentRuns` (one if it never said). |
 | A worker stops reporting for 60 s | The run is FAILED `INTERRUPTED`; the worktree stays on that computer and `/retry N` continues it there. |
 
 Nothing retries silently. The only automatic retries are Telegram polling and outbox delivery, and both log every attempt.

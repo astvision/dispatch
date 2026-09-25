@@ -116,6 +116,11 @@ public final class Workers {
                         workerId, project, check.ok() ? 1 : 0, check.detail()));
     }
 
+    /** How many runs this computer takes at once, as its last poll said; {@link Runs#claimNext} counts on it. */
+    public static void saveCapacity(Tx tx, long workerId, int maxRuns) {
+        tx.update("UPDATE worker SET max_runs = ? WHERE id = ?", maxRuns, workerId);
+    }
+
     /** Never null: a worker that reported nothing counts as ready (see {@link Readiness#READY}). */
     public static Readiness readiness(Tx tx, long workerId) {
         Optional<Readiness> base = tx.one(

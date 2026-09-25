@@ -118,7 +118,7 @@ public final class WorkerLoop implements Runnable {
                 continue;
             }
             try {
-                Optional<Job> job = client.next(readiness());
+                Optional<Job> job = client.next(readiness(), config.maxConcurrentRuns());
                 job.ifPresent(this::start);
             } catch (WorkerClient.RevokedException e) {
                 Log.error("worker.key_revoked", null, "detail", e.getMessage());
