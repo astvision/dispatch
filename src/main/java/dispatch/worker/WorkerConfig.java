@@ -49,7 +49,8 @@ public record WorkerConfig(String team, String name, int maxConcurrentRuns, Stri
 
     /**
      * @param path   an existing clone on this computer
-     * @param model  overrides the team's model for this project here; null keeps the team's
+     * @param model  overrides the team's Claude Code model for this project here; null keeps the team's. A project the
+     *               team runs on another agent always keeps the team's
      * @param effort likewise
      */
     public record Project(String path, String model, String effort) {

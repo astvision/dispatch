@@ -2,15 +2,18 @@ package dispatch.worker;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.cli.Cli;
 import dispatch.cli.Locations;
 import dispatch.cli.SecretsFile;
+import dispatch.config.Config;
 import dispatch.testing.GitFixture;
 import dispatch.testing.ScriptedTerminal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -52,6 +55,30 @@ class WorkerInitCommandTest extends WorkerApiFixture {
         String key = SecretsFile.read(SecretsFile.beside(workerFile)).get(WorkerCommand.KEY_VARIABLE);
         assertTrue(key != null && !key.isBlank(), "no worker key was written");
         assertFalse(terminal.output().contains(key), "the key must never be shown: " + terminal.output());
+    }
+
+    /** Sonnet, Opus and Max are Claude Code's words: a project on another agent keeps the team's, and is never asked. */
+    @Test
+    void aProjectOnAnotherAgentKeepsTheTeamsModelAndEffortWithoutAsking() throws Exception {
+        Config.Project codex = new Config.Project("alm", null, almRepo(), null, "main", "codex", "gpt-5-codex", "high",
+                List.of(), null, null, null);
+        try (WorkerApi team = WorkerApi.start(config("http://127.0.0.1:0", codex), groups(), keys, remote, attachments(), db,
+                clock)) {
+            Path workerFile = dir.resolve("config/worker.yaml");
+            ScriptedTerminal terminal = new ScriptedTerminal(
+                    "http://127.0.0.1:" + team.port(), "ann-laptop", keys.newCode(BOLD),
+                    "A clone I already have", repos.repo("alm").toString(),
+                    JAVA, JAVA, "y");
+
+            int status = init(terminal, workerFile);
+
+            assertEquals(0, status, terminal.output());
+            assertFalse(terminal.output().contains("Model on this computer"), terminal.output());
+            WorkerConfig.Project alm = WorkerConfigLoader.load(workerFile).projects().get("alm");
+            assertEquals(repos.repo("alm").toString(), alm.path());
+            assertNull(alm.model());
+            assertNull(alm.effort());
+        }
     }
 
     @Test

@@ -105,7 +105,8 @@ public class WorkerClient {
     public record Setup(String team, String authorName, String authorEmail, List<ProjectInfo> projects) {
     }
 
-    public record ProjectInfo(String name, String repo, String baseBranch, String model, String effort) {
+    /** @param agent the agent the team runs this project on; null from a team machine older than this field */
+    public record ProjectInfo(String name, String repo, String baseBranch, String agent, String model, String effort) {
     }
 
     public Setup setup() {
@@ -113,7 +114,8 @@ public class WorkerClient {
         List<ProjectInfo> projects = new ArrayList<>();
         answer.get("projects").forEach(project -> projects.add(new ProjectInfo(project.path("name").asText(),
                 project.path("repo").asText(null), project.path("baseBranch").asText(null),
-                project.path("model").asText(null), project.path("effort").asText(null))));
+                project.path("agent").asText(null), project.path("model").asText(null),
+                project.path("effort").asText(null))));
         return new Setup(answer.get("team").asText(), answer.get("authorName").asText(),
                 answer.get("authorEmail").asText(), projects);
     }

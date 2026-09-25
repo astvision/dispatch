@@ -434,7 +434,8 @@ public final class WorkerApi implements AutoCloseable {
                 continue;
             }
             projects.addObject().put("name", project.name()).put("repo", project.repo())
-                    .put("baseBranch", project.baseBranch()).put("model", project.model()).put("effort", project.effort());
+                    .put("baseBranch", project.baseBranch()).put("agent", project.agent())
+                    .put("model", project.model()).put("effort", project.effort());
         }
         return answer;
     }

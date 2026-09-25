@@ -4,6 +4,7 @@ import dispatch.Json;
 import dispatch.Redactor;
 import dispatch.agent.Agent;
 import dispatch.agent.claude.ClaudeCodeAgent;
+import dispatch.agent.codex.CodexAgent;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
 import dispatch.core.AttachmentSource;
@@ -15,6 +16,7 @@ import dispatch.domain.Phase;
 import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
 import dispatch.store.Database;
+import dispatch.testing.FakeAgents;
 import dispatch.testing.FakeClaude;
 import dispatch.testing.FakeGh;
 import dispatch.testing.GitFixture;
@@ -182,16 +184,26 @@ abstract class WorkerApiFixture {
     }
 
     Job planJob(String prompt) {
+        return planJob(prompt, "claude-code", null, null);
+    }
+
+    /** As {@link #planJob(String)}, on {@code agent} with the team's {@code model} and {@code effort} (null: its default). */
+    Job planJob(String prompt, String agent, String model, String effort) {
         return new Job(TASK_ID, 1, RunKind.PLAN,
-                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),
-                "main", null, null, null, UUID.fromString("11111111-2222-3333-4444-555555555555"), false, prompt, null,
-                null, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(),
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", agent, List.of()),
+                "main", null, null, null, UUID.fromString("11111111-2222-3333-4444-555555555555"), false, prompt, model,
+                effort, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(),
                 "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), null);
     }
 
     /** Pairs {@code name} with Bold and starts a real {@link WorkerLoop}, wired to this fixture's server, on a virtual thread. */
     void startLoop(String name, Path clonePath) throws Exception {
-        startLoop(name, Map.of("alm", new WorkerConfig.Project(clonePath.toString(), null, null)), WorkerClient::new);
+        startLoop(name, new WorkerConfig.Project(clonePath.toString(), null, null));
+    }
+
+    /** As {@link #startLoop(String, Path)}, with alm as this computer's worker.yaml has it, e.g. its own model. */
+    void startLoop(String name, WorkerConfig.Project alm) throws Exception {
+        startLoop(name, Map.of("alm", alm), WorkerClient::new);
     }
 
     /** As {@link #startLoop(String, Path)}, but with a {@link WorkerClient} this test controls, e.g. one call failing on demand. */
@@ -215,14 +227,17 @@ abstract class WorkerApiFixture {
         Path bin = Files.createDirectories(workerStateDir(name).resolve("bin"));
         URI team = URI.create("http://127.0.0.1:" + api.port());
         WorkerConfig workerConfig = new WorkerConfig(team.toString(), name, 1, FakeClaude.install(bin).toString(),
-                FakeGh.install(bin).toString(), workerStateDir(name), projects);
+                FakeGh.install(bin).toString(), workerStateDir(name), projects, FakeAgents.install(bin, "codex").toString(),
+                null);
         WorkerClient client = clientFactory.create(http, team, key);
         Git git = new Git("git", null, Duration.ofSeconds(30));
         Workspaces workspaces = new Workspaces(workerConfig.stateDir(), git);
         Delivery delivery = new Delivery(git, new Gh(workerConfig.ghCommand(), null, Duration.ofSeconds(30)),
                 "Dispatch (backend)", "dispatch-backend@example.com");
-        Map<String, Agent> agents = Map.of("claude-code",
-                new ClaudeCodeAgent(workerConfig.claudeCommand(), FakeClaude.environment(), Duration.ofSeconds(1)));
+        Map<String, Agent> agents = Map.of(
+                "claude-code", new ClaudeCodeAgent(workerConfig.claudeCommand(), FakeClaude.environment(), Duration.ofSeconds(1)),
+                "codex", new CodexAgent(workerConfig.codexCommand(), FakeClaude.environment(), Duration.ofSeconds(1),
+                        workerConfig.stateDir().resolve("agent-sessions").resolve("codex")));
         WorkerLoop loop = new WorkerLoop(workerConfig, client, agents, workspaces, delivery, Redactor.patternsOnly(),
                 new ActiveRuns(), TEST_PROGRESS);
         loops.add(loop);
@@ -337,14 +352,19 @@ abstract class WorkerApiFixture {
     }
 
     Config config(String publicUrl) {
+        return config(publicUrl, new Config.Project("alm", null, almRepo(), null, "main", "claude-code", "opus",
+                "high", List.of(), null, null, null));
+    }
+
+    /** As {@link #config(String)}, with alm as the team configured it, e.g. on another agent. */
+    Config config(String publicUrl, Config.Project alm) {
         return new Config("backend", dir, new Config.Telegram(List.of(), List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))),
                 new Config.Scheduler(2), Config.Worktrees.DEFAULT,
                 new Config.Limits(new Config.RunLimits(Duration.ofMinutes(30), new BigDecimal("2")),
                         new Config.RunLimits(Duration.ofMinutes(60), new BigDecimal("10"))),
-                Map.of("claude-code", new Config.Agent("claude")),
-                List.of(new Config.Project("alm", null, almRepo(), null, "main", "claude-code", "opus",
-                        "high", List.of(), null, null, null)),
+                Map.of("claude-code", new Config.Agent("claude"), "codex", new Config.Agent("codex")),
+                List.of(alm),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", "gh"),
                 new Config.Workers(publicUrl, 0), null, new Config.Secrets("token", null));
     }

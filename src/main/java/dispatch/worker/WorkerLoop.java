@@ -193,17 +193,26 @@ public final class WorkerLoop implements Runnable {
         }
     }
 
-    /** The team's project as this computer has it: its own clone, and its own model and effort when it set any. */
+    /**
+     * The team's project as this computer has it: its own clone, and its own model and effort when it set any. Those are
+     * Claude Code's, so a project the team runs on another agent keeps the team's, even one that moved since worker init.
+     */
     private Optional<Job> withLocalClone(Job job) {
         WorkerConfig.Project mine = config.projects().get(job.project().name());
         if (mine == null) {
             return Optional.empty();
         }
+        boolean claudeCode = job.project().agent().equals("claude-code");
+        if (!claudeCode && (mine.model() != null || mine.effort() != null)) {
+            Log.warn("worker.override_ignored", "task", job.taskId(), "project", job.project().name(),
+                    "agent", job.project().agent());
+        }
+        String model = claudeCode && mine.model() != null ? mine.model() : job.model();
+        String effort = claudeCode && mine.effort() != null ? mine.effort() : job.effort();
         Job.Project project = new Job.Project(job.project().name(), job.project().repo(), mine.path(),
                 job.project().baseBranch(), job.project().agent(), job.project().copyFiles());
         return Optional.of(new Job(job.taskId(), job.seq(), job.kind(), project, job.baseBranch(), job.baseSha(),
-                job.worktree(), job.prUrl(), job.sessionId(), job.resume(), job.prompt(),
-                mine.model() == null ? job.model() : mine.model(), mine.effort() == null ? job.effort() : mine.effort(),
+                job.worktree(), job.prUrl(), job.sessionId(), job.resume(), job.prompt(), model, effort,
                 job.timeoutMillis(), job.budgetUsd(), job.attachments(), job.commitSubject(), job.commitTrailers(),
                 job.deliverySummary()));
     }
