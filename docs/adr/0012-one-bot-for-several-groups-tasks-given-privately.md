@@ -2,6 +2,7 @@
 
 Amended: a member may also start a task from their project's linked group by mentioning the bot; the draft still opens privately (G-1b).
 Amended: a member may also be mentioned in their project's linked group to receive the message as a task, drafted in their own private chat; the bot must be an admin of the group to see such messages (G-1c).
+Amended by ADR 0027: a requester still sees and acts on their own tasks after they leave the project's group.
 
 An instance now serves several Telegram groups, and a person may be a member of several of them. The config lists groups, each with its members and projects; every project belongs to exactly one group. A member can give tasks for any project of their groups.
 

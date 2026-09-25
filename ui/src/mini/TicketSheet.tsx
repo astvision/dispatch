@@ -75,9 +75,10 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
   };
 
   const plan = detail?.plan;
-  const awaiting = detail?.phase === "AWAITING_APPROVAL" && plan !== undefined;
-  const open = plan?.questions.filter((question) => question.answer === null) ?? [];
-  const current = awaiting ? open[0] : undefined;
+  // What the sheet offers is the server's (ADR 0027): a decision while the plan waits for one, and the question to answer.
+  const decides = detail?.actions.includes("reject") ?? false;
+  const mayApprove = detail?.actions.includes("approve") ?? false;
+  const current = plan?.current ?? 0;
 
   const answer = (question: PlanQuestionView, given: Answer) => act(
     () => answerQuestion(task.taskId, plan!.planSeq, question.index, given),
@@ -109,7 +110,7 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
                 <h3>Асуултууд</h3>
                 {plan.questions.map((question) => (
                   <Question key={question.index} question={question} total={plan.questions.length} busy={busy}
-                            current={question === current} later={awaiting && question.answer === null && question !== current}
+                            current={question.index === current} later={question.answer === null && current > 0 && question.index > current}
                             onAnswer={(given) => void answer(question, given)} />
                 ))}
               </>
@@ -133,8 +134,8 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
         )}
 
         <div className="sheet-actions">
-          {awaiting
-            ? <Decide busy={busy} openQuestions={open.length}
+          {decides && plan
+            ? <Decide busy={busy} mayApprove={mayApprove}
                       onApprove={() => void act(() => approvePlan(task.taskId, plan.planSeq), () => onDecided(task.taskId, "approved"))}
                       onReject={() => void act(() => rejectPlan(task.taskId, plan.planSeq), () => onDecided(task.taskId, "rejected"))} />
             : <button type="button" className="sheet-reject" style={{ color: "var(--link)" }} onClick={onClose}>Хаах</button>}
@@ -203,9 +204,10 @@ function Question({ question, total, current, later, busy, onAnswer }: {
 }
 
 /** Approve, or reject after one more tap: rejecting ends the task, and Telegram's webview shows no confirm() dialog. */
-function Decide({ busy, openQuestions, onApprove, onReject }: {
+function Decide({ busy, mayApprove, onApprove, onReject }: {
   busy: boolean;
-  openQuestions: number;
+  /** False while the plan asks questions: their answers make the agent plan again, and that plan is approved. */
+  mayApprove: boolean;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -224,8 +226,8 @@ function Decide({ busy, openQuestions, onApprove, onReject }: {
   }
   return (
     <>
-      {openQuestions > 0 && <p className="note">Асуултад хариулсны дараа агент төлөвлөгөөгөө шинэчилнэ.</p>}
-      <button type="button" className="ticket-go" style={{ marginTop: 0 }} disabled={busy || openQuestions > 0} onClick={onApprove}>
+      {!mayApprove && <p className="note">Асуултад хариулсны дараа агент төлөвлөгөөгөө шинэчилнэ.</p>}
+      <button type="button" className="ticket-go" style={{ marginTop: 0 }} disabled={busy || !mayApprove} onClick={onApprove}>
         Зөвшөөрөх
       </button>
       <button type="button" className="sheet-reject" disabled={busy} onClick={() => setAsking(true)}>Татгалзах</button>

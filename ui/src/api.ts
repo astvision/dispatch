@@ -304,6 +304,9 @@ export interface ProjectSummary {
 
 export type TaskState = "running" | "queued" | "awaitingApproval" | "finished";
 
+/** What the viewer may do with a task now, as the server's task access decided (ADR 0027). */
+export type TaskAction = "approve" | "correct" | "answer" | "reject" | "priority" | "cancel" | "retry" | "followUp";
+
 /** One row of a task list. A task that is not the viewer's own carries the headline fields only (ADR 0020). */
 export interface TaskRow {
   taskId: number;
@@ -313,6 +316,8 @@ export interface TaskRow {
   priority: string;
   requester: string | null;
   mine: boolean;
+  /** What the viewer may do with it now; a button whose action is not here is not shown (ADR 0027). */
+  actions: TaskAction[];
   phase?: string;
   prUrl?: string | null;
   failureReason?: string | null;
@@ -374,6 +379,8 @@ export interface PlanQuestionView {
 
 export interface PlanView {
   planSeq: number;
+  /** The question to answer now, 1-based; 0 when none is open. */
+  current: number;
   understanding: string;
   steps: string[];
   risks: string[];
@@ -392,6 +399,7 @@ export interface TaskDetail {
   createdAt: string | null;
   completedAt: string | null;
   costUsd: string | null;
+  actions: TaskAction[];
   plan?: PlanView;
 }
 

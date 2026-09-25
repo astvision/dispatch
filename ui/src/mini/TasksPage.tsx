@@ -11,11 +11,9 @@ const STATE_LABELS: Record<TaskState, { text: string; color: string }> = {
   finished: { text: "Дууссан", color: "success" },
 };
 
-const CANCELLABLE: TaskState[] = ["running", "queued", "awaitingApproval"];
-
 /**
- * A member's own tasks, or every task of an admin's groups (spec: Task pages). The two differ in which list they ask
- * for and whether a row may be retried, not in how they look.
+ * A member's own tasks, or every task of an admin's groups (spec: Task pages). The two differ only in which list
+ * they ask for; what a row offers is the server's (ADR 0027).
  *
  * <p>A phone is too narrow for a table, so each task is a row that wraps: the title on its own line, everything else
  * underneath. It polls rather than saving anything, so it follows LogsPage rather than useManagedConfig.
@@ -138,13 +136,12 @@ function Task({ task, scope, open, timeline, onToggle, onCancel, onRetry }: {
         </Typography.Text>
       </Flex>
       <Space>
-        {CANCELLABLE.includes(task.state) && (
+        {task.actions.includes("cancel") && (
           <Popconfirm title={`#${task.taskId} цуцлах уу?`} okText="Цуцлах" cancelText="Болих" onConfirm={onCancel}>
             <Button size="middle" danger aria-label={`Цуцлах ${task.taskId}`}>Цуцлах</Button>
           </Popconfirm>
         )}
-        {/* Someone else's task is an admin's to stop, never to start again for them. */}
-        {task.mine && task.state === "finished" && (
+        {task.actions.includes("retry") && (
           <Button size="middle" aria-label={`Дахин эхлүүлэх ${task.taskId}`} onClick={onRetry}>Дахин</Button>
         )}
       </Space>

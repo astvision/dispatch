@@ -1,6 +1,6 @@
 # One module decides what a member may see and do with a task
 
-Status: proposed
+Status: accepted
 
 What a member may see of a task and do with it was worked out separately by each place that shows or acts on tasks:
 `TaskService`'s commands, the assistant's proposals (`AssistantActions`), the Mini App's routes (`TasksApi`) and its
