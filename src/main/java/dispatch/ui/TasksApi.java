@@ -21,6 +21,7 @@ import dispatch.ui.UiServer.Caller;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.BiFunction;
 
 /**
@@ -90,34 +91,62 @@ public final class TasksApi {
                 .orElseThrow(() -> new ApiException(404, "not_found", "no task #" + taskId + " here"));
     }
 
-    /** The requester or an admin; the rules are {@link TaskService}'s, exactly as for /cancel in the chat. */
+    /**
+     * The requester or an admin, by {@link TaskAccess} exactly as for /cancel in the chat. A refusal is answered here and
+     * only here: {@link TaskService} would also write it into the member's chat, where a tap in the Mini App does not belong.
+     */
     ObjectNode cancel(Caller caller, JsonNode body) {
         long taskId = taskId(body);
-        CancelResult result = db.transactionReturning(tx ->
-                tasks.cancel(tx, requester(caller), taskId, null, caller.ref()));
-        return switch (result) {
-            case CANCELLED -> Json.object().put("result", result.name());
-            case NOT_FOUND -> throw new ApiException(404, "not_found", "no task #" + taskId + " here");
-            case REFUSED -> throw new ApiException(403, "not_yours", "only the member who gave this task, or an admin, may cancel it");
-            case NOT_ALLOWED -> throw new ApiException(403, "not_a_member", "you are not in a group of this Dispatch");
+        CancelResult result = db.transactionReturning(tx -> {
+            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.CANCEL);
+            if (refused.isPresent()) {
+                throw cancelRefused(refused.get(), taskId);
+            }
+            return tasks.cancel(tx, requester(caller), taskId, null, caller.ref());
+        });
+        // Allowed in this same transaction, so TaskService cannot refuse it; if it ever did, a 200 would hide its refusal.
+        if (result != CancelResult.CANCELLED) {
+            throw new IllegalStateException("task #" + taskId + " was allowed a cancel but came back " + result);
+        }
+        return Json.object().put("result", result.name());
+    }
+
+    private static ApiException cancelRefused(TaskAccess.Refusal refusal, long taskId) {
+        return switch (refusal) {
+            case NOT_MEMBER -> notMember();
+            case NOT_FOUND -> notFound(taskId);
+            case NOT_REQUESTER -> new ApiException(403, "not_yours", "only the member who gave this task, or an admin, may cancel it");
+            case WRONG_PHASE -> new ApiException(409, "wrong_state", "this task has already ended");
+            default -> throw new IllegalStateException("task access never refuses a cancel as " + refusal);
         };
     }
 
     /**
-     * The requester alone: an admin may stop someone's task but never start it again for them. {@code REFUSED} covers
-     * both "not yours" and "it has not failed", and {@link TaskService} does not say which, so the message names both
-     * rather than telling a requester something untrue about their own task.
+     * The requester alone, and only after the task failed: an admin may stop someone's task but never start it again for
+     * them. Refused here and only here, as {@link #cancel} is.
      */
     ObjectNode retry(Caller caller, JsonNode body) {
         long taskId = taskId(body);
-        RetryResult result = db.transactionReturning(tx ->
-                tasks.retry(tx, requester(caller), taskId, null, caller.ref()));
-        return switch (result) {
-            case RETRIED -> Json.object().put("result", result.name());
-            case NOT_FOUND -> throw new ApiException(404, "not_found", "no task #" + taskId + " here");
-            case REFUSED -> throw new ApiException(403, "cannot_retry",
-                    "this task cannot be retried: only the member who gave it may retry it, and only after it failed");
-            case NOT_ALLOWED -> throw new ApiException(403, "not_a_member", "you are not in a group of this Dispatch");
+        RetryResult result = db.transactionReturning(tx -> {
+            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.RETRY);
+            if (refused.isPresent()) {
+                throw retryRefused(refused.get(), taskId);
+            }
+            return tasks.retry(tx, requester(caller), taskId, null, caller.ref());
+        });
+        if (result != RetryResult.RETRIED) {
+            throw new IllegalStateException("task #" + taskId + " was allowed a retry but came back " + result);
+        }
+        return Json.object().put("result", result.name());
+    }
+
+    private static ApiException retryRefused(TaskAccess.Refusal refusal, long taskId) {
+        return switch (refusal) {
+            case NOT_MEMBER -> notMember();
+            case NOT_FOUND -> notFound(taskId);
+            case NOT_REQUESTER -> new ApiException(403, "cannot_retry", "only the member who gave it may retry this task");
+            case NOT_FAILED -> new ApiException(409, "wrong_state", "only a failed task can be retried");
+            default -> throw new IllegalStateException("task access never refuses a retry as " + refusal);
         };
     }
 

@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -160,6 +161,39 @@ class TasksApiTest {
         assertEquals("cannot_retry", refused.code());
         assertTrue(refused.getMessage().contains("only the member who gave it"), refused.getMessage());
         assertEquals("CANCELLED", api.cancel(BOLD_CALLER, Json.object().put("taskId", alis)).path("result").asText());
+    }
+
+    /**
+     * The page that was tapped answers a refusal, with its reason. The chat's refusal messages belong to commands given
+     * in the chat, so none of these may also reach the member's private chat.
+     */
+    @Test
+    void aRefusedCancelOrRetryIsAnsweredHereAndNeverInTheChat() {
+        long alis = create(ALI, "Add the export button");
+        long boldsOwn = create(BOLD, "Fix the login timeout");
+        long ended = create(ALI, "Rename the report");
+        api.cancel(ALI_CALLER, Json.object().put("taskId", ended));
+        String outboxBefore = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
+
+        List<String> answers = List.of(
+                refused(() -> api.cancel(STRANGER, Json.object().put("taskId", alis))),
+                refused(() -> api.cancel(ALI_CALLER, Json.object().put("taskId", 9999))),
+                refused(() -> api.cancel(ALI_CALLER, Json.object().put("taskId", boldsOwn))),
+                refused(() -> api.cancel(ALI_CALLER, Json.object().put("taskId", ended))),
+                refused(() -> api.retry(BOLD_CALLER, Json.object().put("taskId", alis))),
+                refused(() -> api.retry(ALI_CALLER, Json.object().put("taskId", alis))));
+        String outboxAfter = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
+
+        assertAll(
+                () -> assertEquals(List.of("403 not_a_member", "404 not_found", "403 not_yours", "409 wrong_state",
+                        "403 cannot_retry", "409 wrong_state"), answers),
+                () -> assertEquals(outboxBefore, outboxAfter, "a refusal the Mini App shows must not also be sent to the chat"));
+    }
+
+    /** A refusal as its status and code, e.g. "403 not_yours". */
+    private static String refused(org.junit.jupiter.api.function.Executable call) {
+        ApiException refused = assertThrows(ApiException.class, call);
+        return refused.status() + " " + refused.code();
     }
 
     @Test
