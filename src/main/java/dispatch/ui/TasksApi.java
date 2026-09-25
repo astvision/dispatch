@@ -165,6 +165,8 @@ public final class TasksApi {
                 case ANSWERED -> ownTask(tx, caller, taskId).put("result", result.name());
                 case EMPTY -> throw new ApiException(400, "invalid", "the answer is empty, or that option is not one of the question's");
                 case ALREADY_ANSWERED -> throw new ApiException(409, "already_answered", "this question already has its answer");
+                case OUT_OF_ORDER -> throw new ApiException(409, "out_of_order",
+                        "answer the questions in order: an earlier one is still open");
                 case STALE -> throw stale();
                 case NOT_ALLOWED -> throw notMember();
                 case NOT_FOUND -> throw notFound(taskId);

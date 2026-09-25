@@ -233,7 +233,7 @@ public final class AssistantActions {
                 : tasks.answer(tx, who, taskId, planSeq, index, action.path("answer").asText(), questionRef, messageRef, chatRef);
         return switch (result) {
             case ANSWERED, PROMPTED, PROMPT_OPEN -> Outcome.DONE;
-            case ALREADY_ANSWERED, STALE, EMPTY -> Outcome.STALE;
+            case ALREADY_ANSWERED, STALE, EMPTY, OUT_OF_ORDER -> Outcome.STALE;
             case NOT_ALLOWED, NOT_FOUND, NOT_REQUESTER -> Outcome.NOT_ALLOWED;
         };
     }

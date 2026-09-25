@@ -642,6 +642,7 @@ public final class UpdateHandler {
             case NOT_ALLOWED -> "notAllowed";
             case NOT_FOUND -> "notFound";
             case NOT_REQUESTER -> "notRequester";
+            case OUT_OF_ORDER -> "stale";
             case STALE -> "stale";
         };
         if (reason != null) {
@@ -684,6 +685,7 @@ public final class UpdateHandler {
             case NOT_FOUND -> "callback.notFound";
             case NOT_REQUESTER -> "callback.notRequester";
             case ALREADY_ANSWERED -> "plan.alreadyAnswered";
+            case OUT_OF_ORDER -> "callback.stale";
             case STALE -> "callback.stale";
         });
     }

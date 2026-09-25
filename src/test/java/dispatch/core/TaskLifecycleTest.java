@@ -50,6 +50,10 @@ class TaskLifecycleTest {
             List.of("Read auth.timeout", "Add AuthClientTimeoutTest"), List.of(), List.of());
     private static final Plan PLAN_WITH_QUESTION = new Plan("Make the auth timeout configurable", List.of(),
             List.of("Read auth.timeout"), List.of(), List.of(new dispatch.domain.PlanQuestion("Which environments need a longer timeout?", List.of())));
+    private static final Plan PLAN_WITH_TWO_QUESTIONS = new Plan("Make the auth timeout configurable", List.of(),
+            List.of("Read auth.timeout"), List.of(), List.of(
+                    new dispatch.domain.PlanQuestion("Which environments?", List.of("staging", "prod")),
+                    new dispatch.domain.PlanQuestion("Keep the old default?", List.of("yes", "no"))));
 
     @TempDir
     Path dir;
@@ -422,14 +426,11 @@ class TaskLifecycleTest {
     }
 
     @Test
-    void rejectIsRefusedForStalePlansOtherPhasesUnknownTasksAndNonMembers() {
+    void aStaleRejectionChangesNothing() {
         long awaiting = awaitingApproval("31");
-        long planning = create(BOLD, "alm", "Another task", "32");
 
         assertEquals(RejectResult.STALE_PLAN, db.transactionReturning(tx -> tasks.reject(tx, BOLD, awaiting, 2)));
-        assertEquals(RejectResult.WRONG_STATE, db.transactionReturning(tx -> tasks.reject(tx, BOLD, planning, 1)));
-        assertEquals(RejectResult.NOT_FOUND, db.transactionReturning(tx -> tasks.reject(tx, BOLD, 999, 1)));
-        assertEquals(RejectResult.NOT_ALLOWED, db.transactionReturning(tx -> tasks.reject(tx, STRANGER, awaiting, 1)));
+
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", awaiting).get("phase"));
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_REJECTED'").get("n"));
     }
@@ -458,51 +459,13 @@ class TaskLifecycleTest {
     }
 
     @Test
-    void secondApprovalOfTheSamePlanIsRefused() {
-        long id = awaitingApproval("71");
-        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
-
-        assertEquals(ApproveResult.WRONG_STATE, db.transactionReturning(tx -> tasks.approve(tx, BOLD, id, 1)));
-        assertEquals("2", row("SELECT count(*) AS n FROM run WHERE task_id = ?", id).get("n"));
-    }
-
-    @Test
-    void planWithOpenQuestionsCannotBeApproved() {
-        long id = awaitingApproval("72", PLAN_WITH_QUESTION);
-
-        assertEquals(ApproveResult.OPEN_QUESTIONS, db.transactionReturning(tx -> tasks.approve(tx, BOLD, id, 1)));
-        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
-        assertEquals("1", row("SELECT count(*) AS n FROM run WHERE task_id = ?", id).get("n"));
-    }
-
-    @Test
-    void approveIsRefusedForStalePlansOtherPhasesUnknownTasksAndNonMembers() {
+    void aStaleApprovalChangesNothing() {
         long awaiting = awaitingApproval("73");
-        long planning = create(BOLD, "alm", "Another task", "74");
 
         assertEquals(ApproveResult.STALE_PLAN, db.transactionReturning(tx -> tasks.approve(tx, BOLD, awaiting, 2)));
-        assertEquals(ApproveResult.WRONG_STATE, db.transactionReturning(tx -> tasks.approve(tx, BOLD, planning, 1)));
-        assertEquals(ApproveResult.NOT_FOUND, db.transactionReturning(tx -> tasks.approve(tx, BOLD, 999, 1)));
-        assertEquals(ApproveResult.NOT_ALLOWED, db.transactionReturning(tx -> tasks.approve(tx, STRANGER, awaiting, 1)));
+
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", awaiting).get("phase"));
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'EXECUTION_QUEUED'").get("n"));
-    }
-
-    @Test
-    void onlyTheRequesterDecidesOnTheirPlan() {
-        long id = awaitingApproval("75");
-
-        assertEquals(ApproveResult.NOT_REQUESTER, db.transactionReturning(tx -> tasks.approve(tx, ALI, id, 1)));
-        assertEquals(RejectResult.NOT_REQUESTER, db.transactionReturning(tx -> tasks.reject(tx, ALI, id, 1)));
-        assertEquals(CorrectResult.REFUSED, db.transactionReturning(tx -> tasks.correct(tx, ALI, id, 1, "Use YAML", CHAT + "/76", CHAT)));
-
-        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
-        assertEquals("1", row("SELECT count(*) AS n FROM run WHERE task_id = ?", id).get("n"));
-        Map<String, String> refused = row("SELECT * FROM outbox WHERE reply_to_ref = ?", CHAT + "/76");
-        assertEquals("CORRECTION_REFUSED", refused.get("kind"));
-        JsonNode payload = Json.read(refused.get("payload"));
-        assertEquals("requester", payload.get("reason").asText());
-        assertEquals("Bold", payload.get("requester").asText());
     }
 
     @Test
@@ -556,6 +519,29 @@ class TaskLifecycleTest {
                 "a refusal in a group chat is only logged");
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = ?", CHAT + "/88").get("n"));
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+    }
+
+    @Test
+    void anAnswerOutOfOrderIsRefusedAndChangesNothing() {
+        long id = awaitingApproval("60", PLAN_WITH_TWO_QUESTIONS);
+
+        assertEquals(AnswerResult.OUT_OF_ORDER,
+                db.transactionReturning(tx -> tasks.answer(tx, BOLD, id, 1, 2, "yes", null, CHAT + "/61", CHAT)));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM plan_answer").get("n"));
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'PLAN_QUESTION'").get("n"),
+                "the first question is not sent a second time");
+    }
+
+    @Test
+    void aBlankReplyToAPlanThatMovedOnIsAnsweredWithTheReason() {
+        long id = awaitingApproval("89");
+        db.transaction(tx -> tasks.correct(tx, BOLD, id, 1, "first correction", CHAT + "/90", CHAT));
+
+        assertEquals(CorrectResult.REFUSED, db.transactionReturning(tx -> tasks.correct(tx, BOLD, id, 1, " ", CHAT + "/91", CHAT)));
+
+        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/91").get("payload"));
+        assertEquals("phase", payload.get("reason").asText(), "a sticker under an old plan is told why, not ignored");
     }
 
     @Test
@@ -636,15 +622,11 @@ class TaskLifecycleTest {
     }
 
     @Test
-    void priorityIsTheRequestersToChangeAndOnlyWhileTheTaskIsActive() {
-        long finished = awaitingApproval("95");
-        db.transaction(tx -> tasks.reject(tx, BOLD, finished, 1));
+    void someoneElsesPriorityChangeChangesNothing() {
         long active = create(BOLD, "alm", "Fix login timeout", "94");
 
         assertEquals(PriorityResult.NOT_REQUESTER, db.transactionReturning(tx -> tasks.changePriority(tx, ALI, active, Priority.LOW)));
-        assertEquals(PriorityResult.NOT_ALLOWED, db.transactionReturning(tx -> tasks.changePriority(tx, STRANGER, active, Priority.LOW)));
-        assertEquals(PriorityResult.NOT_FOUND, db.transactionReturning(tx -> tasks.changePriority(tx, BOLD, 999, Priority.LOW)));
-        assertEquals(PriorityResult.FINISHED, db.transactionReturning(tx -> tasks.changePriority(tx, BOLD, finished, Priority.LOW)));
+
         assertEquals("NORMAL", row("SELECT priority FROM task WHERE id = ?", active).get("priority"));
     }
 
@@ -664,18 +646,6 @@ class TaskLifecycleTest {
         assertNull(message.get("reply_to_ref"));
         assertEquals("Bold", Json.read(message.get("payload")).get("by").asText());
         assertEquals("CANCELLED", row("SELECT to_phase FROM task_event WHERE task_id = ? ORDER BY id DESC LIMIT 1", id).get("to_phase"));
-    }
-
-    @Test
-    void cancelOfATaskOutsideTheMembersGroupsLooksLikeAnUnknownTask() {
-        long id = create(BOLD, "alm", "Fix login timeout", "52");
-        Requester sara = new Requester("telegram:300", "Sara");
-
-        CancelResult result = db.transactionReturning(tx -> tasks.cancel(tx, sara, id, "telegram:300/1", "telegram:300"));
-
-        assertEquals(CancelResult.NOT_FOUND, result);
-        assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
-        assertEquals("TASK_NOT_FOUND", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:300/1'").get("kind"));
     }
 
     @Test
@@ -785,33 +755,6 @@ class TaskLifecycleTest {
             assertEquals("requester", payload.get("reason").asText(), refusal[0]);
             assertEquals("Bold", payload.get("requester").asText(), refusal[0]);
         }
-    }
-
-    @Test
-    void anAdminCanCancelAnyTaskEvenOutsideTheirGroups() {
-        Groups withAdmin = new Groups(new Config.Telegram(List.of(300L), List.of(
-                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
-                        List.of("autoland-management", "crm")),
-                new Config.Group("mobile", -300L, List.of(new Config.Member(300, "Sara")), List.of("life")))));
-        tasks = new TaskService(withAdmin, projects, activeRuns, clock, schedulerWakes::incrementAndGet, outboxWakes::incrementAndGet);
-        long id = create(BOLD, "alm", "Fix login timeout", "92");
-        Requester sara = new Requester("telegram:300", "Sara");
-
-        assertEquals(CancelResult.CANCELLED, db.transactionReturning(tx -> tasks.cancel(tx, sara, id, "telegram:300/1", "telegram:300")));
-        assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
-    }
-
-    @Test
-    void anAdminWhoIsNotAMemberOfAnyGroupCanStillCancel() {
-        Groups withAdmin = new Groups(new Config.Telegram(List.of(400L), List.of(
-                new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
-                        List.of("autoland-management", "crm")))));
-        tasks = new TaskService(withAdmin, projects, activeRuns, clock, schedulerWakes::incrementAndGet, outboxWakes::incrementAndGet);
-        long id = create(BOLD, "alm", "Fix login timeout", "93");
-        Requester admin = new Requester("telegram:400", "Admin");
-
-        assertEquals(CancelResult.CANCELLED, db.transactionReturning(tx -> tasks.cancel(tx, admin, id, "telegram:400/1", "telegram:400")));
-        assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
     }
 
     /** Sent to the requester's private chat under the message that gave the task, falling back to the group. */

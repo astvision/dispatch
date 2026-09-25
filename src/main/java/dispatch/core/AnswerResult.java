@@ -13,6 +13,8 @@ public enum AnswerResult {
     NOT_REQUESTER,
     /** The question was answered already, and its plan is still the current one. */
     ALREADY_ANSWERED,
+    /** A later question while an earlier one is still open: they are answered in order (ADR 0027). */
+    OUT_OF_ORDER,
     /** An older plan's question, or a task no longer awaiting approval. */
     STALE
 }
