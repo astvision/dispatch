@@ -308,6 +308,15 @@ public final class App {
         } catch (TelegramException e) {
             Log.warn("telegram.menu_button_failed", "error", e.getMessage());
         }
+        // A chat's own button outranks the default; one left from an earlier run kept a member on the command list.
+        groups.all().stream().flatMap(group -> group.members().stream()).map(Config.Member::id).distinct().forEach(member -> {
+            try {
+                api.resetMenuButton(member);
+            } catch (TelegramException e) {
+                // Most often a member who never pressed Start: their chat takes the default once they do.
+                Log.warn("telegram.menu_button_failed", "member", member, "error", e.getMessage());
+            }
+        });
         for (Config.Group group : groups.all()) {
             if (group.chatId() == null) {
                 continue;

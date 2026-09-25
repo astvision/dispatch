@@ -308,6 +308,21 @@ class AppTest {
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 
+    /**
+     * A chat's own menu button outranks the bot's default, and one left over from an earlier run kept a member on "Menu"
+     * after the default became the Mini App: every member's chat is set back to the default at startup.
+     */
+    @Test
+    void everyMembersOwnMenuButtonIsResetToTheDefault() throws Exception {
+        app = start();
+        telegram.awaitRequest("setChatMenuButton", WAIT);
+
+        List<JsonNode> perChat = List.of(telegram.awaitRequest("setChatMenuButton", WAIT).json(),
+                telegram.awaitRequest("setChatMenuButton", WAIT).json());
+        assertEquals(java.util.Set.of(100L, 200L), java.util.Set.of(perChat.get(0).path("chat_id").asLong(), perChat.get(1).path("chat_id").asLong()));
+        perChat.forEach(request -> assertEquals("default", request.path("menu_button").path("type").asText()));
+    }
+
     private App start() {
         return start((group, member) -> {
             throw new AssertionError("no one joins in this test");

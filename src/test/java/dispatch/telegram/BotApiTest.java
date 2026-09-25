@@ -60,6 +60,15 @@ class BotApiTest {
     }
 
     @Test
+    void aChatsOwnMenuButtonIsResetToTheBotsDefault() throws Exception {
+        api.resetMenuButton(100);
+
+        JsonNode request = telegram.awaitRequest("setChatMenuButton", Duration.ofSeconds(1)).json();
+        assertEquals(100, request.get("chat_id").asLong());
+        assertEquals("default", request.get("menu_button").get("type").asText());
+    }
+
+    @Test
     void anEmptyEmojiClearsTheReaction() throws Exception {
         api.setMessageReaction(-100, 41, "");
 

@@ -217,6 +217,13 @@ public final class BotApi {
         call("setChatMenuButton", body, requestTimeout);
     }
 
+    /** Drops one chat's own menu button, which outranks the default {@link #setMenuButton} sets, so the default shows there. */
+    public void resetMenuButton(long chatId) {
+        ObjectNode body = Json.object().put("chat_id", chatId);
+        body.putObject("menu_button").put("type", "default");
+        call("setChatMenuButton", body, requestTimeout);
+    }
+
     public void answerCallbackQuery(String callbackQueryId, String text) {
         call("answerCallbackQuery", Json.object().put("callback_query_id", callbackQueryId).put("text", text), requestTimeout);
     }
