@@ -145,6 +145,13 @@ denies every edit and command when headless), and execution runs as your user wi
 - **Cost:** Codex and Gemini CLI report tokens, not money, so their runs show `Зардал —` and are bounded by the run's
   timeout only; the budget per run applies to Claude Code.
 - **Instructions:** each agent reads its own file from the repository — `CLAUDE.md`, `AGENTS.md` (Codex) or `GEMINI.md`.
+- **Logins:** Codex uses its own (`codex login`: a ChatGPT plan, whose usage limit fails runs until it resets, or an API key).
+  Gemini CLI needs a Gemini API key: add `GEMINI_API_KEY=...` to `dispatch.env` and choose `gemini-api-key` as its login
+  (`security.auth.selectedType` in `~/.gemini/settings.json`). A personal Google login was refused for Gemini CLI on
+  2026-09-25 (`IneligibleTierError`), and such a run fails with that reason.
+- **Trying one for real:** `DISPATCH_LIVE_GEMINI=1 ./mvnw test -Dtest=LiveAgentsTest` (or `DISPATCH_LIVE_CODEX=1`) runs a plan,
+  a correction and an execution through the agent in a scratch repository, with Dispatch's own prompts; it uses the
+  account's quota.
 - **A member's computer (team mode):** add `codexCommand` or `geminiCommand` to `worker.yaml`; a task on an agent the
   computer lacks fails with what to add.
 

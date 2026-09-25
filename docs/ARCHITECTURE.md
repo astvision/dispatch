@@ -459,7 +459,7 @@ A group's `chatId` is optional: a personal bot's group has none, and its tasks s
 | **G-2** several groups per project (built) | A project listed in several groups; `Groups.chatOfTask` by the task's origin; linking a second chat adds a group instead of moving the first (replaces R6); `/start@bot <project>` from a project's add link links at once and closes an open prompt; the add link in `/projects` and on the Mini App's project page (ADR 0025) |
 | **M5** several agents (built) | `CodexAgent` and `GeminiAgent` on a shared `ProcessRun`; `agent: codex` or `gemini` per project with per-agent effort; `dispatch project add --agent` and the Mini App's **Агент** row; ✂️ and the assistant only with Claude Code; `dispatch check` per agent (ADR 0026) |
 
-Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests.
+Tests throughout: unit tests for transitions and scheduler rules; end-to-end tests through `TaskService` with `FakeAgent` and a temp SQLite file; Telegram parsing tests from recorded update JSON. No network in tests, except `LiveAgentsTest`, which runs a real Codex or Gemini CLI through its adapter only when `DISPATCH_LIVE_CODEX=1` or `DISPATCH_LIVE_GEMINI=1` is set (ADR 0026).
 
 ## Derived decisions (not asked explicitly)
 
