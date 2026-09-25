@@ -71,15 +71,15 @@ public final class Tasks {
                 Tasks::map, Phase.PLANNING, Phase.AWAITING_APPROVAL, Phase.EXECUTING);
     }
 
-    /** Tasks of {@code projects} in {@code phase}, the longest unchanged first. */
-    public static List<Task> withPhase(Tx tx, Phase phase, Set<String> projects) {
-        if (projects.isEmpty()) {
+    /** Tasks in {@code phase} of {@code projects}, or given by {@code requesterRef}, the longest unchanged first. */
+    public static List<Task> withPhase(Tx tx, Phase phase, Set<String> projects, String requesterRef) {
+        List<Object> params = new ArrayList<>(List.of(phase));
+        String visible = visibleClause("", projects, requesterRef, params);
+        if (visible == null) {
             return List.of();
         }
-        List<Object> params = new ArrayList<>(List.of(phase));
-        params.addAll(projects);
-        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase = ? AND project IN (" + Tx.placeholders(projects.size()) + ")"
-                + " ORDER BY updated_at, id", Tasks::map, params.toArray());
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase = ? AND " + visible + " ORDER BY updated_at, id",
+                Tasks::map, params.toArray());
     }
 
     /** Tasks of {@code projects} given at or after {@code since}, or ever when it is null. */
@@ -96,16 +96,35 @@ public final class Tasks {
         return tx.list(sql + " ORDER BY id", Tasks::map, params.toArray());
     }
 
-    /** The {@code limit} most recently finished tasks of {@code projects}, newest first. */
-    public static List<Task> finished(Tx tx, Set<String> projects, int limit) {
-        if (projects.isEmpty()) {
+    /** The {@code limit} most recently finished tasks of {@code projects}, or given by {@code requesterRef}, newest first. */
+    public static List<Task> finished(Tx tx, Set<String> projects, String requesterRef, int limit) {
+        List<Object> params = new ArrayList<>(List.of(Phase.COMPLETED, Phase.FAILED, Phase.REJECTED, Phase.CANCELLED));
+        String visible = visibleClause("", projects, requesterRef, params);
+        if (visible == null) {
             return List.of();
         }
-        List<Object> params = new ArrayList<>(List.of(Phase.COMPLETED, Phase.FAILED, Phase.REJECTED, Phase.CANCELLED));
-        params.addAll(projects);
         params.add(limit);
-        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase IN (?, ?, ?, ?) AND project IN ("
-                + Tx.placeholders(projects.size()) + ") ORDER BY completed_at DESC, id DESC LIMIT ?", Tasks::map, params.toArray());
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase IN (?, ?, ?, ?) AND " + visible
+                + " ORDER BY completed_at DESC, id DESC LIMIT ?", Tasks::map, params.toArray());
+    }
+
+    /**
+     * A viewer's list: tasks of their projects, and their own wherever they are (ADR 0027). Adds its parameters to
+     * {@code params}; null when nothing can match, with no projects and no member.
+     *
+     * @param alias the task table's alias with its dot, e.g. {@code "t."}; empty when it has none
+     */
+    static String visibleClause(String alias, Set<String> projects, String requesterRef, List<Object> params) {
+        List<String> terms = new ArrayList<>();
+        if (!projects.isEmpty()) {
+            terms.add(alias + "project IN (" + Tx.placeholders(projects.size()) + ")");
+            params.addAll(projects);
+        }
+        if (requesterRef != null) {
+            terms.add(alias + "requester_ref = ?");
+            params.add(requesterRef);
+        }
+        return terms.isEmpty() ? null : "(" + String.join(" OR ", terms) + ")";
     }
 
     /** Finished tasks with a worktree, unchanged since before {@code idleSince}, oldest first. */

@@ -2,10 +2,12 @@ package dispatch.cli;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
+import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
 import dispatch.core.AssistantHome;
 import dispatch.core.Groups;
 import dispatch.core.Projects;
+import dispatch.core.TaskAccess;
 import dispatch.core.TaskService;
 import dispatch.store.Database;
 import java.io.PrintStream;
@@ -30,6 +32,7 @@ public final class AskCommand {
     static final String MEMBER = AssistantHome.MEMBER_VARIABLE;
     static final String PROJECTS = AssistantHome.PROJECTS_VARIABLE;
     static final String DATABASE = AssistantHome.DATABASE_VARIABLE;
+    static final String ADMIN = AssistantHome.ADMIN_VARIABLE;
 
     private AskCommand() {
     }
@@ -44,18 +47,28 @@ public final class AskCommand {
         }
         Set<String> visible = Arrays.stream(env.getOrDefault(PROJECTS, "").split(","))
                 .map(String::strip).filter(name -> !name.isEmpty()).collect(Collectors.toSet());
-        // Only the read-only payloads are used, and none of them looks at groups or projects: those come from the environment.
-        TaskService tasks = new TaskService(new Groups(List.of()), new Projects(List.of(), project -> Optional.empty()), new ActiveRuns(),
+        Optional<Long> memberId = telegramId(member);
+        if (memberId.isEmpty()) {
+            out.println(error("not_configured", "dispatch ask answers only inside the bot's assistant"));
+            return 2;
+        }
+        boolean admin = "true".equals(env.get(ADMIN));
+        // The member, whether they are an admin, and their projects, as the bot's own groups have them: all task access
+        // needs to decide what they see and may do. The config itself is not the assistant's to read.
+        Groups asked = new Groups(new Config.Telegram(admin ? List.of(memberId.get()) : List.of(),
+                List.of(new Config.Group("ask", null, List.of(new Config.Member(memberId.get(), "")), List.copyOf(visible)))));
+        TaskService tasks = new TaskService(asked, new Projects(List.of(), project -> Optional.empty()), new ActiveRuns(),
                 Clock.systemUTC(), () -> { }, () -> { });
+        TaskAccess.Viewer viewer = new TaskAccess.Viewer(member, visible);
         try (Database db = Database.open(Path.of(database))) {
             Optional<ObjectNode> answer = db.transactionReturning(tx -> {
                 if (ask.taskId() == null) {
                     ObjectNode all = Json.object();
-                    all.set("active", tasks.statusPayload(tx, visible, member));
-                    all.set("finished", tasks.historyPayload(tx, visible, member).path("tasks"));
+                    all.set("active", tasks.statusPayload(tx, viewer));
+                    all.set("finished", tasks.historyPayload(tx, viewer).path("tasks"));
                     return Optional.of(all);
                 }
-                return tasks.timelinePayload(tx, visible, member, ask.taskId()).map(task -> {
+                return tasks.timelinePayload(tx, viewer, ask.taskId()).map(task -> {
                     if (!task.path("headline").asBoolean(false)) {
                         tasks.currentPlan(tx, ask.taskId()).ifPresent(plan -> task.set("plan", plan));
                     }
@@ -63,11 +76,22 @@ public final class AskCommand {
                 });
             });
             if (answer.isEmpty()) {
-                out.println(error("not_found", "no task #" + ask.taskId() + " among this member's projects"));
+                out.println(error("not_found", "no task #" + ask.taskId() + " this member may see"));
                 return 1;
             }
             out.println(answer.get());
             return 0;
+        }
+    }
+
+    private static Optional<Long> telegramId(String ref) {
+        if (!ref.startsWith("telegram:")) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Long.parseLong(ref.substring("telegram:".length())));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
         }
     }
 

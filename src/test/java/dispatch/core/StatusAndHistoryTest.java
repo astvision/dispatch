@@ -11,6 +11,7 @@ import dispatch.agent.AgentResult;
 import dispatch.agent.RunHandle;
 import dispatch.config.Config;
 import dispatch.domain.ClaimedRun;
+import dispatch.domain.FailureReason;
 import dispatch.domain.Plan;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
@@ -47,6 +48,7 @@ class StatusAndHistoryTest {
     private Database db;
     private TestClock clock;
     private ActiveRuns activeRuns;
+    private Groups groups;
     private TaskService tasks;
     private RunTransitions transitions;
 
@@ -63,7 +65,7 @@ class StatusAndHistoryTest {
                 null,
                 List.of(), null, null, null);
         activeRuns = new ActiveRuns();
-        Groups groups = new Groups(List.of(
+        groups = new Groups(List.of(
                 new Config.Group("mobile", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("life")),
                 new Config.Group("backend", -200L, List.of(new Config.Member(200, "Ali")), List.of("alm"))));
         tasks = new TaskService(groups, new Projects(List.of(life, alm), p -> Optional.empty()), activeRuns, clock, () -> { }, () -> { });
@@ -88,7 +90,7 @@ class StatusAndHistoryTest {
         clock.advance(Duration.ofMinutes(4));
 
         db.transaction(tx -> tasks.changePriority(tx, BOLD, queued, Priority.URGENT));
-        db.transaction(tx -> tasks.status(tx, LIFE, BOLD.ref(), "telegram:100/99", "telegram:100"));
+        db.transaction(tx -> tasks.status(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), "telegram:100/99", "telegram:100"));
 
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'STATUS'");
         assertEquals("telegram:100/99", message.get("reply_to_ref"));
@@ -116,7 +118,7 @@ class StatusAndHistoryTest {
 
     @Test
     void statusWithNothingGoingOnHasEmptySections() {
-        db.transaction(tx -> tasks.status(tx, LIFE, null, CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.status(tx, new TaskAccess.Viewer(null, LIFE), CHAT + "/99", CHAT));
 
         JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'STATUS'").get("payload"));
         assertEquals(0, payload.get("running").size() + payload.get("queued").size() + payload.get("awaitingApproval").size());
@@ -131,7 +133,7 @@ class StatusAndHistoryTest {
         long completed = completed("Add make help", "40");
         create("Still planning", "41");
 
-        db.transaction(tx -> tasks.history(tx, LIFE, BOLD.ref(), CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.history(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), CHAT + "/99", CHAT));
 
         JsonNode listed = Json.read(row("SELECT payload FROM outbox WHERE kind = 'HISTORY'").get("payload")).get("tasks");
         assertEquals(10, listed.size());
@@ -159,7 +161,7 @@ class StatusAndHistoryTest {
         clock.advance(Duration.ofSeconds(62));
         transitions.completed(id, 3, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
 
-        db.transaction(tx -> tasks.timeline(tx, LIFE, BOLD.ref(), id, CHAT + "/52", CHAT));
+        db.transaction(tx -> tasks.timeline(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), id, CHAT + "/52", CHAT));
 
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'TASK_TIMELINE'");
         assertEquals(CHAT + "/52", message.get("reply_to_ref"));
@@ -186,7 +188,7 @@ class StatusAndHistoryTest {
 
     @Test
     void timelineOfAnUnknownTaskSaysItWasNotFound() {
-        db.transaction(tx -> tasks.timeline(tx, LIFE, null, 999, CHAT + "/60", CHAT));
+        db.transaction(tx -> tasks.timeline(tx, new TaskAccess.Viewer(null, LIFE), 999, CHAT + "/60", CHAT));
 
         Map<String, String> message = row("SELECT * FROM outbox");
         assertEquals("TASK_NOT_FOUND", message.get("kind"));
@@ -201,9 +203,9 @@ class StatusAndHistoryTest {
         db.transaction(tx -> tasks.reject(tx, ALI, other, 1));
         long mine = create("Mobile work", "71");
 
-        db.transaction(tx -> tasks.status(tx, LIFE, null, CHAT + "/72", CHAT));
-        db.transaction(tx -> tasks.history(tx, LIFE, null, CHAT + "/73", CHAT));
-        db.transaction(tx -> tasks.timeline(tx, LIFE, null, other, CHAT + "/74", CHAT));
+        db.transaction(tx -> tasks.status(tx, new TaskAccess.Viewer(null, LIFE), CHAT + "/72", CHAT));
+        db.transaction(tx -> tasks.history(tx, new TaskAccess.Viewer(null, LIFE), CHAT + "/73", CHAT));
+        db.transaction(tx -> tasks.timeline(tx, new TaskAccess.Viewer(null, LIFE), other, CHAT + "/74", CHAT));
 
         JsonNode status = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", CHAT + "/72").get("payload"));
         assertEquals(1, status.get("queued").size());
@@ -220,7 +222,7 @@ class StatusAndHistoryTest {
         claim();
         transitions.planSucceeded(mine, 1, PLAN, result("0.1"));
 
-        db.transaction(tx -> tasks.status(tx, LIFE, BOLD.ref(), "telegram:100/82", "telegram:100"));
+        db.transaction(tx -> tasks.status(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), "telegram:100/82", "telegram:100"));
 
         JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'STATUS'").get("payload"));
         assertEquals(2, payload.get("mine").size());
@@ -235,7 +237,7 @@ class StatusAndHistoryTest {
         long id = completed("Add make help", "83");
         db.transaction(tx -> tx.update("UPDATE task SET priority = 'LOW' WHERE id = ?", id));
 
-        db.transaction(tx -> tasks.history(tx, LIFE, null, CHAT + "/84", CHAT));
+        db.transaction(tx -> tasks.history(tx, new TaskAccess.Viewer(null, LIFE), CHAT + "/84", CHAT));
 
         JsonNode listed = Json.read(row("SELECT payload FROM outbox WHERE kind = 'HISTORY'").get("payload")).get("tasks").get(0);
         assertEquals("LOW", listed.get("priority").asText());
@@ -250,10 +252,10 @@ class StatusAndHistoryTest {
         activeRuns.register(alis, 1).attach(new ActivityHandle(new AgentActivity(3, "Bash: cat secrets")));
         long done = completedFor(ALI, "Ali's finished work", "91");
 
-        db.transaction(tx -> tasks.status(tx, LIFE, BOLD.ref(), "telegram:100/92", "telegram:100"));
-        db.transaction(tx -> tasks.history(tx, LIFE, BOLD.ref(), "telegram:100/93", "telegram:100"));
-        db.transaction(tx -> tasks.timeline(tx, LIFE, BOLD.ref(), done, "telegram:100/94", "telegram:100"));
-        db.transaction(tx -> tasks.status(tx, LIFE, null, CHAT + "/95", CHAT));
+        db.transaction(tx -> tasks.status(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), "telegram:100/92", "telegram:100"));
+        db.transaction(tx -> tasks.history(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), "telegram:100/93", "telegram:100"));
+        db.transaction(tx -> tasks.timeline(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), done, "telegram:100/94", "telegram:100"));
+        db.transaction(tx -> tasks.status(tx, new TaskAccess.Viewer(null, LIFE), CHAT + "/95", CHAT));
 
         JsonNode running = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:100/92").get("payload"))
                 .get("running").get(0);
@@ -281,8 +283,8 @@ class StatusAndHistoryTest {
         claim();
         activeRuns.register(mine, 1).attach(new ActivityHandle(new AgentActivity(2, "Read README.md")));
 
-        db.transaction(tx -> tasks.status(tx, LIFE, BOLD.ref(), "telegram:100/97", "telegram:100"));
-        db.transaction(tx -> tasks.timeline(tx, LIFE, BOLD.ref(), mine, "telegram:100/98", "telegram:100"));
+        db.transaction(tx -> tasks.status(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), "telegram:100/97", "telegram:100"));
+        db.transaction(tx -> tasks.timeline(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), mine, "telegram:100/98", "telegram:100"));
 
         JsonNode running = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:100/97").get("payload"))
                 .get("running").get(0);
@@ -290,6 +292,83 @@ class StatusAndHistoryTest {
         JsonNode timeline = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:100/98").get("payload"));
         assertTrue(timeline.path("headline").isMissingNode() || !timeline.get("headline").asBoolean());
         assertEquals(1, timeline.get("runs").size());
+    }
+
+    @Test
+    void aRequesterWhoLeftTheGroupStillSeesTheirOwnTasksButNoLongerTheGroupsOthers() {
+        // Driven to their final state before the next task is created: claim() takes the oldest queued run overall.
+        long finished = completed("Ship the changelog", "3");
+        long stillAwaiting = create("Plan the migration", "4");
+        claim();
+        transitions.planSucceeded(stillAwaiting, 1, PLAN, result("0.16"));
+        long bolds = create("Add make help", "1");
+        long alis = createFor(ALI, "life", "Rename the report", "2");
+        groups.replace(new Config.Telegram(List.of(), List.of(
+                new Config.Group("mobile", -100L, List.of(new Config.Member(200, "Ali")), List.of("life")),
+                new Config.Group("backend", -200L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
+                        List.of("alm")))));
+        TaskAccess.Viewer bold = new TaskAccess(groups).member(BOLD.ref());
+
+        JsonNode queued = db.transactionReturning(tx -> tasks.statusPayload(tx, bold)).path("queued");
+
+        assertEquals(1, queued.size(), queued.toString());
+        assertEquals(bolds, queued.get(0).path("taskId").asLong());
+        assertTrue(db.transactionReturning(tx -> tasks.timelinePayload(tx, bold, bolds)).isPresent());
+        assertTrue(db.transactionReturning(tx -> tasks.timelinePayload(tx, bold, alis)).isEmpty(),
+                "the group's other tasks are no longer his to see");
+        JsonNode history = db.transactionReturning(tx -> tasks.historyPayload(tx, bold)).path("tasks");
+        assertEquals(1, history.size(), history.toString());
+        assertEquals(finished, history.get(0).path("taskId").asLong(), "his finished task follows him too");
+        JsonNode awaitingApproval = db.transactionReturning(tx -> tasks.statusPayload(tx, bold)).path("awaitingApproval");
+        assertEquals(1, awaitingApproval.size(), awaitingApproval.toString());
+        assertEquals(stillAwaiting, awaitingApproval.get(0).path("taskId").asLong(), "and the plan still waiting for him");
+    }
+
+    @Test
+    void aGroupChatSeesHeadlinesWithNothingToDo() {
+        long id = create("Add make help", "1");
+
+        JsonNode status = db.transactionReturning(tx -> tasks.statusPayload(tx, new TaskAccess.Viewer(null, LIFE)));
+
+        assertEquals(id, status.path("queued").get(0).path("taskId").asLong());
+        assertEquals("[]", status.path("queued").get(0).path("actions").toString(), "a chat acts on no task");
+        assertEquals(0, status.path("mine").size(), "no priority buttons in a group");
+    }
+
+    @Test
+    void eachListedTaskCarriesWhatTheViewerMayDoWithIt() {
+        long done = completed("Rename the report", "2");
+        create("Add make help", "1");
+
+        JsonNode mine = db.transactionReturning(tx -> tasks.statusPayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE)));
+        JsonNode theirs = db.transactionReturning(tx -> tasks.statusPayload(tx, new TaskAccess.Viewer(ALI.ref(), LIFE)));
+        JsonNode history = db.transactionReturning(tx -> tasks.historyPayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE)));
+
+        assertEquals("[\"priority\",\"cancel\"]", mine.path("queued").get(0).path("actions").toString());
+        assertEquals("[]", theirs.path("queued").get(0).path("actions").toString(), "someone else's task is theirs to act on");
+        assertEquals(done, history.path("tasks").get(0).path("taskId").asLong());
+        assertEquals("[]", history.path("tasks").get(0).path("actions").toString(),
+                "completed, and its execution never started an agent here: nothing to retry or follow up");
+    }
+
+    @Test
+    void aFailedExecutionWhoseAgentStartedOffersRetryAndFollowUp() {
+        long id = executingWithAgentStarted("Add make help", "110");
+        transitions.failed(id, 2, FailureReason.AGENT, "boom", result("0.20"));
+
+        JsonNode history = db.transactionReturning(tx -> tasks.historyPayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE)));
+
+        assertEquals("[\"retry\",\"followUp\"]", history.path("tasks").get(0).path("actions").toString());
+    }
+
+    @Test
+    void aCompletedExecutionWhoseAgentStartedOffersOnlyFollowUp() {
+        long id = executingWithAgentStarted("Add make help", "111");
+        transitions.completed(id, 2, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
+
+        JsonNode history = db.transactionReturning(tx -> tasks.historyPayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE)));
+
+        assertEquals("[\"followUp\"]", history.path("tasks").get(0).path("actions").toString());
     }
 
     private long createFor(Requester who, String project, String text, String messageId) {
@@ -314,6 +393,17 @@ class StatusAndHistoryTest {
 
     private long completed(String text, String messageId) {
         return completedFor(BOLD, text, messageId);
+    }
+
+    /** A task whose approved plan's execution run (seq 2) is running, with its agent started (ADR 0027: retry/follow-up). */
+    private long executingWithAgentStarted(String text, String messageId) {
+        long id = create(text, messageId);
+        claim();
+        transitions.planSucceeded(id, 1, PLAN, result("0.16"));
+        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+        claim();
+        transitions.agentStarted(id, 2, null, null);
+        return id;
     }
 
     private long completedFor(Requester who, String text, String messageId) {

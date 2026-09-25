@@ -176,6 +176,26 @@ class AssistantActionsTest {
     }
 
     @Test
+    void anAdminOfTheTasksGroupProposesCancellingATeammatesTaskWithItsTitle() {
+        Requester sara = new Requester("telegram:300", "Sara");
+        Config.Project life = new Config.Project("life", "l", "https://github.com/acme/life.git", null, "main", "claude-code",
+                null, null, List.of(), null, null, null);
+        Groups adminGroups = new Groups(new Config.Telegram(List.of(300L), List.of(
+                new Config.Group("home", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(300, "Sara")),
+                        List.of("life")))));
+        Projects adminProjects = new Projects(List.of(life), project -> Optional.empty());
+        TaskService adminTasks = new TaskService(adminGroups, adminProjects, new ActiveRuns(), clock, () -> { }, () -> { });
+        AssistantActions adminActions = new AssistantActions(adminTasks, adminGroups, adminProjects, clock, "Чи шийд");
+        long taskId = create(BOLD, "life", "Fix the login");
+
+        AssistantActions.Checked checked = db.transactionReturning(tx ->
+                adminActions.check(tx, sara, Json.object().put("type", "cancel").put("task", taskId)));
+
+        assertTrue(checked.valid(), checked.payload().toString());
+        assertEquals("Fix the login", checked.payload().path("title").asText());
+    }
+
+    @Test
     void someoneElsesButtonDoesNothing() {
         long id = propose(ALI, check(ALI, Json.object().put("type", "draft").put("text", "Export")));
 

@@ -250,6 +250,30 @@ class TasksApiTest {
                 Json.object().put("taskId", approved).put("planSeq", 1))).code(), "a second tap changes nothing");
     }
 
+    @Test
+    void theGroupViewOffersAnAdminOnlyTheCancelOfSomeoneElsesTask() {
+        long alis = create(ALI, "Add the export button");
+        long boldsOwn = create(BOLD, "Fix the login timeout");
+
+        JsonNode listed = api.list(BOLD_CALLER, Json.object().put("scope", "group"));
+
+        assertEquals("[\"cancel\"]", item(listed, alis).path("actions").toString(), "an admin stops it, never decides it");
+        assertEquals("[\"priority\",\"cancel\"]", item(listed, boldsOwn).path("actions").toString());
+    }
+
+    @Test
+    void theDetailSaysWhatTheRequesterMayDoAndWhichQuestionIsAsked() {
+        long taskId = planned(ALI, twoQuestions());
+
+        JsonNode detail = api.detail(ALI_CALLER, Json.object().put("taskId", taskId));
+        JsonNode answered = api.answer(ALI_CALLER,
+                Json.object().put("taskId", taskId).put("planSeq", 1).put("index", 1).put("option", 0));
+
+        assertEquals("[\"correct\",\"answer\",\"reject\",\"priority\",\"cancel\"]", detail.path("actions").toString());
+        assertEquals(1, detail.path("plan").path("current").asInt());
+        assertEquals(2, answered.path("plan").path("current").asInt(), "the next question is the one to answer");
+    }
+
     private Object call(String route, Caller caller, com.fasterxml.jackson.databind.node.ObjectNode body) {
         return switch (route) {
             case "detail" -> api.detail(caller, body);

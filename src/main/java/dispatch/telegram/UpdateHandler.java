@@ -19,6 +19,7 @@ import dispatch.core.JoinRequestResult;
 import dispatch.core.Membership;
 import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
+import dispatch.core.TaskAccess;
 import dispatch.core.TaskService;
 import dispatch.domain.Attachment;
 import dispatch.domain.OutboxKind;
@@ -73,6 +74,7 @@ public final class UpdateHandler {
     private final TaskService tasks;
     private final Membership membership;
     private final Groups groups;
+    private final TaskAccess access;
     private final Projects projects;
     private final BotApi api;
     private final Renderer renderer;
@@ -114,6 +116,7 @@ public final class UpdateHandler {
         this.tasks = tasks;
         this.membership = membership;
         this.groups = groups;
+        this.access = new TaskAccess(groups);
         this.projects = projects;
         this.api = api;
         this.renderer = renderer;
@@ -261,7 +264,8 @@ public final class UpdateHandler {
                 : null;
         String origin = Refs.message(chatId, message.path("message_id").asLong(), thread);
         String chatRef = Refs.chat(chatId);
-        Set<String> visible = privateChat ? groups.projectsOfMember(who.ref()) : groups.projectsOfChat(chatRef);
+        TaskAccess.Viewer viewer = privateChat ? access.member(who.ref()) : access.chat(chatRef);
+        Set<String> visible = viewer.projects();
         Optional<Command> parsed = Command.parse(message);
         Optional<Task> topicTask = privateChat && thread != null
                 ? tasks.taskOfTopic(tx, who.ref(), Long.toString(thread))
@@ -321,13 +325,10 @@ public final class UpdateHandler {
                 }
                 giveTask(tx, who, command.args(), message, origin);
             }
-            case "status" -> tasks.status(tx, visible, privateChat ? who.ref() : null, origin, chatRef);
-            case "history" -> {
-                String viewer = privateChat ? who.ref() : null;
-                taskId(command.args()).ifPresentOrElse(
-                        id -> tasks.timeline(tx, visible, viewer, id, origin, chatRef),
-                        () -> tasks.history(tx, visible, viewer, origin, chatRef));
-            }
+            case "status" -> tasks.status(tx, viewer, origin, chatRef);
+            case "history" -> taskId(command.args()).ifPresentOrElse(
+                    id -> tasks.timeline(tx, viewer, id, origin, chatRef),
+                    () -> tasks.history(tx, viewer, origin, chatRef));
             case "cancel" -> {
                 if (!privateChat) {
                     privateOnly(tx, chatRef, origin);
@@ -642,6 +643,7 @@ public final class UpdateHandler {
             case NOT_ALLOWED -> "notAllowed";
             case NOT_FOUND -> "notFound";
             case NOT_REQUESTER -> "notRequester";
+            case OUT_OF_ORDER -> "stale";
             case STALE -> "stale";
         };
         if (reason != null) {
@@ -684,6 +686,7 @@ public final class UpdateHandler {
             case NOT_FOUND -> "callback.notFound";
             case NOT_REQUESTER -> "callback.notRequester";
             case ALREADY_ANSWERED -> "plan.alreadyAnswered";
+            case OUT_OF_ORDER -> "callback.stale";
             case STALE -> "callback.stale";
         });
     }
@@ -921,8 +924,8 @@ public final class UpdateHandler {
         long chatId = message.path("chat").path("id").asLong();
         long messageId = message.path("message_id").asLong();
         boolean privateChat = isPrivateChatOf(message.path("chat"), callback.path("from"));
-        Set<String> visible = privateChat ? groups.projectsOfMember(who.ref()) : groups.projectsOfChat(Refs.chat(chatId));
-        ObjectNode payload = tasks.statusPayload(tx, visible, privateChat ? who.ref() : null);
+        TaskAccess.Viewer viewer = privateChat ? access.member(who.ref()) : access.chat(Refs.chat(chatId));
+        ObjectNode payload = tasks.statusPayload(tx, viewer);
         Renderer.Rendered status = renderer.render(OutboxKind.STATUS, Json.read(redactor.redact(payload.toString())));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, status.html(), status.keyboard())));
     }

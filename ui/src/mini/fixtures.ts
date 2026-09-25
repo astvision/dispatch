@@ -10,9 +10,10 @@ export const myRunningTask: TaskRow = {
   requester: "Bold",
   mine: true,
   startedAt: "2026-09-23T09:00:00Z",
+  actions: ["priority", "cancel"],
 };
 
-/** Bold's own task, finished, so it may be retried. */
+/** Bold's own task, completed: nothing to retry. */
 export const myFinishedTask: TaskRow = {
   taskId: 2,
   project: "alm",
@@ -24,6 +25,13 @@ export const myFinishedTask: TaskRow = {
   phase: "COMPLETED",
   costUsd: "1.20",
   completedAt: "2026-09-23T08:00:00Z",
+  actions: ["followUp"],
+};
+
+/** Bold's own task, failed, so it may be retried. */
+export const myFailedTask: TaskRow = {
+  taskId: 6, project: "alm", title: "Rename the export column", state: "finished", priority: "NORMAL", requester: "Bold",
+  mine: true, phase: "FAILED", failureReason: "AGENT", completedAt: "2026-09-23T08:30:00Z", actions: ["retry", "followUp"],
 };
 
 /** Ali's task as an admin sees it: the headline, and no cost (ADR 0020). */
@@ -36,6 +44,7 @@ export const someoneElsesTask: TaskRow = {
   requester: "Ali",
   mine: false,
   costUsd: null,
+  actions: ["cancel"],
 };
 
 export const myTimeline: Timeline = {
@@ -86,10 +95,12 @@ export const headlineTimeline: Timeline = {
 export const waitingOnQuestion: TaskRow = {
   taskId: 10, project: "alm", title: "Make the login timeout configurable", state: "awaitingApproval", priority: "NORMAL",
   requester: "Bold", mine: true, since: "2026-09-23T09:40:00Z", openQuestions: 2, question: "Which environments?",
+  actions: ["correct", "answer", "reject", "priority", "cancel"],
 };
 export const waitingOnApproval: TaskRow = {
   taskId: 11, project: "crm", title: "Add the CSV export", state: "awaitingApproval", priority: "NORMAL", requester: "Bold",
   mine: true, since: "2026-09-23T09:50:00Z", openQuestions: 0,
+  actions: ["approve", "correct", "reject", "priority", "cancel"],
 };
 
 export const planWithQuestions: PlanView = {
@@ -98,6 +109,7 @@ export const planWithQuestions: PlanView = {
   steps: ["Read auth.timeout", "Default to 30 minutes"],
   risks: ["Sessions end sooner in staging"],
   findings: [],
+  current: 1,
   questions: [
     { index: 1, text: "Which environments?", options: ["staging", "prod"], answer: null },
     { index: 2, text: "Keep the old default?", options: ["yes", "no"], answer: null },
@@ -106,5 +118,5 @@ export const planWithQuestions: PlanView = {
 
 export const detailOf = (task: TaskRow, plan: PlanView): TaskDetail => ({
   taskId: task.taskId, project: task.project, title: task.title, phase: "AWAITING_APPROVAL", prUrl: null,
-  failureReason: null, createdAt: null, completedAt: null, costUsd: null, plan,
+  failureReason: null, createdAt: null, completedAt: null, costUsd: null, plan, actions: task.actions,
 });

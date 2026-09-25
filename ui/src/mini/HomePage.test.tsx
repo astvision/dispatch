@@ -103,6 +103,7 @@ describe("the home screen", () => {
   it("answers the questions in the sheet one at a time; the last answer closes the sheet and asks for the list again", async () => {
     const afterFirst = detailOf(waitingOnQuestion, {
       ...planWithQuestions,
+      current: 2,
       questions: [{ ...planWithQuestions.questions[0], answer: "prod" }, planWithQuestions.questions[1]],
     });
     vi.mocked(api.answerQuestion)
@@ -141,7 +142,8 @@ describe("the home screen", () => {
   });
 
   it("approves a plan with no open questions", async () => {
-    vi.mocked(api.getTaskDetail).mockResolvedValue(detailOf(waitingOnApproval, { ...planWithQuestions, planSeq: 2, questions: [] }));
+    vi.mocked(api.getTaskDetail).mockResolvedValue(
+      detailOf(waitingOnApproval, { ...planWithQuestions, planSeq: 2, current: 0, questions: [] }));
     vi.mocked(api.approvePlan).mockResolvedValue({ result: "APPROVED" });
     renderHome([waitingOnApproval]);
 
@@ -155,7 +157,8 @@ describe("the home screen", () => {
   });
 
   it("rejects only after one more tap", async () => {
-    vi.mocked(api.getTaskDetail).mockResolvedValue(detailOf(waitingOnApproval, { ...planWithQuestions, planSeq: 2, questions: [] }));
+    vi.mocked(api.getTaskDetail).mockResolvedValue(
+      detailOf(waitingOnApproval, { ...planWithQuestions, planSeq: 2, current: 0, questions: [] }));
     vi.mocked(api.rejectPlan).mockResolvedValue({ result: "REJECTED" });
     renderHome([waitingOnApproval]);
 

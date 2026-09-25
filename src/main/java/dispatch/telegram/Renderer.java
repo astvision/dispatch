@@ -1,6 +1,7 @@
 package dispatch.telegram;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dispatch.core.TaskAccess;
 import dispatch.domain.OutboxKind;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -432,11 +433,15 @@ public final class Renderer {
         JsonNode plan = payload.path("plan");
         String planRef = taskId + ":" + payload.path("planSeq").asInt();
         boolean openQuestions = !plan.path("questions").isEmpty();
-        // With open questions there is nothing to approve yet: members answer them under the question messages (G-1d)
-        // or by replying, and either way the answers come back as a correction.
-        List<List<Button>> buttons = List.of(openQuestions
-                ? List.of(new Button(text("button.reject"), "reject:" + planRef))
-                : List.of(new Button(text("button.approve"), "approve:" + planRef), new Button(text("button.reject"), "reject:" + planRef)));
+        // The buttons are task access's: no Approve while the plan asks questions (G-1d, ADR 0027); either way the answers
+        // come back as a correction.
+        List<Button> decisions = new ArrayList<>();
+        for (TaskAccess.Action action : TaskAccess.decisions(plan.path("questions").size())) {
+            decisions.add(action == TaskAccess.Action.APPROVE
+                    ? new Button(text("button.approve"), "approve:" + planRef)
+                    : new Button(text("button.reject"), "reject:" + planRef));
+        }
+        List<List<Button>> buttons = List.of(decisions);
         String title = format("plan.title", taskId, escape(payload.path("project").asText()));
 
         StringBuilder html = new StringBuilder(title).append("\n\n")

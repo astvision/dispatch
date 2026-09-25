@@ -42,6 +42,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -65,6 +67,7 @@ public final class TaskService {
     private final Groups groups;
     private final Projects projects;
     private final ActiveRuns activeRuns;
+    private final TaskAccess access;
     private final Clock clock;
     private final Runnable wakeScheduler;
     private final Runnable wakeOutbox;
@@ -94,6 +97,7 @@ public final class TaskService {
         this.groups = groups;
         this.projects = projects;
         this.activeRuns = activeRuns;
+        this.access = new TaskAccess(groups);
         this.clock = clock;
         this.wakeScheduler = wakeScheduler;
         this.wakeOutbox = wakeOutbox;
@@ -482,29 +486,25 @@ public final class TaskService {
      */
     public ApproveResult approve(Tx tx, Requester who, long taskId, int planSeq) {
         Instant now = clock.instant();
-        if (!groups.isMember(who.ref())) {
-            tx.afterCommit(() -> Log.warn("task.approve_not_allowed", "task", taskId, "requester", who.ref()));
-            return ApproveResult.NOT_ALLOWED;
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.APPROVE, planSeq);
+        if (refused.isPresent()) {
+            return switch (refused.get()) {
+                case NOT_MEMBER -> {
+                    tx.afterCommit(() -> Log.warn("task.approve_not_allowed", "task", taskId, "requester", who.ref()));
+                    yield ApproveResult.NOT_ALLOWED;
+                }
+                case NOT_FOUND -> ApproveResult.NOT_FOUND;
+                case NOT_REQUESTER -> {
+                    tx.afterCommit(() -> Log.info("task.approve_not_requester", "task", taskId, "requester", who.ref()));
+                    yield ApproveResult.NOT_REQUESTER;
+                }
+                case STALE_PLAN -> ApproveResult.STALE_PLAN;
+                case OPEN_QUESTIONS -> ApproveResult.OPEN_QUESTIONS;
+                default -> ApproveResult.WRONG_STATE;
+            };
         }
-        Optional<Task> found = Tasks.find(tx, taskId);
-        if (found.isEmpty()) {
-            return ApproveResult.NOT_FOUND;
-        }
-        Task task = found.get();
-        if (!isRequester(task, who)) {
-            tx.afterCommit(() -> Log.info("task.approve_not_requester", "task", taskId, "requester", who.ref()));
-            return ApproveResult.NOT_REQUESTER;
-        }
-        if (task.phase() != Phase.AWAITING_APPROVAL) {
-            return ApproveResult.WRONG_STATE;
-        }
-        OptionalInt latestPlan = Runs.latestSucceededPlanSeq(tx, taskId);
-        if (latestPlan.isEmpty() || latestPlan.getAsInt() != planSeq) {
-            return ApproveResult.STALE_PLAN;
-        }
-        if (!Plan.parse(task.planJson()).questions().isEmpty()) {
-            return ApproveResult.OPEN_QUESTIONS;
-        }
+        Task task = verdict.task();
         if (!Tasks.changePhase(tx, taskId, Phase.AWAITING_APPROVAL, Phase.EXECUTING, now)) {
             return ApproveResult.WRONG_STATE;
         }
@@ -527,28 +527,17 @@ public final class TaskService {
      */
     public CorrectResult correct(Tx tx, Requester who, long taskId, int planSeq, String text, String originRef, String chatRef) {
         Instant now = clock.instant();
-        if (!groups.isMember(who.ref())) {
-            notAllowed(tx, who, originRef, chatRef, now);
-            return CorrectResult.NOT_ALLOWED;
-        }
-        Task task = Tasks.find(tx, taskId).orElseThrow(() -> new IllegalStateException("task " + taskId + " does not exist"));
-        if (!isRequester(task, who)) {
-            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef, notRequester(task), now);
-            return CorrectResult.REFUSED;
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.CORRECT, planSeq);
+        if (refused.isPresent()) {
+            refuse(tx, OutboxKind.CORRECTION_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
+            return refused.get() == TaskAccess.Refusal.NOT_MEMBER ? CorrectResult.NOT_ALLOWED : CorrectResult.REFUSED;
         }
         if (text == null || text.isBlank()) {
             return CorrectResult.EMPTY;
         }
-        if (task.phase() != Phase.AWAITING_APPROVAL) {
-            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef,
-                    Json.object().put("taskId", taskId).put("reason", "phase").put("phase", task.phase().name()), now);
-            return CorrectResult.REFUSED;
-        }
-        OptionalInt latestPlan = Runs.latestSucceededPlanSeq(tx, taskId);
-        if (latestPlan.isEmpty() || latestPlan.getAsInt() != planSeq
-                || !Tasks.changePhase(tx, taskId, Phase.AWAITING_APPROVAL, Phase.PLANNING, now)) {
-            enqueue(tx, taskId, OutboxKind.CORRECTION_REFUSED, chatRef, originRef,
-                    Json.object().put("taskId", taskId).put("reason", "stale"), now);
+        if (!Tasks.changePhase(tx, taskId, Phase.AWAITING_APPROVAL, Phase.PLANNING, now)) {
+            refuse(tx, OutboxKind.CORRECTION_REFUSED, who, verdict, taskId, TaskAccess.Refusal.STALE_PLAN, originRef, chatRef, now);
             return CorrectResult.REFUSED;
         }
         int seq = Runs.nextSeq(tx, taskId);
@@ -570,15 +559,16 @@ public final class TaskService {
     /**
      * The requester's answer to question {@code index} (1-based) of the plan with run number {@code planSeq} (G-1d). The
      * question message is redrawn with it and the next unanswered question is sent; the last answer sends them all to
-     * the agent as one correction, exactly as a typed one. A question already answered, one of an older plan, or one of a
-     * task no longer awaiting approval changes nothing.
+     * the agent as one correction, exactly as a typed one. A question already answered, one of an older plan, a later
+     * question while an earlier one is still open, or one of a task no longer awaiting approval changes nothing.
      *
      * @param questionRef the question message, redrawn with the answer
      * @param originRef   the message the correction is acknowledged under
      */
     public AnswerResult answer(Tx tx, Requester who, long taskId, int planSeq, int index, String answer, String questionRef,
                                String originRef, String chatRef) {
-        Optional<AnswerResult> refused = questionRefusal(tx, who, taskId, planSeq, index);
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        Optional<AnswerResult> refused = answerRefusal(verdict, planSeq, index);
         if (refused.isPresent()) {
             tx.afterCommit(() -> Log.info("task.answer_refused", "task", taskId, "plan", planSeq, "question", index,
                     "requester", who.ref(), "result", refused.get()));
@@ -588,7 +578,7 @@ public final class TaskService {
             return AnswerResult.EMPTY;
         }
         Instant now = clock.instant();
-        Task task = Tasks.find(tx, taskId).orElseThrow();
+        Task task = verdict.task();
         List<PlanQuestion> questions = Plan.parse(task.planJson()).questionItems();
         String text = answer.strip();
         if (!PlanAnswers.record(tx, taskId, planSeq, index, text, who.ref(), questionRef, now)) {
@@ -629,7 +619,7 @@ public final class TaskService {
 
     /** The requester wants to write their own answer to a question: they are asked for it as a forced reply under it (G-1d). */
     public AnswerResult askForAnswer(Tx tx, Requester who, long taskId, int planSeq, int index, String questionRef) {
-        Optional<AnswerResult> refused = questionRefusal(tx, who, taskId, planSeq, index);
+        Optional<AnswerResult> refused = answerRefusal(access.of(tx, who.ref(), taskId), planSeq, index);
         if (refused.isPresent()) {
             return refused.get();
         }
@@ -662,31 +652,16 @@ public final class TaskService {
         return payload;
     }
 
-    /** Why question {@code index} of plan {@code planSeq} cannot be answered now; empty when it can. */
-    private Optional<AnswerResult> questionRefusal(Tx tx, Requester who, long taskId, int planSeq, int index) {
-        if (!groups.isMember(who.ref())) {
-            return Optional.of(AnswerResult.NOT_ALLOWED);
-        }
-        Optional<Task> found = Tasks.find(tx, taskId);
-        if (found.isEmpty()) {
-            return Optional.of(AnswerResult.NOT_FOUND);
-        }
-        Task task = found.get();
-        if (!isRequester(task, who)) {
-            return Optional.of(AnswerResult.NOT_REQUESTER);
-        }
-        OptionalInt latestPlan = Runs.latestSucceededPlanSeq(tx, taskId);
-        if (task.phase() != Phase.AWAITING_APPROVAL || latestPlan.isEmpty() || latestPlan.getAsInt() != planSeq) {
-            return Optional.of(AnswerResult.STALE);
-        }
-        int total = Plan.parse(task.planJson()).questionItems().size();
-        if (index < 1 || index > total) {
-            return Optional.of(AnswerResult.STALE);
-        }
-        if (PlanAnswers.of(tx, taskId, planSeq).containsKey(index)) {
-            return Optional.of(AnswerResult.ALREADY_ANSWERED);
-        }
-        return Optional.empty();
+    /** Why question {@code index} of plan {@code planSeq} cannot be answered now, in the answer's terms; empty when it can. */
+    private static Optional<AnswerResult> answerRefusal(TaskAccess.Verdict verdict, int planSeq, int index) {
+        return verdict.answerRefusal(planSeq, index).map(refusal -> switch (refusal) {
+            case NOT_MEMBER -> AnswerResult.NOT_ALLOWED;
+            case NOT_FOUND -> AnswerResult.NOT_FOUND;
+            case NOT_REQUESTER -> AnswerResult.NOT_REQUESTER;
+            case ALREADY_ANSWERED -> AnswerResult.ALREADY_ANSWERED;
+            case OUT_OF_ORDER -> AnswerResult.OUT_OF_ORDER;
+            default -> AnswerResult.STALE;
+        });
     }
 
     /** The correction that carries every answer, in the requester's language like the buttons they pressed. */
@@ -705,26 +680,24 @@ public final class TaskService {
     /** The requester rejects the plan with run number {@code planSeq}; a button on an older plan is refused as stale. */
     public RejectResult reject(Tx tx, Requester who, long taskId, int planSeq) {
         Instant now = clock.instant();
-        if (!groups.isMember(who.ref())) {
-            tx.afterCommit(() -> Log.warn("task.reject_not_allowed", "task", taskId, "requester", who.ref()));
-            return RejectResult.NOT_ALLOWED;
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.REJECT, planSeq);
+        if (refused.isPresent()) {
+            return switch (refused.get()) {
+                case NOT_MEMBER -> {
+                    tx.afterCommit(() -> Log.warn("task.reject_not_allowed", "task", taskId, "requester", who.ref()));
+                    yield RejectResult.NOT_ALLOWED;
+                }
+                case NOT_FOUND -> RejectResult.NOT_FOUND;
+                case NOT_REQUESTER -> {
+                    tx.afterCommit(() -> Log.info("task.reject_not_requester", "task", taskId, "requester", who.ref()));
+                    yield RejectResult.NOT_REQUESTER;
+                }
+                case STALE_PLAN -> RejectResult.STALE_PLAN;
+                default -> RejectResult.WRONG_STATE;
+            };
         }
-        Optional<Task> found = Tasks.find(tx, taskId);
-        if (found.isEmpty()) {
-            return RejectResult.NOT_FOUND;
-        }
-        Task task = found.get();
-        if (!isRequester(task, who)) {
-            tx.afterCommit(() -> Log.info("task.reject_not_requester", "task", taskId, "requester", who.ref()));
-            return RejectResult.NOT_REQUESTER;
-        }
-        if (task.phase() != Phase.AWAITING_APPROVAL) {
-            return RejectResult.WRONG_STATE;
-        }
-        OptionalInt latestPlan = Runs.latestSucceededPlanSeq(tx, taskId);
-        if (latestPlan.isEmpty() || latestPlan.getAsInt() != planSeq) {
-            return RejectResult.STALE_PLAN;
-        }
+        Task task = verdict.task();
         if (!Tasks.changePhase(tx, taskId, Phase.AWAITING_APPROVAL, Phase.REJECTED, now)) {
             return RejectResult.WRONG_STATE;
         }
@@ -739,20 +712,17 @@ public final class TaskService {
     /** The requester moves their unfinished task up or down the queue; a running agent is not affected (ADR 0012). */
     public PriorityResult changePriority(Tx tx, Requester who, long taskId, Priority priority) {
         Instant now = clock.instant();
-        if (!groups.isMember(who.ref())) {
-            return PriorityResult.NOT_ALLOWED;
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.PRIORITY);
+        if (refused.isPresent()) {
+            return switch (refused.get()) {
+                case NOT_MEMBER -> PriorityResult.NOT_ALLOWED;
+                case NOT_FOUND -> PriorityResult.NOT_FOUND;
+                case NOT_REQUESTER -> PriorityResult.NOT_REQUESTER;
+                default -> PriorityResult.FINISHED;
+            };
         }
-        Optional<Task> found = Tasks.find(tx, taskId);
-        if (found.isEmpty()) {
-            return PriorityResult.NOT_FOUND;
-        }
-        Task task = found.get();
-        if (!isRequester(task, who)) {
-            return PriorityResult.NOT_REQUESTER;
-        }
-        if (!task.phase().isActive()) {
-            return PriorityResult.FINISHED;
-        }
+        Task task = verdict.task();
         if (task.priority() == priority) {
             return PriorityResult.UNCHANGED;
         }
@@ -773,23 +743,19 @@ public final class TaskService {
      */
     public CancelResult cancel(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
-        if (!groups.isMember(who.ref()) && !groups.isAdmin(who.ref())) {
-            notAllowed(tx, who, originRef, chatRef, now);
-            return CancelResult.NOT_ALLOWED;
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.CANCEL);
+        if (refused.isPresent()) {
+            refuse(tx, OutboxKind.CANCEL_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
+            return switch (refused.get()) {
+                case NOT_MEMBER -> CancelResult.NOT_ALLOWED;
+                case NOT_FOUND -> CancelResult.NOT_FOUND;
+                default -> CancelResult.REFUSED;
+            };
         }
-        Optional<Task> found = groups.isAdmin(who.ref()) ? Tasks.find(tx, taskId) : visibleTask(tx, who, taskId);
-        if (found.isEmpty()) {
-            enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
-            return CancelResult.NOT_FOUND;
-        }
-        Task task = found.get();
-        if (!isRequester(task, who) && !groups.isAdmin(who.ref())) {
-            enqueue(tx, taskId, OutboxKind.CANCEL_REFUSED, chatRef, originRef, notRequester(task), now);
-            return CancelResult.REFUSED;
-        }
-        if (!task.phase().isActive() || !Tasks.changePhase(tx, taskId, task.phase(), Phase.CANCELLED, now)) {
-            enqueue(tx, taskId, OutboxKind.CANCEL_REFUSED, chatRef, originRef,
-                    Json.object().put("taskId", taskId).put("phase", task.phase().name()), now);
+        Task task = verdict.task();
+        if (!Tasks.changePhase(tx, taskId, task.phase(), Phase.CANCELLED, now)) {
+            refuse(tx, OutboxKind.CANCEL_REFUSED, who, verdict, taskId, TaskAccess.Refusal.WRONG_PHASE, originRef, chatRef, now);
             return CancelResult.REFUSED;
         }
         Runs.cancelQueued(tx, taskId, now);
@@ -813,27 +779,18 @@ public final class TaskService {
      */
     public RetryResult retry(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
-        if (!groups.isMember(who.ref())) {
-            notAllowed(tx, who, originRef, chatRef, now);
-            return RetryResult.NOT_ALLOWED;
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.RETRY);
+        if (refused.isPresent()) {
+            refuse(tx, OutboxKind.RETRY_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
+            return switch (refused.get()) {
+                case NOT_MEMBER -> RetryResult.NOT_ALLOWED;
+                case NOT_FOUND -> RetryResult.NOT_FOUND;
+                default -> RetryResult.REFUSED;
+            };
         }
-        Optional<Task> found = visibleTask(tx, who, taskId);
-        if (found.isEmpty()) {
-            enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
-            return RetryResult.NOT_FOUND;
-        }
-        Task task = found.get();
-        if (!isRequester(task, who)) {
-            enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef, notRequester(task), now);
-            return RetryResult.REFUSED;
-        }
-        Optional<Run> failed = Runs.latest(tx, taskId).filter(run -> run.status() == RunStatus.FAILED);
-        if (task.phase() != Phase.FAILED || failed.isEmpty()) {
-            enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef,
-                    Json.object().put("taskId", taskId).put("phase", task.phase().name()), now);
-            return RetryResult.REFUSED;
-        }
-        Run step = failed.get();
+        // Task access saw the latest run fail: that run is the step to repeat.
+        Run step = Runs.latest(tx, taskId).orElseThrow();
         RunKind kind;
         String instruction;
         if (step.kind() == RunKind.PLAN) {
@@ -849,8 +806,7 @@ public final class TaskService {
         }
         Phase to = kind == RunKind.PLAN ? Phase.PLANNING : Phase.EXECUTING;
         if (!Tasks.changePhase(tx, taskId, Phase.FAILED, to, now)) {
-            enqueue(tx, taskId, OutboxKind.RETRY_REFUSED, chatRef, originRef,
-                    Json.object().put("taskId", taskId).put("phase", task.phase().name()), now);
+            refuse(tx, OutboxKind.RETRY_REFUSED, who, verdict, taskId, TaskAccess.Refusal.NOT_FAILED, originRef, chatRef, now);
             return RetryResult.REFUSED;
         }
         int seq = Runs.nextSeq(tx, taskId);
@@ -872,28 +828,22 @@ public final class TaskService {
      */
     public FollowUpResult followUp(Tx tx, Requester who, long taskId, String text, String originRef, String chatRef) {
         Instant now = clock.instant();
-        if (!groups.isMember(who.ref())) {
-            notAllowed(tx, who, originRef, chatRef, now);
-            return FollowUpResult.NOT_ALLOWED;
-        }
-        Optional<Task> found = visibleTask(tx, who, taskId);
-        if (found.isEmpty()) {
-            enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
-            return FollowUpResult.NOT_FOUND;
-        }
-        Task task = found.get();
-        if (!isRequester(task, who)) {
-            enqueue(tx, taskId, OutboxKind.FOLLOW_UP_REFUSED, chatRef, originRef, notRequester(task), now);
-            return FollowUpResult.REFUSED;
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.FOLLOW_UP);
+        if (refused.isPresent()) {
+            refuse(tx, OutboxKind.FOLLOW_UP_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
+            return switch (refused.get()) {
+                case NOT_MEMBER -> FollowUpResult.NOT_ALLOWED;
+                case NOT_FOUND -> FollowUpResult.NOT_FOUND;
+                default -> FollowUpResult.REFUSED;
+            };
         }
         if (text == null || text.isBlank()) {
             return FollowUpResult.EMPTY;
         }
-        boolean finished = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED;
-        boolean executed = Runs.agentStartedBefore(tx, taskId, RunKind.EXECUTE, Integer.MAX_VALUE);
-        if (!finished || !executed || !Tasks.changePhase(tx, taskId, task.phase(), Phase.EXECUTING, now)) {
-            enqueue(tx, taskId, OutboxKind.FOLLOW_UP_REFUSED, chatRef, originRef, Json.object().put("taskId", taskId)
-                    .put("reason", finished && !executed ? "notExecuted" : "phase").put("phase", task.phase().name()), now);
+        Task task = verdict.task();
+        if (!Tasks.changePhase(tx, taskId, task.phase(), Phase.EXECUTING, now)) {
+            refuse(tx, OutboxKind.FOLLOW_UP_REFUSED, who, verdict, taskId, TaskAccess.Refusal.WRONG_PHASE, originRef, chatRef, now);
             return FollowUpResult.REFUSED;
         }
         int seq = Runs.nextSeq(tx, taskId);
@@ -905,24 +855,34 @@ public final class TaskService {
         return FollowUpResult.QUEUED;
     }
 
-    /** The member's own task, or one of their groups' tasks; empty for anything else, so its existence does not leak. */
-    private Optional<Task> visibleTask(Tx tx, Requester who, long taskId) {
-        return Tasks.find(tx, taskId).filter(task ->
-                task.requester().ref().equals(who.ref()) || groups.isMemberOfProjectGroup(who.ref(), task.project()));
-    }
-
-    private static boolean isRequester(Task task, Requester who) {
-        return task.requester().ref().equals(who.ref());
-    }
-
     /** Null when the task is not among the active ones this viewer may see, e.g. a run of another group's project. */
     private static String requesterName(Task task) {
         return task == null ? null : task.requester().name();
     }
 
-    /** Whether {@code viewerRef} gave the task; a group chat (null viewer) owns nothing, so it sees headlines only (ADR 0020). */
-    private static boolean ownedBy(Task task, String viewerRef) {
-        return task != null && viewerRef != null && task.requester().ref().equals(viewerRef);
+    /** Whether {@code viewer} gave the task and so sees all of it; a group chat owns nothing (ADR 0020). */
+    private static boolean isOwn(TaskAccess.Viewer viewer, Task task) {
+        return task != null && viewer.sees(task) == TaskAccess.Sight.FULL;
+    }
+
+    /** What {@code viewer} may do with each listed task now; nothing for a group chat, which acts on no task (ADR 0027). */
+    private Map<Long, List<TaskAccess.Action>> actionsOf(Tx tx, TaskAccess.Viewer viewer, Collection<Task> listed) {
+        Map<Long, List<TaskAccess.Action>> actions = new HashMap<>();
+        if (viewer.ref() == null) {
+            return actions;
+        }
+        // ponytail: one verdict per listed task (a few indexed reads each); batch the run reads if a list ever holds hundreds.
+        for (Task task : listed) {
+            actions.put(task.id(), access.of(tx, viewer.ref(), task).allowed());
+        }
+        return actions;
+    }
+
+    private static void putActions(ObjectNode item, List<TaskAccess.Action> actions) {
+        ArrayNode listed = item.putArray("actions");
+        if (actions != null) {
+            actions.forEach(action -> listed.add(action.json()));
+        }
     }
 
     /** Why a member may see a task but not act on it: it is someone else's (ADR 0020). */
@@ -931,46 +891,74 @@ public final class TaskService {
     }
 
     /**
-     * Posts what Dispatch is doing on {@code visibleProjects}: running runs with their agent's latest action, then queued
-     * runs, then plans awaiting approval.
-     *
-     * @param viewerRef the member asking in their private chat, whose active tasks get priority buttons; null in a group
+     * Answers a refused command where it was given, in the words the chat has always used: someone in no group is told they
+     * may not use Dispatch, a task they may not see is not found, and anything else names its reason.
      */
-    public void status(Tx tx, Set<String> visibleProjects, String viewerRef, String originRef, String chatRef) {
-        enqueue(tx, null, OutboxKind.STATUS, chatRef, originRef, statusPayload(tx, visibleProjects, viewerRef), clock.instant());
+    private void refuse(Tx tx, OutboxKind kind, Requester who, TaskAccess.Verdict verdict, long taskId, TaskAccess.Refusal refusal,
+                        String originRef, String chatRef, Instant now) {
+        switch (refusal) {
+            case NOT_MEMBER -> notAllowed(tx, who, originRef, chatRef, now);
+            case NOT_FOUND -> enqueue(tx, null, OutboxKind.TASK_NOT_FOUND, chatRef, originRef, Json.object().put("taskId", taskId), now);
+            default -> enqueue(tx, taskId, kind, chatRef, originRef, refusalPayload(verdict.task(), refusal), now);
+        }
     }
 
-    /** The content of a status message, also used to update one in place after a priority change. */
-    public ObjectNode statusPayload(Tx tx, Set<String> visibleProjects, String viewerRef) {
+    /** What a refusal message carries; the renderer words it by {@code reason} and names the requester (ADR 0020). */
+    private static ObjectNode refusalPayload(Task task, TaskAccess.Refusal refusal) {
+        return switch (refusal) {
+            case NOT_REQUESTER -> notRequester(task);
+            case STALE_PLAN -> Json.object().put("taskId", task.id()).put("reason", "stale");
+            case NOT_EXECUTED -> Json.object().put("taskId", task.id()).put("reason", "notExecuted").put("phase", task.phase().name());
+            default -> Json.object().put("taskId", task.id()).put("reason", "phase").put("phase", task.phase().name());
+        };
+    }
+
+    /**
+     * Posts what Dispatch is doing on the tasks {@code viewer} sees: running runs with their agent's latest action, then
+     * queued runs, then plans awaiting approval.
+     */
+    public void status(Tx tx, TaskAccess.Viewer viewer, String originRef, String chatRef) {
+        enqueue(tx, null, OutboxKind.STATUS, chatRef, originRef, statusPayload(tx, viewer), clock.instant());
+    }
+
+    /**
+     * The content of a status message, also used to update one in place after a priority change. Every task carries what
+     * the viewer may do with it now ({@code actions}); {@code mine} lists the tasks whose priority they may change, which a
+     * private chat offers as buttons.
+     */
+    public ObjectNode statusPayload(Tx tx, TaskAccess.Viewer viewer) {
         ObjectNode payload = Json.object();
         Map<Long, Task> active = new LinkedHashMap<>();
         for (Task task : Tasks.active(tx)) {
-            if (visibleProjects.contains(task.project())) {
+            if (viewer.sees(task) != TaskAccess.Sight.NONE) {
                 active.put(task.id(), task);
             }
         }
+        Map<Long, List<TaskAccess.Action>> actions = actionsOf(tx, viewer, active.values());
         ArrayNode running = payload.putArray("running");
         ArrayNode queued = payload.putArray("queued");
         Instant workerSeenSince = requiresWorker ? clock.instant().minus(Workers.SEEN_WITHIN) : null;
-        for (Runs.InProgress run : Runs.inProgress(tx, visibleProjects)) {
+        for (Runs.InProgress run : Runs.inProgress(tx, viewer.projects(), viewer.ref())) {
+            Task task = active.get(run.taskId());
+            boolean own = isOwn(viewer, task);
             boolean isRunning = run.status() == RunStatus.RUNNING;
             ObjectNode item = (isRunning ? running : queued).addObject().put("taskId", run.taskId()).put("project", run.project())
-                    .put("title", run.title()).put("kind", run.kind().name()).put("priority", priority(active.get(run.taskId())))
+                    .put("title", run.title()).put("kind", run.kind().name()).put("priority", priority(task))
                     // Who gave it: the name for an admin's Tasks page to show (ADR 0020 allows it), and a flag for the
                     // Mini App's My tasks page, which keeps only the viewer's own and cannot go by name — two members
                     // may share a first name.
-                    .put("requester", requesterName(active.get(run.taskId())))
-                    .put("mine", ownedBy(active.get(run.taskId()), viewerRef));
+                    .put("requester", requesterName(task))
+                    .put("mine", own);
+            putActions(item, actions.get(run.taskId()));
             if (isRunning) {
                 item.put("startedAt", text(run.startedAt()));
-                if (ownedBy(active.get(run.taskId()), viewerRef)) {
+                if (own) {
                     activeRuns.activity(run.taskId()).ifPresent(activity ->
                             item.put("steps", activity.steps()).put("lastAction", activity.lastAction()));
                 }
             } else {
                 item.put("queuedAt", text(run.queuedAt()));
-                Task queuedTask = active.get(run.taskId());
-                boolean waitingForWorker = requiresWorker && queuedTask != null && waitsForWorker(tx, queuedTask, workerSeenSince);
+                boolean waitingForWorker = requiresWorker && task != null && waitsForWorker(tx, task, workerSeenSince);
                 if (waitingForWorker) {
                     item.put("waitingForWorker", true);
                 }
@@ -982,11 +970,13 @@ public final class TaskService {
             }
         }
         ArrayNode awaiting = payload.putArray("awaitingApproval");
-        for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL, visibleProjects)) {
+        for (Task task : Tasks.withPhase(tx, Phase.AWAITING_APPROVAL, viewer.projects(), viewer.ref())) {
+            boolean own = isOwn(viewer, task);
             ObjectNode item = awaiting.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                     .put("priority", task.priority().name()).put("requester", task.requester().name())
-                    .put("mine", ownedBy(task, viewerRef)).put("since", text(task.updatedAt()));
-            if (ownedBy(task, viewerRef)) {
+                    .put("mine", own).put("since", text(task.updatedAt()));
+            putActions(item, actions.get(task.id()));
+            if (own) {
                 // What the Mini App's home shows on the requester's own waiting task: the question it waits on, if any.
                 currentPlan(tx, task.id()).ifPresent(plan -> {
                     List<JsonNode> open = new ArrayList<>();
@@ -1002,9 +992,10 @@ public final class TaskService {
                 });
             }
         }
-        ArrayNode mine = payload.putArray("mine");
-        active.values().stream().filter(task -> task.requester().ref().equals(viewerRef))
-                .forEach(task -> mine.addObject().put("taskId", task.id()).put("priority", task.priority().name()));
+        ArrayNode prioritized = payload.putArray("mine");
+        // A private chat's priority buttons: the tasks whose priority task access lets this viewer change.
+        active.values().stream().filter(task -> actions.getOrDefault(task.id(), List.of()).contains(TaskAccess.Action.PRIORITY))
+                .forEach(task -> prioritized.addObject().put("taskId", task.id()).put("priority", task.priority().name()));
         return payload;
     }
 
@@ -1041,47 +1032,49 @@ public final class TaskService {
     }
 
     /**
-     * Posts the most recently finished tasks of {@code visibleProjects}, newest first; the total cost is shown only on
-     * the viewer's own tasks, everyone else's carry just the headline (ADR 0020).
+     * Posts the most recently finished tasks {@code viewer} sees, newest first; the total cost is shown only on the viewer's
+     * own tasks, everyone else's carry just the headline (ADR 0020).
      */
-    public void history(Tx tx, Set<String> visibleProjects, String viewerRef, String originRef, String chatRef) {
-        enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, historyPayload(tx, visibleProjects, viewerRef), clock.instant());
+    public void history(Tx tx, TaskAccess.Viewer viewer, String originRef, String chatRef) {
+        enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, historyPayload(tx, viewer), clock.instant());
     }
 
     /** The content of a history message; also what the Mini App's task list reads (spec: Task pages). */
-    public ObjectNode historyPayload(Tx tx, Set<String> visibleProjects, String viewerRef) {
-        List<Task> finished = Tasks.finished(tx, visibleProjects, HISTORY_SIZE);
+    public ObjectNode historyPayload(Tx tx, TaskAccess.Viewer viewer) {
+        List<Task> finished = Tasks.finished(tx, viewer.projects(), viewer.ref(), HISTORY_SIZE);
         Map<Long, BigDecimal> costs = Runs.costs(tx, finished.stream().map(Task::id).toList());
+        Map<Long, List<TaskAccess.Action>> actions = actionsOf(tx, viewer, finished);
         ObjectNode payload = Json.object();
         ArrayNode listed = payload.putArray("tasks");
         for (Task task : finished) {
-            boolean mine = ownedBy(task, viewerRef);
-            BigDecimal cost = mine ? costs.get(task.id()) : null;
-            listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
-                    .put("mine", mine)
+            boolean own = isOwn(viewer, task);
+            BigDecimal cost = own ? costs.get(task.id()) : null;
+            ObjectNode item = listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
+                    .put("mine", own)
                     .put("phase", task.phase().name()).put("priority", task.priority().name())
                     .put("requester", task.requester().name()).put("createdAt", text(task.createdAt())).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
                     .put("costUsd", cost == null ? null : cost.toPlainString()).put("completedAt", text(task.completedAt()));
+            putActions(item, actions.get(task.id()));
         }
         return payload;
     }
 
     /**
-     * Posts one task's timeline: its runs in order, how it ended, and what it cost. Tasks outside {@code visibleProjects}
-     * are not found. Someone else's task stops at the headline: no runs, no cost (ADR 0020).
+     * Posts one task's timeline: its runs in order, how it ended, and what it cost. A task {@code viewer} does not see is
+     * not found. Someone else's task stops at the headline: no runs, no cost (ADR 0020).
      */
-    public void timeline(Tx tx, Set<String> visibleProjects, String viewerRef, long taskId, String originRef, String chatRef) {
-        Optional<ObjectNode> payload = timelinePayload(tx, visibleProjects, viewerRef, taskId);
+    public void timeline(Tx tx, TaskAccess.Viewer viewer, long taskId, String originRef, String chatRef) {
+        Optional<ObjectNode> payload = timelinePayload(tx, viewer, taskId);
         enqueue(tx, null, payload.isPresent() ? OutboxKind.TASK_TIMELINE : OutboxKind.TASK_NOT_FOUND, chatRef, originRef,
                 payload.orElseGet(() -> Json.object().put("taskId", taskId)), clock.instant());
     }
 
     /**
-     * One task's timeline, or empty when it is not in {@code visibleProjects} — so a task's existence does not leak.
-     * Someone else's task stops at the headline here too (ADR 0020), which is what keeps that rule in one place.
+     * One task's timeline, or empty when {@code viewer} does not see it — so a task's existence does not leak. Someone
+     * else's task stops at the headline here too (ADR 0020).
      */
-    public Optional<ObjectNode> timelinePayload(Tx tx, Set<String> visibleProjects, String viewerRef, long taskId) {
-        Optional<Task> found = Tasks.find(tx, taskId).filter(task -> visibleProjects.contains(task.project()));
+    public Optional<ObjectNode> timelinePayload(Tx tx, TaskAccess.Viewer viewer, long taskId) {
+        Optional<Task> found = Tasks.find(tx, taskId).filter(task -> viewer.sees(task) != TaskAccess.Sight.NONE);
         if (found.isEmpty()) {
             return Optional.empty();
         }
@@ -1091,7 +1084,8 @@ public final class TaskService {
                 .put("prUrl", task.prUrl())
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
                 .put("completedAt", text(task.completedAt()));
-        if (!ownedBy(task, viewerRef)) {
+        putActions(payload, actionsOf(tx, viewer, List.of(task)).get(task.id()));
+        if (!isOwn(viewer, task)) {
             return Optional.of(payload.put("headline", true).putNull("costUsd"));
         }
         ArrayNode runs = payload.putArray("runs");

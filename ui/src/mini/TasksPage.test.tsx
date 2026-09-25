@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
-import { headlineTimeline, myFinishedTask, myRunningTask, myTimeline, someoneElsesTask } from "./fixtures";
+import { headlineTimeline, myFailedTask, myFinishedTask, myRunningTask, myTimeline, someoneElsesTask } from "./fixtures";
 import TasksPage from "./TasksPage";
 
 vi.mock("../api", async (importOriginal) => ({
@@ -44,14 +44,24 @@ describe("the task pages", () => {
     await waitFor(() => expect(vi.mocked(api.listTasks).mock.calls.length).toBeGreaterThan(1));
   });
 
-  it("retries a finished task of mine without asking", async () => {
-    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [myFinishedTask] });
+  it("retries a failed task of mine without asking", async () => {
+    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [myFailedTask] });
     vi.mocked(api.retryTask).mockResolvedValue({ result: "RETRIED" });
 
     render(<TasksPage scope="me" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Дахин эхлүүлэх 2" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Дахин эхлүүлэх 6" }));
 
-    await waitFor(() => expect(api.retryTask).toHaveBeenCalledWith(2));
+    await waitFor(() => expect(api.retryTask).toHaveBeenCalledWith(6));
+  });
+
+  it("offers only what the server allows: no retry on a task that did not fail", async () => {
+    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [myFinishedTask] });
+
+    render(<TasksPage scope="me" />);
+
+    expect(await screen.findByText(/Add the export button/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Дахин эхлүүлэх 2" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Цуцлах 2" })).not.toBeInTheDocument();
   });
 
   it("lets an admin cancel someone else's task but never retry it", async () => {

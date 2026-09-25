@@ -10,6 +10,7 @@ import dispatch.core.CancelResult;
 import dispatch.core.Groups;
 import dispatch.core.RejectResult;
 import dispatch.core.RetryResult;
+import dispatch.core.TaskAccess;
 import dispatch.core.TaskService;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
@@ -20,7 +21,6 @@ import dispatch.ui.UiServer.Caller;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.BiFunction;
 
 /**
@@ -40,12 +40,12 @@ public final class TasksApi {
 
     private final Database db;
     private final TaskService tasks;
-    private final Groups groups;
+    private final TaskAccess access;
 
     public TasksApi(Database db, TaskService tasks, Groups groups) {
         this.db = db;
         this.tasks = tasks;
-        this.groups = groups;
+        this.access = new TaskAccess(groups);
     }
 
     public Map<String, BiFunction<Caller, JsonNode, Object>> routes() {
@@ -69,10 +69,10 @@ public final class TasksApi {
         if (wholeGroup && !caller.admin()) {
             throw new ApiException(403, "not_admin", NOT_ADMIN);
         }
-        Set<String> visible = groups.projectsOfMember(caller.ref());
+        TaskAccess.Viewer viewer = access.member(caller.ref());
         return db.transactionReturning(tx -> {
-            ObjectNode active = tasks.statusPayload(tx, visible, caller.ref());
-            ObjectNode finished = tasks.historyPayload(tx, visible, caller.ref());
+            ObjectNode active = tasks.statusPayload(tx, viewer);
+            ObjectNode finished = tasks.historyPayload(tx, viewer);
             ObjectNode answer = Json.object();
             ArrayNode listed = answer.putArray("tasks");
             for (ObjectNode task : merge(active, finished)) {
@@ -86,8 +86,7 @@ public final class TasksApi {
 
     ObjectNode timeline(Caller caller, JsonNode body) {
         long taskId = taskId(body);
-        Set<String> visible = groups.projectsOfMember(caller.ref());
-        return db.transactionReturning(tx -> tasks.timelinePayload(tx, visible, caller.ref(), taskId))
+        return db.transactionReturning(tx -> tasks.timelinePayload(tx, access.member(caller.ref()), taskId))
                 .orElseThrow(() -> new ApiException(404, "not_found", "no task #" + taskId + " here"));
     }
 
@@ -141,14 +140,6 @@ public final class TasksApi {
         int planSeq = number(body, "planSeq");
         int index = number(body, "index");
         return db.transactionReturning(tx -> {
-            ObjectNode task = ownTask(tx, caller, taskId);
-            JsonNode plan = task.path("plan");
-            if (plan.path("planSeq").asInt() != planSeq || !task.path("phase").asText().equals("AWAITING_APPROVAL")) {
-                throw stale();
-            }
-            if (index != firstUnanswered(plan)) {
-                throw new ApiException(409, "out_of_order", "answer question " + firstUnanswered(plan) + " first; they go in order");
-            }
             String questionRef = Outbox.sentQuestion(tx, taskId, planSeq, index).orElse(null);
             String chatRef = caller.ref();
             AnswerResult result;
@@ -165,6 +156,8 @@ public final class TasksApi {
                 case ANSWERED -> ownTask(tx, caller, taskId).put("result", result.name());
                 case EMPTY -> throw new ApiException(400, "invalid", "the answer is empty, or that option is not one of the question's");
                 case ALREADY_ANSWERED -> throw new ApiException(409, "already_answered", "this question already has its answer");
+                case OUT_OF_ORDER -> throw new ApiException(409, "out_of_order",
+                        "answer the questions in order: an earlier one is still open");
                 case STALE -> throw stale();
                 case NOT_ALLOWED -> throw notMember();
                 case NOT_FOUND -> throw notFound(taskId);
@@ -206,25 +199,20 @@ public final class TasksApi {
         };
     }
 
-    /** The caller's own task with its plan; a task outside their groups is not found, so its existence does not leak. */
+    /** The caller's own task with its plan, what they may do with it, and the question to answer now (ADR 0027). */
     private ObjectNode ownTask(Tx tx, Caller caller, long taskId) {
-        Set<String> visible = groups.projectsOfMember(caller.ref());
-        ObjectNode task = tasks.timelinePayload(tx, visible, caller.ref(), taskId).orElseThrow(() -> notFound(taskId));
-        if (task.path("headline").asBoolean(false)) {
+        TaskAccess.Verdict verdict = access.of(tx, caller.ref(), taskId);
+        if (verdict.sight() == TaskAccess.Sight.NONE) {
+            throw notFound(taskId);
+        }
+        if (verdict.sight() == TaskAccess.Sight.HEADLINE) {
             throw new ApiException(403, "not_yours", NOT_YOURS);
         }
+        ObjectNode task = tasks.timelinePayload(tx, access.member(caller.ref()), taskId).orElseThrow(() -> notFound(taskId));
         task.remove("runs");
-        tasks.currentPlan(tx, taskId).ifPresent(plan -> task.set("plan", plan));
+        tasks.currentPlan(tx, taskId).ifPresent(plan -> task.set("plan",
+                plan.put("current", verdict.allows(TaskAccess.Action.ANSWER) ? verdict.currentQuestion() : 0)));
         return task;
-    }
-
-    private static int firstUnanswered(JsonNode plan) {
-        for (JsonNode question : plan.path("questions")) {
-            if (question.path("answer").isNull() || question.path("answer").isMissingNode()) {
-                return question.path("index").asInt();
-            }
-        }
-        return 0;
     }
 
     private static ApiException stale() {

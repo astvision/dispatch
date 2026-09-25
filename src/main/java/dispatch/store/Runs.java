@@ -154,19 +154,17 @@ public final class Runs {
         return tx.one("SELECT " + COLUMNS + " FROM run WHERE task_id = ? AND seq = ?", Runs::map, taskId, seq);
     }
 
-    /** Running and queued runs of {@code projects}, oldest queued first. */
-    public static List<InProgress> inProgress(Tx tx, Set<String> projects) {
-        if (projects.isEmpty()) {
+    /** Running and queued runs of {@code projects}' tasks, or of tasks given by {@code requesterRef}, oldest queued first. */
+    public static List<InProgress> inProgress(Tx tx, Set<String> projects, String requesterRef) {
+        List<Object> params = new ArrayList<>(List.of(RunStatus.RUNNING, RunStatus.QUEUED));
+        String visible = Tasks.visibleClause("t.", projects, requesterRef, params);
+        if (visible == null) {
             return List.of();
         }
-        List<Object> params = new ArrayList<>(List.of(RunStatus.RUNNING, RunStatus.QUEUED));
-        params.addAll(projects);
-        return tx.list("""
-                        SELECT r.task_id, r.seq, r.kind, r.status, r.queued_at, r.started_at, t.project, t.title
-                        FROM run r JOIN task t ON t.id = r.task_id
-                        WHERE r.status IN (?, ?) AND t.project IN (""" + Tx.placeholders(projects.size()) + """
-                        )
-                        ORDER BY r.queued_at, r.task_id, r.seq""",
+        return tx.list("SELECT r.task_id, r.seq, r.kind, r.status, r.queued_at, r.started_at, t.project, t.title"
+                        + " FROM run r JOIN task t ON t.id = r.task_id"
+                        + " WHERE r.status IN (?, ?) AND " + visible
+                        + " ORDER BY r.queued_at, r.task_id, r.seq",
                 Runs::mapInProgress, params.toArray());
     }
 

@@ -17,7 +17,7 @@ A person who decides who may use a shared bot. When someone new writes to it, ad
 _Avoid_: Owner, moderator
 
 **Requester**:
-The member who created a task. Its plan is theirs to approve, correct or reject, and its details reach them in their private chat with the bot.
+The member who created a task. Its plan is theirs to approve, correct or reject, and its details reach them in their private chat with the bot. It stays theirs after they leave its project's group.
 _Avoid_: Owner, author, assignee
 
 **Project**:
@@ -27,6 +27,10 @@ _Avoid_: Repo, service, workspace
 **Task**:
 A piece of development work on one project that a member explicitly gives Dispatch in their private chat with the bot, with a priority. One message can give several tasks when the member splits it into parts.
 _Avoid_: Job, ticket, request
+
+**Headline**:
+What a member may see of someone else's task: who gave it, its project, title, priority, state and pull request link, never its plan, the agent's actions or its cost (ADR 0020).
+_Avoid_: Summary, preview
 
 **Priority**:
 How urgently a task should run: urgent, normal or low. More urgent tasks start first; nothing already running is interrupted.
