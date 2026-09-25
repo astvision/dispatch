@@ -1,12 +1,16 @@
 package dispatch.worker;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.core.Job;
 import dispatch.core.JobResult;
 import dispatch.domain.FailureReason;
+import dispatch.testing.SqlRows;
+import java.nio.file.Files;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -29,6 +33,46 @@ class WorkerLoopTest extends WorkerApiFixture {
         assertTrue(result.agent().structuredOutput().contains("understanding"), result.agent().structuredOutput());
         assertTrue(worktreeOf("ann-laptop", 7).resolve("fake-claude.args").toFile().exists(),
                 "the worktree is on this computer, not on the team machine");
+    }
+
+    @Test
+    void theLoopTellsTheTeamMachineHowManyRunsItTakesAtOnce() throws Exception {
+        startLoop("ann-laptop", repos.repo("alm"), 2);
+
+        offer(planJob());
+        awaitResult();
+
+        assertEquals("2", SqlRows.single(dir.resolve("dispatch.db"), "SELECT max_runs FROM worker WHERE name = ?",
+                "ann-laptop").get("max_runs"), "worker.yaml's maxConcurrentRuns rides on every poll");
+    }
+
+    @Test
+    void thisComputersOwnModelAndEffortReachClaudeCode() throws Exception {
+        startLoop("ann-laptop", new WorkerConfig.Project(repos.repo("alm").toString(), "opus", "max"));
+
+        offer(planJob());
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, awaitResult().outcome());
+        List<String> args = Files.readAllLines(worktreeOf("ann-laptop", 7).resolve("fake-claude.args"));
+        assertEquals("opus", args.get(args.indexOf("--model") + 1), args.toString());
+        assertEquals("max", args.get(args.indexOf("--effort") + 1), args.toString());
+    }
+
+    /**
+     * A computer's own model and effort are Claude Code's, the only ones worker init offers: a project the team has moved
+     * to codex since must run on the team's codex settings, never on {@code -m opus}.
+     */
+    @Test
+    void thisComputersOwnModelAndEffortNeverReachAnotherAgent() throws Exception {
+        startLoop("ann-laptop", new WorkerConfig.Project(repos.repo("alm").toString(), "opus", "max"));
+
+        offer(planJob("Plan this: fix the login timeout", "codex", "gpt-5-codex", "high"));
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, awaitResult().outcome());
+        List<String> args = Files.readAllLines(worktreeOf("ann-laptop", 7).resolve("fake-codex.args"));
+        assertEquals("gpt-5-codex", args.get(args.indexOf("-m") + 1), args.toString());
+        assertTrue(args.contains("model_reasoning_effort=\"high\""), args.toString());
+        assertFalse(args.contains("opus"), args.toString());
     }
 
     @Test
@@ -93,9 +137,9 @@ class WorkerLoopTest extends WorkerApiFixture {
         AtomicBoolean revoked = new AtomicBoolean();
         startLoop("ann-laptop", repos.repo("alm"), (http, team, key) -> new WorkerClient(http, team, key) {
             @Override
-            public Optional<Job> next(Readiness readiness) {
+            public Optional<Job> next(Readiness readiness, int maxConcurrentRuns) {
                 nextCalls.incrementAndGet();
-                return super.next(readiness);
+                return super.next(readiness, maxConcurrentRuns);
             }
 
             @Override

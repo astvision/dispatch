@@ -11,9 +11,10 @@ import java.util.Map;
  * @param team              the team's URL, as {@code dispatch worker pair} was given it
  * @param name              what the member's /worker list calls this computer
  * @param maxConcurrentRuns how many of this member's runs this computer works on at once — trades this machine's own
- *                          resource use (parallel agent processes) against throughput; it does not bound how many
- *                          requests this computer sends the team machine at once, which {@link WorkerClient} caps on
- *                          its own regardless of this number
+ *                          resource use (parallel agent processes) against throughput, and travels on every poll so the
+ *                          team machine claims the member's runs by it; it does not bound how many requests this
+ *                          computer sends the team machine at once, which {@link WorkerClient} caps on its own
+ *                          regardless of this number
  * @param claudeCommand     the member's own Claude Code, which runs with the member's own login
  * @param ghCommand         the member's own GitHub CLI
  * @param stateDir          where this computer keeps its worktrees, run logs and attachments
@@ -49,7 +50,8 @@ public record WorkerConfig(String team, String name, int maxConcurrentRuns, Stri
 
     /**
      * @param path   an existing clone on this computer
-     * @param model  overrides the team's model for this project here; null keeps the team's
+     * @param model  overrides the team's Claude Code model for this project here; null keeps the team's. A project the
+     *               team runs on another agent always keeps the team's
      * @param effort likewise
      */
     public record Project(String path, String model, String effort) {

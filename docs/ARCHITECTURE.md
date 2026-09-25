@@ -319,7 +319,8 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
 - Plain threads, all virtual: Telegram poller, outbox sender, scheduler loop, draft expiry (every minute), the hourly sweeper, one thread per missing clone at startup, one thread per active run, and one per split (at most two agents at once, outside the run queue and its limits).
 - The scheduler wakes on each commit that queues a run, and every 5 s. It claims the most urgent `QUEUED` run, oldest first among equals, that may start: a run that must wait never holds back the ones behind it. A run may start when:
   - fewer than `maxConcurrentRuns` runs are active (default 2), and
-  - the run is a PLAN, or its project has no active EXECUTE/DELIVER run.
+  - the run is a PLAN, or its project has no active EXECUTE/DELIVER run, and
+  - in a team, a live computer of the requester that may take it is ready for it, and fewer of the requester's runs are active than their live computers take at once (each its `worker.yaml` `maxConcurrentRuns`, one if it never said). The team's slots go in the same most-urgent, oldest-first order, so a member whose computers take several runs may hold several of them.
 - A claim is a conditional update, `QUEUED → RUNNING`.
 - The sweeper removes, every hour, worktrees of finished tasks unchanged for longer than `worktrees.idleDays` (7):
   - COMPLETED/FAILED tasks only if the worktree is clean and its commits are on origin; otherwise it keeps them and logs a WARN;
@@ -362,7 +363,7 @@ In a team the same `JobRunner` runs on the member's computer inside `WorkerLoop`
 | Task topic deleted or not found | The task forgets its topic + WARN; its messages go to General, never to the group fallback. |
 | Invalid config | Startup fails, naming the field. |
 | SQLite error | Logged; the process exits non-zero and systemd restarts it (recovery above). |
-| A member's computer is offline | Their tasks stay queued; the requester is told once; they start when it connects. A task with a worktree waits for the computer that holds it, and while that computer is busy. |
+| A member's computer is offline | Their tasks stay queued; the requester is told once; they start when it connects. A task with a worktree waits for the computer that holds it, and while that computer already runs as many as its `worker.yaml` `maxConcurrentRuns` (one if it never said). |
 | A worker stops reporting for 60 s | The run is FAILED `INTERRUPTED`; the worktree stays on that computer and `/retry N` continues it there. |
 
 Nothing retries silently. The only automatic retries are Telegram polling and outbox delivery, and both log every attempt.

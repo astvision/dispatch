@@ -49,7 +49,8 @@ public final class WorkerConfigLoader {
         }
         // No upper bound here: WorkerClient bounds every request this computer sends at once to
         // WorkerApi.MAX_IN_FLIGHT_PER_WORKER structurally (a Semaphore around call() and attachment()), whatever this is
-        // set to, so this number only trades local resource use (parallel agent processes) against throughput.
+        // set to. This number trades local resource use (parallel agent processes) against throughput, and it is also how
+        // many of the team's scheduler.maxConcurrentRuns slots this computer may hold for its member at once.
         int concurrent = raw.maxConcurrentRuns() == null ? 1 : raw.maxConcurrentRuns();
         if (concurrent < 1) {
             errors.add("maxConcurrentRuns: at least 1");

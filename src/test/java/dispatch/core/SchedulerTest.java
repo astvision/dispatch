@@ -222,9 +222,47 @@ class SchedulerTest {
         assertEquals(fresh, claim().orElseThrow().taskId(), "it is pinned to nobody, and the desktop is free");
     }
 
+    /** A computer takes as many of its member's runs at once as its worker.yaml's maxConcurrentRuns, and no more. */
+    @Test
+    void aComputerThatTakesTwoRunsAtOnceIsGivenTwoOfItsMembersTasksButNotAThird() {
+        long first = queuedTaskOf("telegram:100");
+        long second = queuedTaskOf("telegram:100");
+        long third = queuedTaskOf("telegram:100");
+        long laptop = pair("telegram:100", "ann-laptop");
+        db.transaction(tx -> Workers.touch(tx, laptop, clock.instant()));
+        db.transaction(tx -> Workers.saveCapacity(tx, laptop, 2));
+
+        assertEquals(first, claim(5).orElseThrow().taskId());
+        assertEquals(second, claim(5).orElseThrow().taskId(), "the laptop takes two at once");
+        assertTrue(claim(5).isEmpty(), "but not three");
+        assertEquals("QUEUED", SqlRows.single(dbFile, "SELECT status FROM run WHERE task_id = ?", third).get("status"));
+    }
+
+    @Test
+    void aTaskPinnedToAComputerWithRoomForAnotherRunIsClaimedWhileItRunsOne() {
+        long running = queuedTaskOf("telegram:100");
+        long pinned = queuedTaskOf("telegram:100");
+        long laptop = pair("telegram:100", "ann-laptop");
+        long desktop = pair("telegram:100", "ann-desktop");
+        db.transaction(tx -> Tasks.recordWorker(tx, running, laptop, clock.instant()));
+        db.transaction(tx -> Tasks.recordWorker(tx, pinned, laptop, clock.instant()));
+        db.transaction(tx -> Workers.touch(tx, laptop, clock.instant()));
+        db.transaction(tx -> Workers.touch(tx, desktop, clock.instant()));
+        db.transaction(tx -> Workers.saveCapacity(tx, laptop, 2));
+
+        assertEquals(running, claim().orElseThrow().taskId());
+
+        assertEquals(pinned, claim().orElseThrow().taskId(), "the laptop has room for a second run");
+    }
+
     /** One claim in team mode, with the worker window the Scheduler itself passes. */
     private Optional<ClaimedRun> claim() {
-        return db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(), clock.instant().minus(Workers.SEEN_WITHIN)));
+        return claim(2);
+    }
+
+    private Optional<ClaimedRun> claim(int maxConcurrentRuns) {
+        return db.transactionReturning(tx -> Runs.claimNext(tx, maxConcurrentRuns, clock.instant(),
+                clock.instant().minus(Workers.SEEN_WITHIN)));
     }
 
     @Test

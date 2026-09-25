@@ -270,8 +270,15 @@ public final class WorkerApi implements AutoCloseable {
         switch (path) {
             case PROJECTS -> json(exchange, 200, Json.write(projects(worker)));
             case NEXT -> {
-                readiness(body).ifPresent(reported ->
-                        db.transaction(tx -> Workers.saveReadiness(tx, worker.id(), reported, clock.instant())));
+                // Read, and refused if bad, before anything is stored: one poll's report lands whole or not at all.
+                Optional<Readiness> readiness = readiness(body);
+                Integer capacity = capacity(body);
+                db.transaction(tx -> {
+                    readiness.ifPresent(reported -> Workers.saveReadiness(tx, worker.id(), reported, clock.instant()));
+                    if (capacity != null) {
+                        Workers.saveCapacity(tx, worker.id(), capacity);
+                    }
+                });
                 Optional<Job> job = workers.next(worker);
                 ObjectNode answer = Json.object();
                 if (job.isPresent()) {
@@ -344,6 +351,15 @@ public final class WorkerApi implements AutoCloseable {
         reported.path("projects").properties().forEach(entry ->
                 projects.put(entry.getKey(), check(entry.getValue())));
         return Optional.of(new Readiness(check(reported.path("claude")), check(reported.path("gh")), projects));
+    }
+
+    /** How many runs the worker takes at once; null from a worker older than this field, which the claim counts as one. */
+    private static Integer capacity(JsonNode body) {
+        Integer capacity = optionalInt(body, "maxConcurrentRuns");
+        if (capacity != null && capacity < 1) {
+            throw new ApiException(400, "invalid", "maxConcurrentRuns: at least 1");
+        }
+        return capacity;
     }
 
     private static Readiness.Check check(JsonNode node) {
@@ -434,7 +450,8 @@ public final class WorkerApi implements AutoCloseable {
                 continue;
             }
             projects.addObject().put("name", project.name()).put("repo", project.repo())
-                    .put("baseBranch", project.baseBranch()).put("model", project.model()).put("effort", project.effort());
+                    .put("baseBranch", project.baseBranch()).put("agent", project.agent())
+                    .put("model", project.model()).put("effort", project.effort());
         }
         return answer;
     }

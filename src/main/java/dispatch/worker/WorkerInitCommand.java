@@ -285,9 +285,17 @@ public final class WorkerInitCommand {
                         + "dispatch worker init --force again");
                 continue;
             }
-            projects.put(project.name(), new WorkerConfig.Project(path.get().toString(),
-                    terminal.choose("Model on this computer", MODELS, 0),
-                    terminal.choose("Effort on this computer", EFFORTS, 0)));
+            String model = null;
+            String effort = null;
+            // Sonnet, Opus and Max mean nothing to another agent, which keeps the team's model and effort (ADR 0026).
+            // A team machine too old to name its agent is asked as before: WorkerLoop keeps the answers off other agents.
+            if (project.agent() == null || project.agent().equals("claude-code")) {
+                model = terminal.choose("Model on this computer", MODELS, 0);
+                effort = terminal.choose("Effort on this computer", EFFORTS, 0);
+            } else {
+                terminal.say("  runs on " + project.agent() + ": the team's model and effort apply");
+            }
+            projects.put(project.name(), new WorkerConfig.Project(path.get().toString(), model, effort));
             terminal.ok(project.name() + " → " + path.get());
         }
         return projects;
