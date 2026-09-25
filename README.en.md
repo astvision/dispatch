@@ -1,0 +1,301 @@
+# Dispatch — full guide (English)
+
+[Монгол](README.md) · **English**
+
+Dispatch takes development tasks that members write to its Telegram bot and has Claude Code plan them in a git worktree. Once the requester approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance and bot can serve several groups, each with its own members and projects.
+
+- Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
+- Status: **M4.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Reply to a result to follow up on it, `/retry` a failed step, and send screenshots or files with a task for the agent to read. In a team, each member's tasks run on their own computer (`dispatch worker init`, `dispatch worker run`; ADR 0021). `CodexAgent` comes next.
+
+## Security
+
+Access to the bot is effectively shell access to the machine it runs on. Read [SECURITY.md](SECURITY.md) before deploying.
+- Secrets go only in a file only their owner can read, never in the YAML config.
+- Logs and Telegram messages are redacted.
+- The state directory is created owner-only.
+
+## Build
+
+Requires JDK 25+ and git. The Maven wrapper downloads Maven itself.
+
+```sh
+./mvnw verify                       # tests, then target/dispatch-0.1.0.jar
+```
+
+With the web UI (needs Node):
+
+```sh
+(cd ui && npm ci && npm run build) && ./mvnw -Pui verify
+```
+
+## Get started (macOS, Windows, Linux)
+
+Dispatch runs on your own machine, with a bot for just you or one your team shares (ADR 0014–0016). It runs as you: the agent can read what you can, and whoever controls the bot's admin accounts or its token can make it act as you.
+
+**You need** Java 25 or later, git, Claude Code (run `claude` once to log in), and the GitHub CLI logged in with `gh auth login` for pull requests.
+
+**1. Install** with one command. It downloads the latest release and puts `dispatch` on your PATH, and builds Dispatch
+from source instead when run from a checkout, when `DISPATCH_FROM_SOURCE=1` is set, when `DISPATCH_REF` names a branch
+rather than `main` or a `v*` tag, or when the download fails:
+
+```sh
+# macOS, Linux
+curl -fsSL https://raw.githubusercontent.com/astvision/dispatch/main/install.sh | sh
+# while the repository is private:
+gh api -H "Accept: application/vnd.github.raw" repos/astvision/dispatch/contents/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/astvision/dispatch/main/install.ps1 | iex
+# while the repository is private:
+gh api -H "Accept: application/vnd.github.raw" repos/astvision/dispatch/contents/install.ps1 | Out-String | iex
+```
+
+**2. Set up** with `dispatch init`. Create a bot with @BotFather (`/newbot`) first. The wizard uses the arrow keys and asks, step by step:
+
+1. **Who will use this bot:** just you, or your team.
+2. **The bot token:** typed masked, then checked with Telegram.
+3. **People:** you open the bot, press Start and confirm your name. For a team, teammates press Start while it waits, and when you add the bot to your team group it finds that group for its announcements. The bot answers each Start in Telegram. If nothing arrives, the wizard says what to check. For example, Telegram may not deliver your messages while the bot is connected under Settings > Chat Automation.
+4. **Claude Code:** found on your PATH, or given.
+5. **Projects:** the folders of your git clones, each with the branch tasks start from and, from a list, the model and effort.
+6. **Commits:** the author of Dispatch's commits.
+
+Or run `dispatch ui` and set it up in your browser: the same steps, with a QR code for the bot, buttons to confirm people, and a folder browser for your clones. On a server, open the page through `ssh -L` (see [Manage it in the browser](#manage-it-in-the-browser)).
+
+Both have an Advanced section that stays closed unless you open it (in the terminal: `dispatch init --advanced`): per project an alias, and a model and effort for planning and for execution; for the whole instance the timeout and budget per run for planning and for execution, how many runs at a time, the state directory and the GitHub CLI command. Whatever you leave alone keeps its default.
+
+It shows a summary and writes nothing until you confirm. Then it offers to keep Dispatch running in the background, also after a restart.
+
+| | Config | Secrets (only you can read) | State and log |
+|---|---|---|---|
+| macOS, Linux | `~/.config/dispatch/dispatch.yaml` | `~/.config/dispatch/dispatch.env` | `~/.local/state/dispatch` |
+| Windows | `%APPDATA%\Dispatch\dispatch.yaml` | `%APPDATA%\Dispatch\dispatch.env` | `%LOCALAPPDATA%\Dispatch` |
+
+Every change to the config — from the pages, `dispatch project add`, or the running bot adding someone who joined from Telegram — first takes an exclusive lock on `dispatch.yaml.lock` beside it, so two writers never lose each other's change; leave that file in place.
+
+**3. Use it.** Write a task to the bot in Telegram (see [Use it](#use-it)). From the terminal:
+
+```sh
+dispatch check                                   # config, bot token, claude, projects, gh: says what to fix
+dispatch service status                          # also: start, stop, install, uninstall
+dispatch project add ~/work/crm --effort high    # add another clone, then: dispatch service stop && dispatch service start
+dispatch run                                     # run in this terminal instead of the background
+dispatch ui                                      # manage it in your browser: projects, people, settings, logs
+```
+
+The service is a systemd user service on Linux, a launchd agent on macOS and a Task Scheduler task on Windows. It starts at login and restarts after a failure. On Linux, it keeps running after you log out only once lingering is on; `dispatch service status` says so.
+
+### A bot for just you
+
+Everything stays in your private chat: tasks, plans, corrections and results. To also see a project's one-line
+announcements in a Telegram group, add the bot to that group, or send `/status@<bot>` there if it is already in it —
+it asks you privately which project, and a tap links it, with no restart. To skip the question, add it through the project's
+add link instead (`/projects` privately, or **Telegram группт нэмэх** on the Mini App's project page): the group is linked
+to that project at once. A project may have several groups; each task is announced in the group it was given in (ADR 0025). In the group, `/task@<bot> text` or a message
+mentioning `@<bot>` opens the task in your private chat as usual (a reply mentioning the bot takes the replied
+message as the task); the group gets announcements and answers `/status@bot`. Mentioning a member there (`@username`, or
+picking them by name) gives them the message as a task in their private chat, ending with `Хүсэлт: <your name>`; this
+needs the bot to be the group's admin, and an `@username` works once that member has written to the bot. Unlink a group on
+the **Группүүд** screen (Home › Dispatch): the group keeps its projects and only the announcements stop — at once from the
+Mini App in Telegram, after a restart from `dispatch ui` (ADR 0023).
+
+### A bot for your team
+
+One machine runs the team's bot, with clones of the team's projects: a small server or an always-on computer. Run `dispatch init` there and choose **My team**. Everyone writes their tasks to the same bot, in their own private chat, and the team group gets a one-line announcement per task and outcome.
+
+- **Joining later:** someone new opens the bot and writes to it. The bot's admins (you, after `init`) get their name with a button per group and **Deny**. Allowing adds them to the config and they can give tasks at once, no restart needed. After a Deny, a person can ask again a day later.
+- **Admins:** `telegram.admins` in the config lists the Telegram user ids of the people who decide. **Upgrading:** a config with several members and no `telegram.admins` used to count as personal; it is now a team, so its Mini App management needs an admin — add yourself to `telegram.admins`.
+- **Config:** plain YAML you may edit by hand; `dispatch check` validates it. Per project: `path` (the clone), `baseBranch`, and optionally `model` and `effort` (`low`, `medium`, `high`, `xhigh` or `max`), for both phases or per phase: `plan: { model: opus, effort: high }` or `execute: { model: sonnet }`. Dispatch works in its own worktrees under the state directory and only adds `dispatch/<task>` branches to the clone.
+- **Linking a group:** an admin adds the bot to a Telegram group, or sends `/status@<bot>` there if it is already in it, and taps which project it's for, or adds it through the project's add link and is not asked (ADR 0025); the group then gets that project's announcements and answers `/status@bot`, and a member of it can start a task there with `/task@<bot> text` or by mentioning `@<bot>`: the task still opens in their private chat. Unlink a group on the **Группүүд** screen — it keeps its projects, only the announcements stop; from the Mini App in Telegram this applies at once, from `dispatch ui` after a restart (ADR 0023).
+- **Workers:** once a group has a chat, each member's tasks run on their own computer, not this machine's: `workers.publicUrl` and `workers.port` are then required (`dispatch init` and `dispatch ui` both ask for them; see `deploy/example.yaml`). Dispatch listens only on `127.0.0.1:<port>`; publish `publicUrl` in front of it with a tunnel, a reverse proxy or a private network. This machine needs no `claude` for tasks and no `gh` at all — only members' computers do. **Upgrading an existing team config:** add a `workers` block before starting this version, or Dispatch refuses to start. Send `/worker` in the bot's private chat for a pairing code, and again to list or revoke your computers.
+
+### Your own computer in a team
+
+Your tasks run where your Claude Code login, your clones and your `gh` are: on your own machine. Once:
+
+```sh
+dispatch worker init      # asks for the team URL and a code from /worker, then sets everything up
+```
+
+It pairs this computer, fetches the projects your team has for you, maps each one to a clone you already have (or clones it), asks for a model and effort per project if you want your own, checks `claude --version` and `gh auth status`, writes `worker.yaml` and an owner-only `worker.env`, and offers to keep it running in the background. After that:
+
+```sh
+dispatch check                    # the whole computer: pairing, the team, claude, gh, each project's clone
+dispatch worker run               # run in this terminal instead of the background
+dispatch worker service status    # install | start | stop | status | uninstall
+```
+
+Tasks you give the bot wait until this computer is connected, and continue on it after a restart. They also wait while this computer cannot do them: when Claude Code will not start, when `gh` is logged out (which holds only execution, not planning), or when a project's clone is missing. The bot tells you privately, once, which of these is wrong and how to fix it, and `/status` shows the same. Once it is fixed, the task starts by itself within a minute, or at once if you restart `dispatch worker run`. Nothing of your code, your Claude sessions or your credentials reaches the team machine — see SECURITY.md. Worktrees of tasks nothing has touched for a week are removed here automatically; anything with uncommitted changes or unpushed commits is kept. A removed worktree's git-ignored content (build output, a copied `.env`) goes with it.
+
+Two `dispatch worker run` processes must never share one state directory: a second one refuses to start while the first holds it, because otherwise each would treat the other's live agents as orphans left over from a crash and kill them. If you installed the background service (`dispatch worker init` offers this), stop it first (`dispatch worker service stop`) before running `dispatch worker run` by hand.
+
+### Help the agent: CLAUDE.md
+
+Every planning and execution run reads the project's `CLAUDE.md` (or `.claude/CLAUDE.md`) as committed on its base branch. Without one, each run first spends several tool calls finding its way around. Keep it short, because every run pays for reading it:
+- what the project is and where its main code lives
+- the exact commands to build it and run its tests
+- conventions a change must follow, and what not to touch
+
+`dispatch check` names the projects that have none.
+
+### Manage it in the browser
+
+`dispatch ui` shows Dispatch's version and files, whether the background service runs, and everything `dispatch check`
+finds, with what to do about it. It prints a link and opens it in your browser; the link works once, and Ctrl+C stops the
+page. Without a config, the page sets Dispatch up, step by step, as `dispatch init` does.
+
+With a config, the page has a menu:
+
+- **Overview:** the version and files, the background service with **Restart**, and what `dispatch check` finds.
+- **Projects:** add a clone with the folder browser; change a project's base branch, alias, model and effort, for both phases or per phase; remove it. A project's model may be any model id (for example `claude-opus-5`), while setup offers Sonnet, Opus and Fable.
+- **People:** each group's members and the admins: rename, remove, make or unmake admin. New people still join by writing to the bot and an admin's approval in Telegram.
+- **Settings:** the timeout and budget per run, how many runs at a time, the commit author, and the Claude Code and GitHub CLI commands.
+- **Logs:** the background service's log, refreshed every 2 seconds, filtered by level and event, with secrets masked.
+
+A save changes only the lines it must, so your comments and layout stay, and keeps the previous file as `dispatch.yaml.bak`. It is refused when the file changed on disk since the page loaded it: reload and try again. The running Dispatch reads its config when it starts, so after a save the page offers **Restart now**.
+
+On a server, from your own computer:
+
+```sh
+ssh -L 7878:localhost:7878 you@server    # then, on the server:
+dispatch ui --no-browser                 # and open the link it prints on your computer
+```
+
+The tunnel's local and remote ports must match (as above): the page only accepts requests for its own port. The page
+listens only on the machine it runs on. Anyone with its link can act as you, like a shell: see SECURITY.md.
+
+### Manage it from Telegram
+
+The same pages open inside Telegram: send `/manage` to the bot and tap the button it answers with. It opens on your
+tasks: those waiting on you first (a plan to approve, or its questions to answer), then what is running with its latest
+step, then the last few finished. Tap a waiting task to read its plan, answer its questions (a choice, your own words, or
+"you decide") and approve or reject it, with the same rules as the chat's buttons; the chat keeps working either way. A
+row at the bottom leads to the rest. **Төслүүд** lists the bot's projects, laid out like BotFather's: search, then a row
+per project. Tap one for its tasks and, for an admin, a row
+per setting (base branch, alias, model and effort, per phase), each changed on its own screen, and Remove. Admins also
+get **Add a project**, the group's tasks, and the People, Settings, Logs and Overview pages; a member gets their groups'
+projects and their own tasks. A saved change says to restart until you do, from any screen. It is **off unless you turn it on**, and turning it on puts a shell-equivalent API on the internet: read
+[SECURITY.md](SECURITY.md) first.
+
+Publish one `https://` address that forwards to a local port — a Cloudflare Tunnel, a Tailscale Funnel or a reverse
+proxy with a domain — and add it to `dispatch.yaml`:
+
+```yaml
+miniApp:
+  publicUrl: https://dispatch.example.com   # your tunnel or reverse proxy
+  port: 7879                                # Dispatch listens on 127.0.0.1:<port>; the tunnel forwards to it
+```
+
+Restart Dispatch, and `dispatch check` will say whether the port answers and whether your URL reaches it. A member gets
+their own tasks, with **Cancel** and **Retry**; an admin also gets every task of their groups and the management pages
+above. Another member's task shows only its headline. Plans are still approved, corrected and rejected in the chat, and
+Dispatch is still set up with `dispatch init` or `dispatch ui` — never from Telegram.
+
+## Set up a team instance with systemd (Linux server)
+
+For a dedicated server with an OS user per team, run Dispatch as a system service instead. The examples use the instance `backend`.
+
+**1. Create the bot.** Create it with @BotFather. Leave privacy mode enabled (the default). Make the bot a group admin only if members should give each other tasks by mentioning them there: only admins receive every message, and everything else works without it. Add the bot to each group it serves. Every member opens the bot once and presses **Start**: tasks are given in that private chat. Optionally, turn on topics (threaded mode) for the bot's private chats in @BotFather: each task then gets its own topic there. Dispatch checks this at startup (`task_topics=true` in the `dispatch.started` log line).
+
+**2. Find the ids before starting Dispatch.** Dispatch leaves any group whose id is not in `telegram.groups`.
+1. In each group, each member sends `/help@<bot_username>`.
+2. Read the ids:
+
+```sh
+curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" \
+  | jq '.result[].message | {group: .chat.id, member: .from.id, name: .from.first_name}'
+```
+
+Later, when a non-member runs a command, the log line `event=member.not_allowed requester=telegram:<id>` shows their id.
+
+**3. Install on the server (as root).**
+
+```sh
+useradd --system --create-home dispatch-backend
+install -d -o dispatch-backend -g dispatch-backend -m 750 /var/lib/dispatch/backend/repos
+
+# Claude Code for the instance user (ends up in ~dispatch-backend/.local/bin/claude), and the GitHub CLI for delivery
+sudo -u dispatch-backend -i sh -c 'curl -fsSL https://claude.ai/install.sh | bash'
+dnf install gh        # or apt install gh; see https://github.com/cli/cli#installation
+
+# One clone per project, named as in the config. For private repos, pass the token without storing it in .git/config.
+sudo -u dispatch-backend GH_TOKEN=github_pat_... git \
+  -c credential.helper='!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' \
+  clone https://github.com/acme/autoland-management.git /var/lib/dispatch/backend/repos/autoland-management
+
+install -D -m 644 target/dispatch-0.1.0.jar /opt/dispatch/dispatch.jar
+install -D -m 644 deploy/example.yaml /etc/dispatch/backend.yaml     # then edit it
+install -D -m 600 deploy/example.env  /etc/dispatch/backend.env      # then fill in the secrets
+install -m 644 deploy/dispatch@.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now dispatch@backend
+```
+
+Check that `journalctl -u dispatch@backend` shows `event=dispatch.started`, then send `/help@<bot_username>` in the group. Set a monthly spend limit on the team's API key in the Anthropic Console.
+
+In the config, list each group under `telegram.groups` with its `chatId`, `members` and the `projects` it owns (a person may be in several groups, and a project may be in several too, one per chat it is announced in; ADR 0025). Set `delivery.authorName`/`authorEmail` (the git identity of delivery commits) and `limits.execute`. The GitHub token needs Contents and Pull requests read/write on the team's repositories. Execution runs in auto mode, which not every model has: set the project's `model` to Sonnet or Opus, or leave it unset if the account's default model is one of them. With Haiku, every execution run fails with a permission-mode error.
+
+## Use it
+
+**In your private chat with the bot**
+
+| You | Dispatch |
+|---|---|
+| write anything as a plain message: a question ("юу хийгдэж байна?", "#12 яагаад унасан бэ?"), a request, or what to do with a task | Your assistant answers, reading your tasks and your projects' code. What it would change — a new task, an answer to a plan's question, approve, reject, cancel, retry, a follow-up — it lists under its reply with a **✅ N.** button each; nothing happens until you tap one, and a tap runs once. "сайн бодоорой" in the message makes a stronger model answer. If the assistant fails, it says so and offers your message as a task instead |
+| `/new` | Starts a fresh conversation; 12 hours of silence does the same |
+| `/task text` (or forward a message after `/task`) | Asks with buttons for the project (skipped if you have only one) and the priority 🔴 🟡 🟢, then queues the task |
+| send a photo or file with the task (as its caption) | The agent gets it to read. Files over 20 MB are skipped, and the prompt says so |
+| `/task alm Fix the login timeout` | The same, with the project already named. A ✅ task button under the assistant's reply opens the same prompt |
+| **✂️ Салгах** on that prompt | Haiku lists the separate tasks in your message (about $0.015, a few seconds). **✂️ N даалгавар болгох** gives each its own prompt; **Нэг даалгавар** keeps the message as one task |
+| **Approve** on the plan | The agent implements it; Dispatch commits, pushes `dispatch/N` and sends you the draft PR link and summary |
+| reply to the plan, or write in the task's topic | A correction: the agent revises the plan in the same session |
+| ❓ question messages under a plan with open questions | One at a time. Answer each in one of three ways: one of the agent's likely answers as a button, your own words, or **🤷 Та шийд**. The last answer sends them all to the agent as one correction, and it revises the plan |
+| an answer button on a ❓ question | That option is your answer |
+| **✍️ Өөрөөр хариулах**, then reply to its prompt, or reply to the ❓ question | Your own words, as text, are the answer. Tapping ✍️ again while its prompt is open points you back to that prompt |
+| **🤷 Та шийд** | The agent picks the most reasonable answer and notes it as an assumption |
+| answer a ❓ question twice, or one of an outdated plan | Dispatch says the question is already answered, or that the plan is outdated; nothing changes |
+| **Reject** on the plan | Closes the task |
+| reply to the result, or write in a finished task's topic | A follow-up: the agent continues in the same session, and one more commit goes to the same pull request |
+| `/retry N` | Repeats task N's failed step: a failed plan is planned again, a failed execution continues, a failed delivery is only delivered again |
+| `/status` | What is running (with the agent's latest action on your own tasks), queued and awaiting approval in your groups, with buttons to change your tasks' priority |
+| `/history`, `/history N` | The last 10 finished tasks with who gave them and when; task N's timeline |
+| `/stats` | Your numbers, each group's and per person, for 7 days, this month or all time; your own view also shows what talking to the assistant cost |
+| `/cancel N` | Cancels task N |
+| `/projects` | Your projects with their base branch, and why any cannot take tasks now |
+
+Each plan and result ends with the model that answered, the cost and the duration. A ⚠️ line appears when the model isn't the one the config asks for.
+
+**In a group**, Dispatch posts a line when a task is given for one of the group's projects (who, project, priority, title) and a line per outcome: done with the PR link, failed with the reason, rejected, or cancelled. `/status@bot`, `/history@bot`, `/stats@bot` and `/projects@bot` there cover that group's projects. Replying to an outcome line there is a follow-up too. A member of the group gives a task there with `/task@bot text` or a message mentioning `@bot` (replying to a message takes that message as the task): the draft with its project and priority buttons opens in their private chat, with the project already chosen if `/task@bot project text` names one of the group's or the group has just one. For that message, the group hears back by reaction, not a line: 👀 once the prompt reaches the private chat, ✍ once the task is created, then 👍 or 👎 once it finishes — or, if they never pressed Start there, a hint to do so (unchanged). Each member picks how their own group hears from them, on the Mini App's Home screen under **Миний тохиргоо**: **Реакц** (the default, just the reactions above), **Реакц + мөр** (also a short "<name> ажиллаж байна" line when the task is created), or **Чимээгүй** (nothing at all). If Telegram refuses a reaction (e.g. reactions turned off in that chat), the 👀 state falls back once to the old `✉️ <name>: sent to the private chat` line; a later state is only logged. Mentioning another member of the group's projects (`@username` or a name picked from the list) gives them the message as a task the same way, by their own choice: the draft opens in their private chat with `Хүсэлт: <author>` as its last line. If the group has no project someone can take a task for now, the group gets one line naming them (all of them, for a message mentioning several). Anyone in the group can do this, including someone who is not a member, such as a manager assigning work: the draft is still the developer's, and nothing starts until they choose to. An `@username` is known once that member has written to the bot or in the group; an unknown one mentioned by a member gets a one-line answer, at most once a day per group and name, and one mentioned by anyone else is left alone. The bot sees such mentions only as the group's admin, or with privacy mode disabled in @BotFather (`/setprivacy`, then remove and re-add the bot to the group). `/cancel` and `/retry` stay private. With privacy mode on, only `/command@<bot_username>` reliably reaches the bot in a group.
+
+Only configured members can give tasks, and only for their groups' projects. Anyone else is told so in a private chat; in a group the bot stays quiet and only logs it (`member.not_allowed`), so a busy group's chatter with the bot is not answered with refusals. Only the requester can approve, correct, reject, reprioritize, follow up on or retry their task; the requester or an admin can cancel it. Other members see only a task's headline: who, project, title, priority, state and pull request, not its plan, the agent's actions or its cost. A plan with open questions has no Approve button: answer its ❓ question messages, or reply to the plan with a correction, which makes the remaining question buttons stale. The most urgent queued task starts first; nothing running is interrupted.
+
+## Run from a checkout
+
+```sh
+./install.sh                           # builds this checkout and installs it; .\install.ps1 on Windows
+dispatch init --config dev.yaml        # dev.yaml and dev.env are git-ignored
+dispatch run --config dev.yaml
+```
+
+Locally, `claude` uses your own login. Your plugins and MCP servers are not loaded into agent runs, but the repository's `CLAUDE.md` is.
+
+## Operate
+
+- **Logs:** `journalctl -u dispatch@backend -f`. Lines are logfmt; grep for `level=ERROR` or `event=task.transition`.
+- **State:** `sqlite3 /var/lib/dispatch/backend/dispatch.db`
+
+  ```sql
+  SELECT id, phase, project, title, pr_url, failure_reason FROM task ORDER BY id DESC LIMIT 20;
+  SELECT task_id, seq, kind, cause, status, cost_usd, turns, error_detail FROM run ORDER BY task_id DESC LIMIT 20;
+  SELECT id, kind, status, attempts, last_error FROM outbox WHERE status <> 'SENT';
+  SELECT * FROM task_event WHERE task_id = 42 ORDER BY id;
+  ```
+- **Config check:** `dispatch check --config <file>` names each problem and what to do about it.
+- **Raw agent output:** `/var/lib/dispatch/backend/runs/<task>/<run>.jsonl` and `.stderr`; splits under `splits/<draft>-<epoch millis>.jsonl`. Grep the log for `event=split.` to see what each split cost.
+- **Restarts:** stopping or restarting interrupts active runs. They fail as `INTERRUPTED` and the group is told.
+- **Worktrees:** every hour, worktrees of tasks idle for `worktrees.idleDays` (default 7) are removed: a completed or failed task's only when it is clean and pushed (otherwise `event=sweeper.kept`), a rejected or cancelled task's anyway. The `dispatch/<id>` branch stays, and a later follow-up or retry recreates the worktree from it.
+- **Clones:** a project with a `repo` and no clone is cloned into `repos/<name>` when Dispatch starts; until then `/projects` shows it as cloning, and a failed clone as the git error (`event=project.clone_failed`).
+- **Attachments:** downloaded into `attachments/<task>/`, outside the worktree, so they are never delivered.
+- **Delivery:** commits are made without hooks or signing, as `delivery.authorName`. A failed push or PR creation fails the task as `DELIVERY`; the work stays in the worktree and `/retry` delivers it without the agent.
+- **Bot texts:** `src/main/resources/messages_mn.properties`.
