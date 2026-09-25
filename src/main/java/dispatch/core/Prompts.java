@@ -26,17 +26,23 @@ final class Prompts {
             options: 2 to 4 short likely answers the requester can pick with one tap, each at most 40 characters, in \
             the same language as the question
 
+            Be brief and exact: short sentences, one fact each, no filler or restating. Say only what you found in the \
+            code; mark a guess as a guess.
+
             Language: write all text in the natural language used inside <task> (a task written in Mongolian gets a \
             Mongolian plan, a task written in English gets an English plan). Keep code identifiers, file paths and \
             commands unchanged.
             """;
 
+    /** The summary is the chat's result message and the pull request's body: brief, since the diff carries the detail. */
     private static final String EXECUTE_RULES = """
             Rules:
             - Do not commit, push, create branches or open pull requests; Dispatch delivers your changes.
             - Keep the change focused on the approved plan.
             - Run the relevant tests if they are quick to run.
-            - Finish with a short plain-text summary (no Markdown) of what you changed and the test results.
+            - Finish with a brief plain-text summary (no Markdown) of at most 5 short lines: what changed (each file in \
+            one clause), the test result in one line, and only the assumptions the team must know. No background, no \
+            restating the plan, no list of every detail: the diff shows those. State only what you verified.
 
             Language: write the summary in the natural language used inside <task> (a task written in Mongolian gets a \
             Mongolian summary, a task written in English gets an English summary). Keep code identifiers, file paths \
