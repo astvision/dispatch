@@ -296,16 +296,15 @@ class AppTest {
     }
 
     /**
-     * The Mini App is opened from /manage, and Dispatch never touches the chat menu button at all: Telegram's menu
-     * button is either the commands or a web app, so setting it would take a member's command list away.
+     * With a Mini App, the chat menu button opens it (ADR 0019, amended); without one, it is set back to the command
+     * list, so a button left over from an earlier run never points at an address that no longer answers.
      */
     @Test
-    void theChatMenuButtonIsLeftAlone() throws Exception {
+    void withoutAMiniAppTheMenuButtonIsTheCommandList() throws Exception {
         app = start();
-        telegram.awaitRequest("setMyCommands", WAIT);
-        telegram.awaitRequest("setMyCommands", WAIT);
 
-        assertTrue(telegram.drain("setChatMenuButton").isEmpty(), "a member keeps whatever menu button they had");
+        JsonNode button = telegram.awaitRequest("setChatMenuButton", WAIT).json().path("menu_button");
+        assertEquals("commands", button.path("type").asText());
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 

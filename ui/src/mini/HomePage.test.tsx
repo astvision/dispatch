@@ -67,32 +67,40 @@ describe("the home screen", () => {
     vi.resetAllMocks();
   });
 
-  it("shows the pass, the rail and what was served", async () => {
+  it("lists what waits on me, what is moving and what finished, each task with its state in words", async () => {
     renderHome([waitingOnQuestion, waitingOnApproval, planning, queued, myFinishedTask]);
 
-    const pass = await screen.findByRole("region", { name: "Таны шийдвэр" });
-    expect(await within(pass).findByRole("button", { name: "Хариулах" })).toBeInTheDocument();
-    expect(within(pass).getByRole("button", { name: "Төлөвлөгөө үзэх" })).toBeInTheDocument();
-    expect(within(pass).getByText("Which environments?")).toBeInTheDocument();
-    expect(within(pass).getByText(/Төлөвлөгөө бэлэн/)).toBeInTheDocument();
-    const rail = screen.getByRole("region", { name: "Явж байна" });
-    expect(within(rail).getByText("7 · Read src/auth.ts")).toBeInTheDocument();
-    expect(within(rail).getByText("дараалалд")).toBeInTheDocument();
+    const waiting = await screen.findByRole("region", { name: "Таны шийдвэр" });
+    expect(await within(waiting).findByRole("button", { name: /^Make the login timeout configurable/ })).toHaveTextContent("2 асуулт: Which environments?");
+    expect(within(waiting).getByRole("button", { name: /^Add the CSV export/ })).toHaveTextContent("Төлөвлөгөө бэлэн");
+    const moving = screen.getByRole("region", { name: "Явж байна" });
+    expect(within(moving).getByText("7 · Read src/auth.ts")).toBeInTheDocument();
+    expect(within(moving).getByText("дараалалд")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Дууссан" })).getByText("хүргэсэн")).toBeInTheDocument();
     expect(screen.getByLabelText("2 даалгавар таныг хүлээж байна")).toBeInTheDocument();
     expect(api.listTasks).toHaveBeenCalledWith("me");
   });
 
+  it("finds a task by its title, project or number", async () => {
+    renderHome([waitingOnQuestion, waitingOnApproval]);
+    await screen.findByRole("button", { name: /^Add the CSV export/ });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Даалгавар хайх" }), { target: { value: "#10" } });
+
+    expect(screen.queryByRole("button", { name: /^Add the CSV export/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Make the login timeout configurable/ })).toBeInTheDocument();
+  });
+
   it("says in one line when nothing waits on me, and when nothing moves or was served", async () => {
     renderHome([]);
 
-    expect(await screen.findByText(/Таны шийдвэр хүлээсэн зүйл алга/)).toBeInTheDocument();
-    expect(screen.getByText("Одоо ажиллаж буй даалгавар алга.")).toBeInTheDocument();
-    expect(screen.getByText("Дууссан даалгавар алга.")).toBeInTheDocument();
+    expect(await screen.findByText("Таны шийдвэр хүлээсэн зүйл алга")).toBeInTheDocument();
+    expect(screen.getByText("Одоо ажиллаж буй даалгавар алга")).toBeInTheDocument();
+    expect(screen.getByText("Дууссан даалгавар алга")).toBeInTheDocument();
     expect(screen.getByLabelText("0 даалгавар таныг хүлээж байна")).toBeInTheDocument();
   });
 
-  it("answers the questions in the sheet one at a time; the last answer sends the ticket off the pass", async () => {
+  it("answers the questions in the sheet one at a time; the last answer closes the sheet and asks for the list again", async () => {
     const afterFirst = detailOf(waitingOnQuestion, {
       ...planWithQuestions,
       questions: [{ ...planWithQuestions.questions[0], answer: "prod" }, planWithQuestions.questions[1]],
@@ -102,7 +110,7 @@ describe("the home screen", () => {
       .mockResolvedValueOnce({ ...afterFirst, phase: "PLANNING", result: "ANSWERED" });
     renderHome([waitingOnQuestion]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Хариулах" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Make the login timeout configurable/ }));
     const sheet = await dialog();
     expect(await within(sheet).findByText("Make the timeout a setting")).toBeInTheDocument();
     expect(within(sheet).getByRole("button", { name: "Зөвшөөрөх" })).toBeDisabled();
@@ -116,7 +124,6 @@ describe("the home screen", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(bridge.TelegramWebviewProxy!.postEvent).toHaveBeenCalledWith("web_app_trigger_haptic_feedback",
       JSON.stringify({ type: "notification", notification_type: "success" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Хариулах" })).not.toBeInTheDocument());
     await waitFor(() => expect(vi.mocked(api.listTasks).mock.calls.length).toBeGreaterThan(1));
   });
 
@@ -124,7 +131,7 @@ describe("the home screen", () => {
     vi.mocked(api.answerQuestion).mockResolvedValue({ ...detailOf(waitingOnQuestion, planWithQuestions), result: "ANSWERED" });
     renderHome([waitingOnQuestion]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Хариулах" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Make the login timeout configurable/ }));
     const sheet = await dialog();
     fireEvent.click(await within(sheet).findByRole("button", { name: "✍️ Өөрөөр" }));
     fireEvent.change(within(sheet).getByRole("textbox", { name: "Өөрийн хариулт" }), { target: { value: " only staging " } });
@@ -138,7 +145,7 @@ describe("the home screen", () => {
     vi.mocked(api.approvePlan).mockResolvedValue({ result: "APPROVED" });
     renderHome([waitingOnApproval]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Төлөвлөгөө үзэх" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Add the CSV export/ }));
     const sheet = await dialog();
     await within(sheet).findByText("Default to 30 minutes");
     fireEvent.click(within(sheet).getByRole("button", { name: "Зөвшөөрөх" }));
@@ -152,7 +159,7 @@ describe("the home screen", () => {
     vi.mocked(api.rejectPlan).mockResolvedValue({ result: "REJECTED" });
     renderHome([waitingOnApproval]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Төлөвлөгөө үзэх" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Add the CSV export/ }));
     const sheet = await dialog();
     fireEvent.click(await within(sheet).findByRole("button", { name: "Татгалзах" }));
     expect(api.rejectPlan).not.toHaveBeenCalled();
@@ -165,7 +172,7 @@ describe("the home screen", () => {
     vi.mocked(api.answerQuestion).mockRejectedValue(new api.ApiError("stale", "this plan was replaced by a newer one"));
     renderHome([waitingOnQuestion]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Хариулах" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Make the login timeout configurable/ }));
     const sheet = await dialog();
     fireEvent.click(await within(sheet).findByRole("button", { name: "staging" }));
 
@@ -175,12 +182,12 @@ describe("the home screen", () => {
 
   it("closes the sheet with Telegram's Back button", async () => {
     renderHome([waitingOnQuestion]);
-    fireEvent.click(await screen.findByRole("button", { name: "Хариулах" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Make the login timeout configurable/ }));
     await dialog();
 
     act(() => bridge.Telegram.WebView.receiveEvent("back_button_pressed", null));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Хариулах" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Make the login timeout configurable/ })).toBeInTheDocument();
   });
 });

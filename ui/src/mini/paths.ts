@@ -5,7 +5,8 @@ export type Field = "baseBranch" | "alias" | "model" | "effort" | "plan" | "exec
 export const FIELDS: Field[] = ["baseBranch", "alias", "model", "effort", "plan", "execute"];
 
 /** Pages from `dispatch ui` reached from the home screen, by path. */
-export type PagePath = "/projects" | "/tasks" | "/group-tasks" | "/people" | "/settings" | "/logs" | "/overview" | "/groups" | "/prefs";
+export type PagePath = "/projects" | "/tasks" | "/group-tasks" | "/people" | "/settings" | "/logs" | "/overview" | "/groups" | "/prefs"
+  | "/guide";
 
 export type Screen =
   | { kind: "home" }
@@ -14,7 +15,7 @@ export type Screen =
   | { kind: "project"; name: string }
   | { kind: "field"; name: string; field: Field };
 
-const PAGES: PagePath[] = ["/projects", "/tasks", "/group-tasks", "/people", "/settings", "/logs", "/overview", "/groups", "/prefs"];
+const PAGES: PagePath[] = ["/projects", "/tasks", "/group-tasks", "/people", "/settings", "/logs", "/overview", "/groups", "/prefs", "/guide"];
 export const ADMIN_PAGES: PagePath[] = ["/group-tasks", "/people", "/settings", "/logs", "/overview", "/groups"];
 
 // The server answers a path whose last segment has a dot as a file, not as this page, so a dot is escaped too.

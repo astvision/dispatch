@@ -56,7 +56,7 @@ function listen() {
   });
 }
 
-function post(eventType: string, eventData: object) {
+export function post(eventType: string, eventData: object) {
   if (bridge.TelegramWebviewProxy) {
     bridge.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(eventData));
   } else if (window.parent !== window) {

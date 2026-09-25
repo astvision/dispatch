@@ -83,7 +83,11 @@ public final class UiServer implements AutoCloseable {
             ".ico", "image/x-icon",
             ".json", "application/json; charset=utf-8",
             ".woff2", "font/woff2");
+    private static final java.util.Set<String> COMPRESSIBLE = java.util.Set.of(".html", ".js", ".css", ".svg", ".json");
     private static final int MAX_BODY = 64 * 1024;
+
+    /** The bundled files never change while the server runs, so each is compressed once. */
+    private final Map<String, byte[]> gzipped = new java.util.concurrent.ConcurrentHashMap<>();
 
     private final HttpServer server;
     private final Auth auth;
@@ -261,8 +265,30 @@ public final class UiServer implements AutoCloseable {
             exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPES.getOrDefault(extension, "application/octet-stream"));
             // Vite names assets by their content, so they may be cached; index.html must not be.
             exchange.getResponseHeaders().set("Cache-Control", file.startsWith("/assets/") ? "max-age=31536000, immutable" : "no-store");
-            send(exchange, 200, bytes);
+            exchange.getResponseHeaders().set("Vary", "Accept-Encoding");
+            if (COMPRESSIBLE.contains(extension) && acceptsGzip(exchange)) {
+                // The Mini App reaches the phone through the owner's tunnel, where the uncompressed bundle took seconds.
+                exchange.getResponseHeaders().set("Content-Encoding", "gzip");
+                send(exchange, 200, gzipped.computeIfAbsent(file, unused -> gzip(bytes)));
+            } else {
+                send(exchange, 200, bytes);
+            }
         }
+    }
+
+    private static boolean acceptsGzip(HttpExchange exchange) {
+        String accepted = exchange.getRequestHeaders().getFirst("Accept-Encoding");
+        return accepted != null && accepted.toLowerCase(java.util.Locale.ROOT).contains("gzip");
+    }
+
+    private static byte[] gzip(byte[] bytes) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(bytes.length / 3);
+        try (java.util.zip.GZIPOutputStream zip = new java.util.zip.GZIPOutputStream(out)) {
+            zip.write(bytes);
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException("cannot gzip a bundled file", e);
+        }
+        return out.toByteArray();
     }
 
     /**

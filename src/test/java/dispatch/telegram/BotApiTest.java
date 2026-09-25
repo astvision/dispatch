@@ -48,6 +48,38 @@ class BotApiTest {
     }
 
     @Test
+    void profilePhotoTakesTheSmallestSizeWideEnough() throws Exception {
+        telegram.respond("getUserProfilePhotos", 200, "{\"ok\":true,\"result\":{\"total_count\":1,\"photos\":[["
+                + "{\"file_id\":\"s\",\"width\":160},{\"file_id\":\"m\",\"width\":320},{\"file_id\":\"l\",\"width\":640}]]}}");
+        telegram.addFile("m", "medium".getBytes(StandardCharsets.UTF_8));
+
+        byte[] photo = api.profilePhoto(1, 200).orElseThrow();
+
+        assertEquals("medium", new String(photo, StandardCharsets.UTF_8));
+        assertEquals(1, telegram.awaitRequest("getUserProfilePhotos", Duration.ofSeconds(1)).json().get("user_id").asLong());
+    }
+
+    @Test
+    void theMenuButtonOpensTheMiniAppOrListsTheCommands() throws Exception {
+        api.setMenuButton("Удирдах", "https://dispatch.example.com");
+        api.setMenuButton("Удирдах", null);
+
+        JsonNode open = telegram.awaitRequest("setChatMenuButton", Duration.ofSeconds(1)).json().get("menu_button");
+        assertEquals("web_app", open.get("type").asText());
+        assertEquals("Удирдах", open.get("text").asText());
+        assertEquals("https://dispatch.example.com", open.get("web_app").get("url").asText());
+        JsonNode off = telegram.awaitRequest("setChatMenuButton", Duration.ofSeconds(1)).json().get("menu_button");
+        assertEquals("commands", off.get("type").asText());
+    }
+
+    @Test
+    void aBotWithoutAPhotoHasNone() {
+        telegram.respond("getUserProfilePhotos", 200, "{\"ok\":true,\"result\":{\"total_count\":0,\"photos\":[]}}");
+
+        assertTrue(api.profilePhoto(1, 160).isEmpty());
+    }
+
+    @Test
     void malformedTokenIsRefusedWithoutRepeatingIt() {
         // A stray space from a hand-edited secrets file; URI.create would put the whole token into its message.
         String malformed = "123456789" + ":AAH-fake token-for-tests";

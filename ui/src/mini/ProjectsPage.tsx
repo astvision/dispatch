@@ -35,7 +35,7 @@ export default function ProjectsPage({ me, navigate }: { me: Me; navigate: (path
       <Section>
         {me.admin && (
           <Row leading={<span aria-hidden="true" className="mini-row-icon"><PlusCircleOutlined /></span>}
-               title={<span style={{ color: token.colorPrimary }}>Төсөл нэмэх</span>} onClick={() => navigate(ADD_PATH)} />
+               title={<span style={{ color: token.colorLink }}>Төсөл нэмэх</span>} onClick={() => navigate(ADD_PATH)} />
         )}
         {!projects && !error && <div style={{ padding: 16 }}><Spin /></div>}
         {projects && shown.map((project) => (

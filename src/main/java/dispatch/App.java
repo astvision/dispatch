@@ -178,7 +178,7 @@ public final class App {
                     Duration.ofSeconds(60), chatRef -> api.sendTyping(Long.parseLong(chatRef.substring(chatRef.indexOf(':') + 1))),
                     outboxSignal::wake);
         }
-        registerCommandMenus(api, renderer, groups, config.miniApp() != null, assistant != null);
+        registerCommandMenus(api, renderer, groups, config.miniApp() == null ? null : config.miniApp().publicUrl(), assistant != null);
         OutboxSender sender = new OutboxSender(db, api, renderer, redactor, outboxSignal, clock, Duration.ofSeconds(30));
         GroupLinks groupLinks = new GroupLinks(groups, GroupWriter.file(configFile, environment), clock, outboxSignal::wake);
         UpdateHandler handler = new UpdateHandler(db, tasks, new Membership(groups, members, clock, outboxSignal::wake), groups, projects,
@@ -191,7 +191,8 @@ public final class App {
         UiServer miniApp = null;
         if (config.miniApp() != null) {
             try {
-                miniApp = dispatch.ui.MiniApp.start(config, configFile, db, tasks, groups, botUsername, BotApi::create, environment, clock, "/ui")
+                miniApp = dispatch.ui.MiniApp.start(config, configFile, db, tasks, groups, botUsername,
+                        dispatch.ui.MiniApp.botPhoto(api, me.path("id").asLong()), BotApi::create, environment, clock, "/ui")
                         .orElse(null);
             } catch (java.io.IOException e) {
                 throw new IllegalStateException("cannot listen on 127.0.0.1:" + config.miniApp().port()
@@ -300,7 +301,13 @@ public final class App {
     }
 
     /** Best effort: a group's menu fails while the bot is not yet in it, and works again on the next start. */
-    private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups, boolean miniApp, boolean assistant) {
+    private static void registerCommandMenus(BotApi api, Renderer renderer, Groups groups, String miniAppUrl, boolean assistant) {
+        boolean miniApp = miniAppUrl != null;
+        try {
+            api.setMenuButton(renderer.text("manage.button"), miniAppUrl);
+        } catch (TelegramException e) {
+            Log.warn("telegram.menu_button_failed", "error", e.getMessage());
+        }
         for (Config.Group group : groups.all()) {
             if (group.chatId() == null) {
                 continue;

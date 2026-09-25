@@ -58,7 +58,7 @@ class MiniAppServerTest {
         groups = new Groups(config.telegram());
         TaskService tasks = new TaskService(groups, new Projects(config.projects(), project -> Optional.empty()),
                 new ActiveRuns(), new TestClock(NOW), () -> { }, () -> { });
-        server = MiniApp.start(config, configFile, db, tasks, groups, "dispatch_backend_bot", token -> {
+        server = MiniApp.start(config, configFile, db, tasks, groups, "dispatch_backend_bot", "data:image/jpeg;base64,cGhvdG8=", token -> {
             // Only an unlink's best-effort leave asks for one, and it survives this as it survives Telegram failing.
             throw new IllegalStateException("no bot in these tests");
         }, Map.of("TELEGRAM_BOT_TOKEN", TOKEN), java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC), "/ui-test").orElseThrow();
@@ -83,6 +83,19 @@ class MiniAppServerTest {
     }
 
     @Test
+    void theBundleIsSentGzippedToAClientThatTakesIt() throws Exception {
+        String plain = get("/assets/app.js", null).body();
+        HttpResponse<byte[]> zipped = http.send(HttpRequest.newBuilder(uri("/assets/app.js")).header("Accept-Encoding", "gzip").GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+
+        assertEquals("gzip", zipped.headers().firstValue("Content-Encoding").orElseThrow());
+        try (var in = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(zipped.body()))) {
+            assertEquals(plain, new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+        }
+        assertTrue(get("/assets/app.js", null).headers().firstValue("Content-Encoding").isEmpty(), "and plain to one that does not");
+    }
+
+    @Test
     void telegramsClientsMayFrameThePage() throws Exception {
         HttpResponse<String> page = get("/", null);
 
@@ -101,6 +114,7 @@ class MiniAppServerTest {
         assertTrue(member.body().contains("\"admin\":false"), member.body());
         assertTrue(admin.body().contains("\"admin\":true"), admin.body());
         assertTrue(member.body().contains("\"bot\":\"dispatch_backend_bot\""), "the header names the bot: " + member.body());
+        assertTrue(member.body().contains("\"botPhoto\":\"data:image/jpeg;base64,cGhvdG8=\""), "and shows its photo: " + member.body());
     }
 
     @Test

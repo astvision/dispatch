@@ -17,6 +17,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -194,19 +195,31 @@ public final class BotApi {
         call("setMyCommands", body, requestTimeout);
     }
 
+    /**
+     * The button left of every private chat's input field: with a Mini App, one tap opens it (as BotFather's "Open"
+     * does); without one, Telegram's own command list. Set either way, so turning the Mini App off takes the button
+     * away instead of leaving it on an address that no longer answers.
+     *
+     * @param webAppUrl the Mini App's address, or null for the command list
+     */
+    public void setMenuButton(String text, String webAppUrl) {
+        ObjectNode body = Json.object();
+        ObjectNode button = body.putObject("menu_button");
+        if (webAppUrl == null) {
+            button.put("type", "commands");
+        } else {
+            button.put("type", "web_app").put("text", text).putObject("web_app").put("url", webAppUrl);
+        }
+        call("setChatMenuButton", body, requestTimeout);
+    }
+
     public void answerCallbackQuery(String callbackQueryId, String text) {
         call("answerCallbackQuery", Json.object().put("callback_query_id", callbackQueryId).put("text", text), requestTimeout);
     }
 
     /** Downloads a file someone sent, e.g. a task's screenshot; Telegram serves files up to 20 MB. */
     public void downloadFile(String fileId, Path target) {
-        String filePath = call("getFile", Json.object().put("file_id", fileId), requestTimeout).path("file_path").asText("");
-        if (filePath.isEmpty()) {
-            throw new TelegramException("getFile returned no file_path", 0, null);
-        }
-        // Files live beside the methods: /file/bot<token>/<path> instead of /bot<token>/<method>.
-        HttpRequest request = HttpRequest.newBuilder(baseUri.resolve("/file" + baseUri.getPath() + filePath))
-                .timeout(Duration.ofMinutes(2)).GET().build();
+        HttpRequest request = HttpRequest.newBuilder(fileUri(fileId)).timeout(Duration.ofMinutes(2)).GET().build();
         HttpResponse<Path> response;
         try {
             // Truncated: a retry writes over what an interrupted download left.
@@ -221,6 +234,50 @@ public final class BotApi {
         if (response.statusCode() != 200) {
             throw new TelegramException("file download failed: HTTP " + response.statusCode(), response.statusCode(), null);
         }
+    }
+
+    /**
+     * A user's current profile photo, e.g. the bot's own for the Mini App's header: the smallest size at least
+     * {@code minSide} pixels wide, or the largest there is. Empty when they have no photo.
+     */
+    public Optional<byte[]> profilePhoto(long userId, int minSide) {
+        JsonNode sizes = call("getUserProfilePhotos", Json.object().put("user_id", userId).put("limit", 1), requestTimeout)
+                .path("photos").path(0);
+        JsonNode chosen = null;
+        // Telegram lists a photo's sizes from the smallest up.
+        for (JsonNode size : sizes) {
+            chosen = size;
+            if (size.path("width").asInt() >= minSide) {
+                break;
+            }
+        }
+        if (chosen == null) {
+            return Optional.empty();
+        }
+        HttpRequest request = HttpRequest.newBuilder(fileUri(chosen.path("file_id").asText())).timeout(requestTimeout).GET().build();
+        HttpResponse<byte[]> response;
+        try {
+            response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException e) {
+            throw new TelegramException("photo download failed: " + e.getClass().getSimpleName() + ": " + scrub(e.getMessage(), baseUri), 0, null);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TelegramException("photo download interrupted", 0, null);
+        }
+        if (response.statusCode() != 200) {
+            throw new TelegramException("photo download failed: HTTP " + response.statusCode(), response.statusCode(), null);
+        }
+        return Optional.of(response.body());
+    }
+
+    /** Where a file is downloaded from, after getFile has named its path. */
+    private URI fileUri(String fileId) {
+        String filePath = call("getFile", Json.object().put("file_id", fileId), requestTimeout).path("file_path").asText("");
+        if (filePath.isEmpty()) {
+            throw new TelegramException("getFile returned no file_path", 0, null);
+        }
+        // Files live beside the methods: /file/bot<token>/<path> instead of /bot<token>/<method>.
+        return baseUri.resolve("/file" + baseUri.getPath() + filePath);
     }
 
     public void leaveChat(long chatId) {
