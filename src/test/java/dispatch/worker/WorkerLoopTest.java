@@ -37,12 +37,12 @@ class WorkerLoopTest extends WorkerApiFixture {
 
     @Test
     void theLoopTellsTheTeamMachineHowManyRunsItTakesAtOnce() throws Exception {
-        startLoop("ann-laptop", repos.repo("alm"));
+        startLoop("ann-laptop", repos.repo("alm"), 2);
 
         offer(planJob());
         awaitResult();
 
-        assertEquals("1", SqlRows.single(dir.resolve("dispatch.db"), "SELECT max_runs FROM worker WHERE name = ?",
+        assertEquals("2", SqlRows.single(dir.resolve("dispatch.db"), "SELECT max_runs FROM worker WHERE name = ?",
                 "ann-laptop").get("max_runs"), "worker.yaml's maxConcurrentRuns rides on every poll");
     }
 

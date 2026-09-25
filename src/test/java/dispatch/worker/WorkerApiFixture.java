@@ -203,17 +203,23 @@ abstract class WorkerApiFixture {
 
     /** As {@link #startLoop(String, Path)}, with alm as this computer's worker.yaml has it, e.g. its own model. */
     void startLoop(String name, WorkerConfig.Project alm) throws Exception {
-        startLoop(name, Map.of("alm", alm), WorkerClient::new);
+        startLoop(name, Map.of("alm", alm), 1, WorkerClient::new);
+    }
+
+    /** As {@link #startLoop(String, Path)}, on a computer whose worker.yaml takes {@code maxConcurrentRuns} at once. */
+    void startLoop(String name, Path clonePath, int maxConcurrentRuns) throws Exception {
+        startLoop(name, Map.of("alm", new WorkerConfig.Project(clonePath.toString(), null, null)), maxConcurrentRuns,
+                WorkerClient::new);
     }
 
     /** As {@link #startLoop(String, Path)}, but with a {@link WorkerClient} this test controls, e.g. one call failing on demand. */
     void startLoop(String name, Path clonePath, ClientFactory clientFactory) throws Exception {
-        startLoop(name, Map.of("alm", new WorkerConfig.Project(clonePath.toString(), null, null)), clientFactory);
+        startLoop(name, Map.of("alm", new WorkerConfig.Project(clonePath.toString(), null, null)), 1, clientFactory);
     }
 
     /** As {@link #startLoop}, but the member never added "alm" to worker.yaml: this computer cannot run it. */
     void startLoopWithoutProjects(String name) throws Exception {
-        startLoop(name, Map.of(), WorkerClient::new);
+        startLoop(name, Map.of(), 1, WorkerClient::new);
     }
 
     /** How {@link #startLoop} builds this test's {@link WorkerClient}; {@code WorkerClient::new} is the ordinary one. */
@@ -222,11 +228,12 @@ abstract class WorkerApiFixture {
         WorkerClient create(HttpClient http, URI team, String key);
     }
 
-    private void startLoop(String name, Map<String, WorkerConfig.Project> projects, ClientFactory clientFactory) throws Exception {
+    private void startLoop(String name, Map<String, WorkerConfig.Project> projects, int maxConcurrentRuns,
+                           ClientFactory clientFactory) throws Exception {
         String key = pair(BOLD, name);
         Path bin = Files.createDirectories(workerStateDir(name).resolve("bin"));
         URI team = URI.create("http://127.0.0.1:" + api.port());
-        WorkerConfig workerConfig = new WorkerConfig(team.toString(), name, 1, FakeClaude.install(bin).toString(),
+        WorkerConfig workerConfig = new WorkerConfig(team.toString(), name, maxConcurrentRuns, FakeClaude.install(bin).toString(),
                 FakeGh.install(bin).toString(), workerStateDir(name), projects, FakeAgents.install(bin, "codex").toString(),
                 null);
         WorkerClient client = clientFactory.create(http, team, key);

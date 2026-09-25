@@ -87,10 +87,14 @@ class WorkerProtocolTest extends WorkerApiFixture {
         String key = pair();
 
         assertEquals(200, post(WorkerApi.NEXT, key, "{\"maxConcurrentRuns\": 2}").statusCode());
-        assertEquals(400, post(WorkerApi.NEXT, key, "{\"maxConcurrentRuns\": 0}").statusCode());
+        assertEquals(400, post(WorkerApi.NEXT, key, """
+                {"maxConcurrentRuns": 0, "readiness": {"claude": {"ok": false, "detail": "cannot run claude"}}}""")
+                .statusCode());
 
         assertEquals("2", SqlRows.single(dir.resolve("dispatch.db"), "SELECT max_runs FROM worker").get("max_runs"),
                 "the refused poll changed nothing");
+        assertTrue(db.transactionReturning(tx -> Workers.readiness(tx, Workers.ofMember(tx, BOLD.ref()).getFirst().id()))
+                .claude().ok(), "not even the readiness that came with it");
     }
 
     @Test

@@ -102,12 +102,14 @@ public final class TasksApi {
             if (refused.isPresent()) {
                 throw cancelRefused(refused.get(), taskId);
             }
-            return tasks.cancel(tx, requester(caller), taskId, null, caller.ref());
+            CancelResult cancelled = tasks.cancel(tx, requester(caller), taskId, null, caller.ref());
+            // Allowed in this same transaction, so TaskService cannot refuse it. If it ever did, throwing here rolls back
+            // the refusal it wrote for the chat, and the 500 says the two disagree instead of a 200 hiding it.
+            if (cancelled != CancelResult.CANCELLED) {
+                throw new IllegalStateException("task #" + taskId + " was allowed a cancel but came back " + cancelled);
+            }
+            return cancelled;
         });
-        // Allowed in this same transaction, so TaskService cannot refuse it; if it ever did, a 200 would hide its refusal.
-        if (result != CancelResult.CANCELLED) {
-            throw new IllegalStateException("task #" + taskId + " was allowed a cancel but came back " + result);
-        }
         return Json.object().put("result", result.name());
     }
 
@@ -132,11 +134,12 @@ public final class TasksApi {
             if (refused.isPresent()) {
                 throw retryRefused(refused.get(), taskId);
             }
-            return tasks.retry(tx, requester(caller), taskId, null, caller.ref());
+            RetryResult retried = tasks.retry(tx, requester(caller), taskId, null, caller.ref());
+            if (retried != RetryResult.RETRIED) {
+                throw new IllegalStateException("task #" + taskId + " was allowed a retry but came back " + retried);
+            }
+            return retried;
         });
-        if (result != RetryResult.RETRIED) {
-            throw new IllegalStateException("task #" + taskId + " was allowed a retry but came back " + result);
-        }
         return Json.object().put("result", result.name());
     }
 

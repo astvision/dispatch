@@ -319,7 +319,8 @@ Observed in runs recorded from Claude Code 2.1.274 (the test fixtures):
 - Plain threads, all virtual: Telegram poller, outbox sender, scheduler loop, draft expiry (every minute), the hourly sweeper, one thread per missing clone at startup, one thread per active run, and one per split (at most two agents at once, outside the run queue and its limits).
 - The scheduler wakes on each commit that queues a run, and every 5 s. It claims the most urgent `QUEUED` run, oldest first among equals, that may start: a run that must wait never holds back the ones behind it. A run may start when:
   - fewer than `maxConcurrentRuns` runs are active (default 2), and
-  - the run is a PLAN, or its project has no active EXECUTE/DELIVER run.
+  - the run is a PLAN, or its project has no active EXECUTE/DELIVER run, and
+  - in a team, a live computer of the requester that may take it is ready for it, and fewer of the requester's runs are active than their live computers take at once (each its `worker.yaml` `maxConcurrentRuns`, one if it never said). The team's slots go in the same most-urgent, oldest-first order, so a member whose computers take several runs may hold several of them.
 - A claim is a conditional update, `QUEUED → RUNNING`.
 - The sweeper removes, every hour, worktrees of finished tasks unchanged for longer than `worktrees.idleDays` (7):
   - COMPLETED/FAILED tasks only if the worktree is clean and its commits are on origin; otherwise it keeps them and logs a WARN;
