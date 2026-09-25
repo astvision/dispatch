@@ -13,9 +13,9 @@ export const teamConfig: ConfigView = {
   },
   projects: [
     { name: "alm", alias: null, path: "/home/bold/alm", repo: null, baseBranch: "main", group: "acme", model: null, effort: null,
-      plan: null, execute: null },
+      plan: null, execute: null, agent: "claude-code" },
     { name: "crm", alias: "c", path: "/home/bold/crm", repo: null, baseBranch: "main", group: "acme", model: "opus", effort: null,
-      plan: { model: "fable", effort: null }, execute: null },
+      plan: { model: "fable", effort: null }, execute: null, agent: "claude-code" },
   ],
   groups: [{
     name: "acme", chatId: -1001234567890, projects: ["alm", "crm"],

@@ -120,6 +120,49 @@ class ChecksTest {
         assertFalse(Checks.failed(findings), findings.toString());
     }
 
+    /** ADR 0026: each agent is checked by its own CLI, and a missing one says what to install. */
+    @Test
+    void aMissingCodexSaysToInstallCodex() throws IOException {
+        writeConfig();
+        Files.writeString(config, Files.readString(config)
+                .replace("agents:\n", "agents:\n  codex:\n    command: 'dispatch-test-missing-codex-binary'\n")
+                .replace("    agent: claude-code\n", "    agent: codex\n"));
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        Checks.Finding codex = area(findings, "codex");
+        assertEquals(Checks.Level.FAIL, codex.level());
+        assertEquals("codex: cannot run dispatch-test-missing-codex-binary; install the Codex CLI (npm install -g @openai/codex)"
+                + " or set agents.codex.command to its full path", codex.message());
+    }
+
+    @Test
+    void aCodexThatIsNotLoggedInIsAWarning() throws IOException {
+        Path codex = dir.resolve("codex");
+        Files.writeString(codex, """
+                #!/bin/sh
+                if [ "$1" = "--version" ]; then echo "codex-cli 0.155.1"; exit 0; fi
+                if [ "$1 $2" = "login status" ]; then echo "Not logged in" >&2; exit 1; fi
+                exit 2
+                """);
+        Files.setPosixFilePermissions(codex, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        writeConfig();
+        Files.writeString(config, Files.readString(config)
+                .replace("agents:\n", "agents:\n  codex:\n    command: '" + quoted(codex) + "'\n"));
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        Checks.Finding found = area(findings, "codex");
+        assertEquals(Checks.Level.WARN, found.level(), findings.toString());
+        assertEquals("codex: codex-cli 0.155.1, but not logged in: run " + codex + " login", found.message(),
+                "the command as configured, which is the one to log in with");
+    }
+
+    private static Checks.Finding area(List<Checks.Finding> findings, String area) {
+        return findings.stream().filter(f -> f.area().equals(area)).findFirst()
+                .orElseThrow(() -> new AssertionError(findings.toString()));
+    }
+
     @Test
     void aTeamMachineChecksItsWorkerPortAndAsksForNoGh() throws IOException {
         int free = freePort();

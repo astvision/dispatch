@@ -12,11 +12,11 @@ Primarily one developer running their own Dispatch bot (a personal instance), wh
 
 ## Product Purpose
 
-Dispatch turns a development task written in Telegram into a Claude Code plan in a git worktree, and, once the requester approves the plan, into a draft pull request. The Telegram Mini App (opened with `/manage`) is where the owner watches that work live and manages the setup without leaving Telegram. Success: the owner sees at a glance what is running, what waits for their answer or approval, and what is done, and can act on it in one or two taps.
+Dispatch turns a development task written in Telegram into a plan by the project's agent — Claude Code, Codex or Gemini CLI — in a git worktree, and, once the requester approves the plan, into a draft pull request. The Telegram Mini App (opened with `/manage`) is where the owner watches that work live and manages the setup without leaving Telegram. Success: the owner sees at a glance what is running, what waits for their answer or approval, and what is done, and can act on it in one or two taps.
 
 ## Positioning
 
-The agent runs on the owner's own machine with their own Claude Code login, clones and `gh`; the human decision point is a single plan approval (answering the plan's questions first). The Mini App mirrors that loop inside Telegram.
+The agent runs on the owner's own machine with their own agent login (Claude Code, Codex or Gemini CLI), clones and `gh`; the human decision point is a single plan approval (answering the plan's questions first). The Mini App mirrors that loop inside Telegram.
 
 ## Operating Context
 

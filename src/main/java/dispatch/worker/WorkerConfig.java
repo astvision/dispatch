@@ -18,12 +18,33 @@ import java.util.Map;
  * @param ghCommand         the member's own GitHub CLI
  * @param stateDir          where this computer keeps its worktrees, run logs and attachments
  * @param projects          project name to what this computer knows about it; a project that is missing here cannot run
+ * @param codexCommand      the member's own Codex CLI, for projects that run on codex; null when this computer has none
+ * @param geminiCommand     the member's own Gemini CLI, likewise (ADR 0026)
  */
 public record WorkerConfig(String team, String name, int maxConcurrentRuns, String claudeCommand, String ghCommand,
-                           Path stateDir, Map<String, Project> projects) {
+                           Path stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand) {
 
     public WorkerConfig {
         projects = Map.copyOf(projects);
+    }
+
+    /** A computer with Claude Code only, as every worker was before other agents (ADR 0026). */
+    public WorkerConfig(String team, String name, int maxConcurrentRuns, String claudeCommand, String ghCommand,
+                        Path stateDir, Map<String, Project> projects) {
+        this(team, name, maxConcurrentRuns, claudeCommand, ghCommand, stateDir, projects, null, null);
+    }
+
+    /** The agents this computer can run, by type, as the team's projects name them. */
+    public Map<String, String> agentCommands() {
+        Map<String, String> commands = new java.util.LinkedHashMap<>();
+        commands.put("claude-code", claudeCommand);
+        if (codexCommand != null) {
+            commands.put("codex", codexCommand);
+        }
+        if (geminiCommand != null) {
+            commands.put("gemini", geminiCommand);
+        }
+        return commands;
     }
 
     /**

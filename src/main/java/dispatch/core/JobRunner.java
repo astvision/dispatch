@@ -205,9 +205,16 @@ public final class JobRunner implements Worker {
 
     /** Starts the agent, waits for it under the job's timeout, and turns how it ended into the job's result. */
     private JobResult runAgent(Job job, JobEvents events, ActiveRuns.ActiveRun control, RunRequest request) {
+        String type = job.project().agent();
+        Agent agent = agents.get(type);
+        if (agent == null) {
+            // A member's computer need not have every agent the team's projects use (ADR 0026).
+            return JobResult.failed(FailureReason.AGENT, "the project runs on " + type + ", which is not configured on this "
+                    + "computer; add it under agents (or " + type.replace("-code", "") + "Command in worker.yaml) and restart", null);
+        }
         RunHandle handle;
         try {
-            handle = agents.get(job.project().agent()).start(request);
+            handle = agent.start(request);
         } catch (AgentStartException e) {
             return JobResult.failed(FailureReason.AGENT, e.getMessage(), null);
         }

@@ -29,10 +29,13 @@ public final class ConfigLoader {
     // "." and ".." are excluded: `dispatch worker init` resolves a project name straight into a path segment
     // (stateDir/repos/<name>), where either would resolve to a directory it does not own.
     private static final Pattern PROJECT_KEY = Pattern.compile("(?!\\.{1,2}$)[A-Za-z0-9._-]+");
-    private static final Set<String> SUPPORTED_AGENTS = Set.of("claude-code");
+    /** The CLIs Dispatch can drive (ADR 0026), in the order error messages name them. */
+    private static final List<String> SUPPORTED_AGENTS = List.of("claude-code", "codex", "gemini");
     static final int MAX_GROUP_NAME = 40;
     /** Claude Code's --effort levels, in its own order. */
     private static final List<String> EFFORT_LEVELS = List.of("low", "medium", "high", "xhigh", "max");
+    /** Codex's model_reasoning_effort levels that its current models share. */
+    private static final List<String> CODEX_EFFORT_LEVELS = List.of("low", "medium", "high", "xhigh");
     /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
     private static final Pattern CREDENTIAL_URL = Pattern.compile("^https?://[^/@]*@", Pattern.CASE_INSENSITIVE);
     private static final Pattern SECRET_KEY = Pattern.compile("(?i).*(token|secret|password|passwd|apikey|api_key|credential).*");
@@ -304,21 +307,36 @@ public final class ConfigLoader {
     }
 
     private static void validateAgents(Map<String, Config.Agent> agents, List<String> errors) {
+        String supported = String.join(", ", SUPPORTED_AGENTS);
         if (agents.isEmpty()) {
-            errors.add("agents: at least one agent is required (supported: " + SUPPORTED_AGENTS + ")");
+            errors.add("agents: at least one agent is required (supported: " + supported + ")");
         }
         agents.forEach((type, agent) -> {
             if (!SUPPORTED_AGENTS.contains(type)) {
-                errors.add("agents." + type + ": unsupported agent type (supported: " + SUPPORTED_AGENTS + ")");
+                errors.add("agents." + type + ": unsupported agent type (supported: " + supported + ")");
             } else if (agent == null || isBlank(agent.command())) {
                 errors.add("agents." + type + ".command: required");
             }
         });
     }
 
-    private static void validateEffort(String at, String effort, List<String> errors) {
-        if (effort != null && !EFFORT_LEVELS.contains(effort)) {
-            errors.add(at + ": must be one of " + String.join(", ", EFFORT_LEVELS) + ", got '" + effort + "'");
+    /** Each CLI has its own effort levels, or none (Gemini CLI); an unknown agent is reported elsewhere, so Claude's apply. */
+    private static void validateEffort(String at, String effort, String agent, List<String> errors) {
+        if (effort == null) {
+            return;
+        }
+        switch (agent == null ? "claude-code" : agent) {
+            case "codex" -> {
+                if (!CODEX_EFFORT_LEVELS.contains(effort)) {
+                    errors.add(at + ": codex takes low, medium, high or xhigh, got '" + effort + "'");
+                }
+            }
+            case "gemini" -> errors.add(at + ": gemini has no effort setting; remove it");
+            default -> {
+                if (!EFFORT_LEVELS.contains(effort)) {
+                    errors.add(at + ": must be one of " + String.join(", ", EFFORT_LEVELS) + ", got '" + effort + "'");
+                }
+            }
         }
     }
 
@@ -356,12 +374,12 @@ public final class ConfigLoader {
             } else if (!agents.containsKey(project.agent())) {
                 errors.add(at + ".agent: '" + project.agent() + "' is not configured under agents");
             }
-            validateEffort(at + ".effort", project.effort(), errors);
+            validateEffort(at + ".effort", project.effort(), project.agent(), errors);
             if (project.plan() != null) {
-                validateEffort(at + ".plan.effort", project.plan().effort(), errors);
+                validateEffort(at + ".plan.effort", project.plan().effort(), project.agent(), errors);
             }
             if (project.execute() != null) {
-                validateEffort(at + ".execute.effort", project.execute().effort(), errors);
+                validateEffort(at + ".execute.effort", project.execute().effort(), project.agent(), errors);
             }
             List<String> copyFiles = project.copyFiles() == null ? List.of() : project.copyFiles();
             for (int f = 0; f < copyFiles.size(); f++) {

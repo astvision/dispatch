@@ -32,7 +32,7 @@ public final class WorkerConfigLoader {
 
     /** The YAML file's shape; the key is never in it — it lives in worker.env. */
     record WorkerFile(String team, String name, Integer maxConcurrentRuns, String claudeCommand, String ghCommand,
-                      String stateDir, Map<String, Project> projects) {
+                      String stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand) {
 
         record Project(String path, String model, String effort) {
         }
@@ -74,7 +74,7 @@ public final class WorkerConfigLoader {
         }
         return new WorkerConfig(raw.team(), raw.name(), concurrent,
                 raw.claudeCommand() == null ? "claude" : raw.claudeCommand(),
-                raw.ghCommand() == null ? "gh" : raw.ghCommand(), stateDir, projects);
+                raw.ghCommand() == null ? "gh" : raw.ghCommand(), stateDir, projects, raw.codexCommand(), raw.geminiCommand());
     }
 
     private static WorkerFile read(Path file) {

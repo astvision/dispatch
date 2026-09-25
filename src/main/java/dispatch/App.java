@@ -1,7 +1,7 @@
 package dispatch;
 
 import dispatch.agent.Agent;
-import dispatch.agent.claude.ClaudeCodeAgent;
+import dispatch.agent.Agents;
 import dispatch.config.Config;
 import dispatch.config.GroupWriter;
 import dispatch.config.MemberWriter;
@@ -124,8 +124,11 @@ public final class App {
         RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake);
         Groups groups = new Groups(config.telegram());
         Splitter[] splitter = new Splitter[1];
-        Map<String, Agent> agents = Map.of("claude-code",
-                new ClaudeCodeAgent(config.agents().get("claude-code").command(), environment, Duration.ofSeconds(10)));
+        Map<String, String> agentCommands = new java.util.LinkedHashMap<>();
+        config.agents().forEach((type, agent) -> agentCommands.put(type, agent.command()));
+        Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir);
+        // Splitting and the assistant need Claude Code (ADR 0013, A-1); without it they are simply not offered (ADR 0026).
+        Agent claude = agents.get("claude-code");
         WorkerKeys workerKeys = null;
         Worker worker;
         WorkerApi workerApi = null;
@@ -148,10 +151,10 @@ public final class App {
         Coordinator coordinator = new Coordinator(db, projects, transitions, activeRuns, config::planLimits,
                 config::executeLimits, worker, schedulerSignal::wake);
         TaskService tasks = new TaskService(groups, projects, activeRuns, clock,
-                schedulerSignal::wake, outboxSignal::wake, taskTopics, draftId -> splitter[0].start(draftId),
+                schedulerSignal::wake, outboxSignal::wake, taskTopics, claude == null ? null : draftId -> splitter[0].start(draftId),
                 config.workers() != null);
         // Splitting happens before a project is chosen, so it cannot use the project's agent (ADR 0013).
-        splitter[0] = new Splitter(db, tasks, agents.get("claude-code"), workspaces.splitsDir(), clock, Duration.ofMinutes(1));
+        splitter[0] = claude == null ? null : new Splitter(db, tasks, claude, workspaces.splitsDir(), clock, Duration.ofMinutes(1));
 
         new Recovery(db, transitions, Duration.ofSeconds(10)).run();
         db.transaction(tasks::failInterruptedSplits);
@@ -169,11 +172,11 @@ public final class App {
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
         AssistantActions assistantActions = new AssistantActions(tasks, groups, projects, clock, renderer.text("plan.youDecide"));
         Assistant assistant = null;
-        if (config.workers() == null) {
+        if (config.workers() == null && claude != null) {
             // Personal mode only: in team mode this machine never runs Claude Code (ADR 0021), so it has no one to ask.
             AssistantHome home = AssistantHome.of(stateDir, environment);
             home.install();
-            assistant = new Assistant(db, tasks, assistantActions, groups, projects, agents.get("claude-code"), home,
+            assistant = new Assistant(db, tasks, assistantActions, groups, projects, claude, home,
                     name -> projects.byName(name).map(workspaces::repo).filter(java.nio.file.Files::isDirectory), clock,
                     Duration.ofSeconds(60), chatRef -> api.sendTyping(Long.parseLong(chatRef.substring(chatRef.indexOf(':') + 1))),
                     outboxSignal::wake);
@@ -241,7 +244,9 @@ public final class App {
         pollerThread.interrupt();
         scheduler.stop();
         sweeper.stop();
-        splitter.stop();
+        if (splitter != null) {
+            splitter.stop();
+        }
         try {
             schedulerThread.join(Duration.ofSeconds(10));
             activeRuns.stopAll(ActiveRuns.StopReason.INTERRUPTED);

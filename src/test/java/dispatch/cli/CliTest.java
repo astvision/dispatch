@@ -38,6 +38,8 @@ class CliTest {
                         "--effort", "high", "--group", "backend"));
         assertEquals(new Cli.ProjectAdd(DEFAULT_CONFIG, Path.of("work/alm"), null, null, null, null, null, null),
                 parse("project", "add", "work/alm"));
+        assertEquals(new Cli.ProjectAdd(DEFAULT_CONFIG, Path.of("work/alm"), null, null, null, null, null, null, "codex"),
+                parse("project", "add", "work/alm", "--agent", "codex"));
         assertTrue(error("project", "add").contains("project add needs the folder of a git clone"));
         assertTrue(error("project", "remove", "alm").contains("unknown command 'project remove'"));
     }

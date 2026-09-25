@@ -345,6 +345,45 @@ class ConfigLoaderTest {
                 error.getMessage());
     }
 
+    /** ADR 0026: a project runs on Claude Code, Codex or Gemini CLI, each configured once under agents. */
+    @Test
+    void aProjectMayRunOnCodexOrGemini() throws IOException {
+        Config config = ConfigLoader.load(write(withAgents(VALID)
+                .replace("    agent: claude-code\n    model: opus\n", "    agent: codex\n    model: gpt-5-codex\n    effort: xhigh\n")
+                .replace("    baseBranch: develop\n    agent: claude-code\n", "    baseBranch: develop\n    agent: gemini\n")), ENV);
+
+        assertEquals("codex", config.projects().getFirst().agent());
+        assertEquals("gemini", config.projects().get(1).agent());
+        assertEquals("codex", config.agents().get("codex").command());
+    }
+
+    @Test
+    void effortFollowsTheProjectsAgent() throws IOException {
+        ConfigException codexMax = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(withAgents(VALID)
+                .replace("    agent: claude-code\n    model: opus\n", "    agent: codex\n    plan: { effort: max }\n")), ENV));
+        ConfigException geminiEffort = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(withAgents(VALID)
+                .replace("    baseBranch: develop\n    agent: claude-code\n", "    baseBranch: develop\n    agent: gemini\n    effort: high\n")), ENV));
+
+        assertTrue(codexMax.getMessage().contains("projects[0].plan.effort: codex takes low, medium, high or xhigh, got 'max'"),
+                codexMax.getMessage());
+        assertTrue(geminiEffort.getMessage().contains("projects[1].effort: gemini has no effort setting; remove it"),
+                geminiEffort.getMessage());
+    }
+
+    @Test
+    void anUnknownAgentTypeNamesTheSupportedOnes() throws IOException {
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(VALID
+                .replace("  claude-code:\n    command: /usr/local/bin/claude\n", "  claude-code:\n    command: /usr/local/bin/claude\n  aider:\n    command: aider\n")), ENV));
+
+        assertTrue(error.getMessage().contains("agents.aider: unsupported agent type (supported: claude-code, codex, gemini)"),
+                error.getMessage());
+    }
+
+    private static String withAgents(String yaml) {
+        return yaml.replace("  claude-code:\n    command: /usr/local/bin/claude\n",
+                "  claude-code:\n    command: /usr/local/bin/claude\n  codex:\n    command: codex\n  gemini:\n    command: gemini\n");
+    }
+
     @Test
     void modelAndEffortCanDifferPerPhase() throws IOException {
         Config config = ConfigLoader.load(write(VALID.replace("    model: opus\n",

@@ -3,6 +3,7 @@ package dispatch.cli;
 import dispatch.config.Config;
 import dispatch.config.ConfigFile;
 import dispatch.config.ConfigText;
+import dispatch.config.ConfigEdit;
 import dispatch.config.ConfigException;
 import dispatch.workspace.Git;
 import java.io.UncheckedIOException;
@@ -55,6 +56,7 @@ public final class ProjectAddCommand {
         // the edit runs; captured here so the success message below can still report what was actually used.
         AtomicReference<String> baseUsed = new AtomicReference<>();
         AtomicReference<String> groupUsed = new AtomicReference<>();
+        AtomicReference<String> agentUsed = new AtomicReference<>();
         try {
             ConfigFile.edit(configFile, environment, text -> {
                 Config config = ConfigFile.parse(configFile, text, environment);
@@ -67,16 +69,26 @@ public final class ProjectAddCommand {
                             "cannot tell which branch tasks in " + probe.folder() + " should start from; name it with --base");
                 }
                 String group = options.group() != null ? options.group() : onlyGroup(config);
+                String agent = options.agent() != null ? options.agent() : defaultAgent(config);
                 baseUsed.set(base);
                 groupUsed.set(group);
+                agentUsed.set(agent);
+                String withAgent = text;
+                if (!config.agents().containsKey(agent)) {
+                    // Found on PATH by its usual name, as claude is; dispatch check says if it is not there. An agent type
+                    // Dispatch does not know is refused by the validation of the edited file (ADR 0026).
+                    withAgent = ConfigEdit.set(text, ConfigEdit.At.of("agents", agent, "command"),
+                            agent.equals("claude-code") ? "claude" : agent);
+                }
                 List<String> lines = projectLines(new Project(name, options.alias(), probe.folder(), probe.originUrl(), base,
-                        config.agents().keySet().iterator().next(), options.model(), options.effort()));
-                return ConfigText.addProject(text, group, yaml(name), lines);
+                        agent, options.model(), options.effort()));
+                return ConfigText.addProject(withAgent, group, yaml(name), lines);
             });
         } catch (ConfigException | UncheckedIOException e) {
             throw new CliException(e.getMessage());
         }
-        terminal.ok("added " + name + ": " + probe.folder() + " (base " + baseUsed.get() + ", group " + groupUsed.get() + ")");
+        terminal.ok("added " + name + ": " + probe.folder() + " (base " + baseUsed.get() + ", group " + groupUsed.get()
+                + ", agent " + agentUsed.get() + ")");
         terminal.say("  A running Dispatch picks it up when restarted.");
     }
 
@@ -149,6 +161,18 @@ public final class ProjectAddCommand {
     private static boolean taken(Config config, String name) {
         return config.projects().stream().anyMatch(project -> project.name().equalsIgnoreCase(name)
                 || project.alias() != null && project.alias().equalsIgnoreCase(name));
+    }
+
+    /** Without --agent: Claude Code when configured, as before other agents existed, else the only agent there is. */
+    private static String defaultAgent(Config config) {
+        if (config.agents().containsKey("claude-code")) {
+            return "claude-code";
+        }
+        if (config.agents().size() == 1) {
+            return config.agents().keySet().iterator().next();
+        }
+        throw new CliException("the config has several agents (" + String.join(", ", new java.util.TreeSet<>(config.agents().keySet()))
+                + "); choose one with --agent");
     }
 
     private static String onlyGroup(Config config) {

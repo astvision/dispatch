@@ -2,10 +2,12 @@
 
 # 🚀 Dispatch
 
-**Telegram-д даалгавар бич → Claude Code төлөвлөнө → чи батал → draft PR бэлэн.**
+**Telegram-д даалгавар бич → Claude Code, Codex эсвэл Gemini төлөвлөнө → чи батал → draft PR бэлэн.**
 
 ![Java 25](https://img.shields.io/badge/Java-25-orange?logo=openjdk)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-agent-d97757?logo=anthropic)
+![Codex](https://img.shields.io/badge/Codex-agent-412991?logo=openai)
+![Gemini CLI](https://img.shields.io/badge/Gemini_CLI-agent-4285F4?logo=googlegemini)
 ![Telegram](https://img.shields.io/badge/Telegram-bot-26A5E4?logo=telegram)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -19,14 +21,14 @@
 
 ```mermaid
 flowchart LR
-    A["💬 Telegram-д<br/>даалгавар"] --> B["🧠 Claude Code<br/>төлөвлөнө"]
+    A["💬 Telegram-д<br/>даалгавар"] --> B["🧠 Агент<br/>төлөвлөнө"]
     B --> C{"👀 Чи<br/>шалгана"}
     C -- "✏️ засвар" --> B
     C -- "✅ батлах" --> D["🛠 Хэрэгжүүлнэ"]
     D --> E["🔀 Draft PR"]
 ```
 
-Агент **таны өөрийн компьютер** дээр, **таны** Claude Code болон GitHub эрхээр ажиллана. Dispatch өөрөө ямар ч cloud үйлчилгээ шаардахгүй.
+Агент **таны өөрийн компьютер** дээр, **таны** Claude Code / Codex / Gemini болон GitHub эрхээр ажиллана. Dispatch өөрөө ямар ч cloud үйлчилгээ шаардахгүй.
 
 ## ✨ Боломжууд
 
@@ -40,11 +42,12 @@ flowchart LR
 | 👥 **Групп** | `@bot` эсвэл хөгжүүлэгчийг mention хийхэд даалгавар үүснэ — менежер ч өгч болно |
 | 🔗 **Группт нэмэх** | Төслийн холбоосоор bot-ыг группт нэмэхэд шууд холбогдоно. Нэг төсөл — олон групп |
 | 📱 **Mini App** | Чатын **Удирдах** товчоор: даалгавар, төсөл, тохиргоо, лог, гарын авлага |
+| 🤖 **Олон агент** | Төсөл бүр өөрийн агенттай: Claude Code, Codex эсвэл Gemini CLI — `--agent codex` эсвэл Mini App-ын **Агент** мөр |
 | 💻 **Баг** | Хүн бүрийн даалгавар өөрийнх нь компьютер дээр ажиллана |
 
 ## ⚡ 3 алхамаар эхлэх
 
-**Хэрэгтэй:** Java 25+, git, [Claude Code](https://claude.ai/code) (`claude` нэг удаа ажиллуулж нэвтэр), `gh auth login`.
+**Хэрэгтэй:** Java 25+, git, `gh auth login`, мөн нэвтэрсэн агент: [Claude Code](https://claude.ai/code) (`claude`), [Codex](https://github.com/openai/codex) (`codex login`) эсвэл [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`). ✂️ салгах, туслах нь зөвхөн Claude Code дээр.
 
 **1️⃣ Суулгах**
 
@@ -106,6 +109,7 @@ flowchart LR
 dispatch check              # юу буруу байгааг хэлнэ
 dispatch service status     # start · stop · install · uninstall
 dispatch project add ~/work/crm
+dispatch project add ~/work/api --agent codex   # эсвэл gemini
 dispatch ui                 # хөтөч дээр: төсөл, хүмүүс, тохиргоо, лог
 ```
 

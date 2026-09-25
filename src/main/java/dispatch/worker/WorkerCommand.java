@@ -4,7 +4,7 @@ import dispatch.Log;
 import dispatch.OwnerOnly;
 import dispatch.Redactor;
 import dispatch.agent.Agent;
-import dispatch.agent.claude.ClaudeCodeAgent;
+import dispatch.agent.Agents;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
 import dispatch.cli.SecretsFile;
@@ -151,8 +151,7 @@ public final class WorkerCommand {
             }
             Delivery delivery = new Delivery(git, new Gh(config.ghCommand(), environment.get("GH_TOKEN"), Duration.ofMinutes(2)),
                     setup.authorName(), setup.authorEmail());
-            Map<String, Agent> agents = Map.of("claude-code",
-                    new ClaudeCodeAgent(config.claudeCommand(), environment, Duration.ofSeconds(10)));
+            Map<String, Agent> agents = Agents.create(config.agentCommands(), environment, config.stateDir());
             ActiveRuns activeRuns = new ActiveRuns();
             WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery,
                     Redactor.fromEnvironment(environment), activeRuns);

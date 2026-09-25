@@ -109,6 +109,12 @@ public final class Checks {
         }
     }
 
+    /** What to install for each agent type (ADR 0026). */
+    private static final Map<String, String> AGENT_INSTALLS = Map.of(
+            "claude-code", "Claude Code",
+            "codex", "the Codex CLI (npm install -g @openai/codex)",
+            "gemini", "the Gemini CLI (npm install -g @google/gemini-cli)");
+
     private static void checkAgent(Run run, String name, String command, Path configFile, boolean team) {
         Optional<Git.Result> version = command(List.of(command, "--version"), configFile);
         if (version.isEmpty() || version.get().exitCode() != 0) {
@@ -116,10 +122,20 @@ public final class Checks {
             // is worth saying and not worth failing on.
             run.add(team ? Level.WARN : Level.FAIL, name, name + ": cannot run " + command
                     + (team ? "; tasks run on members' computers, but splitting a message with ✂️ still runs here (ADR 0013)"
-                            : "; install Claude Code or set agents." + name + ".command to its full path"));
+                            : "; install " + AGENT_INSTALLS.getOrDefault(name, name) + " or set agents." + name
+                                    + ".command to its full path"));
             return;
         }
-        run.add(Level.OK, name, name + ": " + version.get().stdout().strip().lines().findFirst().orElse(command));
+        String shown = version.get().stdout().strip().lines().findFirst().orElse(command);
+        if (name.equals("codex") && !team) {
+            // Its runs fail at once without a login, which --version does not reveal.
+            Optional<Git.Result> login = command(List.of(command, "login", "status"), configFile);
+            if (login.isEmpty() || login.get().exitCode() != 0) {
+                run.add(Level.WARN, name, name + ": " + shown + ", but not logged in: run " + command + " login");
+                return;
+            }
+        }
+        run.add(Level.OK, name, name + ": " + shown);
     }
 
     private static void checkProject(Run run, Config.Project project, Workspaces workspaces) {

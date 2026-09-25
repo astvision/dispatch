@@ -62,12 +62,15 @@ public final class ManageApi {
     private static final Pattern EVENT = Pattern.compile("(?:^| )event=(\\S+)");
     /** Claude Code accepts both short names (opus) and full model ids (claude-opus-5); only the shape is checked here. */
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._-]{1,100}");
+    /** The agents a project can run on (ADR 0026). */
+    private static final Set<String> AGENTS = Set.of("claude-code", "codex", "gemini");
 
     public record Phase(String model, String effort) {
     }
 
+    /** @param agent the CLI the project runs on: claude-code, codex or gemini (ADR 0026) */
     public record ProjectView(String name, String alias, String path, String repo, String baseBranch, String group, String model,
-                              String effort, Phase plan, Phase execute) {
+                              String effort, Phase plan, Phase execute, String agent) {
     }
 
     public record MemberView(long id, String name, boolean admin) {
@@ -145,15 +148,21 @@ public final class ManageApi {
         Config.Limits limits = config.limits();
         Settings settings = new Settings(duration(limits.plan().timeout()), limits.plan().budgetUsd(), duration(limits.execute().timeout()),
                 limits.execute().budgetUsd(), config.scheduler().maxConcurrentRuns(), config.delivery().authorName(),
-                config.delivery().authorEmail(), config.agents().get("claude-code").command(), config.delivery().ghCommand());
+                config.delivery().authorEmail(), claudeCommand(config), config.delivery().ghCommand());
         List<ProjectView> projects = config.projects().stream().map(project -> new ProjectView(project.name(), project.alias(),
                 project.path(), project.repo(), project.baseBranch(), groupOf(config, project.name()).name(), project.model(),
-                project.effort(), view(project.plan()), view(project.execute()))).toList();
+                project.effort(), view(project.plan()), view(project.execute()), project.agent())).toList();
         List<GroupView> groups = config.telegram().groups().stream().map(group -> new GroupView(group.name(), group.chatId(),
                 group.members().stream().map(member -> new MemberView(member.id(), member.name(), admins.contains(member.id()))).toList(),
                 group.projects())).toList();
         return new ConfigView(version, configFile.toString(), admins.isEmpty(), admins, OverviewApi.serviceView(service), settings,
                 projects, groups);
+    }
+
+    /** Null when no project runs on Claude Code and none is configured (ADR 0026). */
+    private static String claudeCommand(Config config) {
+        Config.Agent claude = config.agents().get("claude-code");
+        return claude == null ? null : claude.command();
     }
 
     private Saved settings(JsonNode body) {
@@ -167,7 +176,7 @@ public final class ManageApi {
         String runs = String.valueOf(body.path("maxConcurrentRuns").asLong());
         String authorName = SetupApi.text(body, "authorName");
         String authorEmail = SetupApi.text(body, "authorEmail");
-        String claude = SetupApi.text(body, "claudeCommand");
+        String claude = SetupApi.optionalText(body, "claudeCommand");
         String gh = SetupApi.text(body, "ghCommand");
         return save(body, (text, config) -> {
             Config.Limits limits = config.limits();
@@ -182,7 +191,16 @@ public final class ManageApi {
             edited = change(edited, At.of("delivery", "authorName"), config.delivery().authorName(), authorName, authorName);
             edited = change(edited, At.of("delivery", "authorEmail"), config.delivery().authorEmail(), authorEmail, authorEmail);
             edited = change(edited, At.of("delivery", "ghCommand"), config.delivery().ghCommand(), gh, gh);
-            return change(edited, At.of("agents", "claude-code", "command"), config.agents().get("claude-code").command(), claude, claude);
+            Config.Agent current = config.agents().get("claude-code");
+            if (claude == null) {
+                // Without Claude Code (projects on Codex or Gemini only, ADR 0026) the page shows no command to keep.
+                if (current != null) {
+                    throw new CliException("claudeCommand is needed");
+                }
+                return edited;
+            }
+            return current == null ? ConfigEdit.set(edited, At.of("agents", "claude-code", "command"), claude)
+                    : change(edited, At.of("agents", "claude-code", "command"), current.command(), claude, claude);
         });
     }
 
@@ -213,17 +231,36 @@ public final class ManageApi {
         String effort = SetupApi.choice(body, "effort", SetupApi.EFFORTS);
         Config.PhaseSettings plan = phaseSettings(body.path("plan"));
         Config.PhaseSettings execute = phaseSettings(body.path("execute"));
+        String agent = SetupApi.choice(body, "agent", AGENTS);
         return save(body, (text, config) -> {
             Config.Project project = project(config, name);
             At at = At.of("projects").item("name", name);
             String edited = text;
             edited = change(edited, at.key("baseBranch"), project.baseBranch(), baseBranch, baseBranch);
             edited = change(edited, at.key("alias"), project.alias(), alias, alias);
+            if (agent != null && !agent.equals(project.agent())) {
+                // Another agent names its models differently, and Gemini CLI has no effort at all: its own defaults instead.
+                edited = switchAgent(edited, at, config, project, agent);
+                return edited;
+            }
             edited = change(edited, at.key("model"), project.model(), model, model);
             edited = change(edited, at.key("effort"), project.effort(), effort, effort);
             edited = phase(edited, at.key("plan"), project.plan(), plan);
             return phase(edited, at.key("execute"), project.execute(), execute);
         });
+    }
+
+    /** The project on {@code agent}, whose command is added when the config has none, found on PATH by its usual name. */
+    private static String switchAgent(String text, At at, Config config, Config.Project project, String agent) {
+        String edited = text;
+        if (!config.agents().containsKey(agent)) {
+            edited = ConfigEdit.set(edited, At.of("agents", agent, "command"), agent.equals("claude-code") ? "claude" : agent);
+        }
+        edited = ConfigEdit.set(edited, at.key("agent"), agent);
+        edited = change(edited, at.key("model"), project.model(), null, null);
+        edited = change(edited, at.key("effort"), project.effort(), null, null);
+        edited = phase(edited, at.key("plan"), project.plan(), null);
+        return phase(edited, at.key("execute"), project.execute(), null);
     }
 
     private Saved removeProject(JsonNode body) {

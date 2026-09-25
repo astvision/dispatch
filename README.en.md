@@ -5,7 +5,7 @@
 Dispatch takes development tasks that members write to its Telegram bot and has Claude Code plan them in a git worktree. Once the requester approves the plan, the agent implements it and Dispatch delivers the change as a draft pull request. One instance and bot can serve several groups, each with its own members and projects.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decisions in [docs/adr/](docs/adr/), vocabulary in [CONTEXT.md](CONTEXT.md).
-- Status: **M4.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Reply to a result to follow up on it, `/retry` a failed step, and send screenshots or files with a task for the agent to read. In a team, each member's tasks run on their own computer (`dispatch worker init`, `dispatch worker run`; ADR 0021). `CodexAgent` comes next.
+- Status: **M4.** Dispatch installs with one command on macOS, Windows or Linux, and `dispatch init` sets up a bot for just you or for your team, running in the background. Teammates join when an admin approves them in Telegram. Tasks are given in the private chat with project and priority buttons, and a message with several tasks can be split with ✂️. The plan, corrections and result stay in the private chat, in a topic per task when the bot has topics on. A team's group sees its projects' tasks and outcomes in one line. `/status`, `/history` and `/stats` report on your groups. Reply to a result to follow up on it, `/retry` a failed step, and send screenshots or files with a task for the agent to read. In a team, each member's tasks run on their own computer (`dispatch worker init`, `dispatch worker run`; ADR 0021). Each project runs on Claude Code, Codex or Gemini CLI (`agent:`, ADR 0026).
 
 ## Security
 
@@ -32,7 +32,7 @@ With the web UI (needs Node):
 
 Dispatch runs on your own machine, with a bot for just you or one your team shares (ADR 0014–0016). It runs as you: the agent can read what you can, and whoever controls the bot's admin accounts or its token can make it act as you.
 
-**You need** Java 25 or later, git, Claude Code (run `claude` once to log in), and the GitHub CLI logged in with `gh auth login` for pull requests.
+**You need** Java 25 or later, git, an agent CLI logged in — Claude Code (run `claude` once), Codex (`codex login`) or Gemini CLI (run `gemini` once) — and the GitHub CLI logged in with `gh auth login` for pull requests. ✂️ splitting and the assistant run on Claude Code only, and are not offered without it.
 
 **1. Install** with one command. It downloads the latest release and puts `dispatch` on your PATH, and builds Dispatch
 from source instead when run from a checkout, when `DISPATCH_FROM_SOURCE=1` is set, when `DISPATCH_REF` names a branch
@@ -80,6 +80,7 @@ Every change to the config — from the pages, `dispatch project add`, or the ru
 dispatch check                                   # config, bot token, claude, projects, gh: says what to fix
 dispatch service status                          # also: start, stop, install, uninstall
 dispatch project add ~/work/crm --effort high    # add another clone, then: dispatch service stop && dispatch service start
+dispatch project add ~/work/api --agent codex     # on Codex (or gemini): adds agents.codex.command when missing
 dispatch run                                     # run in this terminal instead of the background
 dispatch ui                                      # manage it in your browser: projects, people, settings, logs
 ```
@@ -130,6 +131,22 @@ dispatch worker service status    # install | start | stop | status | uninstall
 Tasks you give the bot wait until this computer is connected, and continue on it after a restart. They also wait while this computer cannot do them: when Claude Code will not start, when `gh` is logged out (which holds only execution, not planning), or when a project's clone is missing. The bot tells you privately, once, which of these is wrong and how to fix it, and `/status` shows the same. Once it is fixed, the task starts by itself within a minute, or at once if you restart `dispatch worker run`. Nothing of your code, your Claude sessions or your credentials reaches the team machine — see SECURITY.md. Worktrees of tasks nothing has touched for a week are removed here automatically; anything with uncommitted changes or unpushed commits is kept. A removed worktree's git-ignored content (build output, a copied `.env`) goes with it.
 
 Two `dispatch worker run` processes must never share one state directory: a second one refuses to start while the first holds it, because otherwise each would treat the other's live agents as orphans left over from a crash and kill them. If you installed the background service (`dispatch worker init` offers this), stop it first (`dispatch worker service stop`) before running `dispatch worker run` by hand.
+
+### Other agents: Codex and Gemini CLI
+
+A project runs on the agent its `agent:` names (ADR 0026): `claude-code`, `codex` or `gemini`, each configured once under
+`agents:` with its command. Put a project on another one with `dispatch project add … --agent codex`, the **Агент** row
+on the Mini App's project page, or by hand in `dispatch.yaml`; switching drops the project's model and effort, which name
+the old agent's. Planning is read-only on every agent (Codex's read-only sandbox, Gemini CLI's default mode, where it
+denies every edit and command when headless), and execution runs as your user without a sandbox, as Claude Code's does.
+
+- **Model:** any model the CLI accepts, e.g. `model: gpt-5-codex` or `model: gemini-2.5-pro`; unset uses the CLI's own default.
+- **Effort:** Codex takes `low`, `medium`, `high` or `xhigh`; Gemini CLI has no effort setting.
+- **Cost:** Codex and Gemini CLI report tokens, not money, so their runs show `Зардал —` and are bounded by the run's
+  timeout only; the budget per run applies to Claude Code.
+- **Instructions:** each agent reads its own file from the repository — `CLAUDE.md`, `AGENTS.md` (Codex) or `GEMINI.md`.
+- **A member's computer (team mode):** add `codexCommand` or `geminiCommand` to `worker.yaml`; a task on an agent the
+  computer lacks fails with what to add.
 
 ### Help the agent: CLAUDE.md
 

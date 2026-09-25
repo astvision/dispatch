@@ -44,9 +44,13 @@ limits:
     timeout: 60m
     budgetUsd: 10
 
-agents:
+agents:                           # the CLIs projects run on (ADR 0026); ✂️ and the assistant need claude-code
   claude-code:
     command: /home/dispatch-backend/.local/bin/claude
+  # codex:
+  #   command: codex                # OpenAI Codex CLI, logged in with `codex login`
+  # gemini:
+  #   command: gemini               # Google Gemini CLI, logged in by running it once
 
 projects:
   - name: autoland-management     # clone lives at <stateDir>/repos/autoland-management, unless path is set
@@ -54,9 +58,9 @@ projects:
     repo: https://github.com/acme/autoland-management.git
     # path: /home/bold/work/autoland-management   # an existing clone anywhere, e.g. your own; repo is then optional
     baseBranch: main
-    agent: claude-code
+    agent: claude-code            # or codex, or gemini
     # model: sonnet               # execution needs a model with auto mode (Sonnet, Opus); Haiku runs fail
-    # effort: high                # low, medium, high, xhigh or max; Claude Code's default when unset
+    # effort: high                # low, medium, high, xhigh or max; Claude Code's default when unset (codex: up to xhigh; gemini: none)
     # copyFiles: [.env]           # must be git-ignored; copied into worktrees for execution runs only
     # limits:
     #   plan: { timeout: 20m, budgetUsd: 3 }

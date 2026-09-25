@@ -35,7 +35,9 @@ export default function SettingsPage() {
             <Form.Item label="Commit author email" name="authorEmail" rules={required}>
               <Input type="email" />
             </Form.Item>
-            <Form.Item label="Claude Code command" name="claudeCommand" rules={required}>
+            <Form.Item label="Claude Code command" name="claudeCommand"
+                       rules={current.settings.claudeCommand === null ? [] : required}
+                       extra="Also runs ✂️ splitting and the assistant. Empty when every project runs on Codex or Gemini CLI.">
               <Input />
             </Form.Item>
             <Form.Item label="GitHub CLI command" name="ghCommand" rules={required}>

@@ -1,8 +1,8 @@
 /** The Mini App's screens and their paths. Telegram always opens it at "/", so a path only matters once inside. */
 
-export type Field = "baseBranch" | "alias" | "model" | "effort" | "plan" | "execute";
+export type Field = "agent" | "baseBranch" | "alias" | "model" | "effort" | "plan" | "execute";
 
-export const FIELDS: Field[] = ["baseBranch", "alias", "model", "effort", "plan", "execute"];
+export const FIELDS: Field[] = ["agent", "baseBranch", "alias", "model", "effort", "plan", "execute"];
 
 /** Pages from `dispatch ui` reached from the home screen, by path. */
 export type PagePath = "/projects" | "/tasks" | "/group-tasks" | "/people" | "/settings" | "/logs" | "/overview" | "/groups" | "/prefs"

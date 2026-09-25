@@ -14,7 +14,7 @@ import java.util.Set;
 public final class Cli {
 
     private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group", "log-file",
-            "port");
+            "port", "agent");
     private static final List<String> SERVICE_ACTIONS = List.of("install", "start", "stop", "status", "uninstall");
     private static final Set<String> SWITCHES = Set.of("force", "no-browser", "advanced");
 
@@ -59,9 +59,18 @@ public final class Cli {
         }
     }
 
-    /** Options left out are null: they come from the clone, or the config's only group. */
+    /**
+     * Options left out are null: they come from the clone, or the config's only group.
+     *
+     * @param agent claude-code, codex or gemini (ADR 0026); null for Claude Code when configured, else the only agent there is
+     */
     public record ProjectAdd(Path configFile, Path folder, String name, String alias, String base, String model, String effort,
-                             String group) implements Invocation {
+                             String group, String agent) implements Invocation {
+
+        public ProjectAdd(Path configFile, Path folder, String name, String alias, String base, String model, String effort,
+                          String group) {
+            this(configFile, folder, name, alias, base, model, effort, group, null);
+        }
     }
 
     /** @param force replaces an existing worker.yaml and pairs this computer again */
@@ -96,7 +105,7 @@ public final class Cli {
                   service install|start|stop|status|uninstall
                            keep Dispatch running in the background (systemd, launchd or Task Scheduler)
                   project add FOLDER [--name NAME] [--alias ALIAS] [--base BRANCH] [--model MODEL]
-                           [--effort low|medium|high|xhigh|max] [--group GROUP]
+                           [--effort low|medium|high|xhigh|max] [--group GROUP] [--agent claude-code|codex|gemini]
                            add a git clone on this machine as a project
                   ui [--port 7878] [--no-browser]
                            manage Dispatch in your browser; on a server: ssh -L 7878:localhost:7878 SERVER
@@ -154,10 +163,10 @@ public final class Cli {
                 if (arguments.positional().size() < 2) {
                     throw new CliException("project add needs the folder of a git clone");
                 }
-                arguments.allow(2, Set.of("config", "name", "alias", "base", "model", "effort", "group"));
+                arguments.allow(2, Set.of("config", "name", "alias", "base", "model", "effort", "group", "agent"));
                 yield new ProjectAdd(arguments.configFile(defaults), Path.of(arguments.positional().get(1)), arguments.values().get("name"),
                         arguments.values().get("alias"), arguments.values().get("base"), arguments.values().get("model"),
-                        arguments.values().get("effort"), arguments.values().get("group"));
+                        arguments.values().get("effort"), arguments.values().get("group"), arguments.values().get("agent"));
             }
             case "init" -> {
                 arguments.allow(0, Set.of("config", "force", "advanced"));
