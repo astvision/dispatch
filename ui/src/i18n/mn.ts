@@ -319,4 +319,13 @@ export const mn: Record<Key, string> = {
   "tasks.status.SUCCEEDED": "амжилттай",
   "tasks.status.FAILED": "амжилтгүй",
   "tasks.status.CANCELLED": "цуцалсан",
+  "give.open": "Даалгавар өгөх",
+  "give.title": "Даалгавар өгөх",
+  "give.project": "Төсөл",
+  "give.chooseProject": "Төсөл сонгох",
+  "give.text": "Даалгавар",
+  "give.textHint": "Юу хийхийг хэдэн өгүүлбэрээр",
+  "give.priority": "Чухал зэрэг",
+  "give.submit": "Өгөх",
+  "give.noProjects": "Таны бүлгүүдэд даалгавар өгөх төсөл алга.",
 };

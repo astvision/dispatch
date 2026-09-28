@@ -318,4 +318,13 @@ export const en = {
   "tasks.status.SUCCEEDED": "done",
   "tasks.status.FAILED": "failed",
   "tasks.status.CANCELLED": "cancelled",
+  "give.open": "Give a task",
+  "give.title": "Give a task",
+  "give.project": "Project",
+  "give.chooseProject": "Choose a project",
+  "give.text": "Task",
+  "give.textHint": "What should be done, in a few sentences",
+  "give.priority": "Priority",
+  "give.submit": "Give",
+  "give.noProjects": "None of your groups has a project to give a task in.",
 } as const;

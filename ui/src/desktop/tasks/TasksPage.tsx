@@ -3,7 +3,9 @@ import { useMemo, useState } from "react";
 import { listTasks, type TaskRow } from "../../api";
 import { useT, type Key, type Translate } from "../../i18n/i18n";
 import { useNarrow } from "../../useNarrow";
+import { useDesktopStatus } from "../status";
 import { usePolling } from "../usePolling";
+import GiveTask from "./GiveTask";
 import { age, grouped, type Filter, type TaskGroup } from "./groups";
 import TaskView from "./TaskView";
 
@@ -54,6 +56,8 @@ export default function TasksPage({ navigate }: { navigate: (path: string) => vo
   const { data, error, reload } = usePolling((signal) => listTasks("group", signal));
   const [filter, setFilter] = useState<Filter>({ project: null, person: null, text: "" });
   const [open, setOpen] = useState<number | null>(null);
+  const [giving, setGiving] = useState(false);
+  const { live } = useDesktopStatus();
   const rows = data?.tasks ?? [];
   const now = new Date();
   const projects = useMemo(() => [...new Set(rows.map((row) => row.project))].sort(), [rows]);
@@ -71,7 +75,10 @@ export default function TasksPage({ navigate }: { navigate: (path: string) => vo
   const groups = grouped(rows, filter, now);
   return (
     <Flex vertical gap={12}>
-      <Typography.Title level={4} style={{ margin: 0 }}>{t("tasks.title")}</Typography.Title>
+      <Flex justify="space-between" align="center" wrap gap={8}>
+        <Typography.Title level={4} style={{ margin: 0 }}>{t("tasks.title")}</Typography.Title>
+        <Button type="primary" onClick={() => setGiving(true)}>{t("give.open")}</Button>
+      </Flex>
       <Flex wrap gap={8}>
         <Select aria-label={t("tasks.allProjects")} style={{ minWidth: 160 }} value={filter.project}
                 options={[{ value: null, label: t("tasks.allProjects") }, ...projects.map((name) => ({ value: name, label: name }))]}
@@ -96,6 +103,14 @@ export default function TasksPage({ navigate }: { navigate: (path: string) => vo
         {open !== null && (
           <TaskView key={open} taskId={open} layout="panel" onChanged={reload} onDetails={() => navigate(`/tasks/${open}`)} />
         )}
+      </Drawer>
+      <Drawer open={giving} onClose={() => setGiving(false)} placement="right" size={narrow ? "100%" : 520} destroyOnHidden
+              title={t("give.title")}>
+        {giving && <GiveTask projects={live?.projects ?? []} onGiven={(taskId) => {
+          setGiving(false);
+          setOpen(taskId);
+          reload();
+        }} />}
       </Drawer>
     </Flex>
   );
