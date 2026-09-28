@@ -39,9 +39,14 @@ public final class ConfigLoader {
     /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
     private static final Pattern CREDENTIAL_URL = Pattern.compile("^https?://[^/@]*@", Pattern.CASE_INSENSITIVE);
     private static final Pattern SECRET_KEY = Pattern.compile("(?i).*(token|secret|password|passwd|apikey|api_key|credential).*");
-    /** Segments of letters, digits, '.', '_' or '-' separated by single '/', e.g. dispatch/team (M: several instances). */
-    private static final Pattern BRANCH_PREFIX =
-            Pattern.compile("[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*(/[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*)*");
+    /**
+     * Segments of letters, digits, '.', '_' or '-' separated by single '/', e.g. dispatch/team (M: several instances).
+     * Each segment also follows git's own ref rules ({@code git check-ref-format --branch}): no leading '-' (git reads
+     * it as an option) and no segment ending in ".lock" (git's own lock file suffix) — either would load here but then
+     * fail every PLAN's {@code git worktree add -b} at SETUP, breaking fail-fast at config load.
+     */
+    private static final String BRANCH_SEGMENT = "(?!-)[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*(?<!\\.lock)";
+    private static final Pattern BRANCH_PREFIX = Pattern.compile(BRANCH_SEGMENT + "(/" + BRANCH_SEGMENT + ")*");
     /** Keys of the single-group config that ADR 0012 replaced with telegram.groups. */
     private static final Set<String> SINGLE_GROUP_KEYS = Set.of("groupChatId", "members");
 

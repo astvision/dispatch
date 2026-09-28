@@ -141,7 +141,7 @@ class ConfigLoaderTest {
     void branchPrefixDefaultsToDispatchAndMustBeARefPath() throws IOException {
         assertEquals("dispatch/12", ConfigLoader.load(write(VALID), ENV).branch(12));
         assertEquals("dispatch/team/12", ConfigLoader.load(write(VALID + "branchPrefix: dispatch/team\n"), ENV).branch(12));
-        for (String bad : List.of("/x", "x/", "a..b", "a b", "a//b", "a~b")) {
+        for (String bad : List.of("/x", "x/", "a..b", "a b", "a//b", "a~b", "-x", "a.lock", "x/a.lock")) {
             ConfigException e = assertThrows(ConfigException.class,
                     () -> ConfigLoader.load(write(VALID + "branchPrefix: '" + bad + "'\n"), ENV));
             assertTrue(e.getMessage().contains("branchPrefix"), e.getMessage());
