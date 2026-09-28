@@ -55,7 +55,7 @@ class DeskProxyTest {
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))));
         tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.empty()), new ActiveRuns(), clock,
                 () -> { }, () -> { });
-        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme");
+        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme", 2);
         proxy = new DeskProxy(() -> state);
     }
 
@@ -130,7 +130,7 @@ class DeskProxyTest {
     @Test
     void aRestartedBotIsFoundAtItsNewPort() throws IOException {
         desk.close();
-        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme");
+        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme", 2);
 
         assertEquals(200, proxy.forward("/api/live", "GET", new byte[0], Language.EN, null).status());
     }

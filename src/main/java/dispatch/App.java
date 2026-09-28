@@ -211,7 +211,8 @@ public final class App {
 
         dispatch.ui.DeskServer desk = null;
         try {
-            desk = dispatch.ui.DeskServer.start(stateDir, db, tasks, groups, clock, version(), config.team());
+            desk = dispatch.ui.DeskServer.start(stateDir, db, tasks, groups, clock, version(), config.team(),
+                    config.scheduler().maxConcurrentRuns());
         } catch (java.io.IOException e) {
             // The bot's own work never waits on the desktop: without a desk port the desktop says the bot is not running.
             Log.error("desk.unavailable", e, "state_dir", stateDir);

@@ -1048,6 +1048,7 @@ public final class TaskService {
             if (own) {
                 // What the Mini App's home shows on the requester's own waiting task: the question it waits on, if any.
                 currentPlan(tx, task.id()).ifPresent(plan -> {
+                    item.put("planSeq", plan.path("planSeq").asInt());
                     List<JsonNode> open = new ArrayList<>();
                     plan.withArray("questions").forEach(question -> {
                         if (question.path("answer").isNull()) {

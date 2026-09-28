@@ -26,10 +26,10 @@ public final class DeskServer implements AutoCloseable {
     }
 
     public static DeskServer start(Path stateDir, Database db, TaskService tasks, Groups groups, Clock clock, String version,
-                                   String name) throws IOException {
+                                   String name, int maxConcurrent) throws IOException {
         String token = DeskFile.newToken();
         TasksApi tasksApi = new TasksApi(db, tasks, groups, true);
-        LiveApi live = new LiveApi(db, tasks, groups, clock, version, name);
+        LiveApi live = new LiveApi(db, tasks, groups, clock, version, name, maxConcurrent);
         Map<String, BiFunction<UiServer.Caller, JsonNode, Object>> routes = new HashMap<>(tasksApi.routes());
         routes.putAll(new DeskTasksApi(db, tasks, clock).routes());
         UiServer server = UiServer.start(0, "/desk-serves-no-pages", port -> new DeskAuth(port, token, groups),

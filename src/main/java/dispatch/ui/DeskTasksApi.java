@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
+import dispatch.Text;
 import dispatch.core.TaskService;
+import dispatch.domain.Priority;
+import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Runs;
 import dispatch.ui.UiServer.Caller;
@@ -36,7 +39,7 @@ final class DeskTasksApi {
     }
 
     Map<String, BiFunction<Caller, JsonNode, Object>> routes() {
-        return Map.of("/api/tasks/spend", this::spend);
+        return Map.of("/api/tasks/spend", this::spend, "/api/tasks/new", this::give);
     }
 
     /**
@@ -77,6 +80,34 @@ final class DeskTasksApi {
                 .put("runs", runsOf.get(project)).put("unpriced", unpricedOf.getOrDefault(project, 0)));
         answer.put("totalUsd", usd(perProject.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add)));
         return answer;
+    }
+
+    /**
+     * {"project", "text", "priority"} → {"taskId"}: a task of the acting admin's own. A refusal is answered here only
+     * ({@link TaskService#give} writes nothing for one), so the chat hears of the tasks the desk gave, not of its typos.
+     */
+    ObjectNode give(Caller caller, JsonNode body) {
+        String project = body.path("project").asText("");
+        Priority priority = priority(body.path("priority").asText("NORMAL"));
+        TaskService.Given given = db.transactionReturning(tx ->
+                tasks.give(tx, new Requester(caller.ref(), caller.name()), project, body.path("text").asText(""), priority));
+        return switch (given.result()) {
+            case CREATED -> Json.object().put("taskId", given.taskId());
+            case EMPTY -> throw new ApiException(400, "empty", Text.of("refusal.taskEmpty"));
+            case UNKNOWN_PROJECT -> throw new ApiException(404, "unknown_project", Text.of("refusal.projectNotYours", project));
+            case PROJECT_UNAVAILABLE -> throw new ApiException(409, "project_unavailable",
+                    Text.of("refusal.projectUnavailable", project, given.reason()));
+            case NOT_ALLOWED -> throw new ApiException(403, "not_a_member", Text.of("refusal.notMember"));
+            case DUPLICATE -> throw new IllegalStateException("a desk origin is new every time, yet the task came back a duplicate");
+        };
+    }
+
+    private static Priority priority(String given) {
+        try {
+            return Priority.valueOf(given);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(400, "bad_priority", Text.of("refusal.badPriority", given));
+        }
     }
 
     private static String usd(BigDecimal amount) {
