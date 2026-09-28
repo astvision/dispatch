@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
@@ -16,7 +15,6 @@ import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Runs;
-import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -42,7 +40,6 @@ class StatsTest {
     @TempDir
     Path dir;
 
-    private Path dbFile;
     private Database db;
     private TestClock clock;
     private TaskService tasks;
@@ -51,8 +48,7 @@ class StatsTest {
 
     @BeforeEach
     void setUp() {
-        dbFile = dir.resolve("dispatch.db");
-        db = Database.open(dbFile);
+        db = Database.open(dir.resolve("dispatch.db"));
         db.migrate();
         clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Projects projects = new Projects(List.of(project("alm"), project("life")), project -> Optional.empty());
@@ -155,19 +151,6 @@ class StatsTest {
             assertEquals(person.get("name").asText().equals("Bold"), !person.get("costUsd").isNull(), person.toString());
         }
         assertEquals("0.20", mine.get("summary").get("costUsd").asText());
-    }
-
-    @Test
-    void statsCommandPostsMyMonthPrivatelyAndTheGroupsMonthInAGroup() {
-        db.transaction(tx -> tasks.stats(tx, BOLD.ref(), BOLDS_GROUPS, "telegram:100/1", "telegram:100"));
-        db.transaction(tx -> tasks.stats(tx, null, List.of("backend"), "telegram:-100/2", "telegram:-100"));
-
-        JsonNode mine = Json.read(SqlRows.single(dbFile, "SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/1'").get("payload"));
-        assertEquals("me", mine.get("view").asText());
-        assertEquals("month", mine.get("period").asText());
-        JsonNode group = Json.read(SqlRows.single(dbFile, "SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:-100/2'").get("payload"));
-        assertEquals("group:backend", group.get("view").asText());
-        assertEquals(false, group.get("canViewMe").asBoolean());
     }
 
     private JsonNode payload(String viewerRef, List<String> groupNames, String view, String period) {

@@ -55,6 +55,19 @@ public final class Row {
         return value == null ? null : Enum.valueOf(type, value);
     }
 
+    /** The constant a column names, or null when it names none this version has, such as an outbox kind since retired. */
+    public <E extends Enum<E>> E enumOrNull(String column, Class<E> type) throws SQLException {
+        String value = resultSet.getString(column);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Enum.valueOf(type, value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     public UUID uuid(String column) throws SQLException {
         String value = resultSet.getString(column);
         return value == null ? null : UUID.fromString(value);

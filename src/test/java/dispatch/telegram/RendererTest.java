@@ -345,34 +345,6 @@ class RendererTest {
     }
 
     @Test
-    void refusedCorrectionSaysWhy() {
-        String stale = renderer.render(OutboxKind.CORRECTION_REFUSED, Json.object().put("taskId", 42).put("reason", "stale")).html();
-        String busy = renderer.render(OutboxKind.CORRECTION_REFUSED,
-                Json.object().put("taskId", 42).put("reason", "phase").put("phase", "EXECUTING")).html();
-
-        String notRequester = renderer.render(OutboxKind.CORRECTION_REFUSED,
-                Json.object().put("taskId", 42).put("reason", "requester").put("requester", "Bold")).html();
-
-        assertEquals(new java.text.MessageFormat(messages.getString("task.correctionStale")).format(new Object[] {"42"}), stale);
-        assertTrue(busy.contains(messages.getString("phase.EXECUTING")), busy);
-        assertTrue(notRequester.contains("#42") && notRequester.contains("Bold"), notRequester);
-    }
-
-    @Test
-    void cancelRetryAndFollowUpRefuseNonRequestersToo() {
-        String cancel = renderer.render(OutboxKind.CANCEL_REFUSED,
-                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
-        String retry = renderer.render(OutboxKind.RETRY_REFUSED,
-                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
-        String followUp = renderer.render(OutboxKind.FOLLOW_UP_REFUSED,
-                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
-
-        assertTrue(cancel.contains("#7") && cancel.contains("Bold"), cancel);
-        assertTrue(retry.contains("#7") && retry.contains("Bold"), retry);
-        assertTrue(followUp.contains("#7") && followUp.contains("Bold"), followUp);
-    }
-
-    @Test
     void aRefusalIsItsWordsEscapedWithItsCommandHintAsCode() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.REFUSED,
                 Json.object().put("text", "#5 <b> is Bold's & Ali's").put("hint", "/retry 5"));
@@ -1140,7 +1112,6 @@ class RendererTest {
             case PLAN_READY -> planPayload(List.of("Do it"), List.of());
             case TASK_FAILED -> Json.object().put("taskId", 1).put("reason", "AGENT").put("detail", "boom");
             case TASK_REJECTED, TASK_CANCELLED, EXECUTION_QUEUED, CORRECTION_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");
-            case CORRECTION_REFUSED -> Json.object().put("taskId", 1).put("reason", "phase").put("phase", "PLANNING");
             case TASK_COMPLETED -> completedPayload("https://github.com/acme/alm/pull/7", 1, List.of("Bash: gh pr list"));
             case STATUS -> statusPayload();
             case HISTORY -> historyPayload();
@@ -1148,18 +1119,9 @@ class RendererTest {
             case TASK_TIMELINE -> timelinePayload();
             case TASK_NOT_FOUND -> Json.object().put("taskId", 99);
             case REFUSED -> Json.object().put("text", "#5 can't be retried: it is completed").put("hint", "/retry 5");
-            case CANCEL_REFUSED -> Json.object().put("taskId", 1).put("phase", "REJECTED");
             case RETRY_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali").put("kind", "DELIVER");
-            case RETRY_REFUSED -> Json.object().put("taskId", 1).put("phase", "COMPLETED");
             case FOLLOW_UP_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");
-            case FOLLOW_UP_REFUSED -> Json.object().put("taskId", 1).put("reason", "notExecuted").put("phase", "FAILED");
             case NOT_ALLOWED -> Json.object().put("name", "Sara");
-            case UNKNOWN_PROJECT -> {
-                ObjectNode payload = Json.object().put("given", "billing");
-                payload.putArray("projects").addObject().put("name", "autoland-management").put("alias", "alm");
-                yield payload;
-            }
-            case PROJECT_UNAVAILABLE -> Json.object().put("project", "crm").put("reason", "no clone");
             case TASK_USAGE -> Json.object();
             case TASK_PROMPT -> Json.object();
             case PROJECTS -> {

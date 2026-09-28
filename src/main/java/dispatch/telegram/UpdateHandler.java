@@ -367,10 +367,12 @@ public final class UpdateHandler {
                 }
                 giveTask(tx, who, command.args(), message, origin);
             }
-            case "status" -> tasks.status(tx, viewer, origin, chatRef);
+            case "status" -> enqueue(tx, OutboxKind.STATUS, chatRef, origin, tasks.statusPayload(tx, viewer));
             case "history" -> taskId(command.args()).ifPresentOrElse(
-                    id -> tasks.timeline(tx, viewer, id, origin, chatRef),
-                    () -> tasks.history(tx, viewer, origin, chatRef));
+                    id -> tasks.timelinePayload(tx, viewer, id).ifPresentOrElse(
+                            payload -> enqueue(tx, OutboxKind.TASK_TIMELINE, chatRef, origin, payload),
+                            () -> enqueue(tx, OutboxKind.TASK_NOT_FOUND, chatRef, origin, Json.object().put("taskId", id))),
+                    () -> enqueue(tx, OutboxKind.HISTORY, chatRef, origin, tasks.historyPayload(tx, viewer)));
             case "cancel" -> {
                 if (!privateChat) {
                     privateOnly(tx, chatRef, origin);
@@ -403,7 +405,7 @@ public final class UpdateHandler {
                 }
                 manage(tx, who, origin, chatRef);
             }
-            case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
+            case "stats" -> stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
             case "projects" -> projectList(tx, who, privateChat, visible, origin, chatRef);
             // "/start help" too: the group card's link to the private chat lands here.
@@ -1413,6 +1415,14 @@ public final class UpdateHandler {
                 }
             }
         }));
+    }
+
+    /** This month's statistics: the viewer's own in a private chat, the group's in a group chat (ADR 0012). */
+    private void stats(Tx tx, String viewerRef, List<String> groupNames, String origin, String chatRef) {
+        String view = viewerRef != null ? "me" : "group:" + groupNames.getFirst();
+        ObjectNode payload = tasks.statsPayload(tx, viewerRef, groupNames, view, "month")
+                .orElseThrow(() -> new IllegalStateException("default statistics view " + view + " refused"));
+        enqueue(tx, OutboxKind.STATS, chatRef, origin, payload);
     }
 
     /**

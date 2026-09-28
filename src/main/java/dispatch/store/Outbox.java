@@ -160,11 +160,15 @@ public final class Outbox {
                 row -> row.string("sent_ref"), taskId, planSeq, index);
     }
 
+    /**
+     * The message Telegram knows as {@code sentRef}; empty for one of a kind this version no longer has (ADR 0031), so a
+     * reply to it is a reply to an unknown message.
+     */
     public static Optional<Sent> findSent(Tx tx, String sentRef) {
         return tx.one("SELECT id, task_id, kind, payload FROM outbox WHERE sent_ref = ?",
-                row -> new Sent(row.longValue("id"), row.longOrNull("task_id"), row.enumValue("kind", OutboxKind.class),
+                row -> new Sent(row.longValue("id"), row.longOrNull("task_id"), row.enumOrNull("kind", OutboxKind.class),
                         row.string("payload")),
-                sentRef);
+                sentRef).filter(sent -> sent.kind() != null);
     }
 
     public static void markSent(Tx tx, long id, int attempts, String sentRef, Instant now) {

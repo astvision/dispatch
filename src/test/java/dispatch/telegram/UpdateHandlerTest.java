@@ -969,6 +969,18 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void historyOfATaskTheMemberSeesPostsItsTimeline() {
+        long taskId = task("Fix the login timeout");
+
+        handler.handle(message(563, 63, 100, "Bold", 100L, "private", "/history " + taskId, null));
+
+        Map<String, String> timeline = row("SELECT * FROM outbox WHERE reply_to_ref = 'telegram:100/63'");
+        assertEquals("TASK_TIMELINE", timeline.get("kind"));
+        assertEquals("telegram:100", timeline.get("chat_ref"));
+        assertEquals(taskId, Json.read(timeline.get("payload")).get("taskId").asLong());
+    }
+
+    @Test
     void manageAnswersAMemberWithAButtonAndSaysSoWhenTheMiniAppIsOff() {
         UpdateHandler withMiniApp = new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
                 () -> { }, null, null, "https://dispatch.example.com", null, null, null);
@@ -1379,6 +1391,20 @@ class UpdateHandlerTest {
         JsonNode edit = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
         assertEquals(88, edit.get("message_id").asLong());
         assertTrue(edit.get("reply_markup").toString().contains("✓ backend"), edit.toString());
+    }
+
+    @Test
+    void statsCommandPostsMyMonthPrivatelyAndTheGroupsMonthInAGroup() {
+        handler.handle(message(593, 93, 100, "Bold", 100L, "private", "/stats", null));
+        handler.handle(message(594, 94, 200, "Ali", GROUP, "supergroup", "/stats", null));
+
+        JsonNode mine = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/93'").get("payload"));
+        assertEquals("me", mine.get("view").asText());
+        assertEquals("month", mine.get("period").asText());
+        JsonNode group = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/94").get("payload"));
+        assertEquals("group:backend", group.get("view").asText());
+        assertEquals("month", group.get("period").asText());
+        assertFalse(group.get("canViewMe").asBoolean());
     }
 
     @Test

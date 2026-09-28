@@ -1,6 +1,6 @@
 # Task commands write a task's news; each channel writes its own reply
 
-Status: proposed
+Status: accepted
 
 A task command (correct, follow up, retry, cancel, give a task) used to answer whoever asked in the chat itself. A refused
 `/cancel` wrote its reason under the command, and a successful one wrote "cancelled" there too. That suited Telegram, the

@@ -459,17 +459,10 @@ public final class TaskService {
     }
 
     /**
-     * Posts what Dispatch is doing on the tasks {@code viewer} sees: running runs with their agent's latest action, then
-     * queued runs, then plans awaiting approval.
-     */
-    public void status(Tx tx, TaskAccess.Viewer viewer, String originRef, String chatRef) {
-        enqueue(tx, null, OutboxKind.STATUS, chatRef, originRef, statusPayload(tx, viewer), clock.instant());
-    }
-
-    /**
-     * The content of a status message, also used to update one in place after a priority change. Every task carries what
-     * the viewer may do with it now ({@code actions}); {@code mine} lists the tasks whose priority they may change, which a
-     * private chat offers as buttons.
+     * What Dispatch is doing on the tasks {@code viewer} sees: running runs with their agent's latest action, then queued
+     * runs, then plans awaiting approval. The content of a status message, also used to update one in place after a
+     * priority change. Every task carries what the viewer may do with it now ({@code actions}); {@code mine} lists the tasks
+     * whose priority they may change, which a private chat offers as buttons.
      */
     public ObjectNode statusPayload(Tx tx, TaskAccess.Viewer viewer) {
         ObjectNode payload = Json.object();
@@ -578,14 +571,10 @@ public final class TaskService {
     }
 
     /**
-     * Posts the most recently finished tasks {@code viewer} sees, newest first; the total cost is shown only on the viewer's
-     * own tasks, everyone else's carry just the headline (ADR 0020).
+     * The most recently finished tasks {@code viewer} sees, newest first; the total cost is shown only on the viewer's own
+     * tasks, everyone else's carry just the headline (ADR 0020). The content of a history message; also what the Mini App's
+     * task list reads (spec: Task pages).
      */
-    public void history(Tx tx, TaskAccess.Viewer viewer, String originRef, String chatRef) {
-        enqueue(tx, null, OutboxKind.HISTORY, chatRef, originRef, historyPayload(tx, viewer), clock.instant());
-    }
-
-    /** The content of a history message; also what the Mini App's task list reads (spec: Task pages). */
     public ObjectNode historyPayload(Tx tx, TaskAccess.Viewer viewer) {
         return historyPayload(tx, viewer, HISTORY_SIZE);
     }
@@ -611,18 +600,8 @@ public final class TaskService {
     }
 
     /**
-     * Posts one task's timeline: its runs in order, how it ended, and what it cost. A task {@code viewer} does not see is
-     * not found. Someone else's task stops at the headline: no runs, no cost (ADR 0020).
-     */
-    public void timeline(Tx tx, TaskAccess.Viewer viewer, long taskId, String originRef, String chatRef) {
-        Optional<ObjectNode> payload = timelinePayload(tx, viewer, taskId);
-        enqueue(tx, null, payload.isPresent() ? OutboxKind.TASK_TIMELINE : OutboxKind.TASK_NOT_FOUND, chatRef, originRef,
-                payload.orElseGet(() -> Json.object().put("taskId", taskId)), clock.instant());
-    }
-
-    /**
-     * One task's timeline, or empty when {@code viewer} does not see it — so a task's existence does not leak. Someone
-     * else's task stops at the headline here too (ADR 0020).
+     * One task's timeline: its runs in order, how it ended, and what it cost; empty when {@code viewer} does not see it, so a
+     * task's existence does not leak. Someone else's task stops at the headline: no runs, no cost (ADR 0020).
      */
     public Optional<ObjectNode> timelinePayload(Tx tx, TaskAccess.Viewer viewer, long taskId) {
         Optional<Task> found = Tasks.find(tx, taskId).filter(task -> viewer.sees(task) != TaskAccess.Sight.NONE);
@@ -682,14 +661,6 @@ public final class TaskService {
             question.options().forEach(item.putArray("options")::add);
         }
         return Optional.of(payload);
-    }
-
-    /** Posts statistics for this month: the viewer's own in a private chat, the group's in a group chat (ADR 0012). */
-    public void stats(Tx tx, String viewerRef, List<String> groupNames, String originRef, String chatRef) {
-        String view = viewerRef != null ? "me" : "group:" + groupNames.getFirst();
-        ObjectNode payload = statsPayload(tx, viewerRef, groupNames, view, "month")
-                .orElseThrow(() -> new IllegalStateException("default statistics view " + view + " refused"));
-        enqueue(tx, null, OutboxKind.STATS, chatRef, originRef, payload, clock.instant());
     }
 
     /**
