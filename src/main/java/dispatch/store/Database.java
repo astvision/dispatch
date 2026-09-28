@@ -1,19 +1,23 @@
 package dispatch.store;
 
-import dispatch.AnsiPaths;
 import dispatch.OwnerOnly;
 import dispatch.Log;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -64,20 +68,63 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * The SQLite driver unpacks its native library into the temporary folder and loads it from there, which Windows does
-     * in its code page ({@link AnsiPaths}): with other letters in that folder's name no database would open. The driver is
-     * given the folder's short name instead.
+     * The SQLite driver unpacks its native library into a folder and loads it from there. Windows loads a library through
+     * its ANSI code page, after the JDK spells the path out in full (an 8.3 short name is expanded again), so a temporary
+     * folder with letters outside the code page, as under C:\Users\Өлзий, opened no database (run 36395743054). Such a
+     * machine unpacks it into a folder of this user's own under ProgramData instead, whose full name the code page spells.
      */
     private static void sqliteFolder() {
         if (!System.getProperty("os.name").startsWith("Windows") || System.getProperty("org.sqlite.tmpdir") != null) {
             return;
         }
         String temp = System.getProperty("java.io.tmpdir");
-        String loadable = AnsiPaths.of(Path.of(temp)).orElseThrow(() -> new DatabaseException("SQLite cannot be loaded from "
-                + temp + ": Windows reads that name in its code page, which lacks some of its letters, and keeps no short name"
-                + " for it; set TMP to a folder named in plain letters, such as C:\\Temp", null));
-        if (!loadable.equals(temp)) {
-            System.setProperty("org.sqlite.tmpdir", loadable);
+        if (loadable(temp)) {
+            return;
+        }
+        String programData = System.getenv("ProgramData");
+        Path folder = programData == null ? null : Path.of(programData, "dispatch-" + userKey());
+        if (folder == null || !loadable(folder.toString()) || !ours(folder)) {
+            throw new DatabaseException("SQLite cannot be loaded from " + temp + ", whose name has letters Windows cannot load"
+                    + " a library from, nor from " + folder + "; set TMP for Dispatch to a folder named in plain letters", null);
+        }
+        System.setProperty("org.sqlite.tmpdir", folder.toString());
+    }
+
+    /** Whether Windows can load a library from {@code path}: its full spelling fits the ANSI code page. */
+    private static boolean loadable(String path) {
+        try {
+            String full = new File(path).getCanonicalPath();
+            return Charset.forName(System.getProperty("native.encoding")).newEncoder().canEncode(full);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Creates {@code folder} when missing; true when it belongs to the user Dispatch runs as, so nobody else can change what
+     * is unpacked into it. Another user's folder of that name is refused, not used.
+     */
+    private static boolean ours(Path folder) {
+        try {
+            Files.createDirectories(folder);
+            Path probe = Files.createTempFile("dispatch-owner", null);
+            try {
+                return Files.getOwner(folder).equals(Files.getOwner(probe));
+            } finally {
+                Files.deleteIfExists(probe);
+            }
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** The user's own folder name under ProgramData, in plain letters whatever the user's name is spelled in. */
+    private static String userKey() {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(System.getProperty("user.name").getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, 8);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is always available", e);
         }
     }
 

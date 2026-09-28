@@ -71,6 +71,11 @@ git commit -F <message file>   # "Plan X-1, and amend the spec with what its fir
 
 ### Task 2: SQLite opens under a temporary folder outside the code page
 
+> **Amended after run 36395743054:** the short name below did not work. The JDK spells a library's path out in full before
+> loading it, so `C:\Users\RUNNER~1\…\DISPAT~1` was loaded as `C:\Users\runneradmin\…\dispatch ????`. `Database` now
+> unpacks into `%ProgramData%\dispatch-<hash of the user's name>`, checked to be the user's own, and `AnsiPaths` waits for
+> X-2/X-3, where java.exe does open a short name as given. The steps below are the first attempt, kept as it was built.
+
 Red on Windows: run 36385991295, every class that opens a database ("Failed to load native library … sqlitejdbc.dll … Can't find dependent libraries").
 
 **Files:**

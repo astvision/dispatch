@@ -171,14 +171,17 @@ its system drive, where user folders are.
 
 1. **Loading a native library.** The SQLite driver unpacks its DLL into the temporary folder and loads it from there. Under
    such a folder the load fails ("Can't find dependent libraries") and no database opens, so Dispatch cannot start at all.
-   **X-1:** a new `dispatch.AnsiPaths` gives a path as the code page can spell it: the path itself, or its short name from
-   `GetShortPathNameW` (through the FFM API, which the jar already enables). On Windows, `Database.open` points the driver
-   (`org.sqlite.tmpdir`) at the temporary folder's short name when needed. A folder with neither, on a volume that keeps no
-   short names, stops Dispatch with an error that says to set `TMP` to a folder named in plain letters.
+   A short name does not help here: the JDK spells a library's path out in full before loading it, expanding 8.3 names
+   again (run 36395743054 loaded `C:\Users\runneradmin\…\dispatch ????` from `C:\Users\RUNNER~1\…`). **X-1:** on
+   Windows, when the temporary folder's full name does not fit the code page, `Database.open` has the driver unpack into
+   `%ProgramData%\dispatch-<hash of the user's name>`, created by and checked to belong to the user Dispatch runs as, so no
+   one else can change what is unpacked there. When that fails too, Dispatch stops with an error that says to set `TMP`
+   to a folder named in plain letters.
 2. **java.exe's own arguments.** java.exe reads its command line in the code page, so a jar or class path with such
    letters is not found ("Unable to access jarfile …????…"). Java is started by `dispatch.cmd` (`install.ps1`), the Windows
    task (X-3), the assistant's `dispatch` script (X-2) and the test fakes (X-2). **X-2 and X-3:** each passes the paths it
-   gives java.exe by `AnsiPaths`. What a person types after `dispatch` keeps the limit, documented in X-4. The fake and
+   gives java.exe by their 8.3 short names, which java.exe opens as given (`AnsiPaths`, first written in X-1 as 936ac25
+   and brought back with its first use). What a person types after `dispatch` keeps the limit, documented in X-4. The fake and
    `CommandLineTest`'s child read their arguments from their own command line as Windows keeps it, in UTF-16
    (`ProcessHandle.current().info().commandLine()`), split by Windows' `CommandLineToArgvW`, and never from `main`'s
    arguments.
