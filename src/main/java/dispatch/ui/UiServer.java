@@ -76,6 +76,19 @@ public final class UiServer implements AutoCloseable {
         }
     }
 
+    /** A call this server passes on to another as it came (D-2: `dispatch ui` passes task calls to the bot's desk port). */
+    public interface Forward {
+
+        boolean handles(String path);
+
+        /** @param member the page's {@link DeskAuth#MEMBER_HEADER}, or null */
+        Forwarded forward(String path, String method, byte[] body, Language language, String member);
+    }
+
+    /** The other server's status and JSON body, sent back unchanged. */
+    public record Forwarded(int status, byte[] json) {
+    }
+
     private static final Map<String, String> CONTENT_TYPES = Map.of(
             ".html", "text/html; charset=utf-8",
             ".js", "text/javascript; charset=utf-8",
@@ -97,14 +110,17 @@ public final class UiServer implements AutoCloseable {
     private final String resourceRoot;
     private final Map<String, Function<Caller, Object>> getRoutes;
     private final Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes;
+    /** Null when this server answers every call itself. */
+    private final Forward forward;
 
     private UiServer(HttpServer server, Auth auth, String resourceRoot, Map<String, Function<Caller, Object>> getRoutes,
-                     Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes) {
+                     Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes, Forward forward) {
         this.server = server;
         this.auth = auth;
         this.resourceRoot = resourceRoot;
         this.getRoutes = Map.copyOf(getRoutes);
         this.postRoutes = Map.copyOf(postRoutes);
+        this.forward = forward;
     }
 
     /**
@@ -131,8 +147,15 @@ public final class UiServer implements AutoCloseable {
     public static UiServer start(int port, String resourceRoot, IntFunction<Auth> auth,
                                  Map<String, Function<Caller, Object>> getRoutes,
                                  Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes) throws IOException {
+        return start(port, resourceRoot, auth, getRoutes, postRoutes, null);
+    }
+
+    /** @param forward the calls this server passes on to another, after its own authentication let them in; null for none */
+    public static UiServer start(int port, String resourceRoot, IntFunction<Auth> auth,
+                                 Map<String, Function<Caller, Object>> getRoutes,
+                                 Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes, Forward forward) throws IOException {
         HttpServer http = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 0);
-        UiServer ui = new UiServer(http, auth.apply(http.getAddress().getPort()), resourceRoot, getRoutes, postRoutes);
+        UiServer ui = new UiServer(http, auth.apply(http.getAddress().getPort()), resourceRoot, getRoutes, postRoutes, forward);
         http.createContext("/", ui::handle);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         http.start();
@@ -212,6 +235,19 @@ public final class UiServer implements AutoCloseable {
     }
 
     private void api(HttpExchange exchange, String path, boolean reading, Caller caller, Language language) throws IOException {
+        if (forward != null && forward.handles(path)) {
+            byte[] body = reading ? new byte[0] : exchange.getRequestBody().readNBytes(MAX_BODY + 1);
+            if (body.length > MAX_BODY) {
+                json(exchange, 413, error("too_large", Text.of("refusal.tooLarge", MAX_BODY / 1024).render(language)));
+                return;
+            }
+            Forwarded answer = forward.forward(path, exchange.getRequestMethod(), body, language,
+                    exchange.getRequestHeaders().getFirst(DeskAuth.MEMBER_HEADER));
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            send(exchange, answer.status(), answer.json());
+            return;
+        }
         Function<Caller, Object> getRoute = getRoutes.get(path);
         BiFunction<Caller, JsonNode, Object> postRoute = postRoutes.get(path);
         if (getRoute == null && postRoute == null) {

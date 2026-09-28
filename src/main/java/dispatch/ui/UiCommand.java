@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
 import dispatch.cli.Locations;
+import dispatch.cli.RunCommand;
 import dispatch.cli.Service;
 import dispatch.cli.ServiceCommand;
+import dispatch.config.ConfigException;
 import dispatch.telegram.BotApi;
 import java.awt.Desktop;
 import java.io.IOException;
@@ -18,6 +20,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /** `dispatch ui`: serves the web UI on 127.0.0.1 and prints its one-time login link (ADR 0018). */
 public final class UiCommand {
@@ -51,7 +54,16 @@ public final class UiCommand {
             Map<String, BiFunction<UiServer.Caller, JsonNode, Object>> postRoutes =
                     new HashMap<>(UiRoutes.anyCaller(setup.routes(), false));
             postRoutes.putAll(management.post(false));
-            server = UiServer.start(options.port(), resourceRoot, management.get(false), postRoutes);
+            // The state folder as the overview finds it, read on every call: the running bot's desk.json is there (D-2).
+            Supplier<Path> stateDir = () -> {
+                try {
+                    return RunCommand.prepare(configFile, processEnvironment).config().stateDir();
+                } catch (CliException | ConfigException e) {
+                    return locations.stateDir();
+                }
+            };
+            server = UiServer.start(options.port(), resourceRoot, UiAuth::new, management.get(false), postRoutes,
+                    new DeskProxy(stateDir));
         } catch (BindException e) {
             throw new CliException("port " + options.port() + " is in use; choose another with --port");
         } catch (IOException e) {

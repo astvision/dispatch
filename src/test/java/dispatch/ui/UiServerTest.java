@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.sun.net.httpserver.HttpExchange;
+import dispatch.Language;
 import dispatch.cli.CliException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -15,7 +17,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
@@ -277,6 +282,67 @@ class UiServerTest {
                 line.append((char) c);
             }
             return line.toString();
+        }
+    }
+
+    /** Lets every request in, as the one who holds dispatch ui's link: what a forwarded call needs from its server. */
+    private static final UiServer.Auth OPEN = new UiServer.Auth() {
+        @Override
+        public Optional<String> hostRefusal(String host) {
+            return Optional.empty();
+        }
+
+        @Override
+        public void headers(HttpExchange exchange) {
+        }
+
+        @Override
+        public Optional<String> pageRefusal(HttpExchange exchange) {
+            return Optional.empty();
+        }
+
+        @Override
+        public UiServer.Caller caller(HttpExchange exchange) {
+            return new UiServer.Caller("local", "owner", true);
+        }
+    };
+
+    private final List<String> forwarded = new CopyOnWriteArrayList<>();
+
+    private final UiServer.Forward tasksElsewhere = new UiServer.Forward() {
+        @Override
+        public boolean handles(String path) {
+            return path.startsWith("/api/tasks/");
+        }
+
+        @Override
+        public UiServer.Forwarded forward(String path, String method, byte[] body, Language language, String member) {
+            forwarded.addAll(List.of(method, String.valueOf(member), language.name(), new String(body, StandardCharsets.UTF_8)));
+            return new UiServer.Forwarded(418, "{\"passed\":true}".getBytes(StandardCharsets.UTF_8));
+        }
+    };
+
+    @Test
+    void aForwardedCallIsAnsweredAsTheOtherServerAnsweredIt() throws Exception {
+        try (UiServer passing = UiServer.start(0, "/ui-test", port -> OPEN, Map.of(), Map.of(), tasksElsewhere)) {
+            HttpResponse<String> answer = http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + passing.port() + "/api/tasks/list"))
+                    .header("Accept-Language", "mn").header("X-Dispatch-Member", "telegram:300")
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"scope\":\"group\"}")).build(), HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(418, answer.statusCode());
+            assertEquals("{\"passed\":true}", answer.body());
+            assertEquals(List.of("POST", "telegram:300", "MN", "{\"scope\":\"group\"}"), forwarded);
+        }
+    }
+
+    @Test
+    void aPathTheForwardDoesNotHandleIsStillThisServersOwn() throws Exception {
+        try (UiServer passing = UiServer.start(0, "/ui-test", port -> OPEN, Map.of(), Map.of(), tasksElsewhere)) {
+            HttpResponse<String> answer = http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + passing.port() + "/api/nothing"))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(404, answer.statusCode());
+            assertEquals(List.of(), forwarded);
         }
     }
 }
