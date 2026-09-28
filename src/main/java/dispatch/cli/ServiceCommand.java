@@ -71,7 +71,7 @@ public final class ServiceCommand {
         terminal.ok(service.kind().label() + " runs in the background as " + service.describe());
         terminal.say("  Logs:   " + spec.logFile());
         terminal.say("  Manage: " + service.kind().manageCommand() + " status | stop | start | uninstall");
-        service.status().notes().forEach(terminal::warn);
+        service.status().notes().forEach(note -> terminal.warn(note.english()));
     }
 
     private void status() {
@@ -81,11 +81,11 @@ public final class ServiceCommand {
             return;
         }
         if (status.running()) {
-            terminal.ok(service.describe() + ": " + status.detail());
+            terminal.ok(service.describe() + ": " + status.detail().english());
         } else {
-            terminal.warn(service.describe() + ": " + status.detail());
+            terminal.warn(service.describe() + ": " + status.detail().english());
         }
-        status.notes().forEach(terminal::warn);
+        status.notes().forEach(note -> terminal.warn(note.english()));
     }
 
     public static Path runningJar() {

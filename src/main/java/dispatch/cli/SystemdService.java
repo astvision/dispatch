@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Text;
 import dispatch.workspace.Git;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -77,16 +78,16 @@ final class SystemdService implements Service {
     @Override
     public Status status() {
         if (!Files.exists(unitFile)) {
-            return new Status(false, false, "not installed", List.of());
+            return new Status(false, false, Text.of("service.notInstalled"), List.of());
         }
         Git.Result active = commands.run(List.of("systemctl", "--user", "is-active", kind.systemdUnit()));
-        List<String> notes = new ArrayList<>();
+        List<Text> notes = new ArrayList<>();
         Git.Result linger = commands.run(List.of("loginctl", "show-user", user, "-p", "Linger"));
         if (!linger.stdout().contains("Linger=yes")) {
-            notes.add("it stops when you log out; to keep it running, run: loginctl enable-linger " + user);
+            notes.add(Text.of("service.linger", user));
         }
         String state = active.stdout().strip();
-        return new Status(true, state.equals("active"), state.isEmpty() ? "unknown" : state, notes);
+        return new Status(true, state.equals("active"), state.isEmpty() ? Text.of("service.unknown") : Text.raw(state), notes);
     }
 
     @Override

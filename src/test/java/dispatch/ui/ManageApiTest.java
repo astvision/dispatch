@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -665,7 +666,7 @@ class ManageApiTest {
 
         @Override
         public Service.Status status() {
-            return new Service.Status(installed, installed, installed ? "running" : "not installed", List.of());
+            return new Service.Status(installed, installed, Text.raw(installed ? "running" : "not installed"), List.of());
         }
 
         @Override

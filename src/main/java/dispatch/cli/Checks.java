@@ -3,6 +3,7 @@ package dispatch.cli;
 import dispatch.Json;
 import dispatch.OwnerOnly;
 import dispatch.Redactor;
+import dispatch.Text;
 import dispatch.config.Config;
 import dispatch.config.ConfigException;
 import dispatch.telegram.BotApi;
@@ -28,8 +29,8 @@ import java.util.function.Function;
 /**
  * Whether an instance can work, before it starts: the config and secrets, the bot token, the agent CLI, each project's clone
  * and base branch, the state directory, and either the GitHub CLI (personal mode) or the workers block members connect
- * through (team mode). Every problem is a finding with what to do about it. Shown by `dispatch check` and on the web UI's
- * overview.
+ * through (team mode). Every problem is a finding with what to do about it. Shown by `dispatch check`, in English, and on
+ * the web UI's overview, in the page's language.
  */
 public final class Checks {
 
@@ -46,9 +47,9 @@ public final class Checks {
 
     /**
      * @param area    what was checked: config, bot, an agent's name, "project NAME", state, gh or workers
-     * @param message the whole line as `dispatch check` prints it, with what to do about a problem
+     * @param message the whole line as `dispatch check` prints it (in English), with what to do about a problem
      */
-    public record Finding(Level level, String area, String message) {
+    public record Finding(Level level, String area, Text message) {
     }
 
     private final Function<String, BotApi> bots;
@@ -66,13 +67,14 @@ public final class Checks {
             prepared = RunCommand.prepare(configFile, processEnvironment);
         } catch (CliException | ConfigException e) {
             Run failed = new Run(onEach, Redactor.fromEnvironment(processEnvironment));
-            failed.add(Level.FAIL, "config", "config: " + e.getMessage());
+            Text why = e instanceof CliException refused ? refused.text() : Text.raw(e.getMessage());
+            failed.add(Level.FAIL, "config", Text.of("check.configInvalid", why));
             return failed.findings;
         }
         // The merged environment includes the secrets file, so tokens findings quote (e.g. a repo URL's userinfo,
         // or a check command's own output) are masked too, not only the ones already known from processEnvironment.
         Run run = new Run(onEach, Redactor.fromEnvironment(prepared.environment()));
-        run.add(Level.OK, "config", "config " + configFile);
+        run.add(Level.OK, "config", Text.of("check.config", configFile));
         Config config = prepared.config();
         checkBot(run, config.secrets().telegramBotToken());
         boolean team = config.workers() != null;
@@ -82,7 +84,7 @@ public final class Checks {
         checkStateDir(run, config.stateDir());
         if (team) {
             // Tasks run on members' computers (ADR 0021), so nothing here opens a pull request.
-            run.add(Level.OK, "gh", "gh: not needed here; members' computers make the pull requests");
+            run.add(Level.OK, "gh", Text.of("check.ghNotNeeded"));
             checkWorkers(run, config.workers());
         } else {
             checkGh(run, config.delivery().ghCommand(), config.secrets().ghToken() != null, configFile);
@@ -97,33 +99,32 @@ public final class Checks {
 
     private void checkBot(Run run, String token) {
         if (!BotApi.isBotToken(token)) {
-            run.add(Level.FAIL, "bot", "bot: TELEGRAM_BOT_TOKEN is not a bot token: @BotFather gives digits, a colon, then letters, digits, '_' and '-'");
+            run.add(Level.FAIL, "bot", Text.of("check.botTokenShape"));
             return;
         }
         try {
             var me = bots.apply(token).getMe();
-            String topics = me.path("has_topics_enabled").asBoolean(false) ? "topics on" : "topics off";
-            run.add(Level.OK, "bot", "bot @" + me.path("username").asText() + " (" + topics + ")");
+            Text topics = me.path("has_topics_enabled").asBoolean(false) ? Text.of("check.topicsOn") : Text.of("check.topicsOff");
+            run.add(Level.OK, "bot", Text.of("check.bot", me.path("username").asText(), topics));
         } catch (TelegramException e) {
-            run.add(Level.FAIL, "bot", "bot: Telegram refused the token or could not be reached (" + e.getMessage() + "); get a fresh one from @BotFather");
+            run.add(Level.FAIL, "bot", Text.of("check.botRefused", e.getMessage()));
         }
     }
 
     /** What to install for each agent type (ADR 0026). */
-    private static final Map<String, String> AGENT_INSTALLS = Map.of(
-            "claude-code", "Claude Code",
-            "codex", "the Codex CLI (npm install -g @openai/codex)",
-            "gemini", "the Gemini CLI (npm install -g @google/gemini-cli)");
+    private static final Map<String, Text> AGENT_INSTALLS = Map.of(
+            "claude-code", Text.of("check.installClaude"),
+            "codex", Text.of("check.installCodex"),
+            "gemini", Text.of("check.installGemini"));
 
     private static void checkAgent(Run run, String name, String command, Path configFile, boolean team) {
         Optional<Git.Result> version = command(List.of(command, "--version"), configFile);
         if (version.isEmpty() || version.get().exitCode() != 0) {
             // In team mode no task's agent runs here, but splitting a message with ✂️ still does (ADR 0013), so this
             // is worth saying and not worth failing on.
-            run.add(team ? Level.WARN : Level.FAIL, name, name + ": cannot run " + command
-                    + (team ? "; tasks run on members' computers, but splitting a message with ✂️ still runs here (ADR 0013)"
-                            : "; install " + AGENT_INSTALLS.getOrDefault(name, name) + " or set agents." + name
-                                    + ".command to its full path"));
+            run.add(team ? Level.WARN : Level.FAIL, name, team
+                    ? Text.of("check.agentCannotRunTeam", name, command)
+                    : Text.of("check.agentCannotRun", name, command, AGENT_INSTALLS.getOrDefault(name, Text.raw(name))));
             return;
         }
         String shown = version.get().stdout().strip().lines().findFirst().orElse(command);
@@ -131,34 +132,33 @@ public final class Checks {
             // Its runs fail at once without a login, which --version does not reveal.
             Optional<Git.Result> login = command(List.of(command, "login", "status"), configFile);
             if (login.isEmpty() || login.get().exitCode() != 0) {
-                run.add(Level.WARN, name, name + ": " + shown + ", but not logged in: run " + command + " login");
+                run.add(Level.WARN, name, Text.of("check.agentNotLoggedIn", name, shown, command));
                 return;
             }
         }
-        run.add(Level.OK, name, name + ": " + shown);
+        run.add(Level.OK, name, Text.of("check.agent", name, shown));
     }
 
     private static void checkProject(Run run, Config.Project project, Workspaces workspaces) {
         String area = "project " + project.name();
+        Text named = Text.of("check.projectArea", project.name());
         if (workspaces.needsClone(project)) {
-            run.add(Level.WARN, area, area + ": not cloned yet; Dispatch clones " + project.repo() + " into "
-                    + workspaces.repo(project) + " when it starts");
+            run.add(Level.WARN, area, Text.of("check.notCloned", named, project.repo(), workspaces.repo(project)));
             return;
         }
         Optional<String> unavailable = workspaces.unavailableReason(project);
         if (unavailable.isPresent()) {
-            run.add(Level.FAIL, area, area + ": " + unavailable.get());
+            run.add(Level.FAIL, area, Text.of("check.projectUnavailable", named, unavailable.get()));
             return;
         }
         Path repo = workspaces.repo(project);
         Optional<Git.Result> base = command(List.of("git", "-C", repo.toString(), "rev-parse", "--verify", "--quiet",
                 "refs/remotes/origin/" + project.baseBranch()), repo);
         if (base.isEmpty() || base.get().exitCode() != 0) {
-            run.add(Level.WARN, area, area + ": origin/" + project.baseBranch() + " not found in " + repo
-                    + "; run git fetch there, or fix baseBranch");
+            run.add(Level.WARN, area, Text.of("check.noBaseBranch", named, project.baseBranch(), repo));
             return;
         }
-        run.add(Level.OK, area, area + ": " + repo + " (base " + project.baseBranch() + ")");
+        run.add(Level.OK, area, Text.of("check.project", named, repo, project.baseBranch()));
         checkInstructions(run, project, repo);
     }
 
@@ -172,36 +172,34 @@ public final class Checks {
             }
         }
         String area = "project " + project.name();
-        run.add(Level.WARN, area, area + ": no CLAUDE.md on " + base + ", so every run first spends turns finding its way around; "
-                + "commit a short one with the layout and the build and test commands");
+        run.add(Level.WARN, area, Text.of("check.noClaudeMd", Text.of("check.projectArea", project.name()), base));
     }
 
     private static void checkStateDir(Run run, Path stateDir) {
         if (!Files.exists(stateDir)) {
-            run.add(Level.OK, "state", "state " + stateDir + " (created on the first run)");
+            run.add(Level.OK, "state", Text.of("check.stateNew", stateDir));
             return;
         }
         try {
             OwnerOnly.othersAccess(stateDir).ifPresentOrElse(
-                    permissions -> run.add(Level.WARN, "state", "state " + stateDir + " is open to other users (" + permissions
-                            + "); run: chmod o-rwx " + stateDir),
-                    () -> run.add(Level.OK, "state", "state " + stateDir));
+                    permissions -> run.add(Level.WARN, "state", Text.of("check.stateOpen", stateDir, permissions)),
+                    () -> run.add(Level.OK, "state", Text.of("check.state", stateDir)));
         } catch (IOException e) {
-            run.add(Level.WARN, "state", "state " + stateDir + ": " + e.getMessage());
+            run.add(Level.WARN, "state", Text.of("check.stateUnreadable", stateDir, e.getMessage()));
         }
     }
 
     private static void checkGh(Run run, String command, boolean tokenSet, Path configFile) {
         if (tokenSet) {
-            run.add(Level.OK, "gh", "gh: GH_TOKEN is set");
+            run.add(Level.OK, "gh", Text.of("check.ghToken"));
             return;
         }
         Optional<Git.Result> status = command(List.of(command, "auth", "status"), configFile);
         if (status.isPresent() && status.get().exitCode() == 0) {
-            run.add(Level.OK, "gh", "gh: logged in");
+            run.add(Level.OK, "gh", Text.of("check.ghLoggedIn"));
             return;
         }
-        run.add(Level.WARN, "gh", "gh: not logged in or not installed (" + command + "); pull requests will fail until you run: gh auth login");
+        run.add(Level.WARN, "gh", Text.of("check.ghNotLoggedIn", command));
     }
 
     /**
@@ -213,19 +211,15 @@ public final class Checks {
         String local = "http://127.0.0.1:" + workers.port();
         switch (probe(local)) {
             case DISPATCH -> {
-                run.add(Level.OK, "workers", "workers: 127.0.0.1:" + workers.port() + " answers as this Dispatch");
+                run.add(Level.OK, "workers", Text.of("check.workersLocal", workers.port()));
                 if (probe(workers.publicUrl()) == Answer.DISPATCH) {
-                    run.add(Level.OK, "workers", "workers: " + workers.publicUrl() + " reaches this Dispatch");
+                    run.add(Level.OK, "workers", Text.of("check.workersPublic", workers.publicUrl()));
                 } else {
-                    run.add(Level.WARN, "workers", "workers: " + workers.publicUrl()
-                            + " does not reach this Dispatch; members' computers cannot connect until your tunnel or "
-                            + "reverse proxy forwards it to 127.0.0.1:" + workers.port());
+                    run.add(Level.WARN, "workers", Text.of("check.workersUnreachable", workers.publicUrl(), workers.port()));
                 }
             }
-            case OTHER -> run.add(Level.WARN, "workers", "workers: something other than Dispatch answers on 127.0.0.1:"
-                    + workers.port() + "; stop it or set another workers.port");
-            case NONE -> run.add(Level.OK, "workers", "workers: nothing listens on 127.0.0.1:" + workers.port()
-                    + " yet; it starts with dispatch run");
+            case OTHER -> run.add(Level.WARN, "workers", Text.of("check.workersOther", workers.port()));
+            case NONE -> run.add(Level.OK, "workers", Text.of("check.workersNone", workers.port()));
         }
     }
 
@@ -235,25 +229,21 @@ public final class Checks {
      */
     private void checkMiniApp(Run run, Config.MiniApp miniApp) {
         if (miniApp == null) {
-            run.add(Level.OK, "miniApp", "miniApp: off; nothing is served to Telegram and the bot shows no Manage button");
+            run.add(Level.OK, "miniApp", Text.of("check.miniAppOff"));
             return;
         }
         String local = "http://127.0.0.1:" + miniApp.port();
         switch (probe(local, ME)) {
             case DISPATCH -> {
-                run.add(Level.OK, "miniApp", "miniApp: 127.0.0.1:" + miniApp.port() + " answers as this Dispatch");
+                run.add(Level.OK, "miniApp", Text.of("check.miniAppLocal", miniApp.port()));
                 if (probe(miniApp.publicUrl(), ME) == Answer.DISPATCH) {
-                    run.add(Level.OK, "miniApp", "miniApp: " + miniApp.publicUrl() + " reaches this Dispatch");
+                    run.add(Level.OK, "miniApp", Text.of("check.miniAppPublic", miniApp.publicUrl()));
                 } else {
-                    run.add(Level.WARN, "miniApp", "miniApp: " + miniApp.publicUrl()
-                            + " does not answer over HTTPS as this Dispatch; Telegram cannot open the Mini App until your "
-                            + "tunnel or reverse proxy forwards it to 127.0.0.1:" + miniApp.port());
+                    run.add(Level.WARN, "miniApp", Text.of("check.miniAppUnreachable", miniApp.publicUrl(), miniApp.port()));
                 }
             }
-            case OTHER -> run.add(Level.WARN, "miniApp", "miniApp: something other than Dispatch answers on 127.0.0.1:"
-                    + miniApp.port() + "; stop it or set another miniApp.port");
-            case NONE -> run.add(Level.OK, "miniApp", "miniApp: nothing listens on 127.0.0.1:" + miniApp.port()
-                    + " yet; it starts with dispatch run");
+            case OTHER -> run.add(Level.WARN, "miniApp", Text.of("check.miniAppOther", miniApp.port()));
+            case NONE -> run.add(Level.OK, "miniApp", Text.of("check.miniAppNone", miniApp.port()));
         }
     }
 
@@ -297,7 +287,10 @@ public final class Checks {
         }
     }
 
-    /** One run's findings, passed on as they come; every message is redacted before it is kept or handed to onEach. */
+    /**
+     * One run's findings, passed on as they come; every message is redacted in the language it is read in, before it is
+     * kept or handed to onEach.
+     */
     private static final class Run {
 
         private final List<Finding> findings = new ArrayList<>();
@@ -309,8 +302,8 @@ public final class Checks {
             this.redactor = redactor;
         }
 
-        void add(Level level, String area, String message) {
-            Finding finding = new Finding(level, area, redactor.redact(message));
+        void add(Level level, String area, Text message) {
+            Finding finding = new Finding(level, area, message.map(redactor::redact));
             findings.add(finding);
             onEach.accept(finding);
         }

@@ -36,10 +36,10 @@ class WorkerChecksTest extends WorkerApiFixture {
         List<Checks.Finding> findings = WorkerChecks.run(workerFile, Map.of(), finding -> { });
 
         assertFalse(Checks.failed(findings), findings.toString());
-        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "team",
+        assertTrue(lines(findings).contains(line(Checks.Level.OK, "team",
                 "team: http://127.0.0.1:" + api.port() + " answers")), findings.toString());
         assertTrue(findings.stream().anyMatch(f -> f.area().equals("pairing")
-                && f.message().startsWith("pairing: paired with ")), findings.toString());
+                && f.message().english().startsWith("pairing: paired with ")), findings.toString());
         assertTrue(findings.stream().anyMatch(f -> f.area().equals("project alm") && f.level() == Checks.Level.OK),
                 findings.toString());
     }
@@ -117,7 +117,7 @@ class WorkerChecksTest extends WorkerApiFixture {
 
         List<Checks.Finding> findings = WorkerChecks.run(workerFile, Map.of(), finding -> { });
 
-        assertTrue(findings.contains(new Checks.Finding(Checks.Level.FAIL, "pairing",
+        assertTrue(lines(findings).contains(line(Checks.Level.FAIL, "pairing",
                 "pairing: this computer's key is not valid any more; pair again: dispatch worker init")),
                 findings.toString());
         assertTrue(Checks.failed(findings));
@@ -129,7 +129,7 @@ class WorkerChecksTest extends WorkerApiFixture {
 
         List<Checks.Finding> findings = WorkerChecks.run(workerFile, Map.of(), finding -> { });
 
-        assertTrue(findings.contains(new Checks.Finding(Checks.Level.FAIL, "project alm",
+        assertTrue(lines(findings).contains(line(Checks.Level.FAIL, "project alm",
                 "project alm: the team has this project, but this computer does not; run: dispatch worker init")),
                 findings.toString());
     }
@@ -144,7 +144,7 @@ class WorkerChecksTest extends WorkerApiFixture {
         List<Checks.Finding> findings = WorkerChecks.run(workerFile, Map.of(), finding -> { });
 
         assertTrue(findings.stream().anyMatch(f -> f.area().equals("project alm") && f.level() == Checks.Level.WARN
-                && f.message().contains("has origin https://example.invalid/other.git")), findings.toString());
+                && f.message().english().contains("has origin https://example.invalid/other.git")), findings.toString());
     }
 
     @Test
@@ -155,7 +155,7 @@ class WorkerChecksTest extends WorkerApiFixture {
         List<Checks.Finding> findings = WorkerChecks.run(workerFile, Map.of(), finding -> { });
 
         assertTrue(findings.stream().anyMatch(f -> f.area().equals("team") && f.level() == Checks.Level.FAIL
-                && f.message().startsWith("team: cannot reach ")), findings.toString());
+                && f.message().english().startsWith("team: cannot reach ")), findings.toString());
         assertEquals(0, findings.stream().filter(f -> f.area().startsWith("project ")).count(),
                 "without the team's list there is nothing to compare against: " + findings);
     }
@@ -174,5 +174,18 @@ class WorkerChecksTest extends WorkerApiFixture {
         Files.writeString(workerFile, yaml.toString());
         SecretsFile.write(SecretsFile.beside(workerFile), Map.of(WorkerCommand.KEY_VARIABLE, key));
         return workerFile;
+    }
+
+    /** A finding as `dispatch check` prints it, with its level and area in front: comparable with one written out. */
+    private static String line(Checks.Level level, String area, String message) {
+        return level + " " + area + ": " + message;
+    }
+
+    private static String line(Checks.Finding finding) {
+        return line(finding.level(), finding.area(), finding.message().english());
+    }
+
+    private static java.util.List<String> lines(java.util.List<Checks.Finding> findings) {
+        return findings.stream().map(WorkerChecksTest::line).toList();
     }
 }

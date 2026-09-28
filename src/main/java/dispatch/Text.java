@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 /**
@@ -34,6 +35,11 @@ public sealed interface Text {
 
     static Text joined(String separator, List<Text> parts) {
         return new Joined(separator, List.copyOf(parts));
+    }
+
+    /** This text with {@code change} applied to its words in every language, such as masking a secret in them. */
+    default Text map(UnaryOperator<String> change) {
+        return new Mapped(this, change);
     }
 
     record Keyed(String key, List<Object> args) implements Text {
@@ -64,6 +70,18 @@ public sealed interface Text {
         @Override
         public String render(Language language) {
             return parts.stream().map(part -> part.render(language)).collect(Collectors.joining(separator));
+        }
+
+        @Override
+        public String toString() {
+            return english();
+        }
+    }
+
+    record Mapped(Text inner, UnaryOperator<String> change) implements Text {
+        @Override
+        public String render(Language language) {
+            return change.apply(inner.render(language));
         }
 
         @Override

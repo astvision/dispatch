@@ -40,11 +40,12 @@ public final class CheckCommand {
         return Checks.failed(findings) ? 1 : 0;
     }
 
+    /** The terminal reads English. */
     private void show(Checks.Finding finding) {
         switch (finding.level()) {
-            case OK -> terminal.ok(finding.message());
-            case WARN -> terminal.warn(finding.message());
-            case FAIL -> terminal.fail(finding.message());
+            case OK -> terminal.ok(finding.message().english());
+            case WARN -> terminal.warn(finding.message().english());
+            case FAIL -> terminal.fail(finding.message().english());
         }
     }
 }
