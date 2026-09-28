@@ -74,9 +74,9 @@ public final class Merges {
     /** {@code who} tapped Merge under task {@code taskId}'s result, {@code messageRef}; what follows is said under it. */
     public Outcome request(Tx tx, Requester who, long taskId, String messageRef) {
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.MERGE);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.MERGE);
         if (refused.isPresent()) {
-            if (refused.get() == TaskAccess.Refusal.MERGED) {
+            if (refused.get() == Refusal.MERGED) {
                 // A result the merge was not tapped under still shows the button: it goes now.
                 redrawMerged(tx, taskId, who.ref(), messageRef, clock.instant());
                 tx.afterCommit(wakeOutbox);

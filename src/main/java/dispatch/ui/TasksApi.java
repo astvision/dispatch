@@ -11,6 +11,7 @@ import dispatch.core.CancelResult;
 import dispatch.core.CorrectResult;
 import dispatch.core.FollowUpResult;
 import dispatch.core.Groups;
+import dispatch.core.Refusal;
 import dispatch.core.RejectResult;
 import dispatch.core.RetryResult;
 import dispatch.core.TaskAccess;
@@ -121,7 +122,7 @@ public final class TasksApi {
     ObjectNode cancel(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         CancelResult result = db.transactionReturning(tx -> {
-            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.CANCEL);
+            Optional<Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.CANCEL);
             if (refused.isPresent()) {
                 throw cancelRefused(refused.get(), taskId);
             }
@@ -136,7 +137,7 @@ public final class TasksApi {
         return Json.object().put("result", result.name());
     }
 
-    private static ApiException cancelRefused(TaskAccess.Refusal refusal, long taskId) {
+    private static ApiException cancelRefused(Refusal refusal, long taskId) {
         return switch (refusal) {
             case NOT_MEMBER -> notMember();
             case NOT_FOUND -> notFound(taskId);
@@ -153,7 +154,7 @@ public final class TasksApi {
     ObjectNode retry(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         RetryResult result = db.transactionReturning(tx -> {
-            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.RETRY);
+            Optional<Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.RETRY);
             if (refused.isPresent()) {
                 throw retryRefused(refused.get(), taskId);
             }
@@ -166,7 +167,7 @@ public final class TasksApi {
         return Json.object().put("result", result.name());
     }
 
-    private static ApiException retryRefused(TaskAccess.Refusal refusal, long taskId) {
+    private static ApiException retryRefused(Refusal refusal, long taskId) {
         return switch (refusal) {
             case NOT_MEMBER -> notMember();
             case NOT_FOUND -> notFound(taskId);
@@ -261,7 +262,7 @@ public final class TasksApi {
         int planSeq = number(body, "planSeq");
         String text = body.path("text").asText("");
         CorrectResult result = db.transactionReturning(tx -> {
-            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.CORRECT, planSeq);
+            Optional<Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.CORRECT, planSeq);
             if (refused.isPresent()) {
                 throw correctRefused(refused.get(), taskId);
             }
@@ -285,7 +286,7 @@ public final class TasksApi {
         long taskId = taskId(body);
         String text = body.path("text").asText("");
         FollowUpResult result = db.transactionReturning(tx -> {
-            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.FOLLOW_UP);
+            Optional<Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.FOLLOW_UP);
             if (refused.isPresent()) {
                 throw followUpRefused(refused.get(), taskId);
             }
@@ -302,7 +303,7 @@ public final class TasksApi {
         return Json.object().put("result", result.name());
     }
 
-    private static ApiException followUpRefused(TaskAccess.Refusal refusal, long taskId) {
+    private static ApiException followUpRefused(Refusal refusal, long taskId) {
         return switch (refusal) {
             case NOT_MEMBER -> notMember();
             case NOT_FOUND -> notFound(taskId);
@@ -312,7 +313,7 @@ public final class TasksApi {
         };
     }
 
-    private static ApiException correctRefused(TaskAccess.Refusal refusal, long taskId) {
+    private static ApiException correctRefused(Refusal refusal, long taskId) {
         return switch (refusal) {
             case NOT_MEMBER -> notMember();
             case NOT_FOUND -> notFound(taskId);

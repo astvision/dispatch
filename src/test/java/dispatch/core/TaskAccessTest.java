@@ -6,7 +6,7 @@ import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.TaskAccess.Action;
-import dispatch.core.TaskAccess.Refusal;
+import dispatch.core.Refusal;
 import dispatch.core.TaskAccess.Sight;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;

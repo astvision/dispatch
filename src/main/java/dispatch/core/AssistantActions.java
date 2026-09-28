@@ -149,9 +149,9 @@ public final class AssistantActions {
     }
 
     private Checked answer(Tx tx, TaskAccess.Verdict verdict, JsonNode action, ObjectNode payload) {
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.ANSWER);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.ANSWER);
         // "No question is open" is only a refusal once we know which question was named.
-        if (refused.isPresent() && refused.get() != TaskAccess.Refusal.ALREADY_ANSWERED) {
+        if (refused.isPresent() && refused.get() != Refusal.ALREADY_ANSWERED) {
             return note(payload, reason(refused.get()));
         }
         int index = action.path("question").asInt(0);
@@ -164,7 +164,7 @@ public final class AssistantActions {
         if (question == null) {
             return note(payload, "noQuestion");
         }
-        Optional<TaskAccess.Refusal> answerRefused = verdict.answerRefusal(verdict.planSeq(), index);
+        Optional<Refusal> answerRefused = verdict.answerRefusal(verdict.planSeq(), index);
         if (answerRefused.isPresent()) {
             return note(payload, reason(answerRefused.get()));
         }
@@ -187,7 +187,7 @@ public final class AssistantActions {
 
     /** Approval needs a plan without questions: answering them makes the agent plan again, and that plan is approved. */
     private static Checked decision(TaskAccess.Verdict verdict, TaskAccess.Action action, ObjectNode payload) {
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(action);
+        Optional<Refusal> refused = verdict.refusal(action);
         if (refused.isPresent()) {
             return note(payload, reason(refused.get()));
         }
@@ -196,7 +196,7 @@ public final class AssistantActions {
 
     /** A follow-up continues the task's building session, so the task must have got as far as execution. */
     private static Checked followUp(TaskAccess.Verdict verdict, JsonNode action, ObjectNode payload) {
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.FOLLOW_UP);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.FOLLOW_UP);
         if (refused.isPresent()) {
             return note(payload, reason(refused.get()));
         }
@@ -207,12 +207,12 @@ public final class AssistantActions {
         return shown(text) ? new Checked(true, payload.put("text", text)) : note(payload, "tooLong");
     }
 
-    private static Checked allowed(Optional<TaskAccess.Refusal> refused, ObjectNode payload) {
+    private static Checked allowed(Optional<Refusal> refused, ObjectNode payload) {
         return refused.map(refusal -> note(payload, reason(refusal))).orElseGet(() -> new Checked(true, payload));
     }
 
     /** The note (assistant.note.*) the reply shows for a proposal task access refuses. */
-    private static String reason(TaskAccess.Refusal refusal) {
+    private static String reason(Refusal refusal) {
         return switch (refusal) {
             case NOT_MEMBER, NOT_FOUND -> "notFound";
             case NOT_REQUESTER -> "notYours";
@@ -220,6 +220,9 @@ public final class AssistantActions {
             case OUT_OF_ORDER -> "order";
             case ALREADY_ANSWERED -> "answered";
             case WRONG_PHASE, STALE_PLAN, NOT_FAILED, NOT_EXECUTED, MERGED -> "phase";
+            // Given by a task command, never by task access, so never a proposal's own refusal (ADR 0031).
+            case EMPTY, UNKNOWN_PROJECT, PROJECT_UNAVAILABLE ->
+                    throw new IllegalStateException("task access never refuses a proposal as " + refusal);
         };
     }
 

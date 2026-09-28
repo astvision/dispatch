@@ -71,6 +71,7 @@ public final class TaskService {
     private final Projects projects;
     private final ActiveRuns activeRuns;
     private final TaskAccess access;
+    private final TaskCommands commands;
     private final Clock clock;
     private final Runnable wakeScheduler;
     private final Runnable wakeOutbox;
@@ -101,9 +102,15 @@ public final class TaskService {
         this.projects = projects;
         this.activeRuns = activeRuns;
         this.access = new TaskAccess(groups);
+        this.commands = new TaskCommands(groups, activeRuns, clock, wakeScheduler, wakeOutbox);
         this.clock = clock;
         this.wakeScheduler = wakeScheduler;
         this.wakeOutbox = wakeOutbox;
+    }
+
+    /** The task commands (ADR 0031): what a channel runs to act on a task. */
+    public TaskCommands commands() {
+        return commands;
     }
 
     /**
@@ -532,7 +539,7 @@ public final class TaskService {
     public ApproveResult approve(Tx tx, Requester who, long taskId, int planSeq) {
         Instant now = clock.instant();
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.APPROVE, planSeq);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.APPROVE, planSeq);
         if (refused.isPresent()) {
             return switch (refused.get()) {
                 case NOT_MEMBER -> {
@@ -573,16 +580,16 @@ public final class TaskService {
     public CorrectResult correct(Tx tx, Requester who, long taskId, int planSeq, String text, String originRef, String chatRef) {
         Instant now = clock.instant();
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.CORRECT, planSeq);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.CORRECT, planSeq);
         if (refused.isPresent()) {
             refuse(tx, OutboxKind.CORRECTION_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
-            return refused.get() == TaskAccess.Refusal.NOT_MEMBER ? CorrectResult.NOT_ALLOWED : CorrectResult.REFUSED;
+            return refused.get() == Refusal.NOT_MEMBER ? CorrectResult.NOT_ALLOWED : CorrectResult.REFUSED;
         }
         if (text == null || text.isBlank()) {
             return CorrectResult.EMPTY;
         }
         if (!Tasks.changePhase(tx, taskId, Phase.AWAITING_APPROVAL, Phase.PLANNING, now)) {
-            refuse(tx, OutboxKind.CORRECTION_REFUSED, who, verdict, taskId, TaskAccess.Refusal.STALE_PLAN, originRef, chatRef, now);
+            refuse(tx, OutboxKind.CORRECTION_REFUSED, who, verdict, taskId, Refusal.STALE_PLAN, originRef, chatRef, now);
             return CorrectResult.REFUSED;
         }
         int seq = Runs.nextSeq(tx, taskId);
@@ -726,7 +733,7 @@ public final class TaskService {
     public RejectResult reject(Tx tx, Requester who, long taskId, int planSeq) {
         Instant now = clock.instant();
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.REJECT, planSeq);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.REJECT, planSeq);
         if (refused.isPresent()) {
             return switch (refused.get()) {
                 case NOT_MEMBER -> {
@@ -758,7 +765,7 @@ public final class TaskService {
     public PriorityResult changePriority(Tx tx, Requester who, long taskId, Priority priority) {
         Instant now = clock.instant();
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.PRIORITY);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.PRIORITY);
         if (refused.isPresent()) {
             return switch (refused.get()) {
                 case NOT_MEMBER -> PriorityResult.NOT_ALLOWED;
@@ -789,7 +796,7 @@ public final class TaskService {
     public CancelResult cancel(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.CANCEL);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.CANCEL);
         if (refused.isPresent()) {
             refuse(tx, OutboxKind.CANCEL_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
             return switch (refused.get()) {
@@ -800,7 +807,7 @@ public final class TaskService {
         }
         Task task = verdict.task();
         if (!Tasks.changePhase(tx, taskId, task.phase(), Phase.CANCELLED, now)) {
-            refuse(tx, OutboxKind.CANCEL_REFUSED, who, verdict, taskId, TaskAccess.Refusal.WRONG_PHASE, originRef, chatRef, now);
+            refuse(tx, OutboxKind.CANCEL_REFUSED, who, verdict, taskId, Refusal.WRONG_PHASE, originRef, chatRef, now);
             return CancelResult.REFUSED;
         }
         Runs.cancelQueued(tx, taskId, now);
@@ -825,7 +832,7 @@ public final class TaskService {
     public RetryResult retry(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
         Instant now = clock.instant();
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.RETRY);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.RETRY);
         if (refused.isPresent()) {
             refuse(tx, OutboxKind.RETRY_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
             return switch (refused.get()) {
@@ -851,7 +858,7 @@ public final class TaskService {
         }
         Phase to = kind == RunKind.PLAN ? Phase.PLANNING : Phase.EXECUTING;
         if (!Tasks.changePhase(tx, taskId, Phase.FAILED, to, now)) {
-            refuse(tx, OutboxKind.RETRY_REFUSED, who, verdict, taskId, TaskAccess.Refusal.NOT_FAILED, originRef, chatRef, now);
+            refuse(tx, OutboxKind.RETRY_REFUSED, who, verdict, taskId, Refusal.NOT_FAILED, originRef, chatRef, now);
             return RetryResult.REFUSED;
         }
         int seq = Runs.nextSeq(tx, taskId);
@@ -874,7 +881,7 @@ public final class TaskService {
     public FollowUpResult followUp(Tx tx, Requester who, long taskId, String text, String originRef, String chatRef) {
         Instant now = clock.instant();
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.FOLLOW_UP);
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.FOLLOW_UP);
         if (refused.isPresent()) {
             refuse(tx, OutboxKind.FOLLOW_UP_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
             return switch (refused.get()) {
@@ -902,7 +909,7 @@ public final class TaskService {
             return FollowUpResult.NEW_TASK;
         }
         if (!Tasks.changePhase(tx, taskId, task.phase(), Phase.EXECUTING, now)) {
-            refuse(tx, OutboxKind.FOLLOW_UP_REFUSED, who, verdict, taskId, TaskAccess.Refusal.WRONG_PHASE, originRef, chatRef, now);
+            refuse(tx, OutboxKind.FOLLOW_UP_REFUSED, who, verdict, taskId, Refusal.WRONG_PHASE, originRef, chatRef, now);
             return FollowUpResult.REFUSED;
         }
         int seq = Runs.nextSeq(tx, taskId);
@@ -963,7 +970,7 @@ public final class TaskService {
      * Answers a refused command where it was given, in the words the chat has always used: someone in no group is told they
      * may not use Dispatch, a task they may not see is not found, and anything else names its reason.
      */
-    private void refuse(Tx tx, OutboxKind kind, Requester who, TaskAccess.Verdict verdict, long taskId, TaskAccess.Refusal refusal,
+    private void refuse(Tx tx, OutboxKind kind, Requester who, TaskAccess.Verdict verdict, long taskId, Refusal refusal,
                         String originRef, String chatRef, Instant now) {
         switch (refusal) {
             case NOT_MEMBER -> notAllowed(tx, who, originRef, chatRef, now);
@@ -973,7 +980,7 @@ public final class TaskService {
     }
 
     /** What a refusal message carries; the renderer words it by {@code reason} and names the requester (ADR 0020). */
-    private static ObjectNode refusalPayload(Task task, TaskAccess.Refusal refusal) {
+    private static ObjectNode refusalPayload(Task task, Refusal refusal) {
         return switch (refusal) {
             case NOT_REQUESTER -> notRequester(task);
             case STALE_PLAN -> Json.object().put("taskId", task.id()).put("reason", "stale");
