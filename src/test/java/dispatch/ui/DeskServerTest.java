@@ -110,6 +110,18 @@ class DeskServerTest {
     }
 
     @Test
+    void theSpendPerDayIsServedToTheDesk() throws Exception {
+        planned(BOLD);
+
+        JsonNode spend = Json.read(post("/api/tasks/spend", "{\"days\":30}").body());
+
+        assertEquals(30, spend.path("days").size());
+        assertEquals("2026-09-28", spend.path("days").get(29).path("day").asText());
+        assertEquals("0.10", spend.path("days").get(29).path("usd").path("alm").asText());
+        assertEquals("0.10", spend.path("totalUsd").asText());
+    }
+
+    @Test
     void closingRemovesTheFile() {
         desk.close();
 

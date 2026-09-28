@@ -1,12 +1,15 @@
 package dispatch.ui;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.core.Groups;
 import dispatch.core.TaskService;
 import dispatch.store.Database;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.function.BiFunction;
 
 /**
  * The running bot's desk port (D-2): its task routes for {@code dispatch ui}, on 127.0.0.1, answering only the token it
@@ -27,8 +30,10 @@ public final class DeskServer implements AutoCloseable {
         String token = DeskFile.newToken();
         TasksApi tasksApi = new TasksApi(db, tasks, groups, true);
         LiveApi live = new LiveApi(db, tasks, groups, clock, version, name);
+        Map<String, BiFunction<UiServer.Caller, JsonNode, Object>> routes = new HashMap<>(tasksApi.routes());
+        routes.putAll(new DeskTasksApi(db, tasks, clock).routes());
         UiServer server = UiServer.start(0, "/desk-serves-no-pages", port -> new DeskAuth(port, token, groups),
-                Map.of("/api/live", live::get), tasksApi.routes());
+                Map.of("/api/live", live::get), routes);
         try {
             new DeskFile(server.port(), token, version, name).write(stateDir);
         } catch (IOException e) {
