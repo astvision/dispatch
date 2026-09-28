@@ -89,3 +89,13 @@ test("with Follow off the log is not read again", async () => {
 
   expect(logs.mock.calls.length).toBe(asked);
 });
+
+test("on the desktop a row's task number opens that task's page", async () => {
+  vi.mocked(api.getLogs).mockResolvedValue({ file, exists: true, lines: ["ts=2026-09-28T06:25:20.000Z level=INFO event=run.started task=14 run=1"] });
+  const navigate = vi.fn();
+
+  render(<LogsPage intervalMs={1000} navigate={navigate} />);
+  fireEvent.click(await screen.findByRole("link", { name: "#14" }));
+
+  expect(navigate).toHaveBeenCalledWith("/tasks/14");
+});

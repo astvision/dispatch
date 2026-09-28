@@ -35,7 +35,7 @@ function timeOf(ts: string | null) {
   return Number.isNaN(date.getTime()) ? ts : date.toTimeString().slice(0, 8);
 }
 
-function EntryView({ entry }: { entry: Entry }) {
+function EntryView({ entry, onTask }: { entry: Entry; onTask?: (taskId: number) => void }) {
   const t = useT();
   const { row, more } = entry;
   const level = row.level === null ? undefined : TONES[row.level];
@@ -49,7 +49,14 @@ function EntryView({ entry }: { entry: Entry }) {
             <span className="sr-only">{level ? t(level.word) : row.level}</span>
           </span>
           <span className="mono">{row.event}</span>
-          <span className="mono">{row.task !== null && `#${row.task}`}</span>
+          <span className="mono">
+            {row.task !== null && (onTask
+              ? <a href={`/tasks/${row.task}`} onClick={(e) => {
+                  e.preventDefault();
+                  onTask(Number(row.task));
+                }}>#{row.task}</a>
+              : `#${row.task}`)}
+          </span>
           <span className="log-fields mono">
             {row.fields.map(([key, value], index) => <span key={index}><em>{key}=</em>{value}</span>)}
           </span>
@@ -65,7 +72,13 @@ function EntryView({ entry }: { entry: Entry }) {
  * filter searches the whole tail). While Follow is on it asks again {@code intervalMs} after each answer, skipping the
  * request while the tab is hidden.
  */
-export default function LogsPage({ intervalMs = 2000 }: { intervalMs?: number }) {
+/** The log's lines as rows, newest first; with {@code onTask}, a row's task number opens that task (D-2). */
+export function LogRows({ lines, onTask }: { lines: string[]; onTask?: (taskId: number) => void }) {
+  return <div>{entriesOf(lines).map((entry, index) => <EntryView key={index} entry={entry} onTask={onTask} />)}</div>;
+}
+
+/** @param navigate the desktop's: task numbers become links to their pages; the Mini App passes none */
+export default function LogsPage({ intervalMs = 2000, navigate }: { intervalMs?: number; navigate?: (path: string) => void }) {
   const t = useT();
   const [level, setLevel] = useState<LogLevel | null>(null);
   const [event, setEvent] = useState<string | null>(null);
@@ -133,7 +146,7 @@ export default function LogsPage({ intervalMs = 2000 }: { intervalMs?: number })
       {logs && !logs.exists && <Empty description={t("logs.noLog")} />}
       {logs && logs.exists && logs.lines.length === 0 && <Empty description={t("logs.noLines")} />}
       {logs && logs.lines.length > 0 && (
-        <div>{entriesOf(logs.lines).map((entry, index) => <EntryView key={index} entry={entry} />)}</div>
+        <LogRows lines={logs.lines} onTask={navigate && ((taskId) => navigate(`/tasks/${taskId}`))} />
       )}
       {logs && <Typography.Text type="secondary" className="mono" style={{ fontSize: 12 }}>{logs.file}</Typography.Text>}
     </Flex>

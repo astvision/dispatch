@@ -33,6 +33,7 @@ const MiniProjectsPage = lazy(() => import("./mini/ProjectsPage"));
 const TasksPage = lazy(() => import("./mini/TasksPage"));
 const OverviewPage = lazy(() => import("./OverviewPage"));
 const DesktopTasksPage = lazy(() => import("./desktop/tasks/TasksPage"));
+const DesktopTaskPage = lazy(() => import("./desktop/tasks/TaskPage"));
 const SetupPage = lazy(() => import("./setup/SetupPage"));
 
 const SETUP_PAGES: ShellPage[] = [{ key: "setup", label: "nav.setup" }];
@@ -182,7 +183,9 @@ function WebUi() {
   if (error) return <Result status="warning" title={t("app.unreachable")} subTitle={error.message} />;
   if (!state) return <Spin size="large" tip={t("app.loading")}><div style={{ height: 200 }} /></Spin>;
 
-  const page = DESKTOP_PAGES.some((candidate) => candidate.key === path) ? path : "/";
+  // A task's own page (/tasks/14) keeps the rail on Даалгавар (D-2).
+  const taskPage = /^\/tasks\/(\d+)$/.exec(path);
+  const page = taskPage ? "/tasks" : DESKTOP_PAGES.some((candidate) => candidate.key === path) ? path : "/";
   const setUp = () => {
     navigate("/");
     void refresh();
@@ -194,7 +197,9 @@ function WebUi() {
            selected={state.configExists ? page : "setup"}
            onSelect={(key) => state.configExists && navigate(key)}>
       {!state.configExists ? <SetupPage onDone={setUp} />
+        : taskPage ? <DesktopTaskPage key={taskPage[1]} taskId={Number(taskPage[1])} navigate={navigate} />
         : page === "/tasks" ? <DesktopTasksPage navigate={navigate} />
+        : page === "/logs" ? <LogsPage navigate={navigate} />
         : <Page path={page} />}
     </Shell>
   );
