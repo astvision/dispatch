@@ -18,6 +18,8 @@ class WorkerConfigLoaderTest {
 
     @Test
     void aWorkerConfigMapsProjectsToLocalClones() throws Exception {
+        // Absolute on this OS: /home/ann/work/crm is not, on Windows.
+        String crm = dir.resolve("work").resolve("crm").toString();
         WorkerConfig config = WorkerConfigLoader.load(write("""
                 team: https://team.example.com
                 name: ann-laptop
@@ -25,15 +27,15 @@ class WorkerConfigLoaderTest {
                 claudeCommand: /usr/local/bin/claude
                 projects:
                   crm:
-                    path: /home/ann/work/crm
+                    path: '%s'
                     model: opus
-                """));
+                """.formatted(crm.replace("'", "''"))));
 
         assertEquals("https://team.example.com", config.team());
         assertEquals("ann-laptop", config.name());
         assertEquals(2, config.maxConcurrentRuns());
         assertEquals("/usr/local/bin/claude", config.claudeCommand());
-        assertEquals("/home/ann/work/crm", config.projects().get("crm").path());
+        assertEquals(crm, config.projects().get("crm").path());
         assertEquals("opus", config.projects().get("crm").model());
     }
 
