@@ -61,8 +61,12 @@ public record Locations(Path configFile, Path stateDir) {
 
     /** @return the instance {@code file} is the config of; null for the default instance or a file elsewhere */
     public String instanceOf(Path file) {
+        if (file == null) {
+            return null;
+        }
         Path absolute = file.toAbsolutePath().normalize();
-        if (!absolute.getParent().equals(configDir().toAbsolutePath().normalize())) {
+        Path parent = absolute.getParent();
+        if (parent == null || !parent.equals(configDir().toAbsolutePath().normalize())) {
             return null;
         }
         String name = absolute.getFileName().toString();

@@ -53,6 +53,7 @@ class LocationsTest {
         assertEquals("team", defaults.instanceOf(HOME.resolve(".config/dispatch/team.yaml")));
         assertNull(defaults.instanceOf(Path.of("/etc/dispatch/backend.yaml")), "the server layout is not an instance here");
         assertNull(defaults.instanceOf(HOME.resolve(".config/dispatch/worker.yaml")));
+        assertNull(defaults.instanceOf(defaults.configFile().getRoot()));
     }
 
     @Test
