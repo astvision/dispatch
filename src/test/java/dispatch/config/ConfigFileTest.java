@@ -11,8 +11,10 @@ import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -125,17 +127,8 @@ class ConfigFileTest {
 
     @Test
     void twoConcurrentEditsThroughEditBothLand() throws Exception {
-        CyclicBarrier barrier = new CyclicBarrier(2);
-        CompletableFuture<Void> first = CompletableFuture.runAsync(() -> {
-            await(barrier);
-            ConfigFile.edit(file, ENV, text -> ConfigEdit.append(text, ConfigEdit.At.of("telegram", "admins"), "201"));
-        });
-        CompletableFuture<Void> second = CompletableFuture.runAsync(() -> {
-            await(barrier);
-            ConfigFile.edit(file, ENV, text -> ConfigEdit.append(text, ConfigEdit.At.of("telegram", "admins"), "202"));
-        });
-
-        CompletableFuture.allOf(first, second).get(10, TimeUnit.SECONDS);
+        atOnce(() -> ConfigFile.edit(file, ENV, text -> ConfigEdit.append(text, ConfigEdit.At.of("telegram", "admins"), "201")),
+                () -> ConfigFile.edit(file, ENV, text -> ConfigEdit.append(text, ConfigEdit.At.of("telegram", "admins"), "202")));
 
         List<Long> admins = ConfigLoader.load(file, ENV).telegram().admins();
         assertEquals(3, admins.size(), "both concurrent appends must land: " + admins);
@@ -154,21 +147,29 @@ class ConfigFileTest {
         Path linkedDir = Files.createSymbolicLink(dir.resolve("link"), realDir);
         Path viaLinkedDir = linkedDir.resolve("dispatch.yaml");
 
-        CyclicBarrier barrier = new CyclicBarrier(2);
-        CompletableFuture<Void> viaReal = CompletableFuture.runAsync(() -> {
-            await(barrier);
-            ConfigFile.edit(real, ENV, text -> ConfigEdit.append(text, ConfigEdit.At.of("telegram", "admins"), "201"));
-        });
-        CompletableFuture<Void> viaLink = CompletableFuture.runAsync(() -> {
-            await(barrier);
-            ConfigFile.edit(viaLinkedDir, ENV, text -> ConfigEdit.append(text, ConfigEdit.At.of("telegram", "admins"), "202"));
-        });
-
-        CompletableFuture.allOf(viaReal, viaLink).get(10, TimeUnit.SECONDS);
+        atOnce(() -> ConfigFile.edit(real, ENV, text -> ConfigEdit.append(text, ConfigEdit.At.of("telegram", "admins"), "201")),
+                () -> ConfigFile.edit(viaLinkedDir, ENV, text -> ConfigEdit.append(text, ConfigEdit.At.of("telegram", "admins"), "202")));
 
         List<Long> admins = ConfigLoader.load(real, ENV).telegram().admins();
         assertEquals(3, admins.size(), "both edits, one made through the symlinked directory, must land: " + admins);
         assertTrue(admins.containsAll(List.of(100L, 201L, 202L)), admins.toString());
+    }
+
+    /** Runs both at once, each on a thread of its own: the common pool has one thread on a two-core machine. */
+    private static void atOnce(Runnable first, Runnable second) throws Exception {
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        try (ExecutorService threads = Executors.newFixedThreadPool(2)) {
+            Future<?> one = threads.submit(() -> {
+                await(barrier);
+                first.run();
+            });
+            Future<?> other = threads.submit(() -> {
+                await(barrier);
+                second.run();
+            });
+            one.get(10, TimeUnit.SECONDS);
+            other.get(10, TimeUnit.SECONDS);
+        }
     }
 
     private static void await(CyclicBarrier barrier) {
