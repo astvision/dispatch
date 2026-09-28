@@ -18,5 +18,7 @@ export default defineConfig({
     setupFiles: ["./src/test-setup.ts"],
     // e2e/*.spec.ts are Playwright's (npm run e2e), not Vitest's.
     include: ["src/**/*.test.{ts,tsx}"],
+    // The default 5 s is too tight for a CI runner: PeoplePage's rename-and-make-admin test took 5.8 s there.
+    testTimeout: 15_000,
   },
 });
