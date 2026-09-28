@@ -22,7 +22,11 @@ public final class Cli {
     }
 
     public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Ui, WorkerInit, WorkerPair,
-            WorkerRun, WorkerService, Ask, Help {
+            WorkerRun, WorkerService, Ask, Help, ListInstances {
+    }
+
+    /** {@code dispatch list}: named {@code ListInstances} to avoid clashing with {@link java.util.List}. */
+    public record ListInstances() implements Invocation {
     }
 
     /**
@@ -165,6 +169,10 @@ public final class Cli {
         }
         Arguments arguments = Arguments.parse(command, List.of(args).subList(1, args.length));
         return switch (command) {
+            case "list" -> {
+                arguments.allow(0, Set.of());
+                yield new ListInstances();
+            }
             case "run" -> {
                 arguments.allow(0, Set.of("config", "log-file", "instance"));
                 yield new Run(arguments.configFile(defaults), arguments.values().containsKey("log-file")

@@ -6,6 +6,7 @@ import dispatch.cli.Cli;
 import dispatch.cli.CliException;
 import dispatch.cli.JLineTerminal;
 import dispatch.cli.InitCommand;
+import dispatch.cli.ListCommand;
 import dispatch.cli.Locations;
 import dispatch.cli.ProjectAddCommand;
 import dispatch.cli.Service;
@@ -48,6 +49,8 @@ public final class Main {
         }
         switch (invocation) {
             case Cli.Help _ -> System.out.print(Cli.usage(defaults));
+            case Cli.ListInstances _ -> System.exit(new ListCommand(System.out,
+                    instance -> Service.forThisMachine(Service.Kind.DISPATCH, instance)).run(defaults, System.getenv()));
             case Cli.Run run -> run(run.configFile(), run.logFile());
             case Cli.Init init -> {
                 JLineTerminal terminal = JLineTerminal.system();
