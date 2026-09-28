@@ -82,6 +82,15 @@ class UiCommandTest {
     }
 
     @Test
+    void aNamedInstanceWithNoConfigYetIsRefusedInsteadOfServingSetupForIt() {
+        CliException e = assertThrows(CliException.class, () -> command("/ui-test")
+                .start(new Cli.Ui(dir.resolve("team.yaml"), 0, false, "team", true), Map.of()));
+
+        assertTrue(e.getMessage().contains("no bot named team") && e.getMessage().contains("dispatch init --instance team"),
+                e.getMessage());
+    }
+
+    @Test
     void aTakenPortNamesTheOption() throws Exception {
         try (ServerSocket taken = new ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) {
             CliException e = assertThrows(CliException.class,

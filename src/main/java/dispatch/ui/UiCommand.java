@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.BindException;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -44,6 +45,10 @@ public final class UiCommand {
                     + "(cd ui && npm ci && npm run build) && ./mvnw -Pui package");
         }
         Path configFile = options.configFile().toAbsolutePath();
+        if (options.instance() != null && !Files.exists(configFile)) {
+            throw new CliException("no bot named " + options.instance() + " on this computer yet; set it up first with: "
+                    + "dispatch init --instance " + options.instance());
+        }
         UiRoutes management = UiRoutes.management(configFile, locations, bots, service, processEnvironment, version(), null);
         UiServer server;
         try {
