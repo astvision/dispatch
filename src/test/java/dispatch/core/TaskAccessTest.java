@@ -357,7 +357,7 @@ class TaskAccessTest {
 
     private long cancelled() {
         long id = planning();
-        db.transaction(tx -> tasks.cancel(tx, BOLD, id, BOLD.ref() + "/cancel", BOLD.ref()));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(id)));
         return id;
     }
 

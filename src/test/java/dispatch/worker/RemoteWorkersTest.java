@@ -16,6 +16,7 @@ import dispatch.core.JobEvents;
 import dispatch.core.JobResult;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
@@ -194,7 +195,7 @@ class RemoteWorkersTest {
         Thread run = coordinate();
         remote.next(ann).orElseThrow();
 
-        db.transaction(tx -> tasks.cancel(tx, BOLD, id, "telegram:100/9", "telegram:100"));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(id)));
 
         assertTrue(remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, 3, "Bash: ls")));
         remote.result(ann, id, 1, JobResult.cancelled(null));

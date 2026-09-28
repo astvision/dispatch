@@ -10,7 +10,6 @@ import dispatch.domain.Attachment;
 import dispatch.domain.Draft;
 import dispatch.domain.GroupAck;
 import dispatch.domain.DraftStatus;
-import dispatch.domain.FailureReason;
 import dispatch.domain.GroupReaction;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
@@ -786,89 +785,6 @@ public final class TaskService {
         tx.afterCommit(() -> Log.info("task.priority_changed", "task", taskId, "from", task.priority(), "to", priority,
                 "actor", who.ref()));
         return PriorityResult.CHANGED;
-    }
-
-    /**
-     * Cancels the member's own task; an admin may cancel any task, even outside their own groups. A running agent is
-     * stopped after commit and its run ends as CANCELLED. Another group's task is answered as not found, so its existence
-     * does not leak, unless the caller is an admin.
-     */
-    public CancelResult cancel(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
-        Instant now = clock.instant();
-        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.CANCEL);
-        if (refused.isPresent()) {
-            refuse(tx, OutboxKind.CANCEL_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
-            return switch (refused.get()) {
-                case NOT_MEMBER -> CancelResult.NOT_ALLOWED;
-                case NOT_FOUND -> CancelResult.NOT_FOUND;
-                default -> CancelResult.REFUSED;
-            };
-        }
-        Task task = verdict.task();
-        if (!Tasks.changePhase(tx, taskId, task.phase(), Phase.CANCELLED, now)) {
-            refuse(tx, OutboxKind.CANCEL_REFUSED, who, verdict, taskId, Refusal.WRONG_PHASE, originRef, chatRef, now);
-            return CancelResult.REFUSED;
-        }
-        Runs.cancelQueued(tx, taskId, now);
-        Events.record(tx, taskId, null, who.ref(), task.phase(), Phase.CANCELLED, "cancelled", now);
-        ObjectNode cancelled = Json.object().put("taskId", taskId).put("by", who.name());
-        enqueue(tx, taskId, OutboxKind.TASK_CANCELLED, task.chatRef(), task.groupOriginRef(), cancelled, now);
-        if (!chatRef.equals(task.chatRef())) {
-            // Sent from a private chat: answer there too, not only in the group.
-            enqueue(tx, taskId, OutboxKind.TASK_CANCELLED, chatRef, originRef, cancelled, now);
-        }
-        GroupAcks.react(tx, task, GroupReaction.ENDED, now);
-        tx.afterCommit(() -> activeRuns.stop(taskId, ActiveRuns.StopReason.CANCELLED));
-        logTransition(tx, taskId, task.phase(), Phase.CANCELLED, who.ref());
-        return CancelResult.CANCELLED;
-    }
-
-    /**
-     * Repeats just the failed step of a failed task (ADR 0008): a failed plan is planned again, a failed execution continues
-     * its building session, and a failed delivery is delivered again without the agent. Only the requester may retry it;
-     * another group's task is answered as not found.
-     */
-    public RetryResult retry(Tx tx, Requester who, long taskId, String originRef, String chatRef) {
-        Instant now = clock.instant();
-        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.RETRY);
-        if (refused.isPresent()) {
-            refuse(tx, OutboxKind.RETRY_REFUSED, who, verdict, taskId, refused.get(), originRef, chatRef, now);
-            return switch (refused.get()) {
-                case NOT_MEMBER -> RetryResult.NOT_ALLOWED;
-                case NOT_FOUND -> RetryResult.NOT_FOUND;
-                default -> RetryResult.REFUSED;
-            };
-        }
-        // Task access saw the latest run fail: that run is the step to repeat.
-        Run step = Runs.latest(tx, taskId).orElseThrow();
-        RunKind kind;
-        String instruction;
-        if (step.kind() == RunKind.PLAN) {
-            kind = RunKind.PLAN;
-            instruction = step.instruction();
-        } else if (step.kind() == RunKind.DELIVER || step.failureReason() == FailureReason.DELIVERY) {
-            // The agent's work is done and waits in the worktree; only its summary is needed, as the commit message.
-            kind = RunKind.DELIVER;
-            instruction = step.kind() == RunKind.DELIVER ? step.instruction() : Runs.output(tx, taskId, step.seq()).orElse("");
-        } else {
-            kind = RunKind.EXECUTE;
-            instruction = step.instruction();
-        }
-        Phase to = kind == RunKind.PLAN ? Phase.PLANNING : Phase.EXECUTING;
-        if (!Tasks.changePhase(tx, taskId, Phase.FAILED, to, now)) {
-            refuse(tx, OutboxKind.RETRY_REFUSED, who, verdict, taskId, Refusal.NOT_FAILED, originRef, chatRef, now);
-            return RetryResult.REFUSED;
-        }
-        int seq = Runs.nextSeq(tx, taskId);
-        Runs.insert(tx, new Runs.NewRun(taskId, seq, kind, RunCause.RETRY, instruction, who), now);
-        Events.record(tx, taskId, seq, who.ref(), Phase.FAILED, to, "retry of run " + step.seq(), now);
-        enqueue(tx, taskId, OutboxKind.RETRY_QUEUED, chatRef, originRef,
-                Json.object().put("taskId", taskId).put("by", who.name()).put("kind", kind.name()), now);
-        tx.afterCommit(wakeScheduler);
-        logTransition(tx, taskId, Phase.FAILED, to, who.ref());
-        return RetryResult.RETRIED;
     }
 
     /**

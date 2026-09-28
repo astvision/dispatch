@@ -315,7 +315,7 @@ class RunExecutorTest {
         Thread executor = runNextInBackground();
         awaitFile(repos.stateDir.resolve("worktrees/" + id + "/fake-claude.child"));
 
-        db.transaction(tx -> tasks.cancel(tx, BOLD, id, CHAT + "/99", CHAT));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(id)));
         executor.join(Duration.ofSeconds(15));
 
         assertFalse(executor.isAlive());
@@ -357,7 +357,8 @@ class RunExecutorTest {
         runNext();
         assertFailed(id, "AGENT", "fatal: model overloaded");
 
-        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
+        assertEquals(new CommandResult.Done(id, true),
+                db.transactionReturning(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Retry(id))));
         runNext();
 
         Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
@@ -390,7 +391,8 @@ class RunExecutorTest {
         Path worktree = repos.stateDir.resolve("worktrees/" + id);
         Files.delete(worktree.resolve("fake-claude.prompt"));
 
-        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
+        assertEquals(new CommandResult.Done(id, true),
+                db.transactionReturning(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Retry(id))));
         runNext();
 
         Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
@@ -416,7 +418,8 @@ class RunExecutorTest {
         assertFailed(id, "SETUP", "git fetch");
         GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", repos.origin.toString());
 
-        assertEquals(RetryResult.RETRIED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
+        assertEquals(new CommandResult.Done(id, true),
+                db.transactionReturning(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Retry(id))));
         runNext();
 
         Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
@@ -632,18 +635,6 @@ class RunExecutorTest {
 
         assertFailed(id, "SETUP", "cannot download 1-photo.jpg: file gone-id is gone");
         assertFalse(Files.exists(repos.stateDir.resolve("worktrees/" + id + "/fake-claude.args")));
-    }
-
-    @Test
-    void onlyAFailedTaskCanBeRetried() throws Exception {
-        long id = queue("Fix the login timeout");
-        runNext();
-
-        assertEquals(RetryResult.REFUSED, db.transactionReturning(tx -> tasks.retry(tx, BOLD, id, CHAT + "/300", CHAT)));
-
-        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
-        assertEquals("AWAITING_APPROVAL", Json.read(row("SELECT payload FROM outbox WHERE kind = 'RETRY_REFUSED'").get("payload"))
-                .get("phase").asText());
     }
 
     private long queue(String description) throws IOException {

@@ -373,6 +373,14 @@ class RendererTest {
     }
 
     @Test
+    void aRefusalIsItsWordsEscapedWithItsCommandHintAsCode() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.REFUSED,
+                Json.object().put("text", "#5 <b> is Bold's & Ali's").put("hint", "/retry 5"));
+        assertEquals("#5 &lt;b&gt; is Bold's &amp; Ali's\n<code>/retry 5</code>", rendered.html());
+        assertEquals("#5", renderer.render(OutboxKind.REFUSED, Json.object().put("text", "#5")).html());
+    }
+
+    @Test
     void statusShowsRunningWorkWithTheAgentsLatestActionThenQueuedAndAwaiting() {
         String html = renderer.render(OutboxKind.STATUS, statusPayload()).html();
 
@@ -839,6 +847,14 @@ class RendererTest {
     }
 
     @Test
+    void aNoteInARefusalsWordsShowsThoseWordsEscaped() {
+        ObjectNode payload = Json.object().put("reply", "Болно");
+        payload.putArray("notes").add(Json.object().put("type", "cancel").put("taskId", 7).put("words", "#7: <Bold> & Ali"));
+
+        assertEquals("Болно\nℹ️ #7: &lt;Bold&gt; &amp; Ali", renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html());
+    }
+
+    @Test
     void theLongestAssistantReplyStillFitsOneMessage() {
         String longest = "ы<".repeat(3000);
         ObjectNode payload = Json.object().put("reply", longest);
@@ -1115,6 +1131,7 @@ class RendererTest {
             case STATS -> statsPayload("me");
             case TASK_TIMELINE -> timelinePayload();
             case TASK_NOT_FOUND -> Json.object().put("taskId", 99);
+            case REFUSED -> Json.object().put("text", "#5 can't be retried: it is completed").put("hint", "/retry 5");
             case CANCEL_REFUSED -> Json.object().put("taskId", 1).put("phase", "REJECTED");
             case RETRY_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali").put("kind", "DELIVER");
             case RETRY_REFUSED -> Json.object().put("taskId", 1).put("phase", "COMPLETED");

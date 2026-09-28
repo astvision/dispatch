@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
+import dispatch.Text;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
@@ -149,55 +150,50 @@ class TasksApiTest {
     }
 
     /**
-     * Retrying for real needs a failed run, which {@code TaskLifecycleTest} already covers end to end. What is new
-     * here is the boundary: an admin may cancel anybody's task but never retry it.
+     * An admin may stop anybody's task (ADR 0020). The group and the requester hear of it as news; the admin acted on a
+     * page, and the page alone answers them (ADR 0031).
      */
     @Test
-    void anAdminMayCancelSomeoneElsesTaskButNeverRetryIt() {
+    void anAdminsCancelOfSomeoneElsesTaskIsNewsForTheGroupAndTheRequesterOnly() {
         long alis = create(ALI, "Add the export button");
 
-        ApiException refused = assertThrows(ApiException.class,
-                () -> api.retry(BOLD_CALLER, Json.object().put("taskId", alis)));
-
-        assertEquals(403, refused.status());
-        assertEquals("cannot_retry", refused.code());
-        assertTrue(refused.getMessage().contains("only the member who gave it"), refused.getMessage());
         assertEquals("CANCELLED", api.cancel(BOLD_CALLER, Json.object().put("taskId", alis)).path("result").asText());
+
+        assertEquals(List.of("telegram:-100", ALI.ref()), SqlRows.query(dbFile,
+                "SELECT chat_ref FROM outbox WHERE kind = 'TASK_CANCELLED' ORDER BY id").stream().map(row -> row.get("chat_ref")).toList());
     }
 
     /**
-     * The page that was tapped answers a refusal, with its reason. The chat's refusal messages belong to commands given
-     * in the chat, so none of these may also reach the member's private chat.
+     * The page that was tapped answers a refusal: the status its kind calls for, its code, and the command's own words,
+     * which the page shows in its language (ADR 0031). None of it may also reach the member's private chat.
      */
     @Test
-    void aRefusedCancelOrRetryIsAnsweredHereAndNeverInTheChat() {
+    void aRefusedCancelOrRetryIsAnsweredWithItsWordsAndNeverInTheChat() {
         long alis = create(ALI, "Add the export button");
         long boldsOwn = create(BOLD, "Fix the login timeout");
         long ended = create(ALI, "Rename the report");
         api.cancel(ALI_CALLER, Json.object().put("taskId", ended));
         String outboxBefore = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
 
-        List<String> answers = List.of(
-                refused(() -> api.cancel(STRANGER, Json.object().put("taskId", alis))),
-                refused(() -> api.cancel(ALI_CALLER, Json.object().put("taskId", 9999))),
-                refused(() -> api.cancel(ALI_CALLER, Json.object().put("taskId", boldsOwn))),
-                refused(() -> api.cancel(ALI_CALLER, Json.object().put("taskId", ended))),
-                refused(() -> api.retry(BOLD_CALLER, Json.object().put("taskId", alis))),
-                refused(() -> api.retry(ALI_CALLER, Json.object().put("taskId", alis))));
+        List<ApiException> refusals = List.of(
+                assertThrows(ApiException.class, () -> api.cancel(STRANGER, Json.object().put("taskId", alis))),
+                assertThrows(ApiException.class, () -> api.cancel(ALI_CALLER, Json.object().put("taskId", 9999))),
+                assertThrows(ApiException.class, () -> api.cancel(ALI_CALLER, Json.object().put("taskId", boldsOwn))),
+                assertThrows(ApiException.class, () -> api.cancel(ALI_CALLER, Json.object().put("taskId", ended))),
+                assertThrows(ApiException.class, () -> api.retry(BOLD_CALLER, Json.object().put("taskId", alis))),
+                assertThrows(ApiException.class, () -> api.retry(ALI_CALLER, Json.object().put("taskId", alis))));
         String outboxAfter = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
 
         assertAll(
                 () -> assertEquals(List.of("403 not_a_member", "404 not_found", "403 not_yours", "409 wrong_state",
-                        "403 cannot_retry", "409 wrong_state"), answers),
+                        "403 not_yours", "409 wrong_state"), refusals.stream().map(refused -> refused.status() + " " + refused.code())
+                        .toList()),
+                () -> assertEquals(List.of(Text.of("refused.notMember"), Text.of("refused.notFound", 9999L),
+                        Text.of("refused.cancelNotRequester", boldsOwn, "Bold"),
+                        Text.of("refused.wrongPhase", ended, Text.of("phase.cancelled")), Text.of("refused.notRequester", alis, "Ali"),
+                        Text.of("refused.notFailed", alis, Text.of("phase.planning"))), refusals.stream().map(ApiException::text).toList()),
+                () -> assertEquals("no task #9999 here", refusals.get(1).getMessage(), "the log and the terminal read English"),
                 () -> assertEquals(outboxBefore, outboxAfter, "a refusal the Mini App shows must not also be sent to the chat"));
-    }
-
-    @Test
-    void aRefusalCarriesItsWordsInBothLanguages() {
-        ApiException refused = assertThrows(ApiException.class, () -> api.cancel(ALI_CALLER, Json.object().put("taskId", 9999)));
-
-        assertEquals("no task #9999 here", refused.getMessage(), "the log and the terminal read English");
-        assertEquals("#9999 даалгавар энд алга", refused.text().render(dispatch.Language.MN));
     }
 
     /** A refusal as its status and code, e.g. "403 not_yours". */

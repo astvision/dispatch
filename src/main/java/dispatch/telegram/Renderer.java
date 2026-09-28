@@ -167,6 +167,8 @@ public final class Renderer {
             case TASK_TIMELINE -> timeline(payload);
             case STATS -> stats(payload);
             case TASK_NOT_FOUND -> plain(format("task.notFound", taskId(payload)));
+            case REFUSED -> plain(escape(payload.path("text").asText())
+                    + (payload.hasNonNull("hint") ? "\n<code>" + escape(payload.path("hint").asText()) + "</code>" : ""));
             case CANCEL_REFUSED -> plain(payload.path("reason").asText().equals("requester")
                     ? format("task.cancelNotRequester", taskId(payload), escape(payload.path("requester").asText()))
                     : format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
@@ -639,7 +641,9 @@ public final class Renderer {
             number++;
         }
         for (JsonNode note : payload.path("notes")) {
-            html.append("\n").append(format("assistant.note." + note.path("reason").asText(), taskId(note)));
+            html.append("\n").append(note.hasNonNull("words")
+                    ? "ℹ️ " + escape(note.path("words").asText())
+                    : format("assistant.note." + note.path("reason").asText(), taskId(note)));
         }
         return new Rendered(html.toString(), keyboard, null);
     }

@@ -3,6 +3,8 @@ package dispatch.core;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
+import dispatch.Language;
+import dispatch.Text;
 import dispatch.config.Config;
 import dispatch.domain.Requester;
 import dispatch.store.Conversations;
@@ -15,7 +17,7 @@ import java.util.Set;
 /**
  * What the assistant may propose, and what a member's tap on a proposal does (A-1). A proposal is checked against the task
  * as it stands when the assistant answers, so a button is only ever offered for something the member may do then; the
- * tap runs the same {@link TaskService} path the chat's own buttons run, which checks everything again.
+ * tap runs the same path the chat's own commands and buttons run, which checks everything again.
  */
 public final class AssistantActions {
 
@@ -23,7 +25,11 @@ public final class AssistantActions {
     public record Checked(boolean valid, ObjectNode payload) {
     }
 
-    /** How a tap ended; the channel says it in words. */
+    /** How a tap ended, and a refusal's words when the task refused it (ADR 0031): the channel shows those. */
+    public record Tapped(Outcome outcome, Optional<Text> refusal) {
+    }
+
+    /** What a tap came to, as its proposal records it; the channel words it unless the tap carries a refusal's words. */
     public enum Outcome {
         /** Done, or answered in the chat by the path it ran. */
         DONE,
@@ -38,6 +44,7 @@ public final class AssistantActions {
     static final int SHOWN_TEXT = 400;
 
     private final TaskService tasks;
+    private final TaskCommands commands;
     private final Groups groups;
     private final Projects projects;
     private final Clock clock;
@@ -47,6 +54,7 @@ public final class AssistantActions {
     /** @param youDecide what a "you decide" answer says, in the same words as the chat's own button */
     public AssistantActions(TaskService tasks, Groups groups, Projects projects, Clock clock, String youDecide) {
         this.tasks = tasks;
+        this.commands = tasks.commands();
         this.groups = groups;
         this.projects = projects;
         this.clock = clock;
@@ -71,8 +79,8 @@ public final class AssistantActions {
             case "answer" -> answer(tx, verdict, action, payload);
             case "approve" -> decision(verdict, TaskAccess.Action.APPROVE, payload);
             case "reject" -> decision(verdict, TaskAccess.Action.REJECT, payload);
-            case "cancel" -> allowed(verdict.refusal(TaskAccess.Action.CANCEL), payload);
-            case "retry" -> allowed(verdict.refusal(TaskAccess.Action.RETRY), payload);
+            case "cancel" -> offered(tx, who, new TaskCommand.Cancel(taskId), payload);
+            case "retry" -> offered(tx, who, new TaskCommand.Retry(taskId), payload);
             case "followUp" -> followUp(verdict, action, payload);
             default -> note(payload, "unknown");
         };
@@ -84,53 +92,60 @@ public final class AssistantActions {
      * @param messageRef the assistant's reply that holds the button; what the action's own messages answer under
      * @param chatRef    the member's private chat
      */
-    public Outcome run(Tx tx, Requester who, long actionId, String messageRef, String chatRef) {
+    public Tapped run(Tx tx, Requester who, long actionId, String messageRef, String chatRef) {
         Optional<JsonNode> taken = Conversations.takeAction(tx, actionId, who.ref(), clock.instant());
         if (taken.isEmpty()) {
-            return Outcome.USED;
+            return new Tapped(Outcome.USED, Optional.empty());
         }
-        Outcome outcome = carryOut(tx, who, taken.get(), actionId, messageRef, chatRef);
-        Conversations.recordOutcome(tx, actionId, outcome.name());
-        return outcome;
+        Tapped tapped = carryOut(tx, who, taken.get(), actionId, messageRef, chatRef);
+        Conversations.recordOutcome(tx, actionId, tapped.outcome().name());
+        return tapped;
     }
 
-    private Outcome carryOut(Tx tx, Requester who, JsonNode action, long actionId, String messageRef, String chatRef) {
+    private Tapped carryOut(Tx tx, Requester who, JsonNode action, long actionId, String messageRef, String chatRef) {
         long taskId = action.path("taskId").asLong();
         int planSeq = action.path("planSeq").asInt();
         return switch (action.path("type").asText()) {
             // Unique per action, while still naming the reply its prompt goes under (as a split's parts do, ADR 0013).
-            case "draft" -> switch (tasks.draft(tx, who, action.path("project").asText(null), action.path("text").asText(),
+            case "draft" -> new Tapped(switch (tasks.draft(tx, who, action.path("project").asText(null), action.path("text").asText(),
                     messageRef + "#a" + actionId)) {
                 case DRAFTED, EMPTY, NO_PROJECTS -> Outcome.DONE;
                 case DUPLICATE -> Outcome.USED;
                 case NOT_ALLOWED -> Outcome.NOT_ALLOWED;
-            };
-            case "answer" -> answered(tx, who, action, taskId, planSeq, messageRef, chatRef);
-            case "approve" -> switch (tasks.approve(tx, who, taskId, planSeq)) {
+            }, Optional.empty());
+            case "answer" -> new Tapped(answered(tx, who, action, taskId, planSeq, messageRef, chatRef), Optional.empty());
+            case "approve" -> new Tapped(switch (tasks.approve(tx, who, taskId, planSeq)) {
                 case APPROVED -> Outcome.DONE;
                 case STALE_PLAN, WRONG_STATE, OPEN_QUESTIONS -> Outcome.STALE;
                 case NOT_ALLOWED, NOT_FOUND, NOT_REQUESTER -> Outcome.NOT_ALLOWED;
-            };
-            case "reject" -> switch (tasks.reject(tx, who, taskId, planSeq)) {
+            }, Optional.empty());
+            case "reject" -> new Tapped(switch (tasks.reject(tx, who, taskId, planSeq)) {
                 case REJECTED -> Outcome.DONE;
                 case STALE_PLAN, WRONG_STATE -> Outcome.STALE;
                 case NOT_ALLOWED, NOT_FOUND, NOT_REQUESTER -> Outcome.NOT_ALLOWED;
-            };
-            // These three answer in the chat themselves, a refusal included, exactly as their commands do.
-            case "cancel" -> {
-                tasks.cancel(tx, who, taskId, messageRef, chatRef);
-                yield Outcome.DONE;
-            }
-            case "retry" -> {
-                tasks.retry(tx, who, taskId, messageRef, chatRef);
-                yield Outcome.DONE;
-            }
+            }, Optional.empty());
+            case "cancel" -> tapped(commands.run(tx, who, new TaskCommand.Cancel(taskId)));
+            case "retry" -> tapped(commands.run(tx, who, new TaskCommand.Retry(taskId)));
             case "followUp" -> {
-                // Unique per action as a draft's is: a merged task's follow-up becomes a task with this as its origin.
+                // Answers in the chat itself, a refusal included, exactly as a reply to the task's result does. Unique per
+                // action as a draft's is: a merged task's follow-up becomes a task with this as its origin.
                 tasks.followUp(tx, who, taskId, action.path("text").asText(), messageRef + "#a" + actionId, chatRef);
-                yield Outcome.DONE;
+                yield new Tapped(Outcome.DONE, Optional.empty());
             }
             default -> throw new IllegalStateException("stored action of unknown type: " + action);
+        };
+    }
+
+    /** A task command's result as a tap records it (ADR 0031): what refuses the member is not allowed, the rest moved on. */
+    private static Tapped tapped(CommandResult result) {
+        return switch (result) {
+            case CommandResult.Refused refused -> new Tapped(switch (refused.reason().kind()) {
+                case FORBIDDEN, NOT_FOUND -> Outcome.NOT_ALLOWED;
+                case INVALID, CONFLICT -> Outcome.STALE;
+            }, Optional.of(refused.words()));
+            case CommandResult.Done done -> new Tapped(Outcome.DONE, Optional.empty());
+            case CommandResult.Created created -> new Tapped(Outcome.DONE, Optional.empty());
+            case CommandResult.Unchanged unchanged -> new Tapped(Outcome.DONE, Optional.empty());
         };
     }
 
@@ -207,8 +222,11 @@ public final class AssistantActions {
         return shown(text) ? new Checked(true, payload.put("text", text)) : note(payload, "tooLong");
     }
 
-    private static Checked allowed(Optional<Refusal> refused, ObjectNode payload) {
-        return refused.map(refusal -> note(payload, reason(refusal))).orElseGet(() -> new Checked(true, payload));
+    /** A button only for what would run now; otherwise a note in the refusal's own words (ADR 0031). */
+    private Checked offered(Tx tx, Requester who, TaskCommand command, ObjectNode payload) {
+        return commands.check(tx, who, command)
+                .map(refused -> new Checked(false, payload.put("words", refused.words().render(Language.MN))))
+                .orElseGet(() -> new Checked(true, payload));
     }
 
     /** The note (assistant.note.*) the reply shows for a proposal task access refuses. */

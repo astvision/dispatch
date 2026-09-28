@@ -34,6 +34,11 @@ public enum OutboxKind {
     TASK_TIMELINE,
     STATS,
     TASK_NOT_FOUND,
+    /**
+     * A task command's refusal, under the message that asked for it (ADR 0031): its words, worded where it was refused, and
+     * the command to type instead when there is one.
+     */
+    REFUSED,
     CANCEL_REFUSED,
     /** /retry queued the failed step again. */
     RETRY_QUEUED,

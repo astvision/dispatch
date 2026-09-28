@@ -41,6 +41,8 @@ class TaskCommandsTest {
     /** An admin in no group: may cancel any task (ADR 0020), and do nothing else. */
     private static final Requester ADMIN = new Requester("telegram:400", "Tuya");
     private static final String CHAT = "telegram:-100";
+    private static final Config.Project ALM = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null,
+            "main", "claude-code", null, null, List.of(), null, null, null);
     private static final Plan PLAN = new Plan("Make the auth timeout configurable", List.of("AuthClient.java:14 hard-codes 30s"),
             List.of("Read auth.timeout"), List.of(), List.of());
 
@@ -60,12 +62,10 @@ class TaskCommandsTest {
         db = Database.open(dbFile);
         db.migrate();
         clock = new TestClock(Instant.parse("2026-09-29T10:00:00Z"));
-        Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null, "main",
-                "claude-code", null, null, List.of(), null, null, null);
         Groups groups = new Groups(new Config.Telegram(List.of(400L), List.of(
                 new Config.Group("backend", -100L, List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")),
                         List.of("autoland-management")))));
-        tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.empty()), new ActiveRuns(), clock,
+        tasks = new TaskService(groups, new Projects(List.of(ALM), project -> Optional.empty()), new ActiveRuns(), clock,
                 () -> { }, () -> { });
         commands = tasks.commands();
         transitions = new RunTransitions(db, clock, () -> { });
@@ -94,6 +94,21 @@ class TaskCommandsTest {
         assertEquals(new CommandResult.Done(id, false), run(ADMIN, new TaskCommand.Cancel(id)));
 
         assertEquals(List.of(CHAT, BOLD.ref()), chatsOf("TASK_CANCELLED"));
+    }
+
+    @Test
+    void aPersonalBotsTaskIsCancelledInOneLineSinceItsChatIsTheRequesters() {
+        // The same member and project on a personal bot: a group without a chat (ADR 0014).
+        Groups personal = new Groups(List.of(new Config.Group("bold", null, List.of(new Config.Member(100, "Bold")),
+                List.of("autoland-management"))));
+        tasks = new TaskService(personal, new Projects(List.of(ALM), project -> Optional.empty()), new ActiveRuns(), clock,
+                () -> { }, () -> { });
+        commands = tasks.commands();
+        long id = given(BOLD, "5");
+
+        assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.Cancel(id)));
+
+        assertEquals(List.of(BOLD.ref()), chatsOf("TASK_CANCELLED"), "one line: the group's line and the requester's are the same chat");
     }
 
     @Test

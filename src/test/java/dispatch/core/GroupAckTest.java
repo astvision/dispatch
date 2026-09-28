@@ -134,7 +134,7 @@ class GroupAckTest {
     void cancellingReactsWithThumbsDown() {
         long id = createFromMention("37");
 
-        db.transaction(tx -> tasks.cancel(tx, BOLD, id, GROUP + "/37", GROUP));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(id)));
 
         assertEquals("👎", lastReactionEmoji(id));
     }

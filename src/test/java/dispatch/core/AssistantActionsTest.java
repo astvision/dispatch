@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
+import dispatch.Language;
+import dispatch.Text;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
@@ -81,13 +83,13 @@ class AssistantActionsTest {
         assertEquals("Дасгалын тэмдэглэл нэм", checked.payload().path("title").asText());
         long id = propose(ALI, checked);
 
-        assertEquals(AssistantActions.Outcome.DONE, run(ALI, id));
+        assertEquals(AssistantActions.Outcome.DONE, run(ALI, id).outcome());
         Map<String, String> draft = SqlRows.single(dbFile, "SELECT project, description, origin_ref FROM draft");
         assertEquals("life", draft.get("project"));
         assertEquals("Дасгалын тэмдэглэл нэм\nӨдөр бүр", draft.get("description"));
         assertEquals(REPLY + "#a" + id, draft.get("origin_ref"));
         assertEquals("DRAFT_PROMPT", SqlRows.single(dbFile, "SELECT kind FROM outbox").get("kind"));
-        assertEquals(AssistantActions.Outcome.USED, run(ALI, id), "a second tap does nothing");
+        assertEquals(AssistantActions.Outcome.USED, run(ALI, id).outcome(), "a second tap does nothing");
         assertEquals("1", SqlRows.single(dbFile, "SELECT count(*) AS n FROM draft").get("n"));
     }
 
@@ -108,7 +110,7 @@ class AssistantActionsTest {
 
         assertTrue(checked.valid(), checked.payload().toString());
         assertEquals("prod", checked.payload().path("answer").asText());
-        assertEquals(AssistantActions.Outcome.DONE, run(ALI, propose(ALI, checked)));
+        assertEquals(AssistantActions.Outcome.DONE, run(ALI, propose(ALI, checked)).outcome());
         assertEquals("prod", SqlRows.single(dbFile, "SELECT answer FROM plan_answer WHERE task_id = ?", taskId).get("answer"));
     }
 
@@ -149,7 +151,7 @@ class AssistantActionsTest {
         long id = propose(ALI, check(ALI, Json.object().put("type", "approve").put("task", taskId)));
         db.transaction(tx -> tasks.reject(tx, ALI, taskId, 1));
 
-        assertEquals(AssistantActions.Outcome.STALE, run(ALI, id));
+        assertEquals(AssistantActions.Outcome.STALE, run(ALI, id).outcome());
         assertEquals("REJECTED", phase(taskId));
     }
 
@@ -157,7 +159,8 @@ class AssistantActionsTest {
     void anApprovalTappedInTimeQueuesTheExecution() {
         long taskId = planned(ALI, noQuestions());
 
-        assertEquals(AssistantActions.Outcome.DONE, run(ALI, propose(ALI, check(ALI, Json.object().put("type", "approve").put("task", taskId)))));
+        assertEquals(AssistantActions.Outcome.DONE,
+                run(ALI, propose(ALI, check(ALI, Json.object().put("type", "approve").put("task", taskId)))).outcome());
         assertEquals("EXECUTING", phase(taskId));
     }
 
@@ -166,13 +169,44 @@ class AssistantActionsTest {
         long bolds = create(BOLD, "life", "Fix the login");
         long crm = create(BOLD, "crm", "Export");
 
-        assertEquals("notYours", reason(check(ALI, Json.object().put("type", "cancel").put("task", bolds))));
-        assertEquals("notFound", reason(check(ALI, Json.object().put("type", "cancel").put("task", crm))),
+        assertEquals(Text.of("refused.cancelNotRequester", bolds, "Bold").render(Language.MN),
+                words(check(ALI, Json.object().put("type", "cancel").put("task", bolds))));
+        assertEquals(Text.of("refused.notFound", crm).render(Language.MN),
+                words(check(ALI, Json.object().put("type", "cancel").put("task", crm))),
                 "a task outside the member's projects does not leak");
-        assertEquals("notFound", reason(check(ALI, Json.object().put("type", "cancel").put("task", 999))));
-        assertEquals("phase", reason(check(BOLD, Json.object().put("type", "retry").put("task", bolds))), "it has not failed");
+        assertEquals(Text.of("refused.notFound", 999L).render(Language.MN),
+                words(check(ALI, Json.object().put("type", "cancel").put("task", 999))));
+        assertEquals(Text.of("refused.notFailed", bolds, Text.of("phase.planning")).render(Language.MN),
+                words(check(BOLD, Json.object().put("type", "retry").put("task", bolds))), "it has not failed");
         assertEquals("phase", reason(check(BOLD, Json.object().put("type", "followUp").put("task", bolds).put("text", "also X"))));
         assertTrue(check(BOLD, Json.object().put("type", "cancel").put("task", bolds)).valid());
+    }
+
+    /**
+     * A cancel or retry tap runs the task command itself (ADR 0031). What it refuses comes back with the refusal's words,
+     * which the channel shows as the button's notice, and writes nothing.
+     */
+    @Test
+    void aCancelOrRetryTapRunsTheCommandAndARefusedOneCarriesItsWordsAndWritesNothing() {
+        long alis = create(ALI, "life", "Fix the login");
+        long bolds = create(BOLD, "life", "Fix the export");
+        long cancel = propose(ALI, check(ALI, Json.object().put("type", "cancel").put("task", alis)));
+        long cancelAgain = stored(ALI, "cancel", alis);
+        long retry = stored(ALI, "retry", alis);
+        long notYours = stored(ALI, "cancel", bolds);
+
+        assertEquals(new AssistantActions.Tapped(AssistantActions.Outcome.DONE, Optional.empty()), run(ALI, cancel));
+        assertEquals("CANCELLED", phase(alis));
+        String outbox = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
+
+        assertEquals(new AssistantActions.Tapped(AssistantActions.Outcome.STALE,
+                Optional.of(Text.of("refused.wrongPhase", alis, Text.of("phase.cancelled")))), run(ALI, cancelAgain));
+        assertEquals(new AssistantActions.Tapped(AssistantActions.Outcome.STALE,
+                Optional.of(Text.of("refused.notFailed", alis, Text.of("phase.cancelled")))), run(ALI, retry));
+        assertEquals(new AssistantActions.Tapped(AssistantActions.Outcome.NOT_ALLOWED,
+                Optional.of(Text.of("refused.cancelNotRequester", bolds, "Bold"))), run(ALI, notYours));
+        assertEquals(outbox, SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n"), "a refused tap writes no row");
+        assertEquals("PLANNING", phase(bolds), "someone else's task is untouched");
     }
 
     @Test
@@ -202,8 +236,8 @@ class AssistantActionsTest {
         long a = propose(BOLD, check(BOLD, Json.object().put("type", "followUp").put("task", first).put("text", "Also log it")));
         long b = propose(BOLD, check(BOLD, Json.object().put("type", "followUp").put("task", second).put("text", "Also cover mobile")));
 
-        assertEquals(AssistantActions.Outcome.DONE, run(BOLD, a));
-        assertEquals(AssistantActions.Outcome.DONE, run(BOLD, b));
+        assertEquals(AssistantActions.Outcome.DONE, run(BOLD, a).outcome());
+        assertEquals(AssistantActions.Outcome.DONE, run(BOLD, b).outcome());
 
         assertEquals("[Also log it, Also cover mobile]", SqlRows.query(dbFile,
                         "SELECT title FROM task WHERE id NOT IN (?, ?) ORDER BY id", first, second).stream().map(row -> row.get("title")).toList()
@@ -214,7 +248,7 @@ class AssistantActionsTest {
     void someoneElsesButtonDoesNothing() {
         long id = propose(ALI, check(ALI, Json.object().put("type", "draft").put("text", "Export")));
 
-        assertEquals(AssistantActions.Outcome.USED, run(BOLD, id));
+        assertEquals(AssistantActions.Outcome.USED, run(BOLD, id).outcome());
         assertEquals("0", SqlRows.single(dbFile, "SELECT count(*) AS n FROM draft").get("n"));
     }
 
@@ -227,13 +261,25 @@ class AssistantActionsTest {
         return db.transactionReturning(tx -> Conversations.proposeAction(tx, who.ref(), checked.payload(), clock.instant()));
     }
 
-    private AssistantActions.Outcome run(Requester who, long id) {
+    private AssistantActions.Tapped run(Requester who, long id) {
         return db.transactionReturning(tx -> actions.run(tx, who, id, REPLY, who.ref()));
+    }
+
+    /** A proposal stored as it stands, as one checked before its task moved on would be, whatever a check would say now. */
+    private long stored(Requester who, String type, long taskId) {
+        return db.transactionReturning(tx ->
+                Conversations.proposeAction(tx, who.ref(), Json.object().put("type", type).put("taskId", taskId), clock.instant()));
     }
 
     private static String reason(AssistantActions.Checked checked) {
         assertFalse(checked.valid(), checked.payload().toString());
         return checked.payload().path("reason").asText();
+    }
+
+    /** A proposal a task command refuses: its note is the refusal's own words, as every channel shows them (ADR 0031). */
+    private static String words(AssistantActions.Checked checked) {
+        assertFalse(checked.valid(), checked.payload().toString());
+        return checked.payload().path("words").asText();
     }
 
     private long planned(Requester who, Plan plan) {

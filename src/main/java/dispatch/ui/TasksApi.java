@@ -7,14 +7,15 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.core.AnswerResult;
 import dispatch.core.ApproveResult;
-import dispatch.core.CancelResult;
+import dispatch.core.CommandResult;
 import dispatch.core.CorrectResult;
 import dispatch.core.FollowUpResult;
 import dispatch.core.Groups;
 import dispatch.core.Refusal;
 import dispatch.core.RejectResult;
-import dispatch.core.RetryResult;
 import dispatch.core.TaskAccess;
+import dispatch.core.TaskCommand;
+import dispatch.core.TaskCommands;
 import dispatch.core.TaskService;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
@@ -49,6 +50,7 @@ public final class TasksApi {
 
     private final Database db;
     private final TaskService tasks;
+    private final TaskCommands commands;
     private final TaskAccess access;
     private final boolean owner;
 
@@ -63,6 +65,7 @@ public final class TasksApi {
     public TasksApi(Database db, TaskService tasks, Groups groups, boolean owner) {
         this.db = db;
         this.tasks = tasks;
+        this.commands = tasks.commands();
         this.access = new TaskAccess(groups);
         this.owner = owner;
     }
@@ -115,66 +118,39 @@ public final class TasksApi {
                 .orElseThrow(() -> new ApiException(404, "not_found", Text.of("refusal.noTask", taskId)));
     }
 
-    /**
-     * The requester or an admin, by {@link TaskAccess} exactly as for /cancel in the chat. A refusal is answered here and
-     * only here: {@link TaskService} would also write it into the member's chat, where a tap in the Mini App does not belong.
-     */
+    /** {@link TaskCommand.Cancel}, exactly as /cancel in the chat; a refusal is answered here and never in the chat (ADR 0031). */
     ObjectNode cancel(Caller caller, JsonNode body) {
         long taskId = taskId(body);
-        CancelResult result = db.transactionReturning(tx -> {
-            Optional<Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.CANCEL);
-            if (refused.isPresent()) {
-                throw cancelRefused(refused.get(), taskId);
-            }
-            CancelResult cancelled = tasks.cancel(tx, requester(caller), taskId, null, caller.ref());
-            // Allowed in this same transaction, so TaskService cannot refuse it. If it ever did, throwing here rolls back
-            // the refusal it wrote for the chat, and the 500 says the two disagree instead of a 200 hiding it.
-            if (cancelled != CancelResult.CANCELLED) {
-                throw new IllegalStateException("task #" + taskId + " was allowed a cancel but came back " + cancelled);
-            }
-            return cancelled;
-        });
-        return Json.object().put("result", result.name());
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller), new TaskCommand.Cancel(taskId))), "CANCELLED");
     }
 
-    private static ApiException cancelRefused(Refusal refusal, long taskId) {
-        return switch (refusal) {
-            case NOT_MEMBER -> notMember();
-            case NOT_FOUND -> notFound(taskId);
-            case NOT_REQUESTER -> new ApiException(403, "not_yours", Text.of("refusal.cancelNotYours"));
-            case WRONG_PHASE -> new ApiException(409, "wrong_state", Text.of("refusal.ended"));
-            default -> throw new IllegalStateException("task access never refuses a cancel as " + refusal);
-        };
+    /** {@link TaskCommand.Retry}: the requester alone, and only after the task failed. */
+    ObjectNode retry(Caller caller, JsonNode body) {
+        long taskId = taskId(body);
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller), new TaskCommand.Retry(taskId))), "RETRIED");
     }
 
     /**
-     * The requester alone, and only after the task failed: an admin may stop someone's task but never start it again for
-     * them. Refused here and only here, as {@link #cancel} is.
+     * A task command's one answer to a page (ADR 0031): {@code {"result": done}}, a new task's number, or its refusal's
+     * words with the status its kind calls for. The desk's give answers through {@link #refused} too.
      */
-    ObjectNode retry(Caller caller, JsonNode body) {
-        long taskId = taskId(body);
-        RetryResult result = db.transactionReturning(tx -> {
-            Optional<Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.RETRY);
-            if (refused.isPresent()) {
-                throw retryRefused(refused.get(), taskId);
-            }
-            RetryResult retried = tasks.retry(tx, requester(caller), taskId, null, caller.ref());
-            if (retried != RetryResult.RETRIED) {
-                throw new IllegalStateException("task #" + taskId + " was allowed a retry but came back " + retried);
-            }
-            return retried;
-        });
-        return Json.object().put("result", result.name());
+    static ObjectNode answered(CommandResult result, String done) {
+        return switch (result) {
+            case CommandResult.Refused refused -> throw refused(refused);
+            case CommandResult.Created created -> Json.object().put("result", "NEW_TASK").put("taskId", created.taskId());
+            case CommandResult.Unchanged unchanged -> Json.object().put("result", "UNCHANGED");
+            case CommandResult.Done finished -> Json.object().put("result", done);
+        };
     }
 
-    private static ApiException retryRefused(Refusal refusal, long taskId) {
-        return switch (refusal) {
-            case NOT_MEMBER -> notMember();
-            case NOT_FOUND -> notFound(taskId);
-            case NOT_REQUESTER -> new ApiException(403, "cannot_retry", Text.of("refusal.retryNotYours"));
-            case NOT_FAILED -> new ApiException(409, "wrong_state", Text.of("refusal.retryNotFailed"));
-            default -> throw new IllegalStateException("task access never refuses a retry as " + refusal);
+    static ApiException refused(CommandResult.Refused refused) {
+        int status = switch (refused.reason().kind()) {
+            case INVALID -> 400;
+            case FORBIDDEN -> 403;
+            case NOT_FOUND -> 404;
+            case CONFLICT -> 409;
         };
+        return new ApiException(status, refused.reason().code(), refused.words());
     }
 
     /**

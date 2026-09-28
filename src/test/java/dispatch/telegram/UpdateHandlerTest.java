@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
+import dispatch.Language;
+import dispatch.Text;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
@@ -1015,8 +1017,58 @@ class UpdateHandlerTest {
         handler.handle(message(567, 67, 100, "Bold", 100L, "private", "/retry " + id, null));
 
         assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/66").get("kind"));
-        assertEquals("RETRY_QUEUED", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:100/67'").get("kind"));
+        Map<String, String> retried = row("SELECT chat_ref, reply_to_ref FROM outbox WHERE kind = 'RETRY_QUEUED'");
+        assertEquals("telegram:100", retried.get("chat_ref"));
+        assertEquals(row("SELECT origin_ref FROM task WHERE id = ?", id).get("origin_ref"), retried.get("reply_to_ref"),
+                "the task's news, under the task's own message: no reply under the command (ADR 0031)");
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = 'telegram:100/67'").get("n"));
         assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+    }
+
+    @Test
+    void aRefusedCancelIsAnsweredUnderTheCommandInItsWords() {
+        long id = task("Fix it");
+        long last = Long.parseLong(row("SELECT max(id) AS id FROM outbox").get("id"));
+
+        handler.handle(privateCommand(596, 200, "Ali", "/cancel " + id));
+
+        List<Map<String, String>> written = SqlRows.query(dbFile, "SELECT * FROM outbox WHERE id > ?", last);
+        assertEquals(1, written.size(), "the channel's reply alone: a refused command writes nothing: " + written);
+        Map<String, String> refused = written.getFirst();
+        assertEquals("REFUSED", refused.get("kind"));
+        assertEquals("telegram:200", refused.get("chat_ref"));
+        assertEquals("telegram:200/596", refused.get("reply_to_ref"));
+        assertEquals(Text.of("refused.cancelNotRequester", id, "Bold").render(Language.MN),
+                Json.read(refused.get("payload")).get("text").asText());
+        assertEquals(List.of(), chatsOf("TASK_CANCELLED"));
+    }
+
+    @Test
+    void anAdminsCancelOfSomeoneElsesTaskGetsItsOwnLine() {
+        long id = task("Fix it");
+        Groups adminGroups = new Groups(new Config.Telegram(List.of(999L), groups.all()));
+        TaskService adminTasks = new TaskService(adminGroups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
+        UpdateHandler adminHandler = new UpdateHandler(db, adminTasks, new Membership(adminGroups, UpdateHandlerTest::noJoins, clock,
+                () -> { }), adminGroups, projects, api, renderer, redactor, BOT, clock, () -> { });
+
+        adminHandler.handle(privateCommand(597, 999, "Root", "/cancel " + id));
+
+        assertEquals(List.of("telegram:" + GROUP, "telegram:100", "telegram:999"), chatsOf("TASK_CANCELLED"),
+                "the group's line, the requester's, and the admin's own");
+        assertEquals("telegram:999/597",
+                row("SELECT reply_to_ref FROM outbox WHERE kind = 'TASK_CANCELLED' AND chat_ref = 'telegram:999'").get("reply_to_ref"),
+                "the admin's line answers their command");
+    }
+
+    @Test
+    void theRequestersOwnCancelGetsNoSecondLine() {
+        long id = task("Fix it");
+
+        handler.handle(privateCommand(598, 100, "Bold", "/cancel " + id));
+
+        assertEquals(List.of("telegram:" + GROUP, "telegram:100"), chatsOf("TASK_CANCELLED"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = 'telegram:100/598'").get("n"),
+                "the news in their own chat already answers them");
     }
 
     @Test
@@ -2168,6 +2220,25 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void aTapTheTaskRefusesIsAnsweredInTheRefusalsWordsAndWritesNothing() throws Exception {
+        long id = task("Fix it");
+        UpdateHandler withAssistant = assistantHandler(new java.util.concurrent.CopyOnWriteArrayList<>(),
+                Json.read("{\"reply\":\"Цуцлах уу?\",\"actions\":[{\"type\":\"cancel\",\"task\":" + id + "}]}"));
+        withAssistant.handle(message(730, 73, 100, "Bold", 100L, "private", "Цуцал", null));
+        lastAssistant.awaitIdleForTests();
+        long reply = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'ASSISTANT_REPLY'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, reply, 1, "telegram:100/88", clock.instant()));
+        handler.handle(privateCommand(731, 100, "Bold", "/cancel " + id));
+        String outbox = row("SELECT count(*) AS n FROM outbox").get("n");
+
+        withAssistant.handle(privateCallback(732, 100, "Bold", "as:" + row("SELECT id FROM assistant_action").get("id")));
+
+        assertEquals(Text.of("refused.wrongPhase", id, Text.of("phase.cancelled")).render(Language.MN),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals(outbox, row("SELECT count(*) AS n FROM outbox").get("n"), "the button's notice is the whole answer");
+    }
+
+    @Test
     void commandsFilesAndRepliesWithAMeaningStillGoWhereTheyWent() throws Exception {
         List<dispatch.agent.RunRequest> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
         UpdateHandler withAssistant = assistantHandler(asked, Json.read("{\"reply\":\"ок\",\"actions\":[]}"));
@@ -2316,5 +2387,11 @@ class UpdateHandlerTest {
 
     private Map<String, String> row(String sql, Object... params) {
         return SqlRows.single(dbFile, sql, params);
+    }
+
+    /** Where the messages of {@code kind} go, in the order they were written. */
+    private List<String> chatsOf(String kind) {
+        return SqlRows.query(dbFile, "SELECT chat_ref FROM outbox WHERE kind = ? ORDER BY id", kind).stream()
+                .map(found -> found.get("chat_ref")).toList();
     }
 }

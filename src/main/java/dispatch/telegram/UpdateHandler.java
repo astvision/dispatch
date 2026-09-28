@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
+import dispatch.Language;
 import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.config.Config;
 import dispatch.core.AnswerResult;
 import dispatch.core.Assistant;
 import dispatch.core.AssistantActions;
+import dispatch.core.CommandResult;
 import dispatch.core.DraftChoice;
 import dispatch.core.DraftResult;
 import dispatch.core.GroupAdditions;
@@ -21,7 +23,10 @@ import dispatch.core.Membership;
 import dispatch.core.Merges;
 import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
+import dispatch.core.Refusal;
 import dispatch.core.TaskAccess;
+import dispatch.core.TaskCommand;
+import dispatch.core.TaskCommands;
 import dispatch.core.TaskService;
 import dispatch.domain.Attachment;
 import dispatch.domain.OutboxKind;
@@ -75,6 +80,7 @@ public final class UpdateHandler {
 
     private final Database db;
     private final TaskService tasks;
+    private final TaskCommands commands;
     private final Membership membership;
     private final Groups groups;
     private final TaskAccess access;
@@ -138,6 +144,7 @@ public final class UpdateHandler {
         }
         this.db = db;
         this.tasks = tasks;
+        this.commands = tasks.commands();
         this.membership = membership;
         this.groups = groups;
         this.access = new TaskAccess(groups);
@@ -209,7 +216,7 @@ public final class UpdateHandler {
             return;
         }
         if (privateChat && groups.isAdmin(Refs.user(from.get("id").asLong())) && isCancelCommand(message)) {
-            // An admin outside every group still cancels through the normal path (ADR 0020); TaskService.cancel allows it.
+            // An admin outside every group still cancels through the normal path (ADR 0020); the cancel command allows it.
             onChatMessage(tx, message, true);
             return;
         }
@@ -369,7 +376,7 @@ public final class UpdateHandler {
                     return;
                 }
                 taskId(command.args()).ifPresentOrElse(
-                        id -> tasks.cancel(tx, who, id, origin, chatRef),
+                        id -> reply(tx, who, new TaskCommand.Cancel(id), commands.run(tx, who, new TaskCommand.Cancel(id)), origin, chatRef),
                         () -> enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "cancel")));
             }
             case "retry" -> {
@@ -378,7 +385,7 @@ public final class UpdateHandler {
                     return;
                 }
                 taskId(command.args()).ifPresentOrElse(
-                        id -> tasks.retry(tx, who, id, origin, chatRef),
+                        id -> reply(tx, who, new TaskCommand.Retry(id), commands.run(tx, who, new TaskCommand.Retry(id)), origin, chatRef),
                         () -> enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "retry")));
             }
             case "worker" -> {
@@ -926,15 +933,16 @@ public final class UpdateHandler {
         long chatId = message.path("chat").path("id").asLong();
         long messageId = message.path("message_id").asLong();
         String messageRef = Refs.message(chatId, messageId, null);
-        AssistantActions.Outcome outcome = assistantActions.run(tx, who, actionId, messageRef, Refs.chat(chatId));
-        answer(tx, callback.path("id").asText(), switch (outcome) {
+        AssistantActions.Tapped tapped = assistantActions.run(tx, who, actionId, messageRef, Refs.chat(chatId));
+        String notice = tapped.refusal().map(words -> words.render(Language.MN)).orElseGet(() -> renderer.text(switch (tapped.outcome()) {
             case DONE -> "callback.assistantDone";
             case USED -> "callback.assistantUsed";
             case STALE -> "callback.wrongState";
             case NOT_ALLOWED -> "callback.notAllowed";
-        });
+        }));
+        tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callback.path("id").asText(), notice)));
         Optional<Outbox.Sent> reply = Outbox.findSent(tx, messageRef).filter(sent -> sent.kind() == OutboxKind.ASSISTANT_REPLY);
-        if (reply.isEmpty() || outcome == AssistantActions.Outcome.NOT_ALLOWED) {
+        if (reply.isEmpty() || tapped.outcome() == AssistantActions.Outcome.NOT_ALLOWED) {
             return;
         }
         ObjectNode payload = (ObjectNode) Json.read(reply.get().payload());
@@ -1276,6 +1284,41 @@ public final class UpdateHandler {
 
     private void answer(Tx tx, String callbackId, String textKey) {
         String text = renderer.text(textKey);
+        tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callbackId, text)));
+    }
+
+    /**
+     * Answers a task command where it was given (ADR 0031). A refusal is said in its words, under the message. An admin who
+     * cancelled someone else's task hears that it is done, since the news went to the task's requester and group. The
+     * requester's own success needs no reply: the news reached their task's topic.
+     */
+    private void reply(Tx tx, Requester who, TaskCommand command, CommandResult result, String origin, String chatRef) {
+        switch (result) {
+            case CommandResult.Refused refused -> refuse(tx, who, command, refused, origin, chatRef);
+            case CommandResult.Done done when !done.toldActor() && command instanceof TaskCommand.Cancel ->
+                    enqueue(tx, OutboxKind.TASK_CANCELLED, chatRef, origin, Json.object().put("taskId", done.taskId()).put("by", who.name()));
+            case CommandResult.Done done -> { }
+            case CommandResult.Created created -> { }
+            case CommandResult.Unchanged unchanged -> { }
+        }
+    }
+
+    /**
+     * A refusal's words under the message that asked. In a group, someone in no group is only logged: a busy group's chatter
+     * would otherwise be answered with a refusal line each time (G-1b).
+     */
+    private void refuse(Tx tx, Requester who, TaskCommand command, CommandResult.Refused refused, String origin, String chatRef) {
+        if (refused.reason() == Refusal.NOT_MEMBER && groups.isGroupChat(chatRef)) {
+            tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef,
+                    "answered", false));
+            return;
+        }
+        enqueue(tx, OutboxKind.REFUSED, chatRef, origin, Json.object().put("text", refused.words().render(Language.MN)));
+    }
+
+    /** A button's notice for a task command (ADR 0031): its refusal's words, or the words of {@code doneKey} once done. */
+    private void notice(Tx tx, String callbackId, CommandResult result, String doneKey) {
+        String text = result instanceof CommandResult.Refused refused ? refused.words().render(Language.MN) : renderer.text(doneKey);
         tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callbackId, text)));
     }
 

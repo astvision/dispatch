@@ -15,6 +15,7 @@ import dispatch.core.Groups;
 import dispatch.core.Membership;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
@@ -213,7 +214,7 @@ class GroupAdditionsTest {
     void aTapOnACancelledTasksAdditionSaysItIsClosedAndDropsTheButton() throws Exception {
         long taskId = taskFromTheManagersMention(90);
         String additionId = offered(90, 91, "Also show the full position in a tooltip");
-        db.transaction(tx -> tasks.cancel(tx, new Requester("telegram:" + ALI, "Ali"), taskId, "telegram:" + ALI + "/5", "telegram:" + ALI));
+        db.transaction(tx -> tasks.commands().run(tx, new Requester("telegram:" + ALI, "Ali"), new TaskCommand.Cancel(taskId)));
 
         handler.handle(UpdateHandlerTest.privateCallback(660, ALI, "Ali", "ad:" + additionId));
 
@@ -409,7 +410,7 @@ class GroupAdditionsTest {
     @Test
     void aClosedTasksMessageTakesNoAdditions() {
         long taskId = taskFromTheManagersMention(90);
-        db.transaction(tx -> tasks.cancel(tx, new Requester("telegram:" + ALI, "Ali"), taskId, "telegram:" + ALI + "/5", "telegram:" + ALI));
+        db.transaction(tx -> tasks.commands().run(tx, new Requester("telegram:" + ALI, "Ali"), new TaskCommand.Cancel(taskId)));
 
         handler.handle(UpdateHandlerTest.message(780, 91, MANAGER, "Nomin", GROUP, "supergroup", "Also a tooltip", humanMessage(90, MANAGER, "Nomin")));
 

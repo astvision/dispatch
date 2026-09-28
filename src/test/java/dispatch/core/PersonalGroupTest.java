@@ -91,7 +91,7 @@ class PersonalGroupTest {
         long cancelled = create("9");
 
         db.transaction(tx -> tasks.reject(tx, BOLD, rejected, 1));
-        db.transaction(tx -> tasks.cancel(tx, BOLD, cancelled, "telegram:100/20", "telegram:100"));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(cancelled)));
 
         Map<String, String> rejection = row("SELECT * FROM outbox WHERE kind = 'TASK_REJECTED'");
         assertEquals("telegram:100", rejection.get("chat_ref"));

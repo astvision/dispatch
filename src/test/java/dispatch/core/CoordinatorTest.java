@@ -211,7 +211,7 @@ class CoordinatorTest {
     void aCancelDuringTheJobReachesTheWorkersControlHandle() {
         long id = queue("Fix the login timeout");
         Worker worker = (job, events, control) -> {
-            db.transaction(tx -> tasks.cancel(tx, BOLD, id, "telegram:100/9", "telegram:100"));
+            db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(id)));
             return control.stopReason() == ActiveRuns.StopReason.CANCELLED
                     ? JobResult.cancelled(null)
                     : JobResult.succeeded(agentResult(PLAN_JSON));
