@@ -1,5 +1,6 @@
 package dispatch.store;
 
+import dispatch.AnsiPaths;
 import dispatch.OwnerOnly;
 import dispatch.Log;
 import java.io.IOException;
@@ -45,6 +46,7 @@ public final class Database implements AutoCloseable {
      */
     public static Database open(Path file) {
         try {
+            sqliteFolder();
             if (!Files.exists(file)) {
                 OwnerOnly.createFile(file);
             }
@@ -58,6 +60,24 @@ public final class Database implements AutoCloseable {
             return new Database(connection);
         } catch (SQLException | IOException e) {
             throw new DatabaseException("cannot open database " + file, e);
+        }
+    }
+
+    /**
+     * The SQLite driver unpacks its native library into the temporary folder and loads it from there, which Windows does
+     * in its code page ({@link AnsiPaths}): with other letters in that folder's name no database would open. The driver is
+     * given the folder's short name instead.
+     */
+    private static void sqliteFolder() {
+        if (!System.getProperty("os.name").startsWith("Windows") || System.getProperty("org.sqlite.tmpdir") != null) {
+            return;
+        }
+        String temp = System.getProperty("java.io.tmpdir");
+        String loadable = AnsiPaths.of(Path.of(temp)).orElseThrow(() -> new DatabaseException("SQLite cannot be loaded from "
+                + temp + ": Windows reads that name in its code page, which lacks some of its letters, and keeps no short name"
+                + " for it; set TMP to a folder named in plain letters, such as C:\\Temp", null));
+        if (!loadable.equals(temp)) {
+            System.setProperty("org.sqlite.tmpdir", loadable);
         }
     }
 
