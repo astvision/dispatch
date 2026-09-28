@@ -48,6 +48,11 @@ public enum OutboxKind {
     PRIVATE_ONLY,
     NO_PROJECTS,
     HELP,
+    /**
+     * To a member privately, from /help's ✍️ button: asks for a task as a forced reply. The reply is drafted as a task, never
+     * put to the assistant, as /task's text is (ADR 0024).
+     */
+    TASK_PROMPT,
     /** The projects a chat can give tasks for, and why any of them cannot take one now. */
     PROJECTS,
     /** To an admin: someone asks to use the bot, with a button per group (ADR 0015). */

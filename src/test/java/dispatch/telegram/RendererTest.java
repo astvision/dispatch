@@ -581,26 +581,168 @@ class RendererTest {
     }
 
     @Test
-    void privateHelpExplainsGivingATaskAndListsThePrivateCommands() {
-        ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot").put("privateChat", true);
-        payload.putArray("projects").addObject().put("name", "life").putNull("alias");
+    void personalHomeGreetsTheOwnerSaysNothingRunsAndOffersNoRoleComputerOrManage() {
+        ObjectNode payload = homePayload().put("personal", true).put("admin", false).put("team", "mine");
 
-        String html = renderer.render(OutboxKind.HELP, payload).html();
+        Renderer.Rendered rendered = renderer.render(OutboxKind.HELP, payload);
 
-        assertTrue(html.contains("/status") && html.contains("/history") && html.contains("/cancel"), html);
-        assertTrue(html.contains("<code>/task"), html);
+        String html = rendered.html();
+        assertTrue(html.contains("<b>Bold</b>"), html);
+        assertTrue(html.contains("mine · " + messages.getString("help.mode.personal")), html);
+        assertFalse(html.contains(messages.getString("help.role.member")) || html.contains(messages.getString("help.role.admin")), html);
+        assertTrue(html.contains(messages.getString("help.live.idle")), html);
+        assertTrue(html.contains("<code>alm</code> (autoland-management), <code>life</code>"), html);
+        assertEquals(List.of(
+                List.of(new Renderer.Button(messages.getString("help.button.task"), "help:task"),
+                        new Renderer.Button(messages.getString("help.button.status"), "help:status")),
+                List.of(new Renderer.Button(messages.getString("help.button.history"), "help:history"),
+                        new Renderer.Button(messages.getString("help.button.projects"), "help:projects")),
+                List.of(new Renderer.Button(messages.getString("help.button.how"), "help:how"),
+                        new Renderer.Button(messages.getString("help.button.refresh"), "help:home"))), rendered.keyboard());
     }
 
     @Test
-    void groupHelpLeadsWithTaskCommandToTheBotThenTheMention() {
-        ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot").put("privateChat", false);
-        payload.putArray("projects").addObject().put("name", "life").putNull("alias");
+    void teamAdminHomeShowsTheRoleTheLiveCountsTheComputerAndTheMiniApp() {
+        ObjectNode payload = homePayload().put("personal", false).put("admin", true).put("team", "backend")
+                .put("running", 2).put("waiting", 1).put("computer", true).put("miniApp", "https://dispatch.example.com");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.HELP, payload);
+
+        String html = rendered.html();
+        assertTrue(html.contains("backend · " + messages.getString("help.mode.team") + " · " + messages.getString("help.role.admin")), html);
+        assertTrue(html.contains(new java.text.MessageFormat(messages.getString("help.live.running")).format(new Object[] {"2"})), html);
+        assertTrue(html.contains(new java.text.MessageFormat(messages.getString("help.live.waiting")).format(new Object[] {"1"})), html);
+        assertFalse(html.contains("⏳"), "no zero parts: " + html);
+        assertFalse(html.contains(messages.getString("help.live.idle")), html);
+        assertEquals(List.of(new Renderer.Button(messages.getString("help.button.computer"), "help:computer"),
+                Renderer.Button.webApp(messages.getString("help.button.manage"), "https://dispatch.example.com")), rendered.keyboard().get(2));
+        assertEquals(new Renderer.Button(messages.getString("help.button.refresh"), "help:home"), rendered.keyboard().getLast().getLast());
+    }
+
+    @Test
+    void teamMemberHomeSaysMemberAndEscapesTheName() {
+        ObjectNode payload = homePayload().put("personal", false).put("admin", false).put("team", "backend")
+                .put("firstName", "<Bold>").put("queued", 3);
 
         String html = renderer.render(OutboxKind.HELP, payload).html();
 
+        assertTrue(html.contains("&lt;Bold&gt;"), html);
+        assertTrue(html.contains(messages.getString("help.role.member")), html);
+        assertTrue(html.contains(new java.text.MessageFormat(messages.getString("help.live.queued")).format(new Object[] {"3"})), html);
+    }
+
+    @Test
+    void theTaskPageExplainsHowToGiveOneAndOffersToWriteIt() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.HELP, helpPage("task"));
+
+        assertEquals(messages.getString("help.task"), rendered.html());
+        assertEquals(List.of(List.of(new Renderer.Button(messages.getString("help.button.write"), "help:write")), backRow()),
+                rendered.keyboard());
+    }
+
+    @Test
+    void theStatusPageIsTheStatusMessageWithOnlyTheBackButton() {
+        ObjectNode status = statusPayload();
+        status.withArray("mine").addObject().put("taskId", 3).put("priority", "NORMAL");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.HELP, helpPage("status").set("status", status));
+
+        assertEquals(renderer.render(OutboxKind.STATUS, status).html(), rendered.html());
+        assertEquals(List.of(backRow()), rendered.keyboard(), "priority buttons would redraw it as a plain status, losing the way back");
+    }
+
+    @Test
+    void theHistoryAndProjectsPagesAreThoseMessagesWithTheBackButton() {
+        ObjectNode projects = Json.object();
+        projects.putArray("projects").addObject().put("name", "crm").putNull("alias").put("baseBranch", "main");
+
+        Renderer.Rendered history = renderer.render(OutboxKind.HELP, helpPage("history").set("history", historyPayload()));
+        Renderer.Rendered listed = renderer.render(OutboxKind.HELP, helpPage("projects").set("projects", projects.get("projects")));
+
+        assertEquals(renderer.render(OutboxKind.HISTORY, historyPayload()).html(), history.html());
+        assertEquals(renderer.render(OutboxKind.PROJECTS, projects).html(), listed.html());
+        assertEquals(List.of(backRow()), history.keyboard());
+        assertEquals(List.of(backRow()), listed.keyboard());
+    }
+
+    @Test
+    void theComputerPageSaysWhichComputersAreConnectedOrHowToPairOne() {
+        ObjectNode page = helpPage("computer");
+        page.putArray("workers").addObject().put("name", "ann-<laptop>").put("live", true);
+        page.withArray("workers").addObject().put("name", "ann-desktop").put("live", false);
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.HELP, page);
+        String none = renderer.render(OutboxKind.HELP, helpPage("computer").set("workers", Json.MAPPER.createArrayNode())).html();
+
+        assertTrue(rendered.html().contains(new java.text.MessageFormat(messages.getString("help.computer.live"))
+                .format(new Object[] {"ann-&lt;laptop&gt;"})), rendered.html());
+        assertTrue(rendered.html().contains(new java.text.MessageFormat(messages.getString("help.computer.offline"))
+                .format(new Object[] {"ann-desktop"})), rendered.html());
+        assertEquals(List.of(backRow()), rendered.keyboard());
+        assertTrue(none.contains("/worker"), none);
+    }
+
+    @Test
+    void theHowPageWalksTheFourStepsThenListsThePrivateCommands() {
+        String html = renderer.render(OutboxKind.HELP, helpPage("how")).html();
+
+        assertTrue(html.contains("draft PR") || html.contains("Draft PR"), html);
+        assertTrue(html.contains("/status") && html.contains("/history") && html.contains("/cancel") && html.contains("<code>/task"), html);
+    }
+
+    @Test
+    void anUnknownPageIsTheHome() {
+        ObjectNode payload = homePayload().put("personal", true).put("page", "gone");
+
+        assertEquals(renderer.render(OutboxKind.HELP, homePayload().put("personal", true)).html(),
+                renderer.render(OutboxKind.HELP, payload).html());
+    }
+
+    @Test
+    void groupHelpLeadsWithTaskCommandToTheBotThenTheMentionAndLinksToThePrivateChat() {
+        ObjectNode payload = Json.object().put("bot", "dispatch_backend_bot").put("privateChat", false);
+        payload.putArray("projects").addObject().put("name", "life").putNull("alias");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.HELP, payload);
+
+        String html = rendered.html();
         int command = html.indexOf("/task@dispatch_backend_bot");
         assertTrue(command >= 0, html);
         assertTrue(html.indexOf("@dispatch_backend_bot-г", command) > command, "the mention comes second: " + html);
+        assertTrue(html.contains("/status@dispatch_backend_bot"), html);
+        assertEquals(List.of(List.of(Renderer.Button.link(messages.getString("help.button.openPrivate"),
+                "https://t.me/dispatch_backend_bot?start=help"))), rendered.keyboard());
+    }
+
+    @Test
+    void theTaskPromptIsAForcedReply() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.TASK_PROMPT, Json.object());
+
+        assertEquals(messages.getString("help.writePrompt"), rendered.html());
+        assertEquals(messages.getString("help.writePlaceholder"), rendered.forceReply());
+    }
+
+    @Test
+    void cancelAndRetryUsageNameTheirCommand() {
+        assertTrue(renderer.render(OutboxKind.TASK_USAGE, Json.object().put("command", "cancel")).html().contains("<code>/cancel дугаар</code>"));
+        assertTrue(renderer.render(OutboxKind.TASK_USAGE, Json.object().put("command", "retry")).html().contains("<code>/retry дугаар</code>"));
+        assertEquals(messages.getString("task.usage"), renderer.render(OutboxKind.TASK_USAGE, Json.object()).html());
+    }
+
+    private static ObjectNode homePayload() {
+        ObjectNode payload = Json.object().put("privateChat", true).put("page", "home").put("bot", "dispatch_backend_bot")
+                .put("firstName", "Bold").put("running", 0).put("waiting", 0).put("queued", 0).put("computer", false).putNull("miniApp");
+        payload.putArray("projects").addObject().put("name", "autoland-management").put("alias", "alm");
+        payload.withArray("projects").addObject().put("name", "life").putNull("alias");
+        return payload;
+    }
+
+    private static ObjectNode helpPage(String page) {
+        return Json.object().put("privateChat", true).put("page", page);
+    }
+
+    private List<Renderer.Button> backRow() {
+        return List.of(new Renderer.Button(messages.getString("help.button.back"), "help:home"));
     }
 
     @Test
@@ -986,6 +1128,7 @@ class RendererTest {
             }
             case PROJECT_UNAVAILABLE -> Json.object().put("project", "crm").put("reason", "no clone");
             case TASK_USAGE -> Json.object();
+            case TASK_PROMPT -> Json.object();
             case PROJECTS -> {
                 ObjectNode payload = Json.object();
                 payload.putArray("projects").addObject().put("name", "crm").putNull("alias").put("baseBranch", "main")

@@ -123,6 +123,16 @@ class BotApiTest {
     }
 
     @Test
+    void aLinkButtonOpensItsUrl() throws Exception {
+        api.sendMessage(-100L, null, "help", null, List.of(List.of(Renderer.Button.link("Нээх", "https://t.me/bot?start=help"))));
+
+        JsonNode button = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json()
+                .get("reply_markup").get("inline_keyboard").get(0).get(0);
+        assertEquals("https://t.me/bot?start=help", button.get("url").asText());
+        assertFalse(button.has("callback_data"), button.toString());
+    }
+
+    @Test
     void messageWithoutReplyOrButtonsOmitsThem() throws Exception {
         api.sendMessage(-100L, null, "hello", null, List.of());
 
