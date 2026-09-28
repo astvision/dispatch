@@ -322,6 +322,32 @@ class InitCommandTest {
         assertTrue(yaml.contains("port: 7881"), yaml);
     }
 
+    @Test
+    void reinitializingANamedInstanceWithForceSuggestsItsOwnPort() throws IOException {
+        Locations team = locations.forInstance("team");
+        TestConfigs.write(team.configFile(), SECOND_TOKEN, "alm");
+        Files.writeString(team.configFile(), "\nworkers:\n  publicUrl: 'https://team.example.com'\n  port: 7880\n",
+                StandardOpenOption.APPEND);
+        telegram.pushUpdate(start(1, 700, "Gus"));
+        telegram.pushUpdate(botAddedTo(2, -1008880000L, "Team chat"));
+        ScriptedTerminal terminal = new ScriptedTerminal(
+                "My team", SECOND_TOKEN,
+                "y",                                 // is Gus you? yes
+                "n",                                 // wait for a teammate? no
+                "y",                                 // a team group for announcements: yes
+                "",                                  // team name: from the group's title
+                "https://team.example.com",          // workers: public URL
+                "",                                  // workers: port, accept the suggested default: its own, not 7881
+                JAVA, repos.repo("alm").toString(), "", "", "", "", "",
+                "", "team@example.com", "", "n");
+
+        int exit = initForAnotherInstance(terminal).run(new Cli.Init(team.configFile(), true, false, "team"), Map.of("PATH", ""));
+
+        assertEquals(0, exit, terminal.output());
+        assertTrue(terminal.output().contains("[7880]"), terminal.output());
+        assertTrue(Files.readString(team.configFile()).contains("port: 7880"), Files.readString(team.configFile()));
+    }
+
     private List<String> answersForAPersonalBot(String token) {
         return List.of(
                 "",                                 // who uses the bot: just me

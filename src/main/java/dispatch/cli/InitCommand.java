@@ -320,7 +320,8 @@ public final class InitCommand {
     private int suggestedPort(Map<String, String> env) {
         Set<Integer> taken = new HashSet<>();
         for (Instances.Found found : Instances.discover(defaults, env)) {
-            if (found.config() == null) {
+            // Only other instances' ports are avoided: re-initialising this one (e.g. --force) must keep its own.
+            if (found.config() == null || Objects.equals(found.name(), instance)) {
                 continue;
             }
             if (found.config().workers() != null) {
