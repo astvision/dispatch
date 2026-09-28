@@ -8,8 +8,10 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /** The instances set up on this computer: the default one and each named one in its config folder (M). */
@@ -40,13 +42,28 @@ public final class Instances {
         return found;
     }
 
+    /** Secrets the process environment carries for the instance dispatch was actually invoked for (RunCommand, ListCommand's caller, etc). */
+    private static final Set<String> OWN_SECRETS = Set.of("TELEGRAM_BOT_TOKEN", "GH_TOKEN");
+
     private static Found load(String name, Path file, Map<String, String> processEnvironment) {
         try {
-            RunCommand.Prepared prepared = RunCommand.prepare(file, processEnvironment);
+            // Never let this process's own instance's secret force itself onto another instance found here: each
+            // instance's own .env must supply its own token, or a shared TELEGRAM_BOT_TOKEN in the environment (set
+            // by the systemd unit, or by a test) would make every other instance look like it uses the same bot.
+            RunCommand.Prepared prepared = RunCommand.prepare(file, withoutOwnSecrets(processEnvironment));
             return new Found(name, file, prepared.config(), prepared.environment(), null);
         } catch (CliException | ConfigException e) {
             return new Found(name, file, null, null, e.getMessage());
         }
+    }
+
+    private static Map<String, String> withoutOwnSecrets(Map<String, String> env) {
+        if (OWN_SECRETS.stream().noneMatch(env::containsKey)) {
+            return env;
+        }
+        Map<String, String> copy = new HashMap<>(env);
+        OWN_SECRETS.forEach(copy::remove);
+        return Map.copyOf(copy);
     }
 
     /** The digits before the token's ':', or null: never the part that must stay secret. */

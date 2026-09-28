@@ -31,4 +31,21 @@ class InstancesTest {
         assertNotNull(found.get(1).error());
         assertEquals("222", Instances.botId(found.get(2).config().secrets().telegramBotToken()));
     }
+
+    /**
+     * The process environment overrides a config's own .env (SecretsFile.environment), which is right for the
+     * instance dispatch was actually invoked for, but wrong for every OTHER instance discovered here: forcing this
+     * process's token onto them would make them all look like the same bot (M: several instances on one computer).
+     */
+    @Test
+    void theProcessEnvironmentsBotTokenDoesNotOverrideAnotherInstancesOwnToken() throws IOException {
+        Locations defaults = Locations.of("Linux", Map.of(), home);
+        TestConfigs.write(defaults.configFile(), "111:AAA", "alm");
+        TestConfigs.write(defaults.forInstance("team").configFile(), "222:BBB", "alm");
+
+        List<Instances.Found> found = Instances.discover(defaults, Map.of("TELEGRAM_BOT_TOKEN", "999:ZZZ"));
+
+        assertEquals("111", Instances.botId(found.get(0).config().secrets().telegramBotToken()));
+        assertEquals("222", Instances.botId(found.get(1).config().secrets().telegramBotToken()));
+    }
 }
