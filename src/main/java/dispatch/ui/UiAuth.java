@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import com.sun.net.httpserver.HttpExchange;
 import java.io.IOException;
 import java.net.URI;
@@ -99,12 +100,12 @@ final class UiAuth implements UiServer.Auth {
     @Override
     public UiServer.Caller caller(HttpExchange exchange) {
         if (!hasSession(exchange.getRequestHeaders().getFirst("Cookie"))) {
-            throw new ApiException(401, "session", "this page's session ended; restart dispatch ui and open the link it prints");
+            throw new ApiException(401, "session", Text.of("refusal.sessionEnded"));
         }
         String method = exchange.getRequestMethod();
         boolean reading = method.equals("GET") || method.equals("HEAD");
         if (!reading && !originAllowed(exchange.getRequestHeaders().getFirst("Origin"))) {
-            throw new ApiException(403, "origin", "this request did not come from the Dispatch page");
+            throw new ApiException(403, "origin", Text.of("refusal.otherOrigin"));
         }
         return OWNER;
     }

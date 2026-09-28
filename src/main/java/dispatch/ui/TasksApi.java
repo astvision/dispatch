@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -34,8 +35,8 @@ import java.util.function.BiFunction;
  */
 public final class TasksApi {
 
-    static final String NOT_ADMIN = "only an admin may see the whole group's tasks";
-    static final String NOT_YOURS = "only the member who gave this task may see its plan and decide on it";
+    static final Text NOT_ADMIN = Text.of("refusal.notAdminTasks");
+    static final Text NOT_YOURS = Text.of("refusal.notYours");
     /** What the chat's "you decide" button answers, so the agent reads the same words from either place. */
     private static final String YOU_DECIDE = Renderer.mongolian().getString("plan.youDecide");
 
@@ -88,7 +89,7 @@ public final class TasksApi {
     ObjectNode timeline(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         return db.transactionReturning(tx -> tasks.timelinePayload(tx, access.member(caller.ref()), taskId))
-                .orElseThrow(() -> new ApiException(404, "not_found", "no task #" + taskId + " here"));
+                .orElseThrow(() -> new ApiException(404, "not_found", Text.of("refusal.noTask", taskId)));
     }
 
     /**
@@ -117,8 +118,8 @@ public final class TasksApi {
         return switch (refusal) {
             case NOT_MEMBER -> notMember();
             case NOT_FOUND -> notFound(taskId);
-            case NOT_REQUESTER -> new ApiException(403, "not_yours", "only the member who gave this task, or an admin, may cancel it");
-            case WRONG_PHASE -> new ApiException(409, "wrong_state", "this task has already ended");
+            case NOT_REQUESTER -> new ApiException(403, "not_yours", Text.of("refusal.cancelNotYours"));
+            case WRONG_PHASE -> new ApiException(409, "wrong_state", Text.of("refusal.ended"));
             default -> throw new IllegalStateException("task access never refuses a cancel as " + refusal);
         };
     }
@@ -147,8 +148,8 @@ public final class TasksApi {
         return switch (refusal) {
             case NOT_MEMBER -> notMember();
             case NOT_FOUND -> notFound(taskId);
-            case NOT_REQUESTER -> new ApiException(403, "cannot_retry", "only the member who gave it may retry this task");
-            case NOT_FAILED -> new ApiException(409, "wrong_state", "only a failed task can be retried");
+            case NOT_REQUESTER -> new ApiException(403, "cannot_retry", Text.of("refusal.retryNotYours"));
+            case NOT_FAILED -> new ApiException(409, "wrong_state", Text.of("refusal.retryNotFailed"));
             default -> throw new IllegalStateException("task access never refuses a retry as " + refusal);
         };
     }
@@ -186,10 +187,9 @@ public final class TasksApi {
             }
             return switch (result) {
                 case ANSWERED -> ownTask(tx, caller, taskId).put("result", result.name());
-                case EMPTY -> throw new ApiException(400, "invalid", "the answer is empty, or that option is not one of the question's");
-                case ALREADY_ANSWERED -> throw new ApiException(409, "already_answered", "this question already has its answer");
-                case OUT_OF_ORDER -> throw new ApiException(409, "out_of_order",
-                        "answer the questions in order: an earlier one is still open");
+                case EMPTY -> throw new ApiException(400, "invalid", Text.of("refusal.answerEmpty"));
+                case ALREADY_ANSWERED -> throw new ApiException(409, "already_answered", Text.of("refusal.answered"));
+                case OUT_OF_ORDER -> throw new ApiException(409, "out_of_order", Text.of("refusal.outOfOrder"));
                 case STALE -> throw stale();
                 case NOT_ALLOWED -> throw notMember();
                 case NOT_FOUND -> throw notFound(taskId);
@@ -206,10 +206,9 @@ public final class TasksApi {
         ApproveResult result = db.transactionReturning(tx -> tasks.approve(tx, requester(caller), taskId, planSeq));
         return switch (result) {
             case APPROVED -> Json.object().put("result", result.name());
-            case OPEN_QUESTIONS -> throw new ApiException(409, "open_questions",
-                    "this plan still has open questions: answer them, and the agent plans again with the answers");
+            case OPEN_QUESTIONS -> throw new ApiException(409, "open_questions", Text.of("refusal.openQuestions"));
             case STALE_PLAN -> throw stale();
-            case WRONG_STATE -> throw new ApiException(409, "wrong_state", "this task is not waiting for a decision any more");
+            case WRONG_STATE -> throw new ApiException(409, "wrong_state", Text.of("refusal.notWaiting"));
             case NOT_ALLOWED -> throw notMember();
             case NOT_FOUND -> throw notFound(taskId);
             case NOT_REQUESTER -> throw new ApiException(403, "not_yours", NOT_YOURS);
@@ -224,7 +223,7 @@ public final class TasksApi {
         return switch (result) {
             case REJECTED -> Json.object().put("result", result.name());
             case STALE_PLAN -> throw stale();
-            case WRONG_STATE -> throw new ApiException(409, "wrong_state", "this task is not waiting for a decision any more");
+            case WRONG_STATE -> throw new ApiException(409, "wrong_state", Text.of("refusal.notWaiting"));
             case NOT_ALLOWED -> throw notMember();
             case NOT_FOUND -> throw notFound(taskId);
             case NOT_REQUESTER -> throw new ApiException(403, "not_yours", NOT_YOURS);
@@ -248,20 +247,20 @@ public final class TasksApi {
     }
 
     private static ApiException stale() {
-        return new ApiException(409, "stale", "this plan was replaced by a newer one, or no longer waits for you; reload the task");
+        return new ApiException(409, "stale", Text.of("refusal.stalePlan"));
     }
 
     private static ApiException notFound(long taskId) {
-        return new ApiException(404, "not_found", "no task #" + taskId + " here");
+        return new ApiException(404, "not_found", Text.of("refusal.noTask", taskId));
     }
 
     private static ApiException notMember() {
-        return new ApiException(403, "not_a_member", "you are not in a group of this Dispatch");
+        return new ApiException(403, "not_a_member", Text.of("refusal.notMember"));
     }
 
     private static int number(JsonNode body, String field) {
         if (!body.path(field).isIntegralNumber()) {
-            throw new ApiException(400, "invalid", field + " is missing");
+            throw new ApiException(400, "invalid", Text.of("refusal.missingField", field));
         }
         return body.path(field).asInt();
     }
@@ -282,7 +281,7 @@ public final class TasksApi {
 
     private static long taskId(JsonNode body) {
         if (!body.path("taskId").isIntegralNumber()) {
-            throw new ApiException(400, "invalid", "which task? taskId is missing");
+            throw new ApiException(400, "invalid", Text.of("refusal.missingTaskId"));
         }
         return body.path("taskId").asLong();
     }

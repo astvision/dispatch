@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Log;
 import dispatch.Redactor;
@@ -52,7 +53,7 @@ import java.util.regex.Pattern;
  */
 public final class ManageApi {
 
-    static final String CHANGED = "the config changed on disk since this page loaded it; reload to see the change";
+    static final Text CHANGED = Text.of("refusal.changed");
     static final int DEFAULT_LOG_LINES = 200;
     static final int MAX_LOG_LINES = 2000;
     /** ponytail: only the log's last MiB is read, so a narrow filter can find fewer lines than asked; read further back in chunks if that matters. */

@@ -11,6 +11,7 @@ import dispatch.domain.FailureReason;
 import dispatch.store.Database;
 import dispatch.store.Tasks;
 import dispatch.store.Workers;
+import dispatch.Text;
 import dispatch.ui.ApiException;
 import java.time.Clock;
 import java.time.Duration;
@@ -325,7 +326,7 @@ public final class RemoteWorkers implements Worker {
         synchronized (lock) {
             if (offer.expired) {
                 throw new ApiException(409, "lease_expired",
-                        "this run's lease has expired; keep its worktree, the member can retry it");
+                        Text.raw("this run's lease has expired; keep its worktree, the member can retry it"));
             }
         }
     }
@@ -353,7 +354,7 @@ public final class RemoteWorkers implements Worker {
         // a silently dropped result.
         if (!offer.answer.complete(result)) {
             throw new ApiException(409, "lease_expired",
-                    "this run's lease has expired; keep its worktree, the member can retry it");
+                    Text.raw("this run's lease has expired; keep its worktree, the member can retry it"));
         }
         Log.info("worker.job_reported", "task", taskId, "run", seq, "worker", worker.id(), "outcome", result.outcome());
     }
@@ -372,19 +373,19 @@ public final class RemoteWorkers implements Worker {
             Optional<Offer> found = offers.stream().filter(offer -> offer.job.taskId() == taskId && !offer.expired).findFirst();
             if (found.isEmpty() || found.get().takenBy == null) {
                 throw new ApiException(409, "lease_expired",
-                        "this run's lease has expired; keep its worktree, the member can retry it");
+                        Text.raw("this run's lease has expired; keep its worktree, the member can retry it"));
             }
             Offer offer = found.get();
             if (offer.takenBy != worker.id()) {
-                throw new ApiException(403, "not_your_run", "this run belongs to another computer");
+                throw new ApiException(403, "not_your_run", Text.raw("this run belongs to another computer"));
             }
             if (seq >= 0 && offer.job.seq() != seq) {
-                throw new ApiException(409, "lease_expired", "this computer holds run " + offer.job.seq() + " of task "
-                        + taskId + ", not " + seq);
+                throw new ApiException(409, "lease_expired", Text.raw("this computer holds run " + offer.job.seq() + " of task "
+                        + taskId + ", not " + seq));
             }
             if (clock.instant().isAfter(offer.leaseUntil)) {
                 throw new ApiException(409, "lease_expired",
-                        "this run's lease has expired; keep its worktree, the member can retry it");
+                        Text.raw("this run's lease has expired; keep its worktree, the member can retry it"));
             }
             return offer;
         }

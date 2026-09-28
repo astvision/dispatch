@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.cli.CliException;
 import dispatch.cli.Locations;
@@ -431,7 +432,7 @@ public final class SetupApi {
         try {
             return source.next(wanted, poll);
         } catch (Setup.ConflictException e) {
-            throw new ApiException(409, "conflict", e.getMessage());
+            throw new ApiException(409, "conflict", Text.raw(e.getMessage()));
         }
     }
 
