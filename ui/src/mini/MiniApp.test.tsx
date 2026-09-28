@@ -199,7 +199,7 @@ describe("the Mini App", () => {
     render(<App />);
 
     const effort = await screen.findByRole("heading", { name: "Effort" });
-    fireEvent.click(within(effort.closest("section")!).getByRole("button", { name: /^High/ }));
+    fireEvent.click(within(effort.closest("section")!).getByRole("button", { name: /^Өндөр/ }));
 
     await waitFor(() => expect(api.editProject).toHaveBeenCalledWith("v1", expect.objectContaining({
       plan: { model: "fable", effort: "high" },
@@ -227,8 +227,8 @@ describe("the Mini App", () => {
     window.history.pushState(null, "", "/p/crm/edit/effort");
     const { unmount } = render(<App />);
 
-    expect(await row("Extra high")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Max/ })).not.toBeInTheDocument();
+    expect(await row("Маш өндөр")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Дээд/ })).not.toBeInTheDocument();
     unmount();
 
     window.history.pushState(null, "", "/p/crm/edit/model");
@@ -249,7 +249,7 @@ describe("the Mini App", () => {
     expect(await row("Агент")).toHaveTextContent("Gemini CLI");
     expect(screen.queryByRole("button", { name: /^Effort/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Төлөвлөх/ })).not.toBeInTheDocument();
-    expect(await row("Model")).toHaveTextContent("Gemini CLI's default");
+    expect(await row("Model")).toHaveTextContent("Gemini CLI-ийн үндсэн");
   });
 
   it("asks on the page before removing a project, then goes back to the projects", async () => {

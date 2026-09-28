@@ -1,7 +1,8 @@
 import { Alert, Button, Card, Collapse, Form, Input, Select, Space, Table, Typography } from "antd";
 import { useState } from "react";
 import { probeProject, type Effort, type Model, type PhaseChoice, type ProjectChoice, type ProjectView } from "../api";
-import { PHASE_EFFORTS, PHASE_MODELS } from "../options";
+import { useT } from "../i18n/i18n";
+import { phaseEfforts, phaseModels } from "../options";
 import { useAction } from "../useAction";
 import FolderBrowser from "./FolderBrowser";
 import type { Draft } from "./SetupPage";
@@ -32,6 +33,7 @@ interface Props {
 }
 
 export default function ProjectsStep({ draft, update, next, back }: Props) {
+  const t = useT();
   const [picking, setPicking] = useState(draft.projects.length === 0);
   const [probe, setProbe] = useState<ProjectView | null>(null);
   const [choice, setChoice] = useState<ProjectChoice | null>(null);
@@ -106,19 +108,19 @@ export default function ProjectsStep({ draft, update, next, back }: Props) {
                   <Input id="project-alias" value={extra.alias} onChange={(e) => setExtra({ ...extra, alias: e.target.value })} />
                 </Form.Item>
                 <Form.Item label="Planning model">
-                  <Select aria-label="Planning model" value={extra.plan.model} options={PHASE_MODELS}
+                  <Select aria-label="Planning model" value={extra.plan.model} options={phaseModels(t)}
                           onChange={(model) => setExtra({ ...extra, plan: { ...extra.plan, model } })} />
                 </Form.Item>
                 <Form.Item label="Planning effort">
-                  <Select aria-label="Planning effort" value={extra.plan.effort} options={PHASE_EFFORTS}
+                  <Select aria-label="Planning effort" value={extra.plan.effort} options={phaseEfforts(t)}
                           onChange={(effort) => setExtra({ ...extra, plan: { ...extra.plan, effort } })} />
                 </Form.Item>
                 <Form.Item label="Execution model">
-                  <Select aria-label="Execution model" value={extra.execute.model} options={PHASE_MODELS}
+                  <Select aria-label="Execution model" value={extra.execute.model} options={phaseModels(t)}
                           onChange={(model) => setExtra({ ...extra, execute: { ...extra.execute, model } })} />
                 </Form.Item>
                 <Form.Item label="Execution effort">
-                  <Select aria-label="Execution effort" value={extra.execute.effort} options={PHASE_EFFORTS}
+                  <Select aria-label="Execution effort" value={extra.execute.effort} options={phaseEfforts(t)}
                           onChange={(effort) => setExtra({ ...extra, execute: { ...extra.execute, effort } })} />
                 </Form.Item>
               </>) }]} />

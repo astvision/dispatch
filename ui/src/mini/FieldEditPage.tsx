@@ -1,9 +1,10 @@
 import { Button, Input, Result, Typography } from "antd";
 import { useState } from "react";
 import { editProject, type ManagedProject, type PhaseChoice, type ProjectFields } from "../api";
+import { useT } from "../i18n/i18n";
 import { fieldsOf } from "../manage/ProjectForm";
 import { useManagedConfig } from "../manage/useManagedConfig";
-import { AGENTS, agentLabel, effortsFor, MODELS, PHASE_EFFORTS, PHASE_MODELS, withCurrent } from "../options";
+import { AGENTS, agentLabel, effortsFor, models, phaseEfforts, phaseModels, withCurrent } from "../options";
 import { MiniManaged } from "./data";
 import { Row, Section } from "./List";
 import type { Field } from "./paths";
@@ -71,6 +72,7 @@ function Editor({ project, field, busy, save, back }: {
   save: Save;
   back: () => void;
 }) {
+  const t = useT();
   const saveThenBack = async (change: Partial<ProjectFields>) => {
     if (await save(change)) back();
   };
@@ -99,18 +101,18 @@ function Editor({ project, field, busy, save, back }: {
                           hint={`Хоосон бол ${agentLabel(project.agent)} өөрийн үндсэн model-ийг хэрэглэнэ.`}
                           onSave={(value) => void saveThenBack({ model: value === "" ? null : value })} />;
       }
-      return <Choices options={withCurrent(MODELS, project.model)} value={project.model} busy={busy}
+      return <Choices options={withCurrent(models(t), project.model)} value={project.model} busy={busy}
                       onPick={(model) => void save({ model })} />;
     case "effort":
-      return <Choices options={effortsFor(project.agent)} value={project.effort} busy={busy}
+      return <Choices options={effortsFor(t, project.agent)} value={project.effort} busy={busy}
                       onPick={(effort) => void save({ effort })} />;
     case "plan":
     case "execute":
       return (
         <>
-          <Choices title="Model" options={withCurrent(PHASE_MODELS, project[field]?.model ?? null)}
+          <Choices title="Model" options={withCurrent(phaseModels(t), project[field]?.model ?? null)}
                    value={project[field]?.model ?? null} busy={busy} onPick={(model) => void phase(field, { model })} />
-          <Choices title="Effort" options={PHASE_EFFORTS} value={project[field]?.effort ?? null} busy={busy}
+          <Choices title="Effort" options={phaseEfforts(t)} value={project[field]?.effort ?? null} busy={busy}
                    onPick={(effort) => void phase(field, { effort })} />
         </>
       );

@@ -66,7 +66,7 @@ export default function OverviewPage({ installAndStop = false }: { installAndSto
   if (loading && !overview) return <Spin size="large" tip={t("overview.checking")}><div style={{ height: 200 }} /></Spin>;
   if (error) {
     return <Result status="warning" title={t("overview.cannotShow")} subTitle={error.message}
-                   extra={<Button onClick={() => void reload()}>{t("overview.tryAgain")}</Button>} />;
+                   extra={<Button onClick={() => void reload()}>{t("common.tryAgain")}</Button>} />;
   }
   if (!overview) return <Empty />;
 

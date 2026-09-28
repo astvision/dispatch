@@ -1,8 +1,9 @@
 import { Result, theme } from "antd";
 import { useState } from "react";
 import { removeProject, type ManagedProject, type Me, type PhaseChoice, type ProjectSummary } from "../api";
+import { useT, type Translate } from "../i18n/i18n";
 import { useManagedConfig } from "../manage/useManagedConfig";
-import { agentDefault, agentLabel, EFFORTS, effortsFor, MODELS } from "../options";
+import { agentDefault, agentLabel, efforts as effortOptions, effortsFor, models } from "../options";
 import { openTelegramLink } from "./backButton";
 import { MiniManaged, useProjects } from "./data";
 import { Header, Row, Section } from "./List";
@@ -13,9 +14,9 @@ const label = (options: { value: string | null; label: string }[], value: string
   options.find((option) => option.value === value)?.label ?? value ?? "";
 
 /** A phase's own model and effort, or what it falls back to when it sets neither. */
-function phaseLabel(phase: PhaseChoice | null) {
-  if (!phase) return "Дээрхтэй адил";
-  return [phase.model && label(MODELS, phase.model), phase.effort && label(EFFORTS, phase.effort)].filter(Boolean).join(" · ");
+function phaseLabel(t: Translate, phase: PhaseChoice | null) {
+  if (!phase) return t("options.same");
+  return [phase.model && label(models(t), phase.model), phase.effort && label(effortOptions(t), phase.effort)].filter(Boolean).join(" · ");
 }
 
 function ProjectHeader({ project }: { project: ProjectSummary }) {
@@ -68,21 +69,22 @@ function RemoveRows({ onRemove, busy }: { onRemove: () => void; busy: boolean })
 }
 
 function Settings({ project, navigate }: { project: ManagedProject; navigate: (path: string) => void }) {
+  const t = useT();
   const open = (field: Field) => () => navigate(fieldPath(project.name, field));
-  const efforts = effortsFor(project.agent);
+  const efforts = effortsFor(t, project.agent);
   return (
     <Section title="Тохиргоо">
       <Row title="Агент" value={agentLabel(project.agent)} onClick={open("agent")} />
       <Row title="Эхлэх салбар" value={project.baseBranch} onClick={open("baseBranch")} />
       <Row title="Товч нэр" value={project.alias ?? "—"} onClick={open("alias")} />
-      <Row title="Model" onClick={open("model")} value={project.agent === "claude-code" ? label(MODELS, project.model)
-        : project.model ?? agentDefault(project.agent)} />
+      <Row title="Model" onClick={open("model")} value={project.agent === "claude-code" ? label(models(t), project.model)
+        : project.model ?? agentDefault(t, project.agent)} />
       {efforts.length > 0 && <Row title="Effort" value={label(efforts, project.effort)} onClick={open("effort")} />}
       {/* Per-phase choices are Claude Code's model aliases and levels; the config file still takes them for any agent. */}
       {project.agent === "claude-code" && (
         <>
-          <Row title="Төлөвлөх" value={phaseLabel(project.plan)} onClick={open("plan")} />
-          <Row title="Хэрэгжүүлэх" value={phaseLabel(project.execute)} onClick={open("execute")} />
+          <Row title="Төлөвлөх" value={phaseLabel(t, project.plan)} onClick={open("plan")} />
+          <Row title="Хэрэгжүүлэх" value={phaseLabel(t, project.execute)} onClick={open("execute")} />
         </>
       )}
     </Section>

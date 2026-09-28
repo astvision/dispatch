@@ -1,10 +1,12 @@
 import { Alert, Button, Card, Input, Popconfirm, Space, Table, Tag } from "antd";
 import { useState } from "react";
 import { removeMember, renameMember, setAdmin, type MemberView } from "../api";
+import { useT } from "../i18n/i18n";
 import ManagedPage from "./ManagedPage";
 import { useManagedConfig } from "./useManagedConfig";
 
 export default function PeoplePage() {
+  const t = useT();
   const { config, loadError, reload, save, saving, saveError } = useManagedConfig();
   const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
 
@@ -14,7 +16,7 @@ export default function PeoplePage() {
   };
 
   return (
-    <ManagedPage title="the people" config={config} loadError={loadError} saveError={saveError} reload={reload}>
+    <ManagedPage cannotShow={t("people.cannotShow")} config={config} loadError={loadError} saveError={saveError} reload={reload}>
       {(current) => (
         <>
           <Alert type="info" showIcon

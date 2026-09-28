@@ -1,15 +1,17 @@
 import { Button, Card, Form, Input, InputNumber } from "antd";
 import { saveSettings, type Settings } from "../api";
+import { useT } from "../i18n/i18n";
 import ManagedPage from "./ManagedPage";
 import { useManagedConfig } from "./useManagedConfig";
 
 const required = [{ required: true, message: "Needed." }];
 
 export default function SettingsPage() {
+  const t = useT();
   const { config, loadError, reload, save, saving, saveError } = useManagedConfig();
 
   return (
-    <ManagedPage title="the settings" config={config} loadError={loadError} saveError={saveError} reload={reload}>
+    <ManagedPage cannotShow={t("settings.cannotShow")} config={config} loadError={loadError} saveError={saveError} reload={reload}>
       {(current) => (
         <Card title="Settings">
           <Form<Settings> key={current.version} layout="vertical" initialValues={current.settings}
