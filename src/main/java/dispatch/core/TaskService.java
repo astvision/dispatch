@@ -202,12 +202,7 @@ public final class TaskService {
         if (draft.project() == null) {
             return DraftChoice.CHOOSE_PROJECT_FIRST;
         }
-        Optional<Config.Project> project = offeredProjects(who.ref()).stream()
-                .filter(candidate -> candidate.name().equals(draft.project())).findFirst();
-        if (project.isEmpty()) {
-            return DraftChoice.PROJECT_UNAVAILABLE;
-        }
-        CommandResult given = commands.run(tx, who, new TaskCommand.Give(project.get().name(), draft.description(), priority,
+        CommandResult given = commands.run(tx, who, new TaskCommand.Give(draft.project(), draft.description(), priority,
                 new Origin(draft.originRef())));
         if (!(given instanceof CommandResult.Created created)) {
             // The project stopped taking tasks, or the member left its groups, since the prompt offered it.
