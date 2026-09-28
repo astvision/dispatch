@@ -328,4 +328,10 @@ export const mn: Record<Key, string> = {
   "give.priority": "Чухал зэрэг",
   "give.submit": "Өгөх",
   "give.noProjects": "Таны бүлгүүдэд даалгавар өгөх төсөл алга.",
+  "spend.title": "Өдөр бүрийн зардал",
+  "spend.window": "{days} хоног · ${usd}",
+  "spend.day": "{day}: ${usd}",
+  "spend.summary": "{days} хоногийн өдөр бүрийн зардал, нийт ${usd}",
+  "spend.unpriced": "{project}: {count} удаа ажилласан, зардал мэдэгдээгүй",
+  "spend.none": "Энэ {days} хоногт ажилласан зүйл алга.",
 };

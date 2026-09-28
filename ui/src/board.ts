@@ -15,6 +15,9 @@ export const BOARD = {
   red: "#ef6a5a",
 } as const;
 
+/** The spend chart's colours, one per project in order of cost (D-2b); they repeat past six projects. */
+export const PROJECT_COLOURS = [BOARD.amber, BOARD.green, "#7fb3d5", "#c39bd3", "#e59866", "#76d7c4"] as const;
+
 export const BOARD_FONT = `"Onest Variable", system-ui, sans-serif`;
 export const BOARD_MONO = `"JetBrains Mono Variable", ui-monospace, monospace`;
 

@@ -327,4 +327,10 @@ export const en = {
   "give.priority": "Priority",
   "give.submit": "Give",
   "give.noProjects": "None of your groups has a project to give a task in.",
+  "spend.title": "Spend per day",
+  "spend.window": "{days} days · ${usd}",
+  "spend.day": "{day}: ${usd}",
+  "spend.summary": "Spend per day for {days} days, ${usd} in all",
+  "spend.unpriced": "{project}: {count} runs, no cost reported",
+  "spend.none": "No runs in these {days} days.",
 } as const;
