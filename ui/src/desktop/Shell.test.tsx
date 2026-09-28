@@ -16,7 +16,7 @@ vi.mock("../api", async (importOriginal) => ({
 afterEach(() => vi.resetAllMocks());
 
 const running: Overview = {
-  configured: true, version: "0.2.0", configFile: "/home/ann/.config/dispatch/dispatch.yaml", stateDir: "/home/ann/.local/state",
+  configured: true, version: "0.2.0", name: null, configFile: "/home/ann/.config/dispatch/dispatch.yaml", stateDir: "/home/ann/.local/state",
   service: { name: "systemd user service dispatch.service", installed: true, running: true, detail: "active", notes: [] },
   findings: [
     { level: "OK", area: "config", message: "config /home/ann/.config/dispatch/dispatch.yaml" },

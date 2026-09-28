@@ -15,7 +15,7 @@ afterEach(() => vi.resetAllMocks());
 
 const service = { name: "systemd user service dispatch.service", installed: true, running: true, detail: "active", notes: [] };
 const overview = (running: boolean): api.Overview => ({
-  version: "1", configFile: "/c", stateDir: "/s", configured: true, service: { ...service, running }, findings: [],
+  version: "1", name: null, configFile: "/c", stateDir: "/s", configured: true, service: { ...service, running }, findings: [],
 });
 
 test("after a restart it waits until the service runs again; a lost connection meanwhile is expected", async () => {

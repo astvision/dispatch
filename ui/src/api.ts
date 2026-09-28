@@ -21,6 +21,8 @@ export interface ServiceView {
 
 export interface Overview {
   version: string;
+  /** The config's team, which names the instance on the strip (D-2); null before setup. */
+  name: string | null;
   configFile: string;
   stateDir: string;
   configured: boolean;

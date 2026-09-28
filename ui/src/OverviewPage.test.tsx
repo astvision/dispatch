@@ -8,6 +8,7 @@ import OverviewPage from "./OverviewPage";
 
 const overview: Overview = {
   version: "0.1.0",
+  name: "bold",
   configFile: "/home/bold/.config/dispatch/dispatch.yaml",
   stateDir: "/home/bold/.local/state/dispatch",
   configured: true,
