@@ -57,7 +57,7 @@ A member's reply to a finished task's result with further instructions. It chang
 _Avoid_: Revision, amendment
 
 **Addition**:
-More instructions someone writes in a linked group by replying to the message a task came from: whoever wrote that message, or a member of the chat's project groups. The task's requester gets it privately, and one tap turns it into a correction of the waiting plan or a follow-up of the finished task; nothing changes until they tap.
+More instructions someone writes in a linked group by replying to the message a task came from, or to the message someone gave as a task by replying to it with a mention: whoever wrote that message, or a member of the chat's project groups. The task's requester gets it privately, and one tap turns it into a correction of the waiting plan or a follow-up of the finished task; nothing changes until they tap.
 _Avoid_: Amendment, comment, note
 
 **Delivery**:

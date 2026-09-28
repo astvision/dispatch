@@ -439,7 +439,7 @@ public final class UpdateHandler {
         String project = projectKey != null ? projectKey : onlyProject(owned);
         String firstName = firstName(message, who);
         DraftResult result = tasks.draft(tx, who, project, text, origin, attachments(repliedTo, message),
-                new TaskService.GroupOrigin(chatRef, firstName));
+                new TaskService.GroupOrigin(chatRef, firstName, sourceRef(message, repliedTo)));
         if (result == DraftResult.NO_PROJECTS) {
             noProjects(tx, chatRef, origin, List.of(firstName));
         }
@@ -498,7 +498,8 @@ public final class UpdateHandler {
             // One draft per developer: the group message alone would make the second a duplicate of the first.
             String draftOrigin = developers.size() > 1 ? origin + "#" + userId : origin;
             DraftResult result = tasks.draft(tx, new Requester(ref, name), onlyProject(owned),
-                    ref.equals(author.ref()) ? own : own + "\n\n" + askedBy, draftOrigin, files, new TaskService.GroupOrigin(chatRef, firstName));
+                    ref.equals(author.ref()) ? own : own + "\n\n" + askedBy, draftOrigin, files,
+                    new TaskService.GroupOrigin(chatRef, firstName, sourceRef(message, repliedTo)));
             if (result == DraftResult.NO_PROJECTS) {
                 withoutProjects.add(firstName);
             }
@@ -552,6 +553,13 @@ public final class UpdateHandler {
     /** The chat's project when it has one only, else null and the prompt asks. */
     private static String onlyProject(Set<String> owned) {
         return owned.size() == 1 ? owned.iterator().next() : null;
+    }
+
+    /** The replied human message a task given by {@code message} came from, as a reference; null when it replies to none. */
+    private static String sourceRef(JsonNode message, JsonNode repliedTo) {
+        return repliedTo.has("message_id")
+                ? Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null)
+                : null;
     }
 
     /** The message this one replies to, unless a bot's, such as the ✉️ line: nothing to give as a task. */

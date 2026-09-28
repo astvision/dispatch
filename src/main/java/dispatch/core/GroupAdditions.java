@@ -83,15 +83,27 @@ public final class GroupAdditions {
         return !offers.isEmpty();
     }
 
-    /** Each task still open and each open draft that message {@code messageRef} gave. */
+    /**
+     * Each task still open and each open draft that message {@code messageRef} gave, or that someone gave by replying to it
+     * with a mention (G-1b, G-1c).
+     */
     private static List<Offer> offersFrom(Tx tx, String messageRef) {
         List<Offer> offers = new ArrayList<>();
-        for (Task task : Tasks.fromMessage(tx, messageRef)) {
+        List<Task> given = new ArrayList<>(Tasks.fromMessage(tx, messageRef));
+        List<Draft> open = new ArrayList<>(Drafts.openFromMessage(tx, messageRef));
+        for (Draft draft : Drafts.fromSource(tx, messageRef)) {
+            if (draft.taskId() == null) {
+                open.add(draft);
+            } else {
+                Tasks.find(tx, draft.taskId()).ifPresent(given::add);
+            }
+        }
+        for (Task task : given) {
             if (task.phase() != Phase.REJECTED && task.phase() != Phase.CANCELLED) {
                 offers.add(new Offer(task.originRef(), task.requester(), task.id(), task.title()));
             }
         }
-        for (Draft draft : Drafts.openFromMessage(tx, messageRef)) {
+        for (Draft draft : open) {
             offers.add(new Offer(draft.originRef(), new Requester(draft.requesterRef(), draft.requesterName()), null,
                     TaskService.title(draft.description())));
         }

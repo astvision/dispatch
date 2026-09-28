@@ -460,6 +460,57 @@ class GroupAdditionsTest {
         assertTrue(sent("setMessageReaction").isEmpty(), "their choice of silence holds for additions too");
     }
 
+    @Test
+    void aReplyToTheMessageSomeoneGaveAsATaskByMentioningTheBotReachesItsRequester() {
+        // Nomin writes; Bold, a member, gives it as his task by replying to it with a mention of the bot (G-1b).
+        handler.handle(UpdateHandlerTest.message(820, 90, MANAGER, "Nomin", GROUP, "supergroup", "The positions column needs a width",
+                null));
+        handler.handle(UpdateHandlerTest.mention(821, 91, 100, "Bold", "@" + FakeTelegram.BOT_USERNAME + " please",
+                humanMessage(90, MANAGER, "Nomin")));
+        String draftId = row("SELECT id FROM draft WHERE origin_ref = ?", "telegram:" + GROUP + "/91").get("id");
+        handler.handle(UpdateHandlerTest.privateCallback(822, 100, "Bold", "draft:" + draftId + ":prio:NORMAL"));
+
+        handler.handle(UpdateHandlerTest.message(823, 92, MANAGER, "Nomin", GROUP, "supergroup", "Also a tooltip",
+                humanMessage(90, MANAGER, "Nomin")));
+
+        Map<String, String> addition = row("SELECT origin_ref, member_ref FROM addition");
+        assertEquals("telegram:100", addition.get("member_ref"), "her reply reaches the task her message became");
+        assertEquals("telegram:" + GROUP + "/91", addition.get("origin_ref"));
+    }
+
+    @Test
+    void aReplyToTheMessageSomeoneGaveAsATaskByMentioningADeveloperReachesThem() {
+        handler.handle(UpdateHandlerTest.message(830, 90, MANAGER, "Nomin", GROUP, "supergroup", "The positions column needs a width",
+                null));
+        handler.handle(UpdateHandlerTest.people(831, 91, 100, "Bold", "@ali_dev can you", humanMessage(90, MANAGER, "Nomin"), "@ali_dev"));
+
+        handler.handle(UpdateHandlerTest.message(832, 92, MANAGER, "Nomin", GROUP, "supergroup", "Also a tooltip",
+                humanMessage(90, MANAGER, "Nomin")));
+
+        assertEquals("telegram:" + ALI, row("SELECT member_ref FROM addition").get("member_ref"), "offered while it is still Ali's draft");
+    }
+
+    @Test
+    void thePartsOfADraftGivenInReplyToSomeonesMessageTakeTheirRepliesToo() {
+        handler.handle(UpdateHandlerTest.message(840, 90, MANAGER, "Nomin", GROUP, "supergroup", "Fix the list and the export", null));
+        handler.handle(UpdateHandlerTest.mention(841, 91, 100, "Bold", "@" + FakeTelegram.BOT_USERNAME + " please",
+                humanMessage(90, MANAGER, "Nomin")));
+        long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
+        Requester bold = new Requester("telegram:100", "Bold");
+        db.transaction(tx -> {
+            tasks.split(tx, bold, draftId, "telegram:100/5");
+            tasks.splitProposed(tx, draftId, List.of("Fix the list", "Fix the export"));
+            tasks.acceptSplit(tx, bold, draftId);
+        });
+
+        handler.handle(UpdateHandlerTest.message(842, 92, MANAGER, "Nomin", GROUP, "supergroup", "Both before Friday",
+                humanMessage(90, MANAGER, "Nomin")));
+
+        assertEquals("[telegram:" + GROUP + "/91#1, telegram:" + GROUP + "/91#2]",
+                SqlRows.query(dbFile, "SELECT origin_ref FROM addition ORDER BY origin_ref").stream()
+                        .map(found -> found.get("origin_ref")).toList().toString());
+    }
+
     /** The approved plan's execution (run 2) has started, its agent running. */
     private void executing(long taskId) {
         db.transaction(tx -> tasks.approve(tx, new Requester("telegram:" + ALI, "Ali"), taskId, 1));
