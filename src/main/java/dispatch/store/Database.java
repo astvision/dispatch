@@ -7,8 +7,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.UserPrincipal;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -16,6 +20,8 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
@@ -50,7 +56,7 @@ public final class Database implements AutoCloseable {
      */
     public static Database open(Path file) {
         try {
-            sqliteFolder();
+            prepareSqlite();
             if (!Files.exists(file)) {
                 OwnerOnly.createFile(file);
             }
@@ -72,8 +78,9 @@ public final class Database implements AutoCloseable {
      * its ANSI code page, after the JDK spells the path out in full (an 8.3 short name is expanded again), so a temporary
      * folder with letters outside the code page, as under C:\Users\Өлзий, opened no database (run 36395743054). Such a
      * machine unpacks it into a folder of this user's own under ProgramData instead, whose full name the code page spells.
+     * {@link #open} calls this; code that reaches SQLite through plain JDBC (the tests' SqlRows) calls it first.
      */
-    private static void sqliteFolder() {
+    public static void prepareSqlite() {
         if (!System.getProperty("os.name").startsWith("Windows") || System.getProperty("org.sqlite.tmpdir") != null) {
             return;
         }
@@ -82,12 +89,26 @@ public final class Database implements AutoCloseable {
             return;
         }
         String programData = System.getenv("ProgramData");
-        Path folder = programData == null ? null : Path.of(programData, "dispatch-" + userKey());
-        if (folder == null || !loadable(folder.toString()) || !ours(folder)) {
-            throw new DatabaseException("SQLite cannot be loaded from " + temp + ", whose name has letters Windows cannot load"
-                    + " a library from, nor from " + folder + "; set TMP for Dispatch to a folder named in plain letters", null);
+        if (programData == null) {
+            throw refusal(temp, "ProgramData is not set", null);
         }
+        Path folder = Path.of(programData, "dispatch-" + userKey());
+        if (!loadable(folder.toString())) {
+            throw refusal(temp, folder + " does not fit the code page either", null);
+        }
+        try {
+            ownFolder(folder);
+        } catch (IOException e) {
+            throw refusal(temp, e.getMessage(), e);
+        }
+        removeLeftovers(folder);
         System.setProperty("org.sqlite.tmpdir", folder.toString());
+    }
+
+    private static DatabaseException refusal(String temp, String why, Exception cause) {
+        return new DatabaseException("SQLite cannot be loaded from " + temp + ", whose name has letters Windows cannot load a"
+                + " library from, and its own folder is not usable (" + why + "); set TMP for Dispatch to a folder named in plain"
+                + " letters", cause);
     }
 
     /** Whether Windows can load a library from {@code path}: its full spelling fits the ANSI code page. */
@@ -101,20 +122,46 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Creates {@code folder} when missing; true when it belongs to the user Dispatch runs as, so nobody else can change what
-     * is unpacked into it. Another user's folder of that name is refused, not used.
+     * Makes {@code folder} this user's alone, or checks that the one already there is: a plain folder (not a link someone
+     * could later point elsewhere, between the driver's check and its load) owned by the user Dispatch runs as. A folder
+     * it creates has one ACL entry, the user's, so nobody else can see into it or add to it.
      */
-    private static boolean ours(Path folder) {
+    static void ownFolder(Path folder) throws IOException {
+        OwnerOnly.createDirectories(folder);
+        BasicFileAttributes attributes = Files.readAttributes(folder, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.isDirectory() || attributes.isOther()) {
+            throw new IOException(folder + " is a link, not a folder");
+        }
+        Path probe = Files.createTempFile("dispatch-owner", null);
         try {
-            Files.createDirectories(folder);
-            Path probe = Files.createTempFile("dispatch-owner", null);
-            try {
-                return Files.getOwner(folder).equals(Files.getOwner(probe));
-            } finally {
-                Files.deleteIfExists(probe);
+            UserPrincipal owner = Files.getOwner(folder, LinkOption.NOFOLLOW_LINKS);
+            if (!owner.equals(Files.getOwner(probe))) {
+                throw new IOException(folder + " belongs to " + owner.getName());
+            }
+        } finally {
+            Files.deleteIfExists(probe);
+        }
+    }
+
+    /**
+     * The driver removes a library it unpacked only at its next start, and only once that library's .lck file is gone,
+     * which a forced stop (the Windows service's Stop and Restart) leaves behind; nobody cleans ProgramData for us. The
+     * driver's files a day old go; one a running Dispatch has loaded is locked and stays until a later start.
+     */
+    static void removeLeftovers(Path folder) {
+        Instant dayAgo = Instant.now().minus(Duration.ofDays(1));
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(folder, "sqlite-*")) {
+            for (Path file : files) {
+                try {
+                    if (Files.getLastModifiedTime(file, LinkOption.NOFOLLOW_LINKS).toInstant().isBefore(dayAgo)) {
+                        Files.deleteIfExists(file);
+                    }
+                } catch (IOException inUse) {
+                    // A library a running Dispatch has loaded: it goes at a later start.
+                }
             }
         } catch (IOException e) {
-            return false;
+            Log.warn("sqlite.leftovers_failed", "folder", folder, "error", e.getMessage());
         }
     }
 

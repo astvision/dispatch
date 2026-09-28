@@ -20,6 +20,7 @@ public final class SqlRows {
 
     /** Every column as text (SQLite converts), null stays null. */
     public static List<Map<String, String>> query(Path dbFile, String sql, Object... params) {
+        dispatch.store.Database.prepareSqlite();
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + dbFile);
              PreparedStatement statement = connection.prepareStatement(sql)) {
             for (int i = 0; i < params.length; i++) {

@@ -23,7 +23,7 @@
 
 ## Review Focus
 
-1. **A Windows temporary folder with letters outside the code page and no short name** (a volume with 8.3 names turned off): Dispatch must stop with an error that names `TMP` and says what to do, not with sqlite's "No native library found". Task 2 pins this with `AnsiPaths.of(..., path -> path)` returning empty and `Database.open`'s message.
+1. **A Windows temporary folder with letters outside the code page** (amended after run 36395743054): SQLite unpacks into the user's own folder under ProgramData, and a link or another user's folder in its place is refused with the reason named, never used. `SqliteFolderTest` pins the folder's checks on every OS; the Windows suite, run under a Cyrillic `TMP`, proves the fallback.
 2. **A worker on Windows reporting to a Linux server, and the other way round:** the worktree text comes back byte for byte (backslashes, drive letters, doubled separators). Task 8 pins it with `/home/ann//work/alm-7`, which Linux's `Path.of` would tidy.
 3. **The flood test on a slow runner:** a request that reaches the server after the first four finished must not count as admitted concurrently. Task 3 releases the downloads only after the other requests were refused.
 4. **A failed clone that leaves read-only git objects (Windows) or a folder without write permission (POSIX):** the cleanup removes them, and a file it still cannot remove is named in the warning. Task 7 pins both, the second with a file held open on Windows.
