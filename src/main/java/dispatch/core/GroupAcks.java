@@ -42,7 +42,7 @@ final class GroupAcks {
     }
 
     /** The configured name's first word, as the group's own mention texts already call a member (G-1b/G-1c). */
-    private static String firstName(String name) {
+    static String firstName(String name) {
         return name.strip().split("\\s+", 2)[0];
     }
 

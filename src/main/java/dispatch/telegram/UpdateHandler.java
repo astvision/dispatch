@@ -12,6 +12,7 @@ import dispatch.core.Assistant;
 import dispatch.core.AssistantActions;
 import dispatch.core.DraftChoice;
 import dispatch.core.DraftResult;
+import dispatch.core.GroupAdditions;
 import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
 import dispatch.core.JoinDecision;
@@ -55,7 +56,8 @@ import java.util.Set;
  * group sees only its own projects, a member those of all their groups. Besides commands and buttons, a reply to a plan
  * message is a correction, one to a plan's question message answers it (G-1d) and one to a task's result is a follow-up.
  * A member who mentions the bot in their linked group gives a task, drafted in their private chat all the same (G-1b);
- * one who mentions a fellow member there gives it to them, drafted in theirs (G-1c).
+ * one who mentions a fellow member there gives it to them, drafted in theirs (G-1c). A reply there to the message a task
+ * came from, mentioning no one, is an addition offered to that task's requester privately.
  */
 public final class UpdateHandler {
 
@@ -88,6 +90,7 @@ public final class UpdateHandler {
     private final GroupLinks groupLinks;
     private final Assistant assistant;
     private final AssistantActions assistantActions;
+    private final GroupAdditions additions;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
@@ -130,6 +133,7 @@ public final class UpdateHandler {
         this.groupLinks = groupLinks;
         this.assistant = assistant;
         this.assistantActions = assistantActions;
+        this.additions = new GroupAdditions(tasks, clock, wakeOutbox, renderer.text("group.requestedBy"));
     }
 
     public void handle(JsonNode update) {
@@ -299,8 +303,10 @@ public final class UpdateHandler {
                 Optional<String> forBot = withoutBotMentions(message);
                 if (forBot.isPresent()) {
                     groupTask(tx, who, null, forBot.get(), message, origin, chatRef);
-                } else {
+                } else if (!mentions(message).isEmpty()) {
                     mentionTasks(tx, who, message, origin, chatRef);
+                } else {
+                    addition(tx, who, message, origin, chatRef);
                 }
             }
             return;
@@ -441,9 +447,6 @@ public final class UpdateHandler {
      */
     private void mentionTasks(Tx tx, Requester author, JsonNode message, String origin, String chatRef) {
         List<Mention> mentions = mentions(message);
-        if (mentions.isEmpty()) {
-            return;
-        }
         Set<String> owned = groups.projectsOfChat(chatRef);
         // Outsiders tag each other all day: answering their unknown names would be noise.
         boolean answersUnknown = inProjectGroup(author.ref(), owned);
@@ -490,6 +493,28 @@ public final class UpdateHandler {
         }
         if (!withoutProjects.isEmpty()) {
             noProjects(tx, chatRef, origin, withoutProjects);
+        }
+    }
+
+    /**
+     * A reply in a linked group to the message tasks came from is offered to their requesters as an addition, when it is
+     * written by whoever wrote that message (such as a manager who is no member) or by a member of the chat's project
+     * groups; anyone else's is chatter.
+     */
+    private void addition(Tx tx, Requester author, JsonNode message, String origin, String chatRef) {
+        JsonNode repliedTo = humanReplied(message);
+        String text = text(message).strip();
+        boolean withFiles = !attachments(message).isEmpty();
+        if (!repliedTo.has("message_id") || (text.isEmpty() && !withFiles)) {
+            return;
+        }
+        boolean asker = repliedTo.path("from").path("id").asLong(-1) == message.path("from").path("id").asLong(-2);
+        if (!asker && !inProjectGroup(author.ref(), groups.projectsOfChat(chatRef))) {
+            return;
+        }
+        String repliedRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
+        if (additions.offer(tx, repliedRef, origin, chatRef, author.ref(), firstName(message, author), text, withFiles)) {
+            tx.afterCommit(() -> Log.info("group.addition", "replied_to", repliedRef, "author", author.ref()));
         }
     }
 
@@ -605,8 +630,12 @@ public final class UpdateHandler {
             tasks.followUp(tx, who, sent.get().taskId(), text(message), origin, chatRef);
             return true;
         }
-        if (sent.isEmpty() || sent.get().kind() != OutboxKind.PLAN_READY) {
-            String kind = sent.map(found -> found.kind().name()).orElse("unknown");
+        if (sent.isEmpty()) {
+            // Not one of the bot's messages: another reply, such as an addition to a task given in a group, may still apply.
+            return false;
+        }
+        if (sent.get().kind() != OutboxKind.PLAN_READY) {
+            String kind = sent.get().kind().name();
             tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind));
             return false;
         }
@@ -714,6 +743,10 @@ public final class UpdateHandler {
         if (groupLinks != null && isPrivateChatOf(chat, from) && parts.length == 3 && parts[0].equals("link") && taskId(parts[1]).isPresent()) {
             // The prompt only ever goes to a private chat; parts[1] is the negative group chat id, which taskId also parses.
             onLinkButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
+            return;
+        }
+        if (isPrivateChatOf(chat, from) && parts.length == 2 && parts[0].equals("ad") && taskId(parts[1]).isPresent()) {
+            onAdditionButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get());
             return;
         }
         if (assistantActions != null && isPrivateChatOf(chat, from) && parts.length == 2 && parts[0].equals("as")
@@ -849,6 +882,30 @@ public final class UpdateHandler {
         payload.withArray("actions").forEach(action -> ((ObjectNode) action).put("outcome", taken.get(action.path("id").asLong())));
         Renderer.Rendered redrawn = renderer.render(OutboxKind.ASSISTANT_REPLY, Json.read(redactor.redact(payload.toString())));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard())));
+    }
+
+    /**
+     * The button under an addition offered to its requester: applies it the way its task can take it now. Once it is
+     * applied, or its task is closed, the offer loses its button; what the task made of it is said under the offer.
+     */
+    private void onAdditionButton(Tx tx, JsonNode callback, Requester who, long additionId) {
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        long messageId = message.path("message_id").asLong();
+        GroupAdditions.Outcome outcome = additions.apply(tx, who, additionId, Refs.message(chatId, messageId, null), Refs.chat(chatId));
+        tx.afterCommit(() -> Log.info("group.addition_tapped", "addition", additionId, "member", who.ref(), "outcome", outcome));
+        answer(tx, callback.path("id").asText(), switch (outcome) {
+            case DONE -> "callback.additionDone";
+            case BUSY -> "callback.additionBusy";
+            case REFUSED -> "callback.additionRefused";
+            case NOT_YET -> "callback.additionDraft";
+            case SPLIT -> "callback.additionSplit";
+            case CLOSED -> "callback.additionClosed";
+            case USED -> "callback.additionUsed";
+        });
+        if (outcome == GroupAdditions.Outcome.DONE || outcome == GroupAdditions.Outcome.SPLIT || outcome == GroupAdditions.Outcome.CLOSED) {
+            tx.afterCommit(() -> bestEffort("editMessageReplyMarkup", () -> api.editMessageReplyMarkup(chatId, messageId, List.of())));
+        }
     }
 
     /** An admin's button on a join request: a group to add the person to, or "-" to deny. The request is redrawn with the decision. */
