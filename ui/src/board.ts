@@ -38,6 +38,8 @@ export function boardTheme(): ThemeConfig {
       colorSuccess: BOARD.green,
       colorError: BOARD.red,
       colorWarning: BOARD.amber,
+      // A notice that asks nothing of the owner: the board's quiet colour, not antd's blue.
+      colorInfo: BOARD.secondary,
       fontFamily: BOARD_FONT,
       fontFamilyCode: BOARD_MONO,
       borderRadius: 5,

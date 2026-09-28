@@ -124,7 +124,7 @@ export default function ProjectForm({ initial, agent: initialAgent, nameEditable
         <Button type="primary" htmlType="submit" loading={busy} disabled={!project.name.trim() || !project.baseBranch.trim()}>
           {submitLabel}
         </Button>
-        <Button onClick={onCancel}>{t("projects.cancel")}</Button>
+        <Button onClick={onCancel}>{t("common.cancel")}</Button>
       </Space>
     </Form>
   );

@@ -28,7 +28,7 @@ export default function AddProject({ groups, busy, onAdd, onCancel }: Props) {
 
   if (!probe) {
     return (
-      <Card title={t("projects.chooseClone")} extra={<Button onClick={onCancel}>{t("projects.cancel")}</Button>}>
+      <Card title={t("projects.chooseClone")} extra={<Button onClick={onCancel}>{t("common.cancel")}</Button>}>
         <FolderBrowser onPick={(folder) => void pick(folder)} />
         {probing.error && <Alert type="error" showIcon message={probing.error.message} style={{ marginTop: 12 }} />}
       </Card>

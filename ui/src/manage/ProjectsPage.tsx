@@ -62,9 +62,9 @@ export default function ProjectsPage() {
                            <Button size="small" aria-label={t("projects.editNamed", { name: project.name })}
                                    onClick={() => setPanel({ kind: "edit", name: project.name })}>{t("projects.edit")}</Button>
                            <Popconfirm title={t("projects.removeAsk", { name: project.name })} description={t("projects.removeHint")}
-                                       okText={t("projects.remove")} cancelText={t("projects.cancel")}
+                                       okText={t("common.remove")} cancelText={t("common.cancel")}
                                        onConfirm={() => void save((version) => removeProject(version, project.name))}>
-                             <Button size="small" danger aria-label={t("projects.removeNamed", { name: project.name })}>{t("projects.remove")}</Button>
+                             <Button size="small" danger aria-label={t("common.removeNamed", { name: project.name })}>{t("common.remove")}</Button>
                            </Popconfirm>
                          </Space>) },
                    ]} />
@@ -75,7 +75,7 @@ export default function ProjectsPage() {
                       : t("projects.addTitle")}>
               {edited && (
                 <ProjectForm key={`${edited.name}-${current.version}`} initial={fieldsOf(edited)} agent={edited.agent} nameEditable={false}
-                             groups={null} busy={saving} submitLabel={t("projects.save")} onCancel={close}
+                             groups={null} busy={saving} submitLabel={t("common.save")} onCancel={close}
                              onSubmit={async (fields) => {
                                if (await save((version) => editProject(version, fields))) close();
                              }} />
