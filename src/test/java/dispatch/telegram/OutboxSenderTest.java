@@ -16,7 +16,10 @@ import dispatch.store.Outbox;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -154,10 +157,12 @@ class OutboxSenderTest {
         long redraw = enqueueRedrawOf(question);
         db.transaction(tx -> Outbox.markFailed(tx, question, 1, "Forbidden: bot was blocked by the user"));
 
-        assertTrue(sender.deliverDue());
+        String log = logged(() -> assertTrue(sender.deliverDue()));
 
         assertEquals("FAILED", row(redraw).get("status"));
         assertTrue(telegram.calls().isEmpty(), "nothing to redraw: " + telegram.calls());
+        assertTrue(log.contains("level=WARN event=outbox.redraw_dropped id=" + redraw + " kind=PLAN_QUESTION original=" + question
+                + " error=\"the message it redraws was never sent\""), log);
     }
 
     @Test
@@ -172,7 +177,7 @@ class OutboxSenderTest {
             statement.executeUpdate("DELETE FROM outbox WHERE id = " + question);
         }
 
-        assertTrue(sender.deliverDue());
+        String log = logged(() -> assertTrue(sender.deliverDue()));
         assertTrue(sender.deliverDue());
 
         Map<String, String> dropped = row(redraw);
@@ -180,6 +185,8 @@ class OutboxSenderTest {
         assertEquals("the message it redraws is gone", dropped.get("last_error"));
         assertEquals(List.of("sendMessage"), telegram.calls(), "the message after it still went out");
         assertEquals("SENT", row(next).get("status"));
+        assertTrue(log.contains("level=WARN event=outbox.redraw_dropped id=" + redraw + " kind=PLAN_QUESTION original=" + question
+                + " error=\"the message it redraws is gone\""), log);
     }
 
     @Test
@@ -533,5 +540,18 @@ class OutboxSenderTest {
 
     private Map<String, String> row(long id) {
         return SqlRows.single(dbFile, "SELECT * FROM outbox WHERE id = ?", id);
+    }
+
+    /** The lines {@code work} logs: Log writes them to stdout. */
+    private static String logged(Runnable work) {
+        PrintStream out = System.out;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(logged, true, StandardCharsets.UTF_8));
+            work.run();
+        } finally {
+            System.setOut(out);
+        }
+        return logged.toString(StandardCharsets.UTF_8);
     }
 }

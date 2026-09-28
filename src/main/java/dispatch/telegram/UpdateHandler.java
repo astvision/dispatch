@@ -368,28 +368,32 @@ public final class UpdateHandler {
                 giveTask(tx, who, command.args(), message, origin);
             }
             case "status" -> enqueue(tx, OutboxKind.STATUS, chatRef, origin, tasks.statusPayload(tx, viewer));
-            case "history" -> taskId(command.args()).ifPresentOrElse(
-                    id -> tasks.timelinePayload(tx, viewer, id).ifPresentOrElse(
-                            payload -> enqueue(tx, OutboxKind.TASK_TIMELINE, chatRef, origin, payload),
-                            () -> enqueue(tx, OutboxKind.TASK_NOT_FOUND, chatRef, origin, Json.object().put("taskId", id))),
-                    () -> enqueue(tx, OutboxKind.HISTORY, chatRef, origin, tasks.historyPayload(tx, viewer)));
+            case "history" -> history(tx, viewer, command.args(), origin, chatRef);
             case "cancel" -> {
                 if (!privateChat) {
                     privateOnly(tx, chatRef, origin);
                     return;
                 }
-                taskId(command.args()).ifPresentOrElse(
-                        id -> reply(tx, who, new TaskCommand.Cancel(id), commands.run(tx, who, new TaskCommand.Cancel(id)), origin, chatRef),
-                        () -> enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "cancel")));
+                Optional<Long> id = taskId(command.args());
+                if (id.isEmpty()) {
+                    enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "cancel"));
+                    return;
+                }
+                TaskCommand cancel = new TaskCommand.Cancel(id.get());
+                reply(tx, who, cancel, commands.run(tx, who, cancel), origin, chatRef);
             }
             case "retry" -> {
                 if (!privateChat) {
                     privateOnly(tx, chatRef, origin);
                     return;
                 }
-                taskId(command.args()).ifPresentOrElse(
-                        id -> reply(tx, who, new TaskCommand.Retry(id), commands.run(tx, who, new TaskCommand.Retry(id)), origin, chatRef),
-                        () -> enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "retry")));
+                Optional<Long> id = taskId(command.args());
+                if (id.isEmpty()) {
+                    enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "retry"));
+                    return;
+                }
+                TaskCommand retry = new TaskCommand.Retry(id.get());
+                reply(tx, who, retry, commands.run(tx, who, retry), origin, chatRef);
             }
             case "worker" -> {
                 if (!privateChat) {
@@ -775,7 +779,7 @@ public final class UpdateHandler {
             return;
         }
         Outbox.enqueue(tx, taskId, OutboxKind.PLAN_ANSWER_PROMPT, who.ref(), questionRef,
-                Json.object().put("taskId", taskId).put("planSeq", planSeq).put("index", index).put("questionRef", questionRef),
+                Json.object().put("taskId", taskId).put("planSeq", planSeq).put("index", index),
                 clock.instant());
         tx.afterCommit(wakeOutbox);
         answer(tx, callbackId, "callback.writeAnswer");
@@ -1279,9 +1283,7 @@ public final class UpdateHandler {
                         Json.object().put("taskId", done.taskId()).put("by", who.name()), clock.instant());
                 tx.afterCommit(wakeOutbox);
             }
-            case CommandResult.Done done -> { }
-            case CommandResult.Created created -> { }
-            case CommandResult.Unchanged unchanged -> { }
+            case CommandResult.Done _, CommandResult.Created _, CommandResult.Unchanged _ -> { }
         }
     }
 
@@ -1315,13 +1317,16 @@ public final class UpdateHandler {
     }
 
     /**
-     * Answers a button with {@code text} as its notice, cut to what Telegram shows there: a refusal's words can run longer,
-     * such as those giving an unavailable project's reason (ADR 0031).
+     * Answers a button with {@code text} as its notice, masked as everything this handler sends is and cut to what Telegram
+     * shows there: a refusal's words can run longer, and may carry git's error, such as those giving an unavailable
+     * project's reason (ADR 0031).
      */
     private void notice(Tx tx, String callbackId, String text) {
+        // Masked before the cut, so the cut applies to the words Telegram shows.
+        String masked = redactor.redact(text);
         // "…" takes the last place, and one more goes where the cut would split an emoji's surrogate pair.
-        String shown = text.length() <= NOTICE_LIMIT ? text
-                : text.substring(0, NOTICE_LIMIT - (Character.isHighSurrogate(text.charAt(NOTICE_LIMIT - 2)) ? 2 : 1)) + "…";
+        String shown = masked.length() <= NOTICE_LIMIT ? masked
+                : masked.substring(0, NOTICE_LIMIT - (Character.isHighSurrogate(masked.charAt(NOTICE_LIMIT - 2)) ? 2 : 1)) + "…";
         tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callbackId, shown)));
     }
 
@@ -1415,6 +1420,24 @@ public final class UpdateHandler {
                 }
             }
         }));
+    }
+
+    /**
+     * /history: the latest finished tasks, or with a number that task's timeline, each as far as the viewer may see it
+     * (ADR 0020); a task they may not see is answered as not found.
+     */
+    private void history(Tx tx, TaskAccess.Viewer viewer, String args, String origin, String chatRef) {
+        Optional<Long> id = taskId(args);
+        if (id.isEmpty()) {
+            enqueue(tx, OutboxKind.HISTORY, chatRef, origin, tasks.historyPayload(tx, viewer));
+            return;
+        }
+        Optional<ObjectNode> timeline = tasks.timelinePayload(tx, viewer, id.get());
+        if (timeline.isEmpty()) {
+            enqueue(tx, OutboxKind.TASK_NOT_FOUND, chatRef, origin, Json.object().put("taskId", id.get()));
+            return;
+        }
+        enqueue(tx, OutboxKind.TASK_TIMELINE, chatRef, origin, timeline.get());
     }
 
     /** This month's statistics: the viewer's own in a private chat, the group's in a group chat (ADR 0012). */

@@ -138,7 +138,8 @@ public final class TaskCommands {
             case TaskCommand.Answer answer -> {
                 Task task = task(tx, answer.taskId());
                 String text = answerText(task, answer).orElseThrow(() -> new IllegalStateException("task #" + task.id()
-                        + " was allowed an answer to question " + answer.question() + ", yet " + answer.choice() + " says nothing"));
+                        + " was allowed an answer to question " + answer.question() + ", yet its "
+                        + answer.choice().getClass().getSimpleName() + " choice says nothing"));
                 yield answer(tx, who, task, answer, text);
             }
             case TaskCommand.Give give -> give(tx, who, give, true);
@@ -184,7 +185,8 @@ public final class TaskCommands {
     private CommandResult retry(Tx tx, Requester who, Task task) {
         Instant now = clock.instant();
         // Task access saw the latest run fail: that run is the step to repeat.
-        Run step = Runs.latest(tx, task.id()).orElseThrow();
+        Run step = Runs.latest(tx, task.id()).orElseThrow(() -> new IllegalStateException("task #" + task.id()
+                + " was allowed a retry, yet has no run to repeat"));
         RunKind kind;
         String instruction;
         if (step.kind() == RunKind.PLAN) {
@@ -345,7 +347,7 @@ public final class TaskCommands {
         return switch (answer.choice()) {
             case TaskCommand.Choice.Written written ->
                     Optional.ofNullable(written.text()).map(String::strip).filter(text -> !text.isEmpty());
-            case TaskCommand.Choice.YouDecide decide -> Optional.of(Text.of("answer.youDecide").render(Language.MN));
+            case TaskCommand.Choice.YouDecide _ -> Optional.of(Text.of("answer.youDecide").render(Language.MN));
             case TaskCommand.Choice.Option option -> {
                 List<PlanQuestion> questions = Plan.parse(task.planJson()).questionItems();
                 List<String> options = questions.get(answer.question() - 1).options();
@@ -463,12 +465,12 @@ public final class TaskCommands {
     }
 
     /** A refusal and its one wording (ADR 0031), naming the task as far as its headline allows (ADR 0020). */
-    static CommandResult.Refused refused(TaskCommand command, Refusal refusal, Task task) {
+    private static CommandResult.Refused refused(TaskCommand command, Refusal refusal, Task task) {
         return new CommandResult.Refused(refusal, words(command, refusal, task));
     }
 
     private static Text words(TaskCommand command, Refusal refusal, Task task) {
-        long taskId = taskId(command);
+        Long taskId = taskId(command);
         return switch (refusal) {
             case NOT_MEMBER -> Text.of("refused.notMember");
             case NOT_FOUND -> Text.of("refused.notFound", taskId);
@@ -483,17 +485,18 @@ public final class TaskCommands {
             case ALREADY_ANSWERED -> Text.of("refused.answered", taskId);
             case NOT_EXECUTED -> Text.of("refused.notExecuted", taskId);
             case EMPTY -> switch (command) {
-                case TaskCommand.Correct correct -> Text.of("refused.emptyCorrection");
-                case TaskCommand.FollowUp followUp -> Text.of("refused.emptyFollowUp");
-                case TaskCommand.Answer answer -> Text.of("refused.emptyAnswer");
-                case TaskCommand.Give give -> Text.of("refused.emptyTask");
+                case TaskCommand.Correct _ -> Text.of("refused.emptyCorrection");
+                case TaskCommand.FollowUp _ -> Text.of("refused.emptyFollowUp");
+                case TaskCommand.Answer _ -> Text.of("refused.emptyAnswer");
+                case TaskCommand.Give _ -> Text.of("refused.emptyTask");
                 // No words of their own to be blank.
                 case TaskCommand.Cancel _, TaskCommand.Retry _, TaskCommand.Approve _, TaskCommand.Reject _, TaskCommand.Reprioritize _ ->
-                        throw new IllegalStateException(command + " is never refused as " + refusal);
+                        throw new IllegalStateException(command.getClass().getSimpleName() + " of task " + taskId
+                                + " is never refused as " + refusal);
             };
             // Merges' own refusal, and giving's, which words its project where it is refused.
-            case MERGED, UNKNOWN_PROJECT, PROJECT_UNAVAILABLE ->
-                    throw new IllegalStateException(command + " is never refused as " + refusal);
+            case MERGED, UNKNOWN_PROJECT, PROJECT_UNAVAILABLE -> throw new IllegalStateException(command.getClass().getSimpleName()
+                    + " of task " + taskId + " is never refused as " + refusal);
         };
     }
 
@@ -509,7 +512,8 @@ public final class TaskCommands {
         };
     }
 
-    private static long taskId(TaskCommand command) {
+    /** The task the command acts on; null for giving one, which has none until it is given. */
+    private static Long taskId(TaskCommand command) {
         return switch (command) {
             case TaskCommand.Cancel cancel -> cancel.taskId();
             case TaskCommand.Retry retry -> retry.taskId();
@@ -519,15 +523,15 @@ public final class TaskCommands {
             case TaskCommand.Correct correct -> correct.taskId();
             case TaskCommand.FollowUp followUp -> followUp.taskId();
             case TaskCommand.Answer answer -> answer.taskId();
-            case TaskCommand.Give give -> 0;
+            case TaskCommand.Give _ -> null;
         };
     }
 
     private static String name(CommandResult result) {
         return switch (result) {
-            case CommandResult.Done done -> "DONE";
+            case CommandResult.Done _ -> "DONE";
             case CommandResult.Created created -> "CREATED #" + created.taskId();
-            case CommandResult.Unchanged unchanged -> "UNCHANGED";
+            case CommandResult.Unchanged _ -> "UNCHANGED";
             case CommandResult.Refused refused -> "REFUSED " + refused.reason();
         };
     }

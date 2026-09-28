@@ -28,6 +28,8 @@ public final class Renderer {
     private static final int TITLE_LIMIT = 80;
     /** GitHub's reason for refusing a merge: its first lines say why; a whole GraphQL error would drown the message. */
     private static final int MERGE_ERROR_LIMIT = 500;
+    /** A refusal's words: a line, unless they carry git's error for a project that cannot take tasks, whose first lines say why. */
+    private static final int REFUSAL_LIMIT = 500;
     private static final int ACTION_LIMIT = 120;
     private static final int INSTRUCTION_LIMIT = 150;
     /** A plan question's text: long enough for any real question, short enough for its message. */
@@ -157,7 +159,7 @@ public final class Renderer {
             case TASK_TIMELINE -> timeline(payload);
             case STATS -> stats(payload);
             case TASK_NOT_FOUND -> plain(format("task.notFound", taskId(payload)));
-            case REFUSED -> plain(escape(payload.path("text").asText())
+            case REFUSED -> plain(escapeWithin(payload.path("text").asText(), REFUSAL_LIMIT)
                     + (payload.hasNonNull("hint") ? "\n<code>" + escape(payload.path("hint").asText()) + "</code>" : ""));
             case RETRY_QUEUED -> plain(format("task.retryQueued", taskId(payload), escape(payload.path("by").asText()),
                     text("kind." + payload.path("kind").asText())));

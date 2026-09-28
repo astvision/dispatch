@@ -28,6 +28,7 @@ import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Runs;
+import dispatch.store.Tasks;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import dispatch.ui.UiServer.Caller;
@@ -40,6 +41,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -65,6 +67,8 @@ class TasksApiTest {
     private TasksApi api;
     private RunTransitions transitions;
     private Groups groups;
+    /** Why alm cannot take tasks now; null while it can. */
+    private final AtomicReference<String> unavailable = new AtomicReference<>();
 
     @BeforeEach
     void setUp() {
@@ -78,8 +82,8 @@ class TasksApiTest {
         // handed, so the admin has to be an admin here for the cancel rules to hold.
         groups = new Groups(new Config.Telegram(List.of(100L), List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))));
-        tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.empty()), new ActiveRuns(), clock,
-                () -> { }, () -> { });
+        tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.ofNullable(unavailable.get())), new ActiveRuns(),
+                clock, () -> { }, () -> { });
         api = new TasksApi(db, tasks, groups);
         transitions = new RunTransitions(db, clock, () -> { });
     }
@@ -428,6 +432,23 @@ class TasksApiTest {
         assertEquals(outboxBefore, outboxAfter, "a refusal the Mini App shows must not also be sent to the chat");
         assertEquals("QUEUED", followed.path("result").asText());
         assertEquals("EXECUTING", phase(finished));
+    }
+
+    /** A merged task's follow-up is a new task, refused exactly as giving one is (ADR 0031): on the page, never in the chat. */
+    @Test
+    void aMergedTasksFollowUpWhileItsProjectIsUnavailableIsRefusedOnThePage() {
+        long merged = finished(ALI);
+        db.transaction(tx -> Tasks.merged(tx, merged, clock.instant()));
+        unavailable.set("repos/alm is being cloned");
+        String outboxBefore = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
+
+        ApiException refused = assertThrows(ApiException.class,
+                () -> api.followUp(ALI_CALLER, Json.object().put("taskId", merged).put("text", "add a test")));
+
+        assertEquals("409 project_unavailable", refused.status() + " " + refused.code());
+        assertEquals(Text.of("refused.projectUnavailable", "alm", "repos/alm is being cloned"), refused.text());
+        assertEquals(outboxBefore, SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n"),
+                "a refusal the Mini App shows must not also be sent to the chat");
     }
 
     private long finished(Requester who) {

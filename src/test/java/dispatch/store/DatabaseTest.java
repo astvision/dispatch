@@ -205,20 +205,26 @@ class DatabaseTest {
      */
     @Test
     void pendingRepliesOfRetiredKindsFailAtUpgradeAndSentOnesAreNoLongerFound() throws Exception {
-        // A state file one schema before the retirement, with a pending and a sent reply of a retired kind.
+        // A state file one schema before the retirement, with a pending and a sent reply of a retired kind, and a pending
+        // message of a kind that stays.
         Path file = databaseAtVersion(26, """
                 INSERT INTO outbox (id, kind, chat_ref, payload, status, next_attempt_at, created_at)
                 VALUES (1, 'CORRECTION_REFUSED', 'telegram:100', '{"taskId":5,"reason":"stale"}', 'PENDING',
                         '2026-09-29T10:00:00.000Z', '2026-09-29T10:00:00.000Z')""", """
                 INSERT INTO outbox (id, kind, chat_ref, payload, status, next_attempt_at, created_at, sent_at, sent_ref)
                 VALUES (2, 'CANCEL_REFUSED', 'telegram:100', '{"taskId":5,"phase":"COMPLETED"}', 'SENT', '2026-09-29T10:00:00.000Z',
-                        '2026-09-29T10:00:00.000Z', '2026-09-29T10:00:01.000Z', 'telegram:100/77')""");
+                        '2026-09-29T10:00:00.000Z', '2026-09-29T10:00:01.000Z', 'telegram:100/77')""", """
+                INSERT INTO outbox (id, kind, chat_ref, payload, status, next_attempt_at, created_at)
+                VALUES (3, 'HELP', 'telegram:100', '{"projects":[]}', 'PENDING', '2026-09-29T10:00:00.000Z',
+                        '2026-09-29T10:00:00.000Z')""");
 
         try (Database upgraded = Database.open(file)) {
             upgraded.migrate();
 
             assertEquals("FAILED", upgraded.transactionReturning(tx -> tx.one("SELECT status FROM outbox WHERE id = 1",
                     row -> row.string("status"))).orElseThrow());
+            assertEquals("PENDING", upgraded.transactionReturning(tx -> tx.one("SELECT status FROM outbox WHERE id = 3",
+                    row -> row.string("status"))).orElseThrow(), "a kind that stays is still sent");
             assertEquals(Optional.empty(), upgraded.transactionReturning(tx -> Outbox.findSent(tx, "telegram:100/77")),
                     "a reply to a message of a kind this version no longer has is a reply to an unknown message");
         }

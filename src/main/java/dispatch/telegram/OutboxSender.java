@@ -194,18 +194,24 @@ public final class OutboxSender implements Runnable {
      */
     private void redrawRow(Outbox.Message message, int attempts, Renderer.Rendered rendered) {
         Optional<Outbox.Original> original = db.transactionReturning(tx -> Outbox.original(tx, message.editOf()));
-        // A row gone is dropped as a failed one is: throwing here would stop every message behind this one.
-        switch (original.map(Outbox.Original::status).orElse("GONE")) {
+        if (original.isEmpty()) {
+            // A row gone is dropped as a failed one is: throwing here would stop every message behind this one.
+            dropRedraw(message, attempts, "the message it redraws is gone");
+            return;
+        }
+        switch (original.get().status()) {
             case "SENT" -> edit(message, attempts, rendered, original.get().sentRef());
             case "PENDING" -> db.transaction(tx -> Outbox.retryLater(tx, message.id(), message.attempts(),
                     clock.instant().plus(WAIT_FOR_ORIGINAL), "waiting for the message it redraws"));
-            default -> {
-                String error = original.isEmpty() ? "the message it redraws is gone" : "the message it redraws was never sent";
-                db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, error));
-                Log.warn("outbox.redraw_dropped", "id", message.id(), "kind", message.kind(), "original", message.editOf(),
-                        "error", error);
-            }
+            // FAILED, the only other status the store allows.
+            default -> dropRedraw(message, attempts, "the message it redraws was never sent");
         }
+    }
+
+    /** Nothing to redraw: the redraw is marked FAILED and logged, never dropped silently. */
+    private void dropRedraw(Outbox.Message message, int attempts, String error) {
+        db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, error));
+        Log.warn("outbox.redraw_dropped", "id", message.id(), "kind", message.kind(), "original", message.editOf(), "error", error);
     }
 
     /** Opens the task's topic; its color shows the priority. A topic that cannot be made leaves the task in General. */

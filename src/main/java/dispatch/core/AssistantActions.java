@@ -133,9 +133,7 @@ public final class AssistantActions {
                 case FORBIDDEN, NOT_FOUND -> Outcome.NOT_ALLOWED;
                 case INVALID, CONFLICT -> Outcome.STALE;
             }, Optional.of(refused.words()));
-            case CommandResult.Done done -> new Tapped(Outcome.DONE, Optional.empty());
-            case CommandResult.Created created -> new Tapped(Outcome.DONE, Optional.empty());
-            case CommandResult.Unchanged unchanged -> new Tapped(Outcome.DONE, Optional.empty());
+            case CommandResult.Done _, CommandResult.Created _, CommandResult.Unchanged _ -> new Tapped(Outcome.DONE, Optional.empty());
         };
     }
 
@@ -178,7 +176,7 @@ public final class AssistantActions {
         switch (answer.choice()) {
             case TaskCommand.Choice.Option option ->
                     payload.put("option", option.index()).put("answer", question.path("options").path(option.index()).asText());
-            case TaskCommand.Choice.YouDecide decide -> payload.put("answer", Text.of("answer.youDecide").render(Language.MN));
+            case TaskCommand.Choice.YouDecide _ -> payload.put("answer", Text.of("answer.youDecide").render(Language.MN));
             case TaskCommand.Choice.Written written -> {
                 String text = written.text().strip();
                 if (!shown(text)) {

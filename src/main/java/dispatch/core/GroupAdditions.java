@@ -180,8 +180,7 @@ public final class GroupAdditions {
             case AWAITING_APPROVAL -> new TaskCommand.Correct(task.id(), OptionalInt.empty(), instruction);
             // A merged task's follow-up becomes a new task: taken all the same.
             case COMPLETED, FAILED -> new TaskCommand.FollowUp(task.id(), instruction, new Origin(messageRef));
-            case PLANNING, EXECUTING -> null;
-            case REJECTED, CANCELLED -> null;
+            case PLANNING, EXECUTING, REJECTED, CANCELLED -> null;
         };
         if (command == null) {
             return new Applied(task.phase().isActive() ? Outcome.BUSY : closed(tx, additionId), Optional.empty());

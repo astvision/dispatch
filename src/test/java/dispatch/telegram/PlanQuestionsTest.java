@@ -256,6 +256,17 @@ class PlanQuestionsTest {
         }
     }
 
+    /** A notice is masked as everything else the handler sends: a refusal's words may carry git's error, or here a name. */
+    @Test
+    void aRefusalsNoticeIsRedacted() throws Exception {
+        String token = "gh" + "p_" + "Q7w8E9r0T1".repeat(4);
+        long taskId = taskWithTwoQuestions("Bold " + token);
+
+        handler.handle(UpdateHandlerTest.callback(650, 200, "Ali", GROUP, 88, "q:" + taskId + ":1:1:0"));
+
+        assertEquals(Text.of("refused.notRequester", taskId, "Bold [redacted]").render(Language.MN), answerText());
+    }
+
     @Test
     void aTapOnAnOlderPlanOrAnAnsweredQuestionIsStale() throws Exception {
         long taskId = taskWithTwoQuestions();

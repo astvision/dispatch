@@ -352,6 +352,18 @@ class RendererTest {
         assertEquals("#5", renderer.render(OutboxKind.REFUSED, Json.object().put("text", "#5")).html());
     }
 
+    /** An unavailable project's refusal carries git's error, as long as git made it: the reply stays one message. */
+    @Test
+    void aRefusalsWordsAreCutBeforeItsHint() {
+        String words = "the project alm cannot take tasks now: cloning failed: " + "<fatal> ".repeat(1000);
+
+        String html = renderer.render(OutboxKind.REFUSED, Json.object().put("text", words).put("hint", "/retry 5")).html();
+
+        assertTrue(html.startsWith("the project alm cannot take tasks now: cloning failed: &lt;fatal&gt; "), html);
+        assertTrue(html.endsWith("…\n<code>/retry 5</code>"), "the words are cut, the hint stays whole: " + html);
+        assertTrue(html.length() <= 4096, "message limit, got " + html.length());
+    }
+
     @Test
     void statusShowsRunningWorkWithTheAgentsLatestActionThenQueuedAndAwaiting() {
         String html = renderer.render(OutboxKind.STATUS, statusPayload()).html();
@@ -1146,7 +1158,7 @@ class RendererTest {
             case WORKER_WAITING -> Json.object().put("taskId", 7);
             case WORKER_BLOCKED -> Json.object().put("taskId", 1).put("code", "claude").put("detail", "gone");
             case PLAN_QUESTION -> questionPayload("Which environments?", List.of("staging", "prod"));
-            case PLAN_ANSWER_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1).put("index", 2).put("questionRef", "telegram:100/5");
+            case PLAN_ANSWER_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1).put("index", 2);
         };
     }
 }

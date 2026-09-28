@@ -128,8 +128,8 @@ public final class TasksApi {
         return switch (result) {
             case CommandResult.Refused refused -> throw refused(refused);
             case CommandResult.Created created -> Json.object().put("result", "NEW_TASK").put("taskId", created.taskId());
-            case CommandResult.Unchanged unchanged -> Json.object().put("result", "UNCHANGED");
-            case CommandResult.Done finished -> Json.object().put("result", done);
+            case CommandResult.Unchanged _ -> Json.object().put("result", "UNCHANGED");
+            case CommandResult.Done _ -> Json.object().put("result", done);
         };
     }
 
