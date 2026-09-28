@@ -80,12 +80,13 @@ export default function TasksPage({ navigate }: { navigate: (path: string) => vo
         <Button type="primary" onClick={() => setGiving(true)}>{t("give.open")}</Button>
       </Flex>
       <Flex wrap gap={8}>
-        <Select aria-label={t("tasks.allProjects")} style={{ minWidth: 160 }} value={filter.project}
-                options={[{ value: null, label: t("tasks.allProjects") }, ...projects.map((name) => ({ value: name, label: name }))]}
-                onChange={(project) => setFilter({ ...filter, project })} />
-        <Select aria-label={t("tasks.everyone")} style={{ minWidth: 140 }} value={filter.person}
-                options={[{ value: null, label: t("tasks.everyone") }, ...people.map((name) => ({ value: name, label: name }))]}
-                onChange={(person) => setFilter({ ...filter, person })} />
+        {/* "" is "all": antd warns about an option whose value is null. */}
+        <Select aria-label={t("tasks.allProjects")} style={{ minWidth: 160 }} value={filter.project ?? ""}
+                options={[{ value: "", label: t("tasks.allProjects") }, ...projects.map((name) => ({ value: name, label: name }))]}
+                onChange={(project) => setFilter({ ...filter, project: project || null })} />
+        <Select aria-label={t("tasks.everyone")} style={{ minWidth: 140 }} value={filter.person ?? ""}
+                options={[{ value: "", label: t("tasks.everyone") }, ...people.map((name) => ({ value: name, label: name }))]}
+                onChange={(person) => setFilter({ ...filter, person: person || null })} />
         <Input allowClear aria-label={t("tasks.search")} placeholder={t("tasks.search")} style={{ width: 220 }} value={filter.text}
                onChange={(e) => setFilter({ ...filter, text: e.target.value })} />
       </Flex>

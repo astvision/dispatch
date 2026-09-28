@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { resetWarned } from "@rc-component/util";
 import { afterEach, expect, test, vi } from "vitest";
 import * as api from "../../api";
 import type { TaskDetail, TaskRow } from "../../api";
@@ -68,4 +69,16 @@ test("without the bot the page says so and leads to the overview", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Open the overview" }));
 
   expect(navigate).toHaveBeenCalledWith("/");
+});
+
+test("the list's filters give antd nothing to warn about", async () => {
+  // antd warns once per message: the earlier tests' pages would have used it up.
+  resetWarned();
+  const warned = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.mocked(api.listTasks).mockResolvedValue({ tasks: rows });
+  render(<TasksPage navigate={vi.fn()} />);
+  await screen.findAllByRole("button", { name: /#\d+/ });
+
+  expect(warned.mock.calls.flat().join(" ")).not.toMatch(/should not be `null`/);
+  warned.mockRestore();
 });
