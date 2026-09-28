@@ -117,6 +117,14 @@ dispatch ui                 # хөтөч дээр: төсөл, хүмүүс, т�
 
 > 💡 Төсөл бүрт богино `CLAUDE.md` (build, test команд, дүрэм) байвал агент хурдан, хямд ажиллана.
 
+### Нэг компьютер дээр өөр нэг bot
+
+`dispatch init`-ийг дахин ажиллуулаарай: эхний bot-оо олоод хажууд нь өөрийг нь санал болгоно, жишээ нь хувийн
+bot-ынхоо хажууд багийн bot. Хоёр дахь нь өөрийн нэр, config, state болон background service-тэй; `dispatch list`
+бүгдийг харуулна. Хоёр дахийг нь `--instance NAME`-ээр аль ч командад зааж болно: `dispatch check --instance team`,
+`dispatch service status --instance team`, `dispatch ui --instance team`. Түүний даалгаврын branch-ууд
+`dispatch/team/<task>` тул хоёр bot нэг clone дээр зэрэг ажиллаж болно.
+
 ## 🔐 Аюулгүй байдал
 
 > [!WARNING]

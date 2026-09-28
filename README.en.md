@@ -87,6 +87,13 @@ dispatch ui                                      # manage it in your browser: pr
 
 The service is a systemd user service on Linux, a launchd agent on macOS and a Task Scheduler task on Windows. It starts at login and restarts after a failure. On Linux, it keeps running after you log out only once lingering is on; `dispatch service status` says so.
 
+### Another bot on the same computer
+
+Run `dispatch init` again: it sees your first bot and offers another beside it, e.g. a team bot next to your personal one.
+Each has its own name, config, state and background service; `dispatch list` shows them all. Address the second one with
+`--instance NAME` on any command: `dispatch check --instance team`, `dispatch service status --instance team`,
+`dispatch ui --instance team`. Its task branches are `dispatch/team/<task>`, so both bots can work in the same clone.
+
 ### A bot for just you
 
 Everything stays in your private chat: tasks, plans, corrections and results. To also see a project's one-line

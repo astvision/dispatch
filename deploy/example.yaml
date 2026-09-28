@@ -3,6 +3,9 @@ team: backend
 
 # stateDir defaults to $STATE_DIRECTORY, which systemd sets from StateDirectory=dispatch/<team>.
 # stateDir: /var/lib/dispatch/backend
+# branchPrefix: dispatch/backend  # task branches are <branchPrefix>/<task>; default "dispatch". Set only when this
+                                   # instance is new — changing it later points existing tasks' retries at branches
+                                   # that no longer exist (ADR 0028).
 
 telegram:
   # admins: [123456789]           # who lets people join from Telegram: they get a button per group (ADR 0015)
