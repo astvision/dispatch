@@ -21,6 +21,8 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 class ChecksTest {
@@ -137,6 +139,7 @@ class ChecksTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "the stand-in codex is a POSIX shell script")
     void aCodexThatIsNotLoggedInIsAWarning() throws IOException {
         Path codex = dir.resolve("codex");
         Files.writeString(codex, """
