@@ -1,6 +1,7 @@
 import { Button, Card, Result, Spin, Steps, Typography } from "antd";
 import { useState } from "react";
 import type { ProjectChoice, SetupAdvanced, WorkersChoice } from "../api";
+import { useT } from "../i18n/i18n";
 import { useSetupState } from "../useSetupState";
 import BotStep from "./BotStep";
 import ClaudeStep from "./ClaudeStep";
@@ -24,15 +25,16 @@ export interface Draft {
 }
 
 export default function SetupPage({ onDone }: { onDone: () => void }) {
+  const t = useT();
   const { state, error, refresh } = useSetupState();
   const [step, setStep] = useState<number | null>(null);
   const [draft, setDraft] = useState<Draft>({ claude: "", projects: [], authorName: "", authorEmail: "", teamName: "" });
 
   if (error) {
-    return <Result status="warning" title="Cannot start setup" subTitle={error.message}
-                   extra={<Button onClick={() => void refresh()}>Try again</Button>} />;
+    return <Result status="warning" title={t("setup.cannotStart")} subTitle={error.message}
+                   extra={<Button onClick={() => void refresh()}>{t("common.tryAgain")}</Button>} />;
   }
-  if (!state) return <Spin size="large" tip="Starting setup…"><div style={{ height: 200 }} /></Spin>;
+  if (!state) return <Spin size="large" tip={t("setup.starting")}><div style={{ height: 200 }} /></Spin>;
 
   // Resume where the server left off: Claude Code, Projects and Commits live only on this page, so a reload
   // can't tell those apart and always resumes at Claude Code (step 3). A team setup resumes at People (step 2)
@@ -40,7 +42,7 @@ export default function SetupPage({ onDone }: { onDone: () => void }) {
   // skipping straight to step 3 would leave teamName empty and fail Write.
   if (step === null) {
     setStep(state.bot == null ? 0 : state.team || state.members.length === 0 ? 2 : 3);
-    return <Spin size="large" tip="Starting setup…"><div style={{ height: 200 }} /></Spin>;
+    return <Spin size="large" tip={t("setup.starting")}><div style={{ height: 200 }} /></Spin>;
   }
 
   const update = (change: Partial<Draft>) => setDraft((current) => ({ ...current, ...change }));
@@ -52,18 +54,18 @@ export default function SetupPage({ onDone }: { onDone: () => void }) {
   const props = { state, draft, update, refresh, next, back, onDone };
 
   const steps = [
-    { title: "Who", content: <WhoStep {...props} /> },
-    { title: "Bot", content: <BotStep {...props} /> },
-    { title: state.team ? "Your team" : "You", content: <PeopleStep {...props} /> },
+    { title: t("setup.who"), content: <WhoStep {...props} /> },
+    { title: t("setup.bot"), content: <BotStep {...props} /> },
+    { title: t(state.team ? "setup.yourTeam" : "setup.you"), content: <PeopleStep {...props} /> },
     { title: "Claude Code", content: <ClaudeStep {...props} /> },
-    { title: "Projects", content: <ProjectsStep {...props} /> },
-    { title: "Commits", content: <CommitsStep {...props} /> },
-    { title: "Summary", content: <SummaryStep {...props} /> },
+    { title: t("setup.projects"), content: <ProjectsStep {...props} /> },
+    { title: t("setup.commits"), content: <CommitsStep {...props} /> },
+    { title: t("setup.summary"), content: <SummaryStep {...props} /> },
   ];
 
   return (
-    <Card title="Set up Dispatch">
-      <Typography.Paragraph type="secondary">Nothing is written until you confirm the summary at the end.</Typography.Paragraph>
+    <Card title={t("setup.title")}>
+      <Typography.Paragraph type="secondary">{t("setup.nothingWritten")}</Typography.Paragraph>
       <Steps current={step} size="small" items={steps.map((s) => ({ title: s.title }))} />
       <div style={{ marginTop: 24 }}>{steps[step].content}</div>
     </Card>

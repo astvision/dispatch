@@ -175,7 +175,7 @@ class GroupAckTest {
 
     private long mentionDraft(String origin) {
         db.transaction(tx -> tasks.draft(tx, BOLD, "autoland-management", "Is this a task?", origin, List.of(),
-                new TaskService.GroupOrigin(GROUP, "Bold")));
+                new TaskService.GroupOrigin(GROUP, "Bold", null)));
         return Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = ?", origin).get("id"));
     }
 
@@ -194,7 +194,7 @@ class GroupAckTest {
         String origin = GROUP + "/" + messageId;
         DraftResult drafted = db.transactionReturning(tx ->
                 tasks.draft(tx, BOLD, "autoland-management", "Fix login timeout", origin, List.of(),
-                        new TaskService.GroupOrigin(GROUP, "Bold")));
+                        new TaskService.GroupOrigin(GROUP, "Bold", null)));
         assertEquals(DraftResult.DRAFTED, drafted);
         long draftId = Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = ?", origin).get("id"));
         assertEquals(DraftChoice.CREATED, db.transactionReturning(tx -> tasks.choosePriority(tx, BOLD, draftId, Priority.NORMAL)));

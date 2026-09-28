@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Text;
 import dispatch.workspace.Git;
 import dispatch.workspace.WorkspaceException;
 import java.io.IOException;
@@ -24,8 +25,11 @@ public interface Service {
     record Spec(Path java, Path jar, Path configFile, Path logFile, String path, Path stateDir) {
     }
 
-    /** @param notes what the person should know, e.g. that it stops at logout */
-    record Status(boolean installed, boolean running, String detail, List<String> notes) {
+    /**
+     * @param detail what the OS says of it (its own words, as they came) or Dispatch's words for it
+     * @param notes  what the person should know, e.g. that it stops at logout
+     */
+    record Status(boolean installed, boolean running, Text detail, List<Text> notes) {
     }
 
     /** Runs a command to completion; how the service tools are called, and replaced in tests. */

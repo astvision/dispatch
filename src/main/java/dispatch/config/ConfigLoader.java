@@ -1,5 +1,6 @@
 package dispatch.config;
 
+import dispatch.Text;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -47,18 +48,18 @@ public final class ConfigLoader {
 
     public static Config load(Path file, Map<String, String> env) {
         ConfigFile raw = read(file);
-        List<String> errors = new ArrayList<>();
+        List<Text> errors = new ArrayList<>();
 
         if (raw.team() == null || !TEAM.matcher(raw.team()).matches()) {
-            errors.add("team: required; lowercase letters, digits and '-' (e.g. backend)");
+            errors.add(Text.of("config.teamRequired"));
         }
         Path stateDir = stateDir(raw.stateDir() != null ? raw.stateDir() : env.get("STATE_DIRECTORY"), errors);
         if (raw.scheduler() == null || raw.scheduler().maxConcurrentRuns() < 1) {
-            errors.add("scheduler.maxConcurrentRuns: required, at least 1");
+            errors.add(Text.of("config.schedulerMaxconcurrentruns"));
         }
         Config.Worktrees worktrees = raw.worktrees() == null ? Config.Worktrees.DEFAULT : raw.worktrees();
         if (worktrees.idleDays() < 1) {
-            errors.add("worktrees.idleDays: at least 1");
+            errors.add(Text.of("config.worktreesIdledays"));
         }
         validateInstanceLimits(raw.limits(), errors);
         Map<String, Config.Agent> agents = raw.agents() == null ? Map.of() : raw.agents();
@@ -71,12 +72,12 @@ public final class ConfigLoader {
 
         String token = env.get("TELEGRAM_BOT_TOKEN");
         if (isBlank(token)) {
-            errors.add("TELEGRAM_BOT_TOKEN: required environment variable");
+            errors.add(Text.of("config.telegramBot"));
         }
         String ghToken = isBlank(env.get("GH_TOKEN")) ? null : env.get("GH_TOKEN");
 
         if (!errors.isEmpty()) {
-            throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));
+            throw new ConfigException(Text.of("config.invalid", file, Text.joined("\n  - ", errors)));
         }
         return new Config(raw.team(), stateDir, telegram, raw.scheduler(), worktrees, raw.limits(), Map.copyOf(agents),
                 projects, delivery, workers, miniApp, new Config.Secrets(token, ghToken));
@@ -86,30 +87,28 @@ public final class ConfigLoader {
         try {
             return YAML.readValue(file.toFile(), ConfigFile.class);
         } catch (UnrecognizedPropertyException e) {
-            String hint = SECRET_KEY.matcher(e.getPropertyName()).matches()
-                    ? " (secrets never go in this file: put them in the environment file, see deploy/example.env)"
-                    : SINGLE_GROUP_KEYS.contains(e.getPropertyName())
-                    ? " (the group and its members now go under telegram.groups, each with name, chatId, members and projects;"
-                            + " see deploy/example.yaml)"
-                    : "";
-            throw new ConfigException(file + ": " + path(e.getPath()) + ": " + e.getOriginalMessage() + hint);
+            Text hint = SECRET_KEY.matcher(e.getPropertyName()).matches() ? Text.of("config.hintSecrets")
+                    : SINGLE_GROUP_KEYS.contains(e.getPropertyName()) ? Text.of("config.hintGroups")
+                    : null;
+            throw new ConfigException(hint == null ? Text.of("config.at", file, path(e.getPath()), e.getOriginalMessage())
+                    : Text.of("config.atWithHint", file, path(e.getPath()), e.getOriginalMessage(), hint));
         } catch (JsonMappingException e) {
-            throw new ConfigException(file + ": " + path(e.getPath()) + ": " + e.getOriginalMessage());
+            throw new ConfigException(Text.of("config.at", file, path(e.getPath()), e.getOriginalMessage()));
         } catch (JsonProcessingException e) {
-            throw new ConfigException(file + ": " + e.getOriginalMessage());
+            throw new ConfigException(Text.of("config.parse", file, e.getOriginalMessage()));
         } catch (IOException e) {
-            throw new ConfigException("cannot read config file " + file + ": " + e.getMessage());
+            throw new ConfigException(Text.of("config.unreadable", file, e.getMessage()));
         }
     }
 
-    private static Path stateDir(String value, List<String> errors) {
+    private static Path stateDir(String value, List<Text> errors) {
         if (isBlank(value)) {
-            errors.add("stateDir: required in the file or via STATE_DIRECTORY (set by systemd StateDirectory=)");
+            errors.add(Text.of("config.statedirRequired"));
             return null;
         }
         Path path = Path.of(value);
         if (!path.isAbsolute()) {
-            errors.add("stateDir: must be an absolute path, got '" + value + "'");
+            errors.add(Text.of("config.statedirMust", value));
             return null;
         }
         return path;
@@ -120,11 +119,11 @@ public final class ConfigLoader {
         return CREDENTIAL_URL.matcher(url).find();
     }
 
-    private static Config.Telegram validateTelegram(Config.Telegram telegram, List<Config.Project> projects, List<String> errors) {
+    private static Config.Telegram validateTelegram(Config.Telegram telegram, List<Config.Project> projects, List<Text> errors) {
         List<Long> admins = validateAdmins(telegram == null || telegram.admins() == null ? List.of() : telegram.admins(), errors);
         List<Config.Group> groups = telegram == null || telegram.groups() == null ? List.of() : telegram.groups();
         if (groups.isEmpty()) {
-            errors.add("telegram.groups: at least one group is required");
+            errors.add(Text.of("config.telegramGroups"));
             return new Config.Telegram(admins, List.of());
         }
         Set<String> names = new HashSet<>();
@@ -137,34 +136,34 @@ public final class ConfigLoader {
             Config.Group group = groups.get(i);
             String at = "telegram.groups[" + i + "]";
             if (isBlank(group.name()) || !PROJECT_KEY.matcher(group.name()).matches()) {
-                errors.add(at + ".name: required; letters, digits, '.', '_' and '-' only");
+                errors.add(Text.of("config.nameRequired", at));
             } else if (group.name().length() > MAX_GROUP_NAME) {
                 // A join request's button carries the name, and Telegram allows 64 bytes of button data.
-                errors.add(at + ".name: at most " + MAX_GROUP_NAME + " characters");
+                errors.add(Text.of("config.nameAt", at, MAX_GROUP_NAME));
             } else if (!names.add(group.name().toLowerCase())) {
-                errors.add(at + ".name: '" + group.name() + "' is used by more than one group");
+                errors.add(Text.of("config.nameIs", at, group.name()));
             }
             if (group.chatId() == null) {
                 // A personal bot's group: no chat, so nothing is announced (ADR 0014).
             } else if (group.chatId() >= 0) {
-                errors.add(at + ".chatId: must be the (negative) chat id of the group, got " + group.chatId());
+                errors.add(Text.of("config.chatidMust", at, group.chatId()));
             } else if (!chats.add(group.chatId())) {
-                errors.add(at + ".chatId: " + group.chatId() + " is used by more than one group");
+                errors.add(Text.of("config.chatidIs", at, group.chatId()));
             }
             List<Config.Member> members = group.members() == null ? List.of() : group.members();
             validateMembers(at, members, errors);
             List<String> owned = group.projects() == null ? List.of() : group.projects();
             if (owned.isEmpty()) {
-                errors.add(at + ".projects: at least one project is required");
+                errors.add(Text.of("config.projectsAt", at));
             }
             // A project may be in several groups, one per chat it is announced in (ADR 0025), but only once in each.
             Set<String> ownedHere = new HashSet<>();
             for (int p = 0; p < owned.size(); p++) {
                 String name = owned.get(p);
                 if (!projectNames.contains(name)) {
-                    errors.add(at + ".projects[" + p + "]: '" + name + "' is not a configured project");
+                    errors.add(Text.of("config.projectsIs", at, p, name));
                 } else if (!ownedHere.add(name)) {
-                    errors.add(at + ".projects[" + p + "]: '" + name + "' is listed twice");
+                    errors.add(Text.of("config.projectsIsListed", at, p, name));
                 } else {
                     listings.merge(name, 1, Integer::sum);
                 }
@@ -173,28 +172,28 @@ public final class ConfigLoader {
         }
         for (int i = 0; i < projects.size(); i++) {
             if (!listings.containsKey(projects.get(i).name())) {
-                errors.add("projects[" + i + "]: '" + projects.get(i).name() + "' is not listed in any group");
+                errors.add(Text.of("config.projectsIsNot", i, projects.get(i).name()));
             }
         }
         return new Config.Telegram(admins, List.copyOf(normalized));
     }
 
-    private static List<Long> validateAdmins(List<Long> admins, List<String> errors) {
+    private static List<Long> validateAdmins(List<Long> admins, List<Text> errors) {
         Set<Long> seen = new HashSet<>();
         for (int i = 0; i < admins.size(); i++) {
             Long admin = admins.get(i);
             if (admin == null || admin <= 0) {
-                errors.add("telegram.admins[" + i + "]: must be a positive Telegram user id, got " + admin);
+                errors.add(Text.of("config.telegramAdmins", i, admin));
             } else if (!seen.add(admin)) {
-                errors.add("telegram.admins[" + i + "]: " + admin + " is listed more than once");
+                errors.add(Text.of("config.telegramAdminsIs", i, admin));
             }
         }
         return admins.stream().filter(admin -> admin != null && admin > 0).distinct().toList();
     }
 
-    private static void validateMembers(String at, List<Config.Member> members, List<String> errors) {
+    private static void validateMembers(String at, List<Config.Member> members, List<Text> errors) {
         if (members.isEmpty()) {
-            errors.add(at + ".members: at least one member is required");
+            errors.add(Text.of("config.membersAt", at));
             return;
         }
         Set<Long> seen = new HashSet<>();
@@ -202,35 +201,35 @@ public final class ConfigLoader {
             Config.Member member = members.get(i);
             String memberAt = at + ".members[" + i + "]";
             if (member.id() <= 0) {
-                errors.add(memberAt + ".id: must be a positive Telegram user id, got " + member.id());
+                errors.add(Text.of("config.idMust", memberAt, member.id()));
             } else if (!seen.add(member.id())) {
-                errors.add(memberAt + ".id: " + member.id() + " is listed more than once");
+                errors.add(Text.of("config.idIs", memberAt, member.id()));
             }
             if (isBlank(member.name())) {
-                errors.add(memberAt + ".name: required");
+                errors.add(Text.of("config.name2", memberAt));
             }
         }
     }
 
-    private static void validateInstanceLimits(Config.Limits limits, List<String> errors) {
+    private static void validateInstanceLimits(Config.Limits limits, List<Text> errors) {
         validateInstanceLimit("limits.plan", limits == null ? null : limits.plan(), errors);
         validateInstanceLimit("limits.execute", limits == null ? null : limits.execute(), errors);
     }
 
-    private static void validateInstanceLimit(String at, Config.RunLimits limits, List<String> errors) {
+    private static void validateInstanceLimit(String at, Config.RunLimits limits, List<Text> errors) {
         if (limits == null || limits.timeout() == null || limits.budgetUsd() == null) {
-            errors.add(at + ": timeout and budgetUsd are required");
+            errors.add(Text.of("config.timeoutAnd", at));
             return;
         }
         validateLimitValues(at, limits, errors);
     }
 
-    private static Config.Delivery validateDelivery(Config.Delivery delivery, List<String> errors) {
+    private static Config.Delivery validateDelivery(Config.Delivery delivery, List<Text> errors) {
         if (delivery == null || isBlank(delivery.authorName())) {
-            errors.add("delivery.authorName: required, the git author of delivery commits (e.g. Dispatch (backend))");
+            errors.add(Text.of("config.deliveryAuthorname"));
         }
         if (delivery == null || isBlank(delivery.authorEmail())) {
-            errors.add("delivery.authorEmail: required (e.g. dispatch-backend@users.noreply.github.com)");
+            errors.add(Text.of("config.deliveryAuthoremail"));
         }
         if (delivery == null) {
             return null;
@@ -243,23 +242,21 @@ public final class ConfigLoader {
      * In a team every member's tasks run on their own computer, so the team machine must be reachable by their workers
      * (spec: Configuration). A personal Dispatch needs none and runs its jobs in this process.
      */
-    private static Config.Workers validateWorkers(Config.Workers workers, Config.Telegram telegram, List<String> errors) {
+    private static Config.Workers validateWorkers(Config.Workers workers, Config.Telegram telegram, List<Text> errors) {
         if (workers == null) {
             boolean needsWorkers = Config.isTeam(telegram) && telegram.groups().stream().anyMatch(group -> group.chatId() != null);
             if (needsWorkers) {
-                errors.add("workers: required once a team's group has a chat; each member's tasks then run on their own computer "
-                        + "(publicUrl and port, see deploy/example.yaml)");
+                errors.add(Text.of("config.workersRequired"));
             }
             return null;
         }
         if (isBlank(workers.publicUrl())) {
-            errors.add("workers.publicUrl: required, the https URL members' workers reach this machine on");
+            errors.add(Text.of("config.workersPublicurl"));
         } else if (!isWorkerUrl(workers.publicUrl())) {
-            errors.add("workers.publicUrl: must start with https:// (plain http only for 127.0.0.1), got '"
-                    + workers.publicUrl() + "'");
+            errors.add(Text.of("config.workersPublicurlMust", workers.publicUrl()));
         }
         if (workers.port() < 1 || workers.port() > 65535) {
-            errors.add("workers.port: must be from 1 to 65535, got " + workers.port());
+            errors.add(Text.of("config.workersPort", workers.port()));
         }
         return workers;
     }
@@ -268,18 +265,17 @@ public final class ConfigLoader {
      * The Mini App is off unless its block is there, in a team and in personal mode alike (spec: Config): it puts the
      * management pages on the internet, so nobody gets it by upgrading.
      */
-    private static Config.MiniApp validateMiniApp(Config.MiniApp miniApp, List<String> errors) {
+    private static Config.MiniApp validateMiniApp(Config.MiniApp miniApp, List<Text> errors) {
         if (miniApp == null) {
             return null;
         }
         if (isBlank(miniApp.publicUrl())) {
-            errors.add("miniApp.publicUrl: required, the https URL Telegram opens the Mini App at");
+            errors.add(Text.of("config.miniappPublicurl"));
         } else if (!isWorkerUrl(miniApp.publicUrl())) {
-            errors.add("miniApp.publicUrl: must start with https:// (plain http only for 127.0.0.1), got '"
-                    + miniApp.publicUrl() + "'");
+            errors.add(Text.of("config.miniappPublicurlMust", miniApp.publicUrl()));
         }
         if (miniApp.port() < 1 || miniApp.port() > 65535) {
-            errors.add("miniApp.port: must be from 1 to 65535, got " + miniApp.port());
+            errors.add(Text.of("config.miniappPort", miniApp.port()));
         }
         return miniApp;
     }
@@ -297,53 +293,53 @@ public final class ConfigLoader {
         }
     }
 
-    private static void validateLimitValues(String at, Config.RunLimits limits, List<String> errors) {
+    private static void validateLimitValues(String at, Config.RunLimits limits, List<Text> errors) {
         if (limits.timeout() != null && (limits.timeout().isZero() || limits.timeout().isNegative())) {
-            errors.add(at + ".timeout: must be positive");
+            errors.add(Text.of("config.timeoutMust", at));
         }
         if (limits.budgetUsd() != null && limits.budgetUsd().compareTo(BigDecimal.ZERO) <= 0) {
-            errors.add(at + ".budgetUsd: must be positive");
+            errors.add(Text.of("config.budgetusdMust", at));
         }
     }
 
-    private static void validateAgents(Map<String, Config.Agent> agents, List<String> errors) {
+    private static void validateAgents(Map<String, Config.Agent> agents, List<Text> errors) {
         String supported = String.join(", ", SUPPORTED_AGENTS);
         if (agents.isEmpty()) {
-            errors.add("agents: at least one agent is required (supported: " + supported + ")");
+            errors.add(Text.of("config.agentsAt", supported));
         }
         agents.forEach((type, agent) -> {
             if (!SUPPORTED_AGENTS.contains(type)) {
-                errors.add("agents." + type + ": unsupported agent type (supported: " + supported + ")");
+                errors.add(Text.of("config.agentsUnsupported", type, supported));
             } else if (agent == null || isBlank(agent.command())) {
-                errors.add("agents." + type + ".command: required");
+                errors.add(Text.of("config.agentsCommand", type));
             }
         });
     }
 
     /** Each CLI has its own effort levels, or none (Gemini CLI); an unknown agent is reported elsewhere, so Claude's apply. */
-    private static void validateEffort(String at, String effort, String agent, List<String> errors) {
+    private static void validateEffort(String at, String effort, String agent, List<Text> errors) {
         if (effort == null) {
             return;
         }
         switch (agent == null ? "claude-code" : agent) {
             case "codex" -> {
                 if (!CODEX_EFFORT_LEVELS.contains(effort)) {
-                    errors.add(at + ": codex takes low, medium, high or xhigh, got '" + effort + "'");
+                    errors.add(Text.of("config.codexTakes", at, effort));
                 }
             }
-            case "gemini" -> errors.add(at + ": gemini has no effort setting; remove it");
+            case "gemini" -> errors.add(Text.of("config.geminiHas", at));
             default -> {
                 if (!EFFORT_LEVELS.contains(effort)) {
-                    errors.add(at + ": must be one of " + String.join(", ", EFFORT_LEVELS) + ", got '" + effort + "'");
+                    errors.add(Text.of("config.effortLevel", at, String.join(", ", EFFORT_LEVELS), effort));
                 }
             }
         }
     }
 
     private static List<Config.Project> validateProjects(List<Config.Project> projects, Map<String, Config.Agent> agents,
-                                                         List<String> errors) {
+                                                         List<Text> errors) {
         if (projects == null || projects.isEmpty()) {
-            errors.add("projects: at least one project is required");
+            errors.add(Text.of("config.projectsAtLeast"));
             return List.of();
         }
         Map<String, Integer> keys = new HashMap<>();
@@ -356,23 +352,23 @@ public final class ConfigLoader {
                 validateKey(at + ".alias", project.alias(), false, keys, errors);
             }
             if (project.path() != null && !Path.of(project.path()).isAbsolute()) {
-                errors.add(at + ".path: must be an absolute path to a git clone, got '" + project.path() + "'");
+                errors.add(Text.of("config.pathMust", at, project.path()));
             }
             if (isBlank(project.repo())) {
                 if (project.path() == null) {
-                    errors.add(at + ".repo: required unless path is set");
+                    errors.add(Text.of("config.repoRequired", at));
                 }
             } else if (CREDENTIAL_URL.matcher(project.repo()).find()) {
                 // The value itself is not echoed: it contains a credential.
-                errors.add(at + ".repo: must not contain credentials; use the plain URL and set GH_TOKEN in the environment file");
+                errors.add(Text.of("config.repoMust", at));
             }
             if (isBlank(project.baseBranch())) {
-                errors.add(at + ".baseBranch: required");
+                errors.add(Text.of("config.basebranchRequired", at));
             }
             if (isBlank(project.agent())) {
-                errors.add(at + ".agent: required");
+                errors.add(Text.of("config.agentRequired", at));
             } else if (!agents.containsKey(project.agent())) {
-                errors.add(at + ".agent: '" + project.agent() + "' is not configured under agents");
+                errors.add(Text.of("config.agentIs", at, project.agent()));
             }
             validateEffort(at + ".effort", project.effort(), project.agent(), errors);
             if (project.plan() != null) {
@@ -384,7 +380,7 @@ public final class ConfigLoader {
             List<String> copyFiles = project.copyFiles() == null ? List.of() : project.copyFiles();
             for (int f = 0; f < copyFiles.size(); f++) {
                 if (!isInsideRepository(copyFiles.get(f))) {
-                    errors.add(at + ".copyFiles[" + f + "]: must be a relative path inside the repository, got '" + copyFiles.get(f) + "'");
+                    errors.add(Text.of("config.copyfilesMust", at, f, copyFiles.get(f)));
                 }
             }
             if (project.limits() != null && project.limits().plan() != null) {
@@ -400,19 +396,19 @@ public final class ConfigLoader {
         return List.copyOf(normalized);
     }
 
-    private static void validateKey(String at, String key, boolean required, Map<String, Integer> keys, List<String> errors) {
+    private static void validateKey(String at, String key, boolean required, Map<String, Integer> keys, List<Text> errors) {
         if (key == null) {
             if (required) {
-                errors.add(at + ": required");
+                errors.add(Text.of("config.required2", at));
             }
             return;
         }
         if (!PROJECT_KEY.matcher(key).matches()) {
-            errors.add(at + ": letters, digits, '.', '_' and '-' only, got '" + key + "'");
+            errors.add(Text.of("config.lettersDigits", at, key));
             return;
         }
         if (keys.putIfAbsent(key.toLowerCase(), keys.size()) != null) {
-            errors.add(at + ": '" + key + "' is used by more than one project");
+            errors.add(Text.of("config.isUsed", at, key));
         }
     }
 

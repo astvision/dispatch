@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Text;
 import dispatch.config.ConfigLoader;
 import dispatch.workspace.Git;
 import dispatch.workspace.WorkspaceException;
@@ -18,7 +19,7 @@ public record ProjectProbe(Path folder, String defaultName, String originUrl, bo
     public static ProjectProbe of(Path given, Git git) {
         Path folder = expandHome(given).toAbsolutePath().normalize();
         if (!Files.exists(folder.resolve(".git"))) {
-            throw new CliException(folder + " is not a git clone");
+            throw new CliException(Text.of("probe.isNot", folder));
         }
         Optional<String> origin = output(git, folder, "remote", "get-url", "origin");
         boolean credentials = origin.map(ConfigLoader::hasCredentials).orElse(false);
@@ -47,7 +48,7 @@ public record ProjectProbe(Path folder, String defaultName, String originUrl, bo
             Git.Result result = git.execute(folder, args);
             return result.exitCode() == 0 && !result.stdout().isBlank() ? Optional.of(result.stdout().strip()) : Optional.empty();
         } catch (WorkspaceException e) {
-            throw new CliException("cannot run git in " + folder + " (" + e.getMessage() + "); is git installed and on PATH?");
+            throw new CliException(Text.of("probe.cannotRun", folder, e.getMessage()));
         }
     }
 

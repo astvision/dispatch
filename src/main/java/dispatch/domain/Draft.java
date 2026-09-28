@@ -14,6 +14,7 @@ import java.util.List;
  * @param topics    the split's proposed parts; empty unless proposed
  * @param parentId  the draft of the whole message this part came from
  * @param part      this part's number, from 1
+ * @param sourceRef someone's message in a group this draft was given in reply to (G-1b, G-1c); null otherwise
  */
 public record Draft(
         long id,
@@ -31,5 +32,6 @@ public record Draft(
         Long parentId,
         Integer part,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        String sourceRef) {
 }

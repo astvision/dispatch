@@ -20,9 +20,9 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Additions: more instructions someone writes in a linked group as a reply to the message a task came from. The requester
- * of each task that message gave, or of its draft not given yet, is offered the text privately with one button; nothing
- * changes until they tap it.
+ * Additions: more instructions someone writes in a linked group as a reply to the message a task came from, or to the one
+ * it was given in reply to. The requester of each such task, or of its draft not given yet, is offered the text privately
+ * with one button; nothing changes until they tap it.
  */
 public final class GroupAdditions {
 
@@ -66,8 +66,8 @@ public final class GroupAdditions {
 
     /**
      * Offers {@code text}, which {@code author} wrote in the group {@code chatRef} as {@code replyRef}, a reply to
-     * {@code repliedRef}, to the requester of each task still open and each open draft that message gave, except the
-     * author's own: they say more to their own plan or result privately. The group sees 👀 on the reply once an offer
+     * {@code repliedRef}, to the requester of each task still open and each open draft that message gave or was given in
+     * reply to, except the author's own: they say more to their own plan or result privately. The group sees 👀 on the reply once an offer
      * reached its requester, as it does for a task given there. Text only: files stay in the group. A text longer than
      * {@link #SHOWN_TEXT}, or none at all, comes without a button, so nothing is applied that was not read whole.
      *
@@ -78,20 +78,33 @@ public final class GroupAdditions {
      */
     public boolean offer(Tx tx, String repliedRef, String replyRef, String chatRef, String authorRef, String author, String text,
                          boolean withFiles) {
-        List<Offer> offers = offersFrom(tx, repliedRef).stream().filter(offer -> !offer.requester().ref().equals(authorRef)).toList();
+        List<Offer> offers = offersFrom(tx, repliedRef, Drafts.fromSource(tx, repliedRef)).stream()
+                .filter(offer -> !offer.requester().ref().equals(authorRef)).toList();
         send(tx, offers, author, text, withFiles, chatRef, replyRef);
         return !offers.isEmpty();
     }
 
-    /** Each task still open and each open draft that message {@code messageRef} gave. */
-    private static List<Offer> offersFrom(Tx tx, String messageRef) {
+    /**
+     * Each task still open and each open draft that message {@code messageRef} gave, and those of {@code sourced}: drafts
+     * someone gave by replying to it with a mention (G-1b, G-1c), still open or given as tasks.
+     */
+    private static List<Offer> offersFrom(Tx tx, String messageRef, List<Draft> sourced) {
         List<Offer> offers = new ArrayList<>();
-        for (Task task : Tasks.fromMessage(tx, messageRef)) {
+        List<Task> given = new ArrayList<>(Tasks.fromMessage(tx, messageRef));
+        List<Draft> open = new ArrayList<>(Drafts.openFromMessage(tx, messageRef));
+        for (Draft draft : sourced) {
+            if (draft.status() == DraftStatus.OPEN) {
+                open.add(draft);
+            } else {
+                given.add(Tasks.find(tx, draft.taskId()).orElseThrow());
+            }
+        }
+        for (Task task : given) {
             if (task.phase() != Phase.REJECTED && task.phase() != Phase.CANCELLED) {
                 offers.add(new Offer(task.originRef(), task.requester(), task.id(), task.title()));
             }
         }
-        for (Draft draft : Drafts.openFromMessage(tx, messageRef)) {
+        for (Draft draft : open) {
             offers.add(new Offer(draft.originRef(), new Requester(draft.requesterRef(), draft.requesterName()), null,
                     TaskService.title(draft.description())));
         }
@@ -148,7 +161,8 @@ public final class GroupAdditions {
                 return Outcome.NOT_YET;
             }
             if (draft.equals(Optional.of(DraftStatus.SPLIT))) {
-                send(tx, offersFrom(tx, addition.originRef()), addition.author(), addition.text(), false, null, null);
+                // Its own parts only: a draft given in reply to the same message was offered this addition already.
+                send(tx, offersFrom(tx, addition.originRef(), List.of()), addition.author(), addition.text(), false, null, null);
                 Additions.markUsed(tx, additionId, clock.instant());
                 return Outcome.SPLIT;
             }

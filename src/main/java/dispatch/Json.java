@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /** The one JSON mapper; strict so unexpected shapes fail loudly instead of turning into nulls. */
@@ -13,6 +14,8 @@ public final class Json {
     public static final ObjectMapper MAPPER = JsonMapper.builder()
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+            // Every Text as its words; an annotation on the interface is not reliably applied to its records.
+            .addModule(new SimpleModule().addSerializer(Text.class, new Text.Serializer()))
             .build();
 
     private Json() {
@@ -25,6 +28,15 @@ public final class Json {
     public static String write(Object value) {
         try {
             return MAPPER.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("cannot serialize " + value.getClass().getSimpleName(), e);
+        }
+    }
+
+    /** {@link #write(Object)} with every {@link Text} in {@code language}. */
+    public static String write(Object value, Language language) {
+        try {
+            return MAPPER.writer().withAttribute(Language.class, language).writeValueAsString(value);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("cannot serialize " + value.getClass().getSimpleName(), e);
         }

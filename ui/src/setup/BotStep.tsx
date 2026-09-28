@@ -1,9 +1,11 @@
 import { Alert, Button, Form, Input, Space, Typography } from "antd";
 import { useState } from "react";
 import { checkToken, type BotView, type SetupState } from "../api";
+import { useT } from "../i18n/i18n";
 import { useAction } from "../useAction";
 
 export default function BotStep({ state, next, back }: { state: SetupState; next: () => void; back: () => void }) {
+  const t = useT();
   const [token, setToken] = useState("");
   const [bot, setBot] = useState<BotView | null>(state.bot);
   const { busy, error, run } = useAction();
@@ -18,12 +20,12 @@ export default function BotStep({ state, next, back }: { state: SetupState; next
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      <Typography.Paragraph>Create a bot with @BotFather (/newbot) in Telegram, then paste its token.</Typography.Paragraph>
+      <Typography.Paragraph>{t("setup.botHow")}</Typography.Paragraph>
       <Form layout="vertical" onFinish={() => void check()}>
-        <Form.Item label="Bot token" htmlFor="bot-token">
+        <Form.Item label={t("setup.botToken")} htmlFor="bot-token">
           <Input.Password id="bot-token" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
         </Form.Item>
-        <Button htmlType="submit" loading={busy} disabled={!token.trim()}>Check</Button>
+        <Button htmlType="submit" loading={busy} disabled={!token.trim()}>{t("common.check")}</Button>
       </Form>
       {error && <Alert type="error" showIcon message={error.message} />}
       {bot && (
@@ -31,12 +33,12 @@ export default function BotStep({ state, next, back }: { state: SetupState; next
           type="success"
           showIcon
           message={`@${bot.username}`}
-          description={bot.topicsEnabled ? undefined : "Tip: turn on topics for the bot in @BotFather, and each task gets its own topic."}
+          description={bot.topicsEnabled ? undefined : t("setup.topicsTip")}
         />
       )}
       <Space>
-        <Button onClick={back}>Back</Button>
-        <Button type="primary" disabled={!bot} onClick={next}>Next</Button>
+        <Button onClick={back}>{t("common.back")}</Button>
+        <Button type="primary" disabled={!bot} onClick={next}>{t("common.next")}</Button>
       </Space>
     </Space>
   );

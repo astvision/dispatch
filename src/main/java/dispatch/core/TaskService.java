@@ -120,11 +120,13 @@ public final class TaskService {
     }
 
     /**
-     * The group a task was given in by mentioning the bot, and the first name it calls the giver by (G-1b).
+     * The group a task was given in, by mentioning the bot (G-1b) or its developer (G-1c), and the first name it calls the
+     * one it is for by.
      *
-     * @param chatRef the group chat, where the prompt's delivery is confirmed or, if refused, the giver is asked to press Start
+     * @param chatRef   the group chat, where the prompt's delivery is confirmed or, if refused, the giver is asked to press Start
+     * @param sourceRef someone's message there the task was given in reply to, whose replies are additions to it; null if none
      */
-    public record GroupOrigin(String chatRef, String firstName) {
+    public record GroupOrigin(String chatRef, String firstName, String sourceRef) {
     }
 
     /**
@@ -159,7 +161,8 @@ public final class TaskService {
         }
         String named = projectKey == null ? null : projects.find(projectKey).map(Config.Project::name).orElse(null);
         String project = preselected(offered, named);
-        long id = Drafts.insert(tx, new Drafts.NewDraft(who, chatRef, originRef, description, project, null, null), now);
+        long id = Drafts.insert(tx, new Drafts.NewDraft(who, chatRef, originRef, description, project, null, null,
+                group == null ? null : group.sourceRef()), now);
         Attachments.addToDraft(tx, id, attachments);
         ObjectNode payload = draftPayload(tx, id).orElseThrow();
         if (group == null) {
@@ -314,7 +317,7 @@ public final class TaskService {
             // Unique per part, while still naming the message its task replies under.
             String originRef = whole.originRef() + "#" + part;
             long id = Drafts.insert(tx, new Drafts.NewDraft(who, whole.chatRef(), originRef, whole.topics().get(part - 1), project,
-                    draftId, part), now);
+                    draftId, part, whole.sourceRef()), now);
             Attachments.copyToDraft(tx, draftId, id);
             enqueue(tx, null, OutboxKind.DRAFT_PROMPT, whole.chatRef(), inChat(whole.chatRef(), originRef),
                     draftPayload(tx, id).orElseThrow(), now);

@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Text;
 import dispatch.OwnerOnly;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -37,18 +38,18 @@ public final class SecretsFile {
             if (processEnvironment.containsKey("TELEGRAM_BOT_TOKEN")) {
                 return processEnvironment;
             }
-            throw new CliException("cannot read " + file + "; it must belong to the user who runs Dispatch");
+            throw new CliException(Text.of("secrets.cannotRead", file));
         }
         try {
             Optional<String> open = OwnerOnly.groupOrOthersAccess(file);
             if (open.isPresent()) {
-                throw new CliException(file + " holds secrets but other users can read it (" + open.get() + "); run: chmod 600 " + file);
+                throw new CliException(Text.of("secrets.holdsSecrets", file, open.get()));
             }
             Map<String, String> merged = new HashMap<>(read(file));
             merged.putAll(processEnvironment);
             return Map.copyOf(merged);
         } catch (IOException e) {
-            throw new CliException("cannot read " + file + ": " + e.getMessage());
+            throw new CliException(Text.of("secrets.cannot2", file, e.getMessage()));
         }
     }
 
@@ -63,7 +64,7 @@ public final class SecretsFile {
             }
             int equals = line.indexOf('=');
             if (equals <= 0) {
-                throw new CliException("line " + (i + 1) + " of " + file + " is not KEY=VALUE");
+                throw new CliException(Text.of("secrets.lineOf", (i + 1), file));
             }
             String value = unquote(line.substring(equals + 1).strip());
             if (!value.isEmpty()) {

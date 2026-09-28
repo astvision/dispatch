@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import dispatch.Json;
+import dispatch.Language;
+import dispatch.Text;
 import dispatch.cli.CliException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -85,6 +87,7 @@ public final class UiServer implements AutoCloseable {
             ".woff2", "font/woff2");
     private static final java.util.Set<String> COMPRESSIBLE = java.util.Set.of(".html", ".js", ".css", ".svg", ".json");
     private static final int MAX_BODY = 64 * 1024;
+    private static final Text INTERNAL = Text.of("refusal.internal");
 
     /** The bundled files never change while the server runs, so each is compressed once. */
     private final Map<String, byte[]> gzipped = new java.util.concurrent.ConcurrentHashMap<>();
@@ -164,9 +167,14 @@ public final class UiServer implements AutoCloseable {
                 // log only) and the person staring at a blank browser tab has nothing to go on.
                 System.err.println("dispatch ui: " + exchange.getRequestURI().getPath() + " failed");
                 e.printStackTrace();
-                json(exchange, 500, error("internal", "something went wrong; the terminal running dispatch ui shows what"));
+                json(exchange, 500, error("internal", INTERNAL.render(language(exchange))));
             }
         }
+    }
+
+    /** The language the page asked for: every message written for it is in that language. */
+    private static Language language(HttpExchange exchange) {
+        return Language.fromAcceptLanguage(exchange.getRequestHeaders().getFirst("Accept-Language"));
     }
 
     private void respond(HttpExchange exchange) throws IOException {
@@ -191,26 +199,27 @@ public final class UiServer implements AutoCloseable {
             }
             return;
         }
+        Language language = language(exchange);
         Caller caller;
         try {
             caller = auth.caller(exchange);
         } catch (ApiException e) {
-            json(exchange, e.status(), error(e.code(), e.getMessage()));
+            json(exchange, e.status(), error(e.code(), e.text().render(language)));
             return;
         }
         String method = exchange.getRequestMethod();
-        api(exchange, path, method.equals("GET") || method.equals("HEAD"), caller);
+        api(exchange, path, method.equals("GET") || method.equals("HEAD"), caller, language);
     }
 
-    private void api(HttpExchange exchange, String path, boolean reading, Caller caller) throws IOException {
+    private void api(HttpExchange exchange, String path, boolean reading, Caller caller, Language language) throws IOException {
         Function<Caller, Object> getRoute = getRoutes.get(path);
         BiFunction<Caller, JsonNode, Object> postRoute = postRoutes.get(path);
         if (getRoute == null && postRoute == null) {
-            json(exchange, 404, error("not_found", "no such API: " + path));
+            json(exchange, 404, error("not_found", Text.of("refusal.noApi", path).render(language)));
             return;
         }
         if (reading ? getRoute == null : postRoute == null) {
-            json(exchange, 405, error("method", path + " only answers " + (reading ? "POST" : "GET")));
+            json(exchange, 405, error("method", Text.of("refusal.method", path, reading ? "POST" : "GET").render(language)));
             return;
         }
         JsonNode body = null;
@@ -219,30 +228,30 @@ public final class UiServer implements AutoCloseable {
             if (raw.length > MAX_BODY) {
                 // Drain remaining bytes (up to 1 MiB total) to avoid JDK client reset after 413
                 exchange.getRequestBody().readNBytes(1024 * 1024 - raw.length);
-                json(exchange, 413, error("too_large", "the request is larger than " + MAX_BODY / 1024 + " KiB"));
+                json(exchange, 413, error("too_large", Text.of("refusal.tooLarge", MAX_BODY / 1024).render(language)));
                 return;
             }
             try {
                 body = raw.length == 0 ? Json.object() : Json.MAPPER.readTree(raw);
             } catch (JsonProcessingException e) {
-                json(exchange, 400, error("invalid", "the request is not JSON"));
+                json(exchange, 400, error("invalid", Text.of("refusal.notJson").render(language)));
                 return;
             }
         }
         String answer;
         try {
-            answer = Json.write(reading ? getRoute.apply(caller) : postRoute.apply(caller, body));
+            answer = Json.write(reading ? getRoute.apply(caller) : postRoute.apply(caller, body), language);
         } catch (ApiException e) {
-            json(exchange, e.status(), error(e.code(), e.getMessage()));
+            json(exchange, e.status(), error(e.code(), e.text().render(language)));
             return;
         } catch (CliException e) {
-            json(exchange, 400, error("invalid", e.getMessage()));
+            json(exchange, 400, error("invalid", e.text().render(language)));
             return;
         } catch (RuntimeException e) {
             // Covers both a route that throws and a result Jackson can't serialize (e.g. an empty bean).
             System.err.println("dispatch ui: " + path + " failed");
             e.printStackTrace();
-            json(exchange, 500, error("internal", "something went wrong; the terminal running dispatch ui shows what"));
+            json(exchange, 500, error("internal", INTERNAL.render(language)));
             return;
         }
         json(exchange, 200, answer);

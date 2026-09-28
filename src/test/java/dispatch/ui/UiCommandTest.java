@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -120,7 +121,7 @@ class UiCommandTest {
 
         @Override
         public Service.Status status() {
-            return new Service.Status(false, false, "not installed", List.of());
+            return new Service.Status(false, false, Text.raw("not installed"), List.of());
         }
 
         @Override

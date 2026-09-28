@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
 import dispatch.Json;
@@ -36,9 +37,9 @@ public final class TelegramAuth implements UiServer.Auth {
 
     /** Telegram's web clients show the page in a frame, so DENY would leave members looking at nothing. */
     static final String FRAME_ANCESTORS = "frame-ancestors https://web.telegram.org https://*.telegram.org";
-    static final String NOT_A_MEMBER = "you are not in a group of this Dispatch; ask an admin to add you";
-    static final String EXPIRED = "this Mini App has been open too long; close it and open it again";
-    static final String UNAUTHORIZED = "open this page from the bot in Telegram";
+    static final Text NOT_A_MEMBER = Text.of("refusal.notMemberAskAdmin");
+    static final Text EXPIRED = Text.of("refusal.expired");
+    static final Text UNAUTHORIZED = Text.of("refusal.unauthorized");
     /** Long enough for a member to read a page and act on it, short enough that stolen launch data goes stale. */
     private static final Duration FRESH_FOR = Duration.ofHours(1);
     /** A phone's clock can be a little ahead of the server's; much more than that is not a clock difference. */
@@ -97,7 +98,7 @@ public final class TelegramAuth implements UiServer.Auth {
      */
     UiServer.Caller verify(String authorization, String host) {
         if (!hostAllowed(host)) {
-            throw new ApiException(403, "host", "This is not the address this Dispatch answers on.");
+            throw new ApiException(403, "host", Text.of("refusal.wrongHost"));
         }
         String initData = launchData(authorization);
         List<String> pairs = split(initData);

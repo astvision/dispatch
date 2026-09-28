@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.cli.CliException;
 import dispatch.cli.Locations;
@@ -40,8 +41,7 @@ public final class SetupApi {
     static final Duration POLL = Duration.ofSeconds(25);
     static final Set<String> MODELS = Set.of("sonnet", "opus", "fable");
     static final Set<String> EFFORTS = Set.of("low", "medium", "high", "xhigh", "max");
-    private static final String PERSONAL_BOT_ONE_MEMBER =
-            "a personal bot has one member: you; go back and choose My team, or start setup again";
+    private static final Text PERSONAL_BOT_ONE_MEMBER = Text.of("setup.personalOneMember");
 
     public record Person(long id, String name) {
     }
@@ -201,14 +201,14 @@ public final class SetupApi {
         long id = requiredLong(body, "id");
         boolean accept = requiredBoolean(body, "accept");
         if (candidate == null || candidate.id() != id) {
-            throw new CliException("that person is no longer waiting; wait for the next one");
+            throw new CliException(Text.of("setup.thatPerson"));
         }
         if (accept && !team && !members.isEmpty()) {
             // A personal bot has one member; whoever else wrote to it is declined, not silently added, so the
             // page can move on to the next candidate instead of leaving this one stuck as pending.
             declined.add(candidate);
             candidate = null;
-            throw new CliException("a personal bot has one member: you");
+            throw new CliException(Text.of("setup.aPersonal"));
         }
         if (accept && members.isEmpty()) {
             // You are the one being confirmed now; anyone declined earlier moves to offerAgain so a team's bot
@@ -227,7 +227,7 @@ public final class SetupApi {
             Setup.Updates source;
             synchronized (this) {
                 if (!team) {
-                    throw new CliException("only a team's bot has a group");
+                    throw new CliException(Text.of("setup.onlyA"));
                 }
                 if (chat != null) {
                     return new GroupFound(new Group(chat.id(), chat.title()));
@@ -252,8 +252,7 @@ public final class SetupApi {
 
     private ClaudeVersion claude(JsonNode body) {
         String command = text(body, "command");
-        String version = Setup.claudeVersion(command).orElseThrow(() -> new CliException(
-                "cannot run " + command + " --version; install Claude Code, or give the full path to claude"));
+        String version = Setup.claudeVersion(command).orElseThrow(() -> new CliException(Text.of("setup.cannotRun", command)));
         return new ClaudeVersion(command, version);
     }
 
@@ -271,13 +270,13 @@ public final class SetupApi {
         synchronized (reading) {
             synchronized (this) {
                 if (Files.exists(configFile)) {
-                    throw new CliException(configFile + " already exists; nothing was written");
+                    throw new CliException(Text.of("setup.alreadyExists", configFile));
                 }
                 if (bot == null) {
-                    throw new CliException("check the bot token first");
+                    throw new CliException(Text.of("setup.checkThe"));
                 }
                 if (members.isEmpty()) {
-                    throw new CliException("confirm who you are first");
+                    throw new CliException(Text.of("setup.confirmWho"));
                 }
                 if (!team && members.size() > 1) {
                     // Defense in depth alongside team()'s own guard: a personal config must never silently carry
@@ -298,7 +297,7 @@ public final class SetupApi {
                 try {
                     yaml = Setup.render(answers, locations.stateDir());
                 } catch (ConfigException e) {
-                    throw new CliException(e.getMessage());
+                    throw new CliException(e.text());
                 }
                 Setup.write(configFile, yaml, bot.token());
                 try {
@@ -335,7 +334,7 @@ public final class SetupApi {
             ProjectProbe probe = probe(text(item, "folder"));
             String name = text(item, "name");
             if (!names.add(name.toLowerCase())) {
-                throw new CliException("two projects are named " + name);
+                throw new CliException(Text.of("setup.twoProjects", name));
             }
             String model = choice(item, "model", MODELS);
             String effort = choice(item, "effort", EFFORTS);
@@ -343,7 +342,7 @@ public final class SetupApi {
                     text(item, "baseBranch"), "claude-code", model, effort, phase(item.path("plan")), phase(item.path("execute"))));
         }
         if (projects.isEmpty()) {
-            throw new CliException("add at least one project");
+            throw new CliException(Text.of("setup.addAt"));
         }
         return projects;
     }
@@ -362,15 +361,14 @@ public final class SetupApi {
     private static Config.Workers workers(JsonNode body) {
         String publicUrl = optionalText(body, "publicUrl");
         if (publicUrl == null) {
-            throw new CliException("workers.publicUrl is needed: the https URL your teammates' computers reach this "
-                    + "machine on, through your tunnel or reverse proxy");
+            throw new CliException(Text.of("setup.workersPublicurl"));
         }
         if (!ConfigLoader.isWorkerUrl(publicUrl)) {
-            throw new CliException("workers.publicUrl must start with https:// (plain http only for 127.0.0.1)");
+            throw new CliException(Text.of("setup.workersPublicurlMust"));
         }
         JsonNode port = body.path("port");
         if (!port.isIntegralNumber() || port.asInt() < 1 || port.asInt() > 65535) {
-            throw new CliException("workers.port must be a whole number from 1 to 65535");
+            throw new CliException(Text.of("setup.workersPort"));
         }
         return new Config.Workers(publicUrl, port.asInt());
     }
@@ -393,7 +391,8 @@ public final class SetupApi {
             Config.RunLimits.parseDuration(value);
             return value;
         } catch (IllegalArgumentException e) {
-            throw new CliException(field + ": " + e.getMessage());
+            // parseDuration's own message is the terminal's English; a page needs it in its own language.
+            throw new CliException(Text.of("setup.durationMust", field, value));
         }
     }
 
@@ -403,7 +402,7 @@ public final class SetupApi {
             return null;
         }
         if (!value.isNumber() || value.decimalValue().signum() <= 0) {
-            throw new CliException(field + " must be a positive number of dollars, e.g. 2 or 12.5");
+            throw new CliException(Text.of("setup.mustBe", field));
         }
         return value.decimalValue();
     }
@@ -414,7 +413,7 @@ public final class SetupApi {
             return null;
         }
         if (!value.isIntegralNumber() || !value.canConvertToInt() || value.asInt() < 1) {
-            throw new CliException("maxConcurrentRuns must be a whole number, at least 1");
+            throw new CliException(Text.of("setup.maxconcurrentrunsMust"));
         }
         return value.asInt();
     }
@@ -423,7 +422,7 @@ public final class SetupApi {
         try {
             return ProjectProbe.of(Path.of(folder), git);
         } catch (InvalidPathException e) {
-            throw new CliException(folder + " is not a folder");
+            throw new CliException(Text.of("setup.isNot", folder));
         }
     }
 
@@ -431,7 +430,7 @@ public final class SetupApi {
         try {
             return source.next(wanted, poll);
         } catch (Setup.ConflictException e) {
-            throw new ApiException(409, "conflict", e.getMessage());
+            throw new ApiException(409, "conflict", e.text());
         }
     }
 
@@ -450,7 +449,7 @@ public final class SetupApi {
 
     private Setup.Updates requireUpdates() {
         if (updates == null) {
-            throw new CliException("check the bot token first");
+            throw new CliException(Text.of("setup.checkTheBot"));
         }
         return updates;
     }
@@ -462,7 +461,7 @@ public final class SetupApi {
     static String text(JsonNode body, String field) {
         JsonNode value = body.path(field);
         if (!value.isTextual() || value.asText().isBlank()) {
-            throw new CliException(field + " is needed");
+            throw new CliException(Text.of("setup.isNeeded", field));
         }
         return value.asText().strip();
     }
@@ -475,21 +474,21 @@ public final class SetupApi {
     static String choice(JsonNode body, String field, Set<String> allowed) {
         String value = optionalText(body, field);
         if (value != null && !allowed.contains(value)) {
-            throw new CliException(field + " must be one of " + allowed.stream().sorted().toList() + ", or left out");
+            throw new CliException(Text.of("setup.mustBeOne", field, allowed.stream().sorted().toList()));
         }
         return value;
     }
 
     static boolean requiredBoolean(JsonNode body, String field) {
         if (!body.path(field).isBoolean()) {
-            throw new CliException(field + " must be true or false");
+            throw new CliException(Text.of("setup.mustBeTrue", field));
         }
         return body.path(field).asBoolean();
     }
 
     static long requiredLong(JsonNode body, String field) {
         if (!body.path(field).isIntegralNumber()) {
-            throw new CliException(field + " must be a number");
+            throw new CliException(Text.of("setup.mustBeA", field));
         }
         return body.path(field).asLong();
     }

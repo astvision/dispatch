@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, getLogs, getOverview, restartService } from "./api";
+import { useT } from "./i18n/i18n";
 
 export type RestartPhase = "idle" | "restarting" | "done" | "failed";
 
@@ -9,6 +10,7 @@ export type RestartPhase = "idle" | "restarting" | "done" | "failed";
  * Unmounting stops the poll (its in-flight request too); a restart already running ignores a second call.
  */
 export function useRestart(intervalMs = 2000, timeoutMs = 60_000) {
+  const t = useT();
   const [phase, setPhase] = useState<RestartPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<string[]>([]);
@@ -59,11 +61,11 @@ export function useRestart(intervalMs = 2000, timeoutMs = 60_000) {
       // the message below still says what happened
     }
     if (!controller.signal.aborted) {
-      setError(`Dispatch is not running again after ${Math.round(timeoutMs / 1000)} seconds. The service log's last lines:`);
+      setError(t("restart.timedOut", { seconds: Math.round(timeoutMs / 1000) }));
       setPhase("failed");
     }
     running.current = false;
-  }, [intervalMs, timeoutMs]);
+  }, [intervalMs, timeoutMs, t]);
 
   return { phase, error, lines, restart };
 }

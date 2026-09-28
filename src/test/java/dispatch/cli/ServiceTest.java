@@ -47,7 +47,7 @@ class ServiceTest {
         assertTrue(unit.contains("Restart=on-failure") && unit.contains("KillMode=mixed") && unit.contains("WantedBy=default.target"), unit);
         assertEquals(List.of("systemctl --user daemon-reload", "systemctl --user enable --now dispatch.service"), commands.run.subList(0, 2));
         assertTrue(status.running());
-        assertTrue(status.notes().stream().anyMatch(note -> note.contains("loginctl enable-linger bold")), status.notes().toString());
+        assertTrue(status.notes().stream().anyMatch(note -> note.english().contains("loginctl enable-linger bold")), status.notes().toString());
 
         service.uninstall();
 

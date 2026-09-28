@@ -1,5 +1,6 @@
 package dispatch.config;
 
+import dispatch.Text;
 import dispatch.Log;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -105,7 +106,9 @@ public final class ConfigFile {
             try {
                 return ConfigLoader.load(draft, environment);
             } catch (ConfigException e) {
-                throw new ConfigException(e.getMessage().replace(draft.toString(), shownAs.toString()));
+                String drafted = draft.toString();
+                String shown = shownAs.toString();
+                throw new ConfigException(e.text().map(words -> words.replace(drafted, shown)));
             }
         } catch (IOException e) {
             throw new UncheckedIOException("cannot read " + shownAs + ": " + e.getMessage(), e);
@@ -129,7 +132,9 @@ public final class ConfigFile {
             try {
                 config = ConfigLoader.load(draft, environment);
             } catch (ConfigException e) {
-                throw new ConfigException(e.getMessage().replace(draft.toString(), file.toString()));
+                String drafted = draft.toString();
+                String shown = file.toString();
+                throw new ConfigException(e.text().map(words -> words.replace(drafted, shown)));
             }
             // A rename keeps the moved file's OWN permissions, not the replaced path's; without this, every save
             // would quietly reset the config from whatever it was chmod'd to back to createTempFile's own default.

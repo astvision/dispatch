@@ -64,6 +64,21 @@ class SetupTest {
     }
 
     @Test
+    void anInvalidSetupsReasonIsWrittenInThePagesLanguage() throws IOException {
+        GitFixture repos = GitFixture.create(dir, "alm");
+        Setup.Answers answers = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, null, "claude",
+                List.of(new ProjectAddCommand.Project("alm", null, repos.repo("alm"), null, "main", "claude-code", "opus", null)),
+                "Dispatch (Bold)", "bold@example.com");
+        String yaml = Setup.render(answers, dir.resolve("state")).replace("maxConcurrentRuns: 1", "maxConcurrentRuns: 0");
+
+        CliException e = assertThrows(CliException.class, () -> Setup.write(config, yaml, TOKEN));
+
+        String mongolian = e.text().render(dispatch.Language.MN);
+        assertTrue(mongolian.contains("scheduler.maxConcurrentRuns: заавал, хамгийн багадаа 1"), mongolian);
+        assertTrue(mongolian.contains(config.toString()), "names the config, not a temporary file: " + mongolian);
+    }
+
+    @Test
     void anInvalidSetupWritesNothingAtAll() throws IOException {
         CliException e = assertThrows(CliException.class, () -> Setup.write(config, "team: [\n", TOKEN));
 

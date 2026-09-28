@@ -1,6 +1,7 @@
 import { Alert, Button, Card } from "antd";
 import { useState } from "react";
 import { probeProject, type ProjectFields, type ProjectView } from "../api";
+import { useT } from "../i18n/i18n";
 import FolderBrowser from "../setup/FolderBrowser";
 import { useAction } from "../useAction";
 import ProjectForm from "./ProjectForm";
@@ -16,6 +17,7 @@ interface Props {
 
 /** Adding a project: pick its clone, then name it and set it up. Shared by the Projects page and the Mini App. */
 export default function AddProject({ groups, busy, onAdd, onCancel }: Props) {
+  const t = useT();
   const [probe, setProbe] = useState<ProjectView | null>(null);
   const probing = useAction();
 
@@ -26,7 +28,7 @@ export default function AddProject({ groups, busy, onAdd, onCancel }: Props) {
 
   if (!probe) {
     return (
-      <Card title="Choose a clone" extra={<Button onClick={onCancel}>Cancel</Button>}>
+      <Card title={t("projects.chooseClone")} extra={<Button onClick={onCancel}>{t("common.cancel")}</Button>}>
         <FolderBrowser onPick={(folder) => void pick(folder)} />
         {probing.error && <Alert type="error" showIcon message={probing.error.message} style={{ marginTop: 12 }} />}
       </Card>
@@ -35,10 +37,10 @@ export default function AddProject({ groups, busy, onAdd, onCancel }: Props) {
   return (
     <Card title={probe.folder}>
       {probe.originHadCredentials && <Alert type="warning" showIcon style={{ marginBottom: 12 }}
-                                            message="origin's URL holds credentials; it is not copied into the config" />}
+                                            message={t("projects.credentials")} />}
       <ProjectForm initial={{ name: probe.name, baseBranch: probe.baseBranch ?? "", alias: null, model: null, effort: null,
                               plan: null, execute: null }}
-                   nameEditable groups={groups} busy={busy} submitLabel="Add project"
+                   nameEditable groups={groups} busy={busy} submitLabel={t("projects.addProject")}
                    onCancel={() => { setProbe(null); onCancel(); }}
                    onSubmit={(fields, group) => void onAdd(probe.folder, group, fields)} />
     </Card>

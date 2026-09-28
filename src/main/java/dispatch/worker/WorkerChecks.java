@@ -1,5 +1,6 @@
 package dispatch.worker;
 
+import dispatch.Text;
 import dispatch.Redactor;
 import dispatch.cli.Checks;
 import dispatch.cli.CliException;
@@ -50,7 +51,7 @@ public final class WorkerChecks {
         Redactor redactor = Redactor.fromEnvironment(environment.values());
         Consumer<Checks.Finding> add = finding -> {
             Checks.Finding redacted = new Checks.Finding(finding.level(), finding.area(),
-                    redactor.redact(finding.message()));
+                    finding.message().map(redactor::redact));
             findings.add(redacted);
             onEach.accept(redacted);
         };
@@ -58,11 +59,11 @@ public final class WorkerChecks {
         try {
             config = WorkerConfigLoader.load(workerFile);
         } catch (ConfigException | CliException e) {
-            add.accept(new Checks.Finding(Checks.Level.FAIL, "worker", "worker: " + e.getMessage()));
+            add.accept(new Checks.Finding(Checks.Level.FAIL, "worker", Text.raw("worker: " + e.getMessage())));
             return findings;
         }
         add.accept(new Checks.Finding(Checks.Level.OK, "worker",
-                "worker: " + config.name() + ", team " + config.team() + " (" + workerFile + ")"));
+                Text.raw("worker: " + config.name() + ", team " + config.team() + " (" + workerFile + ")")));
         Optional<WorkerClient.Setup> team = checkPairing(workerFile, config, environment, add);
         checkClaude(config, add);
         checkGh(config, add);
@@ -92,31 +93,31 @@ public final class WorkerChecks {
                                                              Consumer<Checks.Finding> add) {
         Path envFile = SecretsFile.beside(workerFile);
         if (environment.error() != null) {
-            add.accept(new Checks.Finding(Checks.Level.FAIL, "pairing", "pairing: " + environment.error()));
+            add.accept(new Checks.Finding(Checks.Level.FAIL, "pairing", Text.raw("pairing: " + environment.error())));
             return Optional.empty();
         }
         String key = environment.values().get(WorkerCommand.KEY_VARIABLE);
         if (key == null) {
             add.accept(new Checks.Finding(Checks.Level.FAIL, "pairing",
-                    "pairing: no worker key in " + envFile + "; run: dispatch worker init"));
+                    Text.raw("pairing: no worker key in " + envFile + "; run: dispatch worker init")));
             return Optional.empty();
         }
         WorkerClient client = new WorkerClient(HttpClient.newBuilder().connectTimeout(PROBE_TIMEOUT).build(),
                 URI.create(config.team()), key);
         try {
             WorkerClient.Setup setup = client.setup();
-            add.accept(new Checks.Finding(Checks.Level.OK, "team", "team: " + config.team() + " answers"));
+            add.accept(new Checks.Finding(Checks.Level.OK, "team", Text.raw("team: " + config.team() + " answers")));
             add.accept(new Checks.Finding(Checks.Level.OK, "pairing",
-                    "pairing: paired with " + setup.team() + " as " + config.name()));
+                    Text.raw("pairing: paired with " + setup.team() + " as " + config.name())));
             return Optional.of(setup);
         } catch (WorkerClient.RevokedException e) {
-            add.accept(new Checks.Finding(Checks.Level.OK, "team", "team: " + config.team() + " answers"));
+            add.accept(new Checks.Finding(Checks.Level.OK, "team", Text.raw("team: " + config.team() + " answers")));
             add.accept(new Checks.Finding(Checks.Level.FAIL, "pairing",
-                    "pairing: this computer's key is not valid any more; pair again: dispatch worker init"));
+                    Text.raw("pairing: this computer's key is not valid any more; pair again: dispatch worker init")));
             return Optional.empty();
         } catch (RuntimeException e) {
             add.accept(new Checks.Finding(Checks.Level.FAIL, "team",
-                    "team: cannot reach " + config.team() + " (" + e.getMessage() + ")"));
+                    Text.raw("team: cannot reach " + config.team() + " (" + e.getMessage() + ")")));
             return Optional.empty();
         }
     }
@@ -124,16 +125,16 @@ public final class WorkerChecks {
     private static void checkClaude(WorkerConfig config, Consumer<Checks.Finding> add) {
         Optional<String> version = Setup.claudeVersion(config.claudeCommand());
         add.accept(version
-                .map(line -> new Checks.Finding(Checks.Level.OK, "claude", "claude: " + line))
-                .orElseGet(() -> new Checks.Finding(Checks.Level.FAIL, "claude", "claude: cannot run "
-                        + config.claudeCommand() + "; install Claude Code, or set claudeCommand to its full path")));
+                .map(line -> new Checks.Finding(Checks.Level.OK, "claude", Text.raw("claude: " + line)))
+                .orElseGet(() -> new Checks.Finding(Checks.Level.FAIL, "claude", Text.raw("claude: cannot run "
+                        + config.claudeCommand() + "; install Claude Code, or set claudeCommand to its full path"))));
     }
 
     private static void checkGh(WorkerConfig config, Consumer<Checks.Finding> add) {
         add.accept(ghAuthenticated(config)
-                ? new Checks.Finding(Checks.Level.OK, "gh", "gh: logged in")
-                : new Checks.Finding(Checks.Level.WARN, "gh", "gh: not logged in or not installed ("
-                        + config.ghCommand() + "); pull requests will fail until you run: gh auth login"));
+                ? new Checks.Finding(Checks.Level.OK, "gh", Text.raw("gh: logged in"))
+                : new Checks.Finding(Checks.Level.WARN, "gh", Text.raw("gh: not logged in or not installed ("
+                        + config.ghCommand() + "); pull requests will fail until you run: gh auth login")));
     }
 
     private static boolean ghAuthenticated(WorkerConfig config) {
@@ -156,34 +157,34 @@ public final class WorkerChecks {
             String area = "project " + project.name();
             WorkerConfig.Project mine = config.projects().get(project.name());
             if (mine == null) {
-                add.accept(new Checks.Finding(Checks.Level.FAIL, area, area
-                        + ": the team has this project, but this computer does not; run: dispatch worker init"));
+                add.accept(new Checks.Finding(Checks.Level.FAIL, area, Text.raw(area
+                        + ": the team has this project, but this computer does not; run: dispatch worker init")));
                 continue;
             }
             Path path = Path.of(mine.path());
             if (!cloneUsable(mine)) {
-                add.accept(new Checks.Finding(Checks.Level.FAIL, area, area + ": no git clone at " + path
-                        + "; run: dispatch worker init"));
+                add.accept(new Checks.Finding(Checks.Level.FAIL, area, Text.raw(area + ": no git clone at " + path
+                        + "; run: dispatch worker init")));
                 continue;
             }
             ProjectProbe probe;
             try {
                 probe = ProjectProbe.of(path, git);
             } catch (CliException e) {
-                add.accept(new Checks.Finding(Checks.Level.FAIL, area, area + ": " + e.getMessage()));
+                add.accept(new Checks.Finding(Checks.Level.FAIL, area, Text.raw(area + ": " + e.getMessage())));
                 continue;
             }
             if (project.repo() != null && !probe.originHadCredentials()
                     && !ProjectProbe.sameRepo(probe.originUrl(), project.repo())) {
-                add.accept(new Checks.Finding(Checks.Level.WARN, area, area + ": " + path + " has origin "
-                        + probe.originUrl() + ", but the team's project is " + project.repo()));
+                add.accept(new Checks.Finding(Checks.Level.WARN, area, Text.raw(area + ": " + path + " has origin "
+                        + probe.originUrl() + ", but the team's project is " + project.repo())));
                 continue;
             }
-            add.accept(new Checks.Finding(Checks.Level.OK, area, area + ": " + path));
+            add.accept(new Checks.Finding(Checks.Level.OK, area, Text.raw(area + ": " + path)));
         }
         config.projects().keySet().stream().filter(name -> !known.contains(name)).forEach(name ->
-                add.accept(new Checks.Finding(Checks.Level.WARN, "project " + name, "project " + name
-                        + ": this computer has it, but the team does not; remove it from worker.yaml")));
+                add.accept(new Checks.Finding(Checks.Level.WARN, "project " + name, Text.raw("project " + name
+                        + ": this computer has it, but the team does not; remove it from worker.yaml"))));
     }
 
     /** Whether {@code project}'s clone is here at all — the same first thing {@link #checkProjects} asks per project. */

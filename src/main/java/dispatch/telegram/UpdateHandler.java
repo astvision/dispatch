@@ -439,7 +439,7 @@ public final class UpdateHandler {
         String project = projectKey != null ? projectKey : onlyProject(owned);
         String firstName = firstName(message, who);
         DraftResult result = tasks.draft(tx, who, project, text, origin, attachments(repliedTo, message),
-                new TaskService.GroupOrigin(chatRef, firstName));
+                new TaskService.GroupOrigin(chatRef, firstName, repliedRef(message, repliedTo)));
         if (result == DraftResult.NO_PROJECTS) {
             noProjects(tx, chatRef, origin, List.of(firstName));
         }
@@ -498,7 +498,8 @@ public final class UpdateHandler {
             // One draft per developer: the group message alone would make the second a duplicate of the first.
             String draftOrigin = developers.size() > 1 ? origin + "#" + userId : origin;
             DraftResult result = tasks.draft(tx, new Requester(ref, name), onlyProject(owned),
-                    ref.equals(author.ref()) ? own : own + "\n\n" + askedBy, draftOrigin, files, new TaskService.GroupOrigin(chatRef, firstName));
+                    ref.equals(author.ref()) ? own : own + "\n\n" + askedBy, draftOrigin, files,
+                    new TaskService.GroupOrigin(chatRef, firstName, repliedRef(message, repliedTo)));
             if (result == DraftResult.NO_PROJECTS) {
                 withoutProjects.add(firstName);
             }
@@ -524,7 +525,7 @@ public final class UpdateHandler {
         if (!asker && !inProjectGroup(author.ref(), groups.projectsOfChat(chatRef))) {
             return;
         }
-        String repliedRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
+        String repliedRef = repliedRef(message, repliedTo);
         if (additions.offer(tx, repliedRef, origin, chatRef, author.ref(), firstName(message, author), text, withFiles)) {
             tx.afterCommit(() -> Log.info("group.addition", "replied_to", repliedRef, "author", author.ref()));
         }
@@ -554,10 +555,24 @@ public final class UpdateHandler {
         return owned.size() == 1 ? owned.iterator().next() : null;
     }
 
-    /** The message this one replies to, unless a bot's, such as the ✉️ line: nothing to give as a task. */
+    /**
+     * The human message {@code message} replies to, as a reference; null when it replies to none. A task given in reply
+     * records it as its source, and a later reply to it is matched by it, so both sides build it here.
+     */
+    private static String repliedRef(JsonNode message, JsonNode repliedTo) {
+        return repliedTo.has("message_id")
+                ? Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null)
+                : null;
+    }
+
+    /**
+     * The message this one replies to, unless a bot's, such as the ✉️ line, or a forum topic's creation, which Telegram puts
+     * under every message in the topic that replies to nothing: neither is anything to give as a task or to add to.
+     */
     private static JsonNode humanReplied(JsonNode message) {
         JsonNode repliedTo = message.path("reply_to_message");
-        return repliedTo.path("from").path("is_bot").asBoolean(false) ? Json.object() : repliedTo;
+        boolean none = repliedTo.path("from").path("is_bot").asBoolean(false) || repliedTo.has("forum_topic_created");
+        return none ? Json.object() : repliedTo;
     }
 
     /** What the group calls the author: their Telegram first name. */

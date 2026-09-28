@@ -26,12 +26,13 @@ test("a project is added from the folder browser, edited and removed", async ({ 
   await page.getByLabel("Branch tasks start from").fill("develop");
   await page.getByLabel("Alias").fill("lf");
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "lf", exact: true })).toBeVisible();
+  // The alias is a chip beside the project's name, in the name's own cell.
+  await expect(page.getByText("lf", { exact: true })).toBeVisible();
   expect(config()).toContain("    baseBranch: develop\n");
   expect(config()).toContain("    alias: lf\n");
 
   await page.getByRole("button", { name: "Remove life", exact: true }).click();
   await page.getByRole("button", { name: "Remove", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "life", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit life", exact: true })).toHaveCount(0);
   expect(config()).not.toContain("life");
 });
