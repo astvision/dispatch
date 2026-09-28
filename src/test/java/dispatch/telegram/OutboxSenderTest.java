@@ -20,6 +20,7 @@ import java.net.http.HttpClient;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
@@ -118,6 +119,42 @@ class OutboxSenderTest {
         sender.deliverDue();
 
         assertEquals("SENT", row(id).get("status"));
+    }
+
+    @Test
+    void aRedrawWaitsForTheMessageItRedrawsAndThenEditsIt() throws Exception {
+        // An answer given before its question reached the chat (ADR 0031), whose first send then fails.
+        telegram.respond("sendMessage", 500, SERVER_ERROR);
+        long question = enqueueQuestion();
+        long redraw = enqueueRedrawOf(question);
+
+        sender.deliverDue();
+        sender.deliverDue();
+
+        assertEquals("PENDING", row(redraw).get("status"), "waits for its question");
+        assertEquals("0", row(redraw).get("attempts"), "waiting is no attempt");
+        clock.advance(Duration.ofSeconds(5));
+        sender.deliverDue();
+        sender.deliverDue();
+
+        assertEquals(List.of("sendMessage", "sendMessage", "editMessageText"), telegram.calls(),
+                "the failed send, the question once, then its redraw: never a second question");
+        assertEquals(1000, telegram.awaitRequest("editMessageText", Duration.ofSeconds(1)).json().get("message_id").asLong(),
+                "the message the question was sent as");
+        assertEquals("SENT", row(question).get("status"));
+        assertEquals("SENT", row(redraw).get("status"));
+    }
+
+    @Test
+    void aRedrawOfAMessageThatWasNeverSentIsDropped() {
+        long question = enqueueQuestion();
+        long redraw = enqueueRedrawOf(question);
+        db.transaction(tx -> Outbox.markFailed(tx, question, 1, "Forbidden: bot was blocked by the user"));
+
+        assertTrue(sender.deliverDue());
+
+        assertEquals("FAILED", row(redraw).get("status"));
+        assertTrue(telegram.calls().isEmpty(), "nothing to redraw: " + telegram.calls());
     }
 
     @Test
@@ -421,6 +458,23 @@ class OutboxSenderTest {
     private long enqueueEdit(ObjectNode draftPayload) {
         return db.transactionReturning(tx -> Outbox.enqueueEdit(tx, null, OutboxKind.DRAFT_PROMPT, "telegram:100", "telegram:100/77",
                 draftPayload, clock.instant()));
+    }
+
+    private long enqueueQuestion() {
+        return db.transactionReturning(tx -> Outbox.enqueue(tx, null, OutboxKind.PLAN_QUESTION, "telegram:100", null, questionPayload(),
+                clock.instant()));
+    }
+
+    private long enqueueRedrawOf(long question) {
+        return db.transactionReturning(tx -> Outbox.enqueueEditOf(tx, null, OutboxKind.PLAN_QUESTION, "telegram:100", question,
+                questionPayload().put("answer", "prod"), clock.instant()));
+    }
+
+    private static ObjectNode questionPayload() {
+        ObjectNode payload = Json.object().put("taskId", 42).put("planSeq", 1).put("index", 1).put("total", 2)
+                .put("text", "Which environments?");
+        payload.putArray("options").add("staging").add("prod");
+        return payload;
     }
 
     private long enqueuePrivate(OutboxKind kind, ObjectNode payload) {

@@ -41,6 +41,8 @@ public final class OutboxSender implements Runnable {
             Priority.LOW, 0x8EEE98);
     private static final Duration FIRST_BACKOFF = Duration.ofSeconds(5);
     private static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
+    /** How long a redraw waits before it looks again for the message it redraws. */
+    private static final Duration WAIT_FOR_ORIGINAL = Duration.ofSeconds(5);
 
     private final Database db;
     private final BotApi api;
@@ -116,8 +118,12 @@ public final class OutboxSender implements Runnable {
             db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, "render failed: " + e.getMessage()));
             return;
         }
+        if (message.editOf() != null) {
+            redrawRow(message, attempts, rendered);
+            return;
+        }
         if (message.editRef() != null) {
-            edit(message, attempts, rendered);
+            edit(message, attempts, rendered, message.editRef());
             return;
         }
         long chatId = Refs.chatId(message.chatRef());
@@ -168,9 +174,9 @@ public final class OutboxSender implements Runnable {
     }
 
     /** Redraws a message sent earlier. No sent reference is recorded: replies are still found through the original's row. */
-    private void edit(Outbox.Message message, int attempts, Renderer.Rendered rendered) {
+    private void edit(Outbox.Message message, int attempts, Renderer.Rendered rendered, String editRef) {
         try {
-            api.editMessageText(Refs.chatId(message.chatRef()), Refs.messageId(message.editRef()), rendered.html(), rendered.keyboard());
+            api.editMessageText(Refs.chatId(message.chatRef()), Refs.messageId(editRef), rendered.html(), rendered.keyboard());
         } catch (TelegramException e) {
             if (!e.getMessage().contains("message is not modified")) {
                 handleFailure(message, attempts, e);
@@ -180,6 +186,23 @@ public final class OutboxSender implements Runnable {
         }
         db.transaction(tx -> Outbox.markSent(tx, message.id(), attempts, null, clock.instant()));
         Log.info("outbox.edited", "id", message.id(), "kind", message.kind(), "attempt", attempts);
+    }
+
+    /**
+     * A redraw of a message that may not be sent yet (ADR 0031): it edits it once it is, waits while it is on its way, and
+     * is dropped if it never will be, since there is nothing to redraw.
+     */
+    private void redrawRow(Outbox.Message message, int attempts, Renderer.Rendered rendered) {
+        Outbox.Original original = db.transactionReturning(tx -> Outbox.original(tx, message.editOf())).orElseThrow();
+        switch (original.status()) {
+            case "SENT" -> edit(message, attempts, rendered, original.sentRef());
+            case "PENDING" -> db.transaction(tx -> Outbox.retryLater(tx, message.id(), message.attempts(),
+                    clock.instant().plus(WAIT_FOR_ORIGINAL), "waiting for the message it redraws"));
+            default -> {
+                db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, "the message it redraws was never sent"));
+                Log.warn("outbox.redraw_dropped", "id", message.id(), "kind", message.kind(), "original", message.editOf());
+            }
+        }
     }
 
     /** Opens the task's topic; its color shows the priority. A topic that cannot be made leaves the task in General. */

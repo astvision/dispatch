@@ -101,7 +101,7 @@ public final class TaskService {
         this.projects = projects;
         this.activeRuns = activeRuns;
         this.access = new TaskAccess(groups);
-        this.commands = new TaskCommands(groups, activeRuns, clock, wakeScheduler, wakeOutbox);
+        this.commands = new TaskCommands(groups, projects, activeRuns, clock, wakeScheduler, wakeOutbox, taskTopics, requiresWorker);
         this.clock = clock;
         this.wakeScheduler = wakeScheduler;
         this.wakeOutbox = wakeOutbox;
@@ -217,7 +217,7 @@ public final class TaskService {
         if (project.isEmpty()) {
             return DraftChoice.PROJECT_UNAVAILABLE;
         }
-        long taskId = insertTask(tx, who, project.get(), draft.description(), priority, draft.originRef(), now);
+        long taskId = commands.insertTask(tx, who, project.get(), draft.description(), priority, draft.originRef(), now);
         Drafts.created(tx, draftId, taskId, now);
         Attachments.giveToTask(tx, draftId, taskId);
         return DraftChoice.CREATED;
@@ -427,7 +427,7 @@ public final class TaskService {
             enqueue(tx, null, OutboxKind.TASK_USAGE, chatRef, originRef, Json.object(), now);
             return CreateResult.EMPTY;
         }
-        insertTask(tx, who, project, text.strip(), priority, originRef, now);
+        commands.insertTask(tx, who, project, text.strip(), priority, originRef, now);
         return CreateResult.CREATED;
     }
 
@@ -456,7 +456,7 @@ public final class TaskService {
             return new Given(CreateResult.PROJECT_UNAVAILABLE, 0, unavailable.get());
         }
         Instant now = clock.instant();
-        long id = insertTask(tx, who, project.get(), text.strip(), priority, DESK_ORIGIN + UUID.randomUUID(), now);
+        long id = commands.insertTask(tx, who, project.get(), text.strip(), priority, DESK_ORIGIN + UUID.randomUUID(), now);
         Task task = Tasks.find(tx, id).orElseThrow();
         Outbox.enqueueForRequester(tx, task, OutboxKind.TASK_GIVEN_ON_DESK, Json.object().put("taskId", id)
                 .put("project", task.project()).put("priority", priority.name()).put("title", task.title()), now);
@@ -468,32 +468,6 @@ public final class TaskService {
     private Optional<Config.Project> memberProject(Requester who, String projectKey) {
         Set<String> mine = groups.projectsOfMember(who.ref());
         return projects.find(projectKey).filter(project -> mine.contains(project.name()));
-    }
-
-    private long insertTask(Tx tx, Requester who, Config.Project project, String description, Priority priority, String originRef,
-                            Instant now) {
-        Optional<String> groupChat = groups.chatOfTask(project.name(), originRef);
-        // Without a group chat the task belongs to the requester's private chat, where nothing needs announcing (ADR 0014).
-        long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), title(description), description, who, originRef, groupChat.orElse(who.ref()),
-                UUID.randomUUID(), project.baseBranch(), priority), Phase.PLANNING, now);
-        Runs.insert(tx, new Runs.NewRun(id, 1, RunKind.PLAN, RunCause.TASK, description, who), now);
-        Events.record(tx, id, null, who.ref(), null, Phase.PLANNING, "created", now);
-        if (taskTopics) {
-            enqueue(tx, id, OutboxKind.TOPIC_CREATE, who.ref(), null, Json.object().put("taskId", id), now);
-        }
-        if (groupChat.isPresent()) {
-            enqueue(tx, id, OutboxKind.TASK_QUEUED, groupChat.get(), null, Json.object().put("taskId", id).put("project", project.name())
-                    .put("requester", who.name()).put("priority", priority.name()).put("title", title(description)), now);
-        }
-        if (requiresWorker && !Workers.hasConnected(tx, who.ref(), now.minus(Workers.SEEN_WITHIN))) {
-            // Said once, when the task is given; /status keeps showing it until a computer connects.
-            enqueue(tx, id, OutboxKind.WORKER_WAITING, who.ref(), null, Json.object().put("taskId", id), now);
-        }
-        GroupAcks.react(tx, Tasks.find(tx, id).orElseThrow(), GroupReaction.TASK_CREATED, now);
-        tx.afterCommit(wakeScheduler);
-        tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "priority", priority,
-                "requester", who.ref()));
-        return id;
     }
 
     /** A draft can be answered only by its writer, and only while it is open. */
@@ -636,18 +610,18 @@ public final class TaskService {
             return AnswerResult.ALREADY_ANSWERED;
         }
         Outbox.enqueueEdit(tx, taskId, OutboxKind.PLAN_QUESTION, task.requester().ref(), questionRef,
-                questionPayload(taskId, planSeq, questions, index).put("answer", text), now);
+                TaskCommands.questionPayload(taskId, planSeq, questions, index).put("answer", text), now);
         tx.afterCommit(wakeOutbox);
         tx.afterCommit(() -> Log.info("task.question_answered", "task", taskId, "plan", planSeq, "question", index,
                 "requester", who.ref()));
         Map<Integer, String> answers = PlanAnswers.of(tx, taskId, planSeq);
         for (int next = 1; next <= questions.size(); next++) {
             if (!answers.containsKey(next)) {
-                enqueueQuestion(tx, task, planSeq, questions, next, now);
+                TaskCommands.enqueueQuestion(tx, task, planSeq, questions, next, now);
                 return AnswerResult.ANSWERED;
             }
         }
-        correct(tx, who, taskId, planSeq, answersText(questions, answers), originRef, chatRef);
+        correct(tx, who, taskId, planSeq, TaskCommands.answersText(questions, answers), originRef, chatRef);
         return AnswerResult.ANSWERED;
     }
 
@@ -686,23 +660,6 @@ public final class TaskService {
         return AnswerResult.PROMPTED;
     }
 
-    /**
-     * Sends question {@code index} of a plan to its requester's private chat only: its buttons are theirs alone, so it has
-     * no fallback to the group (G-1d).
-     */
-    static void enqueueQuestion(Tx tx, Task task, int planSeq, List<PlanQuestion> questions, int index, Instant now) {
-        Outbox.enqueue(tx, task.id(), OutboxKind.PLAN_QUESTION, task.requester().ref(), null,
-                questionPayload(task.id(), planSeq, questions, index), now);
-    }
-
-    private static ObjectNode questionPayload(long taskId, int planSeq, List<PlanQuestion> questions, int index) {
-        PlanQuestion question = questions.get(index - 1);
-        ObjectNode payload = Json.object().put("taskId", taskId).put("planSeq", planSeq).put("index", index)
-                .put("total", questions.size()).put("text", question.text());
-        question.options().forEach(payload.putArray("options")::add);
-        return payload;
-    }
-
     /** Why question {@code index} of plan {@code planSeq} cannot be answered now, in the answer's terms; empty when it can. */
     private static Optional<AnswerResult> answerRefusal(TaskAccess.Verdict verdict, int planSeq, int index) {
         return verdict.answerRefusal(planSeq, index).map(refusal -> switch (refusal) {
@@ -713,15 +670,6 @@ public final class TaskService {
             case OUT_OF_ORDER -> AnswerResult.OUT_OF_ORDER;
             default -> AnswerResult.STALE;
         });
-    }
-
-    /** The correction that carries every answer, in the requester's language like the buttons they pressed. */
-    private static String answersText(List<PlanQuestion> questions, Map<Integer, String> answers) {
-        StringBuilder text = new StringBuilder("Асуултын хариулт:");
-        for (int index = 1; index <= questions.size(); index++) {
-            text.append('\n').append(index).append(". ").append(questions.get(index - 1).text()).append(" → ").append(answers.get(index));
-        }
-        return text.toString();
     }
 
     public Optional<Task> taskOfTopic(Tx tx, String requesterRef, String topicRef) {
