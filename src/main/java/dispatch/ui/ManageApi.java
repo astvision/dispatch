@@ -61,6 +61,8 @@ public final class ManageApi {
     private static final Set<String> LEVELS = Set.of("INFO", "WARN", "ERROR");
     private static final Pattern LEVEL = Pattern.compile("(?:^| )level=(\\S+)");
     private static final Pattern EVENT = Pattern.compile("(?:^| )event=(\\S+)");
+    /** A task's number as its own field: task=12, never task=120. */
+    private static final Pattern TASK = Pattern.compile("(?:^| )task=(\\d+)(?= |$)");
     /** Claude Code accepts both short names (opus) and full model ids (claude-opus-5); only the shape is checked here. */
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._-]{1,100}");
     /** The agents a project can run on (ADR 0026). */
@@ -415,6 +417,17 @@ public final class ManageApi {
             throw new CliException(Text.of("manage.levelMust"));
         }
         String event = SetupApi.optionalText(body, "event");
+        JsonNode taskField = body.path("task");
+        String task = null;
+        if (!taskField.isMissingNode() && !taskField.isNull()) {
+            if (!taskField.isIntegralNumber() || taskField.asLong() < 1) {
+                throw new CliException(Text.of("manage.logsTask"));
+            }
+            task = Long.toString(taskField.asLong());
+        }
+        String text = SetupApi.optionalText(body, "text");
+        String wantedText = text == null ? null : text.toLowerCase(java.util.Locale.ROOT);
+        String wantedTask = task;
         RunCommand.Prepared prepared = prepare();
         Path file = prepared.config().stateDir().resolve("dispatch.log");
         if (!Files.exists(file)) {
@@ -426,7 +439,9 @@ public final class ManageApi {
         String redacted = redactor.redact(rawTail);
         List<String> allLines = redacted.lines().toList();
         List<String> matching = allLines.stream()
-                .filter(line -> matches(line, LEVEL, level, true) && matches(line, EVENT, event, false))
+                .filter(line -> matches(line, LEVEL, level, true) && matches(line, EVENT, event, false)
+                        && matches(line, TASK, wantedTask, true)
+                        && (wantedText == null || line.toLowerCase(java.util.Locale.ROOT).contains(wantedText)))
                 .toList();
         List<String> result = matching.subList(Math.max(0, matching.size() - lines), matching.size());
         return new Logs(file.toString(), true, result);

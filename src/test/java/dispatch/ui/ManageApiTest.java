@@ -511,6 +511,36 @@ class ManageApiTest {
     }
 
     @Test
+    void theLogIsFilteredByTaskAndByAnyText() throws Exception {
+        Path log = dir.resolve("state/dispatch.log");
+        Files.createDirectories(log.getParent());
+        Files.writeString(log, """
+                ts=2026-09-22T10:00:00.000Z level=INFO event=run.finished task=12 run=1
+                ts=2026-09-22T10:00:01.000Z level=INFO event=run.finished task=120 run=1
+                ts=2026-09-22T10:00:02.000Z level=ERROR event=outbox.failed error="Bad Request: message is not modified"
+                ts=2026-09-22T10:00:03.000Z level=INFO event=task.created task=12
+                """);
+
+        JsonNode twelve = call("/api/manage/logs", "{\"task\":12}");
+        JsonNode badRequest = call("/api/manage/logs", "{\"text\":\"bad request\"}");
+        JsonNode both = call("/api/manage/logs", "{\"task\":12,\"text\":\"run.\"}");
+
+        assertEquals(List.of("ts=2026-09-22T10:00:00.000Z level=INFO event=run.finished task=12 run=1",
+                "ts=2026-09-22T10:00:03.000Z level=INFO event=task.created task=12"), lines(twelve), "task=120 is another task");
+        assertEquals(List.of("ts=2026-09-22T10:00:02.000Z level=ERROR event=outbox.failed error=\"Bad Request: message is not modified\""),
+                lines(badRequest), "any text, ignoring case");
+        assertEquals(List.of("ts=2026-09-22T10:00:00.000Z level=INFO event=run.finished task=12 run=1"), lines(both));
+        CliException refused = assertThrows(CliException.class, () -> call("/api/manage/logs", "{\"task\":0}"));
+        assertTrue(refused.getMessage().contains("task must be a whole number from 1"), refused.getMessage());
+    }
+
+    private static List<String> lines(JsonNode logs) {
+        List<String> lines = new java.util.ArrayList<>();
+        logs.path("lines").forEach(line -> lines.add(line.asText()));
+        return lines;
+    }
+
+    @Test
     void beforeTheServiceWritesItsLogThereIsNone() throws Exception {
         JsonNode logs = call("/api/manage/logs", "{}");
 
