@@ -101,8 +101,10 @@ class OverviewApiTest {
     }
 
     private OverviewApi api(Service service, Map<String, String> processEnvironment) {
-        return new OverviewApi(config, new Locations(config, dir.resolve("state/dispatch")),
-                new Checks(token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5))),
+        // The same isolated Locations for both, so the instances check never reads this machine's real config directory.
+        Locations locations = new Locations(config, dir.resolve("state/dispatch"));
+        return new OverviewApi(config, locations,
+                new Checks(token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)), locations),
                 service, processEnvironment, "0.1.0-test");
     }
 

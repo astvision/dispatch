@@ -16,10 +16,13 @@ import dispatch.testing.FakeTelegram;
 import dispatch.testing.GitFixture;
 import dispatch.testing.ScriptedTerminal;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,6 +35,7 @@ class InitCommandTest {
 
     // Split, so secret scanners never see a token-shaped literal in this file.
     private static final String TOKEN = "123456789" + ":AAH-fake-token-for-tests-only-0123456789";
+    private static final String SECOND_TOKEN = "222222222" + ":AAH-second-fake-token-for-tests-0123456789";
     private static final String JAVA = ProcessHandle.current().info().command().orElseThrow();
 
     @TempDir
@@ -218,12 +222,162 @@ class InitCommandTest {
     void existingConfigIsKeptUnlessForced() throws IOException {
         Files.createDirectories(config.getParent());
         Files.writeString(config, "team: mine\n");
-        ScriptedTerminal terminal = new ScriptedTerminal();
+        // A default instance is already here (M): declining its offer of another bot keeps the old refusal.
+        ScriptedTerminal terminal = new ScriptedTerminal("n");
 
         assertEquals(1, init(terminal, false));
 
         assertEquals("team: mine\n", Files.readString(config));
         assertTrue(terminal.output().contains("already exists") && terminal.output().contains("--force"), terminal.output());
+    }
+
+    @Test
+    void withADefaultBotAlreadyHereItOffersAnotherAndWritesItBesideIt() throws IOException {
+        TestConfigs.write(config, TOKEN, "alm");
+        telegram.pushUpdate(start(1, 200, "Ada"));
+        ScriptedTerminal terminal = new ScriptedTerminal(concat(List.of("y", "team"), answersForAPersonalBot(SECOND_TOKEN)));
+
+        int exit = initForAnotherInstance(terminal).run(new Cli.Init(config, false), Map.of("PATH", ""));
+
+        assertEquals(0, exit, terminal.output());
+        Locations team = locations.forInstance("team");
+        String yaml = Files.readString(team.configFile());
+        assertTrue(yaml.contains("branchPrefix: dispatch/team"), yaml);
+        assertTrue(yaml.contains(team.stateDir().toString()), yaml);
+        assertTrue(Files.exists(SecretsFile.beside(team.configFile())));
+        assertTrue(terminal.output().contains("You already have"), terminal.output());
+    }
+
+    @Test
+    void sayingNoToAnotherBotWritesNothing() throws IOException {
+        TestConfigs.write(config, TOKEN, "alm");
+        ScriptedTerminal terminal = new ScriptedTerminal("n");
+
+        int exit = initForAnotherInstance(terminal).run(new Cli.Init(config, false), Map.of("PATH", ""));
+
+        assertEquals(1, exit);
+        assertFalse(Files.exists(locations.forInstance("team").configFile()));
+        assertTrue(terminal.output().contains("dispatch init --force"), terminal.output());
+    }
+
+    @Test
+    void aBotAnotherInstanceRunsIsRefused() throws IOException {
+        TestConfigs.write(config, TOKEN, "alm");
+        telegram.pushUpdate(start(1, 250, "Cy"));
+        ScriptedTerminal terminal = new ScriptedTerminal(concat(List.of("y", "team"), answersForAPersonalBot(TOKEN)));
+
+        initForAnotherInstance(terminal).run(new Cli.Init(config, false), Map.of("PATH", ""));
+
+        assertTrue(terminal.output().contains("already runs as instance default"), terminal.output());
+    }
+
+    @Test
+    void anExplicitInstanceNeverAsksToAddAnotherBot() throws IOException {
+        TestConfigs.write(config, TOKEN, "alm");
+        telegram.pushUpdate(start(1, 300, "Cam"));
+        Locations team = locations.forInstance("team");
+        ScriptedTerminal terminal = new ScriptedTerminal(answersForAPersonalBot(SECOND_TOKEN).toArray(String[]::new));
+
+        int exit = initForAnotherInstance(terminal).run(new Cli.Init(team.configFile(), false, false, "team"), Map.of("PATH", ""));
+
+        assertEquals(0, exit, terminal.output());
+        assertFalse(terminal.output().contains("Add another bot here?"), terminal.output());
+        assertTrue(Files.readString(team.configFile()).contains("branchPrefix: dispatch/team"));
+    }
+
+    @Test
+    void reinitializingWithForceDoesNotRefuseItsOwnToken() throws IOException {
+        TestConfigs.write(config, TOKEN, "alm");
+        telegram.pushUpdate(start(1, 500, "Eve"));
+        ScriptedTerminal terminal = new ScriptedTerminal(
+                "", TOKEN, "y", JAVA, repos.repo("alm").toString(), "", "", "Opus", "High", "", "", "eve@example.com", "", "n");
+
+        int exit = init(terminal, true);
+
+        assertEquals(0, exit, terminal.output());
+        assertFalse(terminal.output().contains("already runs as instance"), terminal.output());
+    }
+
+    @Test
+    void suggestedPortSkipsPortsOtherInstancesUse() throws IOException {
+        TestConfigs.write(config, TOKEN, "alm");
+        Files.writeString(config, "\nworkers:\n  publicUrl: 'https://example.com'\n  port: 7880\n", StandardOpenOption.APPEND);
+        telegram.pushUpdate(start(1, 600, "Fay"));
+        telegram.pushUpdate(botAddedTo(2, -1009990000L, "Team chat"));
+        ScriptedTerminal terminal = new ScriptedTerminal(concat(List.of("y", "team"), List.of(
+                "My team", SECOND_TOKEN,
+                "y",                                 // is Fay you? yes
+                "n",                                 // wait for a teammate? no
+                "y",                                 // a team group for announcements: yes
+                "",                                  // team name: from the group's title
+                "https://team.example.com",          // workers: public URL
+                "",                                  // workers: port, accept the suggested default
+                JAVA, repos.repo("alm").toString(), "", "", "", "", "",
+                "", "team@example.com", "", "n")));
+
+        int exit = initForAnotherInstance(terminal).run(new Cli.Init(config, false), Map.of("PATH", ""));
+
+        assertEquals(0, exit, terminal.output());
+        assertTrue(terminal.output().contains("[7881]"), terminal.output());
+        String yaml = Files.readString(locations.forInstance("team").configFile());
+        assertTrue(yaml.contains("port: 7881"), yaml);
+    }
+
+    @Test
+    void reinitializingANamedInstanceWithForceSuggestsItsOwnPort() throws IOException {
+        Locations team = locations.forInstance("team");
+        TestConfigs.write(team.configFile(), SECOND_TOKEN, "alm");
+        Files.writeString(team.configFile(), "\nworkers:\n  publicUrl: 'https://team.example.com'\n  port: 7880\n",
+                StandardOpenOption.APPEND);
+        telegram.pushUpdate(start(1, 700, "Gus"));
+        telegram.pushUpdate(botAddedTo(2, -1008880000L, "Team chat"));
+        ScriptedTerminal terminal = new ScriptedTerminal(
+                "My team", SECOND_TOKEN,
+                "y",                                 // is Gus you? yes
+                "n",                                 // wait for a teammate? no
+                "y",                                 // a team group for announcements: yes
+                "",                                  // team name: from the group's title
+                "https://team.example.com",          // workers: public URL
+                "",                                  // workers: port, accept the suggested default: its own, not 7881
+                JAVA, repos.repo("alm").toString(), "", "", "", "", "",
+                "", "team@example.com", "", "n");
+
+        int exit = initForAnotherInstance(terminal).run(new Cli.Init(team.configFile(), true, false, "team"), Map.of("PATH", ""));
+
+        assertEquals(0, exit, terminal.output());
+        assertTrue(terminal.output().contains("[7880]"), terminal.output());
+        assertTrue(Files.readString(team.configFile()).contains("port: 7880"), Files.readString(team.configFile()));
+    }
+
+    private List<String> answersForAPersonalBot(String token) {
+        return List.of(
+                "",                                 // who uses the bot: just me
+                token,                               // bot token
+                "y",                                 // is <person> you? yes
+                JAVA,                                // the claude command
+                repos.repo("alm").toString(),        // a project
+                "", "", "Opus", "High",              // name, base branch, model, effort
+                "",                                  // add another project? no
+                "", "person@example.com",            // commit author name and email
+                "",                                  // write this setup? yes
+                "n");                                // keep it running in the background? no
+    }
+
+    private static String[] concat(List<String> first, List<String> second) {
+        List<String> all = new ArrayList<>(first);
+        all.addAll(second);
+        return all.toArray(String[]::new);
+    }
+
+    private InitCommand initForAnotherInstance(ScriptedTerminal terminal) {
+        Path jar;
+        try {
+            jar = Files.writeString(dir.resolve("dispatch.jar"), "stand-in");
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return new InitCommand(terminal, token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)),
+                locations, waitForPeople, instance -> new ServiceCommand(terminal, service, jar, instance));
     }
 
     private final RecordingService service = new RecordingService();

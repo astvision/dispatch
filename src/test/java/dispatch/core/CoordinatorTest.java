@@ -96,6 +96,22 @@ class CoordinatorTest {
     }
 
     @Test
+    void theJobCarriesTheInstancesBranchPrefixExceptForTheDefaultOne() {
+        long id = queue("Fix the login timeout");
+
+        coordinator(projects(List.of(ALM)), remember(JobResult.succeeded(agentResult(PLAN_JSON))), "dispatch/team").execute(claim());
+        assertEquals("dispatch/team/" + id, given.get().branch(), "a named instance's own prefix travels with the job");
+
+        queue("Rename the report");
+        coordinator(projects(List.of(ALM)), remember(JobResult.succeeded(agentResult(PLAN_JSON))), null).execute(claim());
+        assertNull(given.get().branch(), "no prefix: the field is left out so an older worker keeps parsing");
+
+        queue("Log the retry count");
+        coordinator(projects(List.of(ALM)), remember(JobResult.succeeded(agentResult(PLAN_JSON))), "dispatch").execute(claim());
+        assertNull(given.get().branch(), "the default prefix is left out too, same as no prefix at all");
+    }
+
+    @Test
     void whatTheWorkerReportsWhileItRunsIsRecordedAtOnce() {
         long id = queue("Fix the login timeout");
         Worker worker = (job, events, control) -> {
@@ -226,9 +242,13 @@ class CoordinatorTest {
     }
 
     private Coordinator coordinator(Projects projects, Worker worker) {
+        return coordinator(projects, worker, null);
+    }
+
+    private Coordinator coordinator(Projects projects, Worker worker, String branchPrefix) {
         return new Coordinator(db, projects, new RunTransitions(db, clock, () -> { }), activeRuns,
                 project -> new Config.RunLimits(Duration.ofMinutes(30), new BigDecimal("2")),
-                project -> new Config.RunLimits(Duration.ofMinutes(60), new BigDecimal("10")), worker, () -> { });
+                project -> new Config.RunLimits(Duration.ofMinutes(60), new BigDecimal("10")), worker, () -> { }, branchPrefix);
     }
 
     private Worker remember(JobResult result) {

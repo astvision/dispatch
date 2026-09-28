@@ -2,6 +2,7 @@ package dispatch.ui;
 
 import dispatch.Text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10,7 +11,9 @@ import dispatch.cli.CliException;
 import dispatch.cli.Locations;
 import dispatch.cli.Service;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -80,12 +83,35 @@ class UiCommandTest {
     }
 
     @Test
+    void aNamedInstanceWithNoConfigYetIsRefusedInsteadOfServingSetupForIt() {
+        CliException e = assertThrows(CliException.class, () -> command("/ui-test")
+                .start(new Cli.Ui(dir.resolve("team.yaml"), 0, false, "team", true), Map.of()));
+
+        assertTrue(e.getMessage().contains("no bot named team") && e.getMessage().contains("dispatch init --instance team"),
+                e.getMessage());
+    }
+
+    @Test
     void aTakenPortNamesTheOption() throws Exception {
         try (ServerSocket taken = new ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) {
             CliException e = assertThrows(CliException.class,
                     () -> command("/ui-test").start(new Cli.Ui(dir.resolve("dispatch.yaml"), taken.getLocalPort(), false), Map.of()));
 
             assertTrue(e.getMessage().contains("--port"), e.getMessage());
+        }
+    }
+
+    @Test
+    void withoutPortItMovesOnFromABusyOne() throws IOException {
+        try (ServerSocket busy = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))) {
+            UiServer server = command("/ui-test").start(new Cli.Ui(dir.resolve("dispatch.yaml"), busy.getLocalPort(), false, null, false), Map.of());
+            try {
+                assertNotEquals(busy.getLocalPort(), server.port());
+            } finally {
+                server.close();
+            }
+            assertThrows(CliException.class,
+                    () -> command("/ui-test").start(new Cli.Ui(dir.resolve("dispatch.yaml"), busy.getLocalPort(), false, null, true), Map.of()));
         }
     }
 

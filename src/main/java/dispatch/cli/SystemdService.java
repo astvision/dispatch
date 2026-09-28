@@ -15,12 +15,14 @@ final class SystemdService implements Service {
     private final Commands commands;
     private final String user;
     private final Kind kind;
+    private final String instance;
 
-    SystemdService(Path home, Commands commands, String user, Kind kind) {
-        this.unitFile = home.resolve(".config").resolve("systemd").resolve("user").resolve(kind.systemdUnit());
+    SystemdService(Path home, Commands commands, String user, Kind kind, String instance) {
+        this.unitFile = home.resolve(".config").resolve("systemd").resolve("user").resolve(kind.systemdUnit(instance));
         this.commands = commands;
         this.user = user;
         this.kind = kind;
+        this.instance = instance;
     }
 
     @Override
@@ -30,11 +32,12 @@ final class SystemdService implements Service {
 
     @Override
     public String describe() {
-        return "systemd user service " + kind.systemdUnit();
+        return "systemd user service " + kind.systemdUnit(instance);
     }
 
     @Override
     public void install(Spec spec) {
+        String line = Service.argumentsLine(spec, kind, SystemdService::quoted);
         Service.write(unitFile, """
                 # Written by dispatch service install (ADR 0016).
                 [Unit]
@@ -43,7 +46,7 @@ final class SystemdService implements Service {
 
                 [Service]
                 Type=simple
-                ExecStart=%s -jar %s %s --config %s --log-file %s
+                ExecStart=%s -jar %s %s
                 Environment=%s
                 Restart=on-failure
                 RestartSec=10
@@ -54,25 +57,24 @@ final class SystemdService implements Service {
 
                 [Install]
                 WantedBy=default.target
-                """.formatted(kind.label(), quoted(spec.java()), quoted(spec.jar()), String.join(" ", kind.command()),
-                quoted(spec.configFile()), quoted(spec.logFile()), quoted("PATH=" + spec.path())));
+                """.formatted(kind.label(), quoted(spec.java()), quoted(spec.jar()), line, quoted("PATH=" + spec.path())));
         Service.required(commands, List.of("systemctl", "--user", "daemon-reload"));
-        Service.required(commands, List.of("systemctl", "--user", "enable", "--now", kind.systemdUnit()));
+        Service.required(commands, List.of("systemctl", "--user", "enable", "--now", kind.systemdUnit(instance)));
     }
 
     @Override
     public void start() {
-        Service.required(commands, List.of("systemctl", "--user", "start", kind.systemdUnit()));
+        Service.required(commands, List.of("systemctl", "--user", "start", kind.systemdUnit(instance)));
     }
 
     @Override
     public void stop() {
-        Service.required(commands, List.of("systemctl", "--user", "stop", kind.systemdUnit()));
+        Service.required(commands, List.of("systemctl", "--user", "stop", kind.systemdUnit(instance)));
     }
 
     @Override
     public void restart() {
-        Service.required(commands, List.of("systemctl", "--user", "restart", kind.systemdUnit()));
+        Service.required(commands, List.of("systemctl", "--user", "restart", kind.systemdUnit(instance)));
     }
 
     @Override
@@ -80,7 +82,7 @@ final class SystemdService implements Service {
         if (!Files.exists(unitFile)) {
             return new Status(false, false, Text.of("service.notInstalled"), List.of());
         }
-        Git.Result active = commands.run(List.of("systemctl", "--user", "is-active", kind.systemdUnit()));
+        Git.Result active = commands.run(List.of("systemctl", "--user", "is-active", kind.systemdUnit(instance)));
         List<Text> notes = new ArrayList<>();
         Git.Result linger = commands.run(List.of("loginctl", "show-user", user, "-p", "Linger"));
         if (!linger.stdout().contains("Linger=yes")) {
@@ -92,7 +94,7 @@ final class SystemdService implements Service {
 
     @Override
     public void uninstall() {
-        Service.required(commands, List.of("systemctl", "--user", "disable", "--now", kind.systemdUnit()));
+        Service.required(commands, List.of("systemctl", "--user", "disable", "--now", kind.systemdUnit(instance)));
         try {
             Files.deleteIfExists(unitFile);
         } catch (IOException e) {

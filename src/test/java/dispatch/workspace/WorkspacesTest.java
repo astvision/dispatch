@@ -43,7 +43,7 @@ class WorkspacesTest {
         Files.writeString(repos.seed.resolve("README.md"), "v2\n");
         String newBase = repos.commitAndPush("pushed after Dispatch cloned");
 
-        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project(List.of()), 42);
+        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project(List.of()), 42, Config.defaultBranch(42));
 
         assertEquals(stateDir.resolve("worktrees/42"), worktree.path());
         assertEquals(newBase, worktree.baseSha());
@@ -59,7 +59,7 @@ class WorkspacesTest {
         Config.Project project = new Config.Project("alm", null, null, mine.toString(), "main", "claude-code", null, null, List.of(), null, null, null);
 
         assertEquals(Optional.empty(), workspaces.unavailableReason(project));
-        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project, 43);
+        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project, 43, Config.defaultBranch(43));
 
         assertEquals(stateDir.resolve("worktrees/43"), worktree.path());
         assertEquals("v1\n", text(worktree.path().resolve("README.md")));
@@ -81,7 +81,7 @@ class WorkspacesTest {
         Files.writeString(repo.resolve(".env"), "DB_PASSWORD=local\n");
         Files.createDirectories(repo.resolve("local"));
         Files.writeString(repo.resolve("local/app.yml"), "port: 8081\n");
-        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project(List.of(".env", "local/app.yml")), 7);
+        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project(List.of(".env", "local/app.yml")), 7, Config.defaultBranch(7));
 
         workspaces.copyFiles(project(List.of(".env", "local/app.yml")), worktree.path());
 
@@ -92,7 +92,7 @@ class WorkspacesTest {
     @Test
     void fileGitWouldCommitIsNeverCopied() throws IOException {
         Files.writeString(stateDir.resolve("repos/alm/notes.txt"), "secret notes\n");
-        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project(List.of("notes.txt")), 8);
+        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project(List.of("notes.txt")), 8, Config.defaultBranch(8));
 
         WorkspaceException error = assertThrows(WorkspaceException.class,
                 () -> workspaces.copyFiles(project(List.of("notes.txt")), worktree.path()));
@@ -103,7 +103,7 @@ class WorkspacesTest {
 
     @Test
     void missingCopyFileIsReported() {
-        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project(List.of(".env")), 9);
+        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project(List.of(".env")), 9, Config.defaultBranch(9));
 
         WorkspaceException error = assertThrows(WorkspaceException.class,
                 () -> workspaces.copyFiles(project(List.of(".env")), worktree.path()));
@@ -118,7 +118,7 @@ class WorkspacesTest {
             List<java.util.concurrent.Future<Workspaces.PreparedWorktree>> results = new java.util.ArrayList<>();
             for (long taskId = 100; taskId < 108; taskId++) {
                 long id = taskId;
-                results.add(pool.submit(() -> workspaces.createWorktree(project(List.of()), id)));
+                results.add(pool.submit(() -> workspaces.createWorktree(project(List.of()), id, Config.defaultBranch(id))));
             }
             for (java.util.concurrent.Future<Workspaces.PreparedWorktree> result : results) {
                 assertTrue(Files.isDirectory(result.get(60, java.util.concurrent.TimeUnit.SECONDS).path()));
@@ -164,9 +164,9 @@ class WorkspacesTest {
 
     @Test
     void existingWorktreeIsNeverReused() {
-        workspaces.createWorktree(project(List.of()), 10);
+        workspaces.createWorktree(project(List.of()), 10, Config.defaultBranch(10));
 
-        WorkspaceException error = assertThrows(WorkspaceException.class, () -> workspaces.createWorktree(project(List.of()), 10));
+        WorkspaceException error = assertThrows(WorkspaceException.class, () -> workspaces.createWorktree(project(List.of()), 10, Config.defaultBranch(10)));
 
         assertTrue(error.getMessage().contains("already exists"), error.getMessage());
     }
@@ -175,7 +175,7 @@ class WorkspacesTest {
     void fetchFailureCarriesGitsOwnError() throws IOException {
         GitFixture.sh(stateDir.resolve("repos/alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
 
-        WorkspaceException error = assertThrows(WorkspaceException.class, () -> workspaces.createWorktree(project(List.of()), 11));
+        WorkspaceException error = assertThrows(WorkspaceException.class, () -> workspaces.createWorktree(project(List.of()), 11, Config.defaultBranch(11)));
 
         assertTrue(error.getMessage().contains("git fetch origin main"), error.getMessage());
         assertTrue(error.getMessage().contains("does not appear to be a git repository"), error.getMessage());
@@ -202,7 +202,7 @@ class WorkspacesTest {
 
         assertEquals(Optional.empty(), workspaces.unavailableReason(crm));
         assertFalse(workspaces.needsClone(crm));
-        assertTrue(Files.isDirectory(workspaces.createWorktree(crm, 42).path()), "tasks run in the new clone");
+        assertTrue(Files.isDirectory(workspaces.createWorktree(crm, 42, Config.defaultBranch(42)).path()), "tasks run in the new clone");
     }
 
     @Test

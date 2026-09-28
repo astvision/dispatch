@@ -6,6 +6,7 @@ import dispatch.cli.Cli;
 import dispatch.cli.CliException;
 import dispatch.cli.JLineTerminal;
 import dispatch.cli.InitCommand;
+import dispatch.cli.ListCommand;
 import dispatch.cli.Locations;
 import dispatch.cli.ProjectAddCommand;
 import dispatch.cli.Service;
@@ -48,17 +49,20 @@ public final class Main {
         }
         switch (invocation) {
             case Cli.Help _ -> System.out.print(Cli.usage(defaults));
+            case Cli.ListInstances _ -> System.exit(new ListCommand(System.out,
+                    instance -> Service.forThisMachine(Service.Kind.DISPATCH, instance)).run(defaults, System.getenv()));
             case Cli.Run run -> run(run.configFile(), run.logFile());
             case Cli.Init init -> {
                 JLineTerminal terminal = JLineTerminal.system();
-                System.exit(new InitCommand(terminal, BotApi::create, defaults, Duration.ofMinutes(3), ServiceCommand.forThisMachine(terminal))
-                        .run(init, System.getenv()));
+                System.exit(new InitCommand(terminal, BotApi::create, defaults, Duration.ofMinutes(3),
+                        instance -> ServiceCommand.forThisMachine(terminal, instance)).run(init, System.getenv()));
             }
             case Cli.Service service -> {
                 JLineTerminal terminal = JLineTerminal.system();
-                System.exit(ServiceCommand.forThisMachine(terminal).run(service, System.getenv()));
+                System.exit(ServiceCommand.forThisMachine(terminal, service.instance()).run(service, System.getenv()));
             }
-            case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create).run(check.configFile(), System.getenv()));
+            case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create, defaults)
+                    .run(check.configFile(), System.getenv()));
             case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(JLineTerminal.system()).run(add, System.getenv()));
             case Cli.Ui ui -> ui(ui, defaults);
             case Cli.WorkerInit init -> {
@@ -81,7 +85,8 @@ public final class Main {
     private static void ui(Cli.Ui options, Locations defaults) throws InterruptedException {
         UiServer server;
         try {
-            server = new UiCommand(System.out, BotApi::create, defaults, Service.forThisMachine(), "/ui").start(options, System.getenv());
+            server = new UiCommand(System.out, BotApi::create, defaults.forInstance(options.instance()),
+                    Service.forThisMachine(Service.Kind.DISPATCH, options.instance()), "/ui").start(options, System.getenv());
         } catch (CliException e) {
             System.err.println(e.getMessage());
             System.exit(1);

@@ -146,8 +146,8 @@ public final class Workspaces {
         }
     }
 
-    /** Fetches the base branch and adds worktrees/&lt;task&gt; on a new branch dispatch/&lt;task&gt; at origin/&lt;base&gt;. */
-    public PreparedWorktree createWorktree(Config.Project project, long taskId) {
+    /** Fetches the base branch and adds worktrees/&lt;task&gt; on a new branch {@code branch} at origin/&lt;base&gt;. */
+    public PreparedWorktree createWorktree(Config.Project project, long taskId, String branch) {
         Path repo = repo(project);
         Path worktree = worktree(taskId);
         if (Files.exists(worktree)) {
@@ -157,7 +157,7 @@ public final class Workspaces {
         lock.lock();
         try {
             git.run(repo, "fetch", "origin", project.baseBranch());
-            git.run(repo, "worktree", "add", "--quiet", "-b", "dispatch/" + taskId, worktree.toString(),
+            git.run(repo, "worktree", "add", "--quiet", "-b", branch, worktree.toString(),
                     "origin/" + project.baseBranch());
             return new PreparedWorktree(worktree, git.run(worktree, "rev-parse", "HEAD"));
         } finally {
@@ -170,10 +170,9 @@ public final class Workspaces {
      * stopped. The sweep only removes worktrees whose commits are pushed, or whose task is merged; a branch that is gone from
      * the clone is fetched.
      */
-    public Path recreateWorktree(Config.Project project, long taskId) {
+    public Path recreateWorktree(Config.Project project, long taskId, String branch) {
         Path repo = repo(project);
         Path worktree = worktree(taskId);
-        String branch = "dispatch/" + taskId;
         ReentrantLock lock = lockFor(repo);
         lock.lock();
         try {
@@ -189,13 +188,13 @@ public final class Workspaces {
     }
 
     /** @param baseSha where the task's branch started: a branch still there has nothing to push */
-    public WorktreeState state(Path worktree, long taskId, String baseSha) {
+    public WorktreeState state(Path worktree, String branch, String baseSha) {
         List<String> uncommitted = git.run(worktree, "status", "--porcelain").lines().filter(line -> !line.isBlank()).toList();
         String head = git.run(worktree, "rev-parse", "HEAD");
         if (head.equals(baseSha)) {
             return new WorktreeState(uncommitted, true);
         }
-        String listed = git.run(worktree, "ls-remote", "origin", "refs/heads/dispatch/" + taskId);
+        String listed = git.run(worktree, "ls-remote", "origin", "refs/heads/" + branch);
         String pushed = listed.isEmpty() ? null : listed.split("\\s+")[0];
         // Someone may have pushed on top of Dispatch's commits, e.g. from the pull request page.
         boolean onOrigin = head.equals(pushed)

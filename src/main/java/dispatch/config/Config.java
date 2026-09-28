@@ -23,10 +23,30 @@ public record Config(
         Delivery delivery,
         Workers workers,
         MiniApp miniApp,
+        /** Task branches are {@code <branchPrefix>/<task>}; null uses "dispatch" (M: several instances on one computer). */
+        String branchPrefix,
         Secrets secrets) {
 
     public boolean isTeam() {
         return isTeam(telegram);
+    }
+
+    /** The task's branch name: the instance's own prefix, or "dispatch" by default. */
+    public String branch(long taskId) {
+        return (branchPrefix == null ? "dispatch" : branchPrefix) + "/" + taskId;
+    }
+
+    /** The branch a job with no {@code branch} of its own names (Job.branchName): what an instance without a prefix uses. */
+    public static String defaultBranch(long taskId) {
+        return "dispatch/" + taskId;
+    }
+
+    /**
+     * The branch a {@link dispatch.core.Job} carries for a worker to use, or null when the instance uses the default
+     * prefix: the field is then left out, so a worker older than this change keeps working (ADR 0028).
+     */
+    public static String branchFor(String branchPrefix, long taskId) {
+        return branchPrefix == null || branchPrefix.equals("dispatch") ? null : branchPrefix + "/" + taskId;
     }
 
     /**

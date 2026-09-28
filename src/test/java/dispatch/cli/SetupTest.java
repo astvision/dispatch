@@ -265,6 +265,26 @@ class SetupTest {
     }
 
     @Test
+    void aNamedInstanceRendersItsOwnBranchPrefix() {
+        Path state = dir.resolve("state");
+        Setup.Answers answers = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, null, "claude",
+                List.of(new ProjectAddCommand.Project("alm", null, dir.resolve("alm"), null, "main", "claude-code", "opus", null)),
+                "Dispatch (Bold)", "bold@example.com", Setup.Advanced.NONE, "dispatch/team");
+
+        assertTrue(Setup.render(answers, state).contains("branchPrefix: dispatch/team\n"));
+    }
+
+    @Test
+    void theDefaultInstanceRendersNoBranchPrefix() {
+        Path state = dir.resolve("state");
+        Setup.Answers answers = new Setup.Answers("bold", false, List.of(new Config.Member(100, "Bold")), null, null, "claude",
+                List.of(new ProjectAddCommand.Project("alm", null, dir.resolve("alm"), null, "main", "claude-code", "opus", null)),
+                "Dispatch (Bold)", "bold@example.com");
+
+        assertFalse(Setup.render(answers, state).contains("branchPrefix"));
+    }
+
+    @Test
     void advancedAnswersEqualToTheDefaultsRenderTheQuickLayout() {
         Path state = dir.resolve("state");
         List<ProjectAddCommand.Project> projects = List.of(new ProjectAddCommand.Project("alm", null, dir.resolve("alm"), null, "main",

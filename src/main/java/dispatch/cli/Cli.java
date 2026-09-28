@@ -14,7 +14,7 @@ import java.util.Set;
 public final class Cli {
 
     private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group", "log-file",
-            "port", "agent");
+            "port", "agent", "instance");
     private static final List<String> SERVICE_ACTIONS = List.of("install", "start", "stop", "status", "uninstall");
     private static final Set<String> SWITCHES = Set.of("force", "no-browser", "advanced");
 
@@ -22,7 +22,11 @@ public final class Cli {
     }
 
     public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Ui, WorkerInit, WorkerPair,
-            WorkerRun, WorkerService, Ask, Help {
+            WorkerRun, WorkerService, Ask, Help, ListInstances {
+    }
+
+    /** {@code dispatch list}: named {@code ListInstances} to avoid clashing with {@link java.util.List}. */
+    public record ListInstances() implements Invocation {
     }
 
     /**
@@ -37,25 +41,45 @@ public final class Cli {
     public record Run(Path configFile, Path logFile) implements Invocation {
     }
 
-    /** @param action one of install, start, stop, status, uninstall */
-    public record Service(Path configFile, String action) implements Invocation {
+    /**
+     * @param action   one of install, start, stop, status, uninstall
+     * @param instance null for the default instance, else the name a second instance runs under
+     */
+    public record Service(Path configFile, String action, String instance) implements Invocation {
+
+        public Service(Path configFile, String action) {
+            this(configFile, action, null);
+        }
     }
 
     public record Check(Path configFile) implements Invocation {
     }
 
-    /** @param openBrowser false with --no-browser, e.g. over SSH where the link is opened on another computer */
-    public record Ui(Path configFile, int port, boolean openBrowser) implements Invocation {
+    /**
+     * @param openBrowser false with --no-browser, e.g. over SSH where the link is opened on another computer
+     * @param instance    null for the default instance, else the name a second instance runs under
+     * @param portGiven   true when --port was given explicitly, not defaulted
+     */
+    public record Ui(Path configFile, int port, boolean openBrowser, String instance, boolean portGiven) implements Invocation {
+
+        public Ui(Path configFile, int port, boolean openBrowser) {
+            this(configFile, port, openBrowser, null, true);
+        }
     }
 
     /**
      * @param force    replaces an existing config and secrets file
      * @param advanced also asks for aliases, per-phase model and effort, limits, concurrency, state directory and gh
+     * @param instance null for the default instance, else the name a second instance runs under
      */
-    public record Init(Path configFile, boolean force, boolean advanced) implements Invocation {
+    public record Init(Path configFile, boolean force, boolean advanced, String instance) implements Invocation {
 
         public Init(Path configFile, boolean force) {
-            this(configFile, force, false);
+            this(configFile, force, false, null);
+        }
+
+        public Init(Path configFile, boolean force, boolean advanced) {
+            this(configFile, force, advanced, null);
         }
     }
 
@@ -94,9 +118,10 @@ public final class Cli {
 
     public static String usage(Locations defaults) {
         return """
-                usage: dispatch [command] [--config FILE]
+                usage: dispatch [command] [--instance NAME | --config FILE]
 
                 commands:
+                  list     the bots set up on this computer
                   init [--advanced]
                            set up your own Dispatch: bot, you, Claude Code, projects;
                            --advanced also asks for limits, per-phase model and effort, and more
@@ -123,6 +148,7 @@ public final class Cli {
                   help     show this help
 
                 FILE defaults to %s
+                NAME is another bot on this computer (dispatch list); without it, the first one.
                 """.formatted(defaults.configFile());
     }
 
@@ -143,8 +169,12 @@ public final class Cli {
         }
         Arguments arguments = Arguments.parse(command, List.of(args).subList(1, args.length));
         return switch (command) {
+            case "list" -> {
+                arguments.allow(0, Set.of());
+                yield new ListInstances();
+            }
             case "run" -> {
-                arguments.allow(0, Set.of("config", "log-file"));
+                arguments.allow(0, Set.of("config", "log-file", "instance"));
                 yield new Run(arguments.configFile(defaults), arguments.values().containsKey("log-file")
                         ? Path.of(arguments.values().get("log-file")) : null);
             }
@@ -152,8 +182,9 @@ public final class Cli {
                 if (arguments.positional().isEmpty() || !SERVICE_ACTIONS.contains(arguments.positional().getFirst())) {
                     throw new CliException("service needs one of: " + String.join(", ", SERVICE_ACTIONS));
                 }
-                arguments.allow(1, Set.of("config"));
-                yield new Service(arguments.configFile(defaults), arguments.positional().getFirst());
+                arguments.allow(1, Set.of("config", "instance"));
+                arguments.refuseConfigWithInstance();
+                yield new Service(arguments.configFile(defaults), arguments.positional().getFirst(), arguments.instance());
             }
             case "project" -> {
                 if (arguments.positional().isEmpty() || !arguments.positional().getFirst().equals("add")) {
@@ -163,24 +194,26 @@ public final class Cli {
                 if (arguments.positional().size() < 2) {
                     throw new CliException("project add needs the folder of a git clone");
                 }
-                arguments.allow(2, Set.of("config", "name", "alias", "base", "model", "effort", "group", "agent"));
+                arguments.allow(2, Set.of("config", "name", "alias", "base", "model", "effort", "group", "agent", "instance"));
                 yield new ProjectAdd(arguments.configFile(defaults), Path.of(arguments.positional().get(1)), arguments.values().get("name"),
                         arguments.values().get("alias"), arguments.values().get("base"), arguments.values().get("model"),
                         arguments.values().get("effort"), arguments.values().get("group"), arguments.values().get("agent"));
             }
             case "init" -> {
-                arguments.allow(0, Set.of("config", "force", "advanced"));
+                arguments.allow(0, Set.of("config", "force", "advanced", "instance"));
+                arguments.refuseConfigWithInstance();
                 yield new Init(arguments.configFile(defaults), arguments.switches().contains("force"),
-                        arguments.switches().contains("advanced"));
+                        arguments.switches().contains("advanced"), arguments.instance());
             }
             case "check" -> {
-                arguments.allow(0, Set.of("config"));
+                arguments.allow(0, Set.of("config", "instance"));
                 yield new Check(arguments.configFile(defaults));
             }
             case "ui" -> {
-                arguments.allow(0, Set.of("config", "port", "no-browser"));
+                arguments.allow(0, Set.of("config", "port", "no-browser", "instance"));
+                arguments.refuseConfigWithInstance();
                 yield new Ui(arguments.configFile(defaults), port(arguments.values().getOrDefault("port", "7878")),
-                        !arguments.switches().contains("no-browser"));
+                        !arguments.switches().contains("no-browser"), arguments.instance(), arguments.values().containsKey("port"));
             }
             case "worker" -> {
                 if (arguments.positional().isEmpty()) {
@@ -217,11 +250,13 @@ public final class Cli {
             case "ask" -> {
                 List<String> what = arguments.positional();
                 if (what.size() == 1 && what.getFirst().equals("tasks")) {
-                    arguments.allow(1, Set.of());
+                    arguments.allow(1, Set.of("instance"));
+                    arguments.instance(); // validated but unused: Ask reads its instance from the environment
                     yield new Ask(null);
                 }
                 if (what.size() == 2 && what.getFirst().equals("task") && what.get(1).matches("[1-9][0-9]{0,17}")) {
-                    arguments.allow(2, Set.of());
+                    arguments.allow(2, Set.of("instance"));
+                    arguments.instance(); // validated but unused: Ask reads its instance from the environment
                     yield new Ask(Long.parseLong(what.get(1)));
                 }
                 throw new CliException("ask needs 'tasks' or 'task N'");
@@ -296,8 +331,26 @@ public final class Cli {
             }
         }
 
+        String instance() {
+            return values.containsKey("instance") ? Locations.validName(values.get("instance")) : null;
+        }
+
+        /**
+         * For a command whose spec (service definition, init'd files) is derived from {@code Locations} rather than
+         * only read once (service, init, ui): --config and --instance would each pick a different bot, so a command
+         * that writes or installs something durable under one of them refuses to guess which.
+         */
+        void refuseConfigWithInstance() {
+            if (values.containsKey("config") && values.containsKey("instance")) {
+                throw new CliException("--config and --instance both name the bot to use; give one of them");
+            }
+        }
+
         Path configFile(Locations defaults) {
-            return values.containsKey("config") ? Path.of(values.get("config")) : defaults.configFile();
+            if (values.containsKey("config")) {
+                return Path.of(values.get("config"));
+            }
+            return defaults.forInstance(instance()).configFile();
         }
 
         Path workerFile(Locations defaults) {

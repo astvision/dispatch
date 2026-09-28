@@ -138,6 +138,24 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void branchPrefixDefaultsToDispatchAndMustBeARefPath() throws IOException {
+        assertEquals("dispatch/12", ConfigLoader.load(write(VALID), ENV).branch(12));
+        assertEquals("dispatch/team/12", ConfigLoader.load(write(VALID + "branchPrefix: dispatch/team\n"), ENV).branch(12));
+        for (String bad : List.of("/x", "x/", "a..b", "a b", "a//b", "a~b", "-x", "a.lock", "x/a.lock")) {
+            ConfigException e = assertThrows(ConfigException.class,
+                    () -> ConfigLoader.load(write(VALID + "branchPrefix: '" + bad + "'\n"), ENV));
+            assertTrue(e.getMessage().contains("branchPrefix"), e.getMessage());
+        }
+    }
+
+    @Test
+    void branchForIsNullForTheDefaultPrefixSoAnOlderWorkerKeepsParsing() {
+        assertNull(Config.branchFor(null, 12));
+        assertNull(Config.branchFor("dispatch", 12));
+        assertEquals("dispatch/team/12", Config.branchFor("dispatch/team", 12));
+    }
+
+    @Test
     void aliasMayRepeatItsOwnProjectName() throws IOException {
         Config config = ConfigLoader.load(write(VALID.replace("alias: alm", "alias: Autoland-Management")), ENV);
 

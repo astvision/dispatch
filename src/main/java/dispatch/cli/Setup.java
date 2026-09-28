@@ -65,18 +65,26 @@ public final class Setup {
     }
 
     /**
-     * @param team    the team's name, as the config and the state directory use it
-     * @param shared  a team's bot (admins, a group chat) rather than a personal one
-     * @param chat    null for none
-     * @param workers null unless there is a chat: a team's tasks run on members' own computers (ADR 0021)
+     * @param team         the team's name, as the config and the state directory use it
+     * @param shared       a team's bot (admins, a group chat) rather than a personal one
+     * @param chat         null for none
+     * @param workers      null unless there is a chat: a team's tasks run on members' own computers (ADR 0021)
+     * @param branchPrefix null for the default instance, else "dispatch/&lt;instance&gt;" (M: several instances on one computer)
      */
     public record Answers(String team, boolean shared, List<Config.Member> members, Chat chat, Config.Workers workers, String claude,
-                          List<ProjectAddCommand.Project> projects, String authorName, String authorEmail, Advanced advanced) {
+                          List<ProjectAddCommand.Project> projects, String authorName, String authorEmail, Advanced advanced,
+                          String branchPrefix) {
 
-        /** A quick setup: every advanced answer keeps its default. */
+        /** A quick setup: every advanced answer keeps its default, and no named instance sets a branch prefix. */
         public Answers(String team, boolean shared, List<Config.Member> members, Chat chat, Config.Workers workers, String claude,
                        List<ProjectAddCommand.Project> projects, String authorName, String authorEmail) {
-            this(team, shared, members, chat, workers, claude, projects, authorName, authorEmail, Advanced.NONE);
+            this(team, shared, members, chat, workers, claude, projects, authorName, authorEmail, Advanced.NONE, null);
+        }
+
+        /** No named instance (M): the branch prefix stays "dispatch". */
+        public Answers(String team, boolean shared, List<Config.Member> members, Chat chat, Config.Workers workers, String claude,
+                       List<ProjectAddCommand.Project> projects, String authorName, String authorEmail, Advanced advanced) {
+            this(team, shared, members, chat, workers, claude, projects, authorName, authorEmail, advanced, null);
         }
     }
 
@@ -249,7 +257,11 @@ public final class Setup {
         StringBuilder yaml = new StringBuilder()
                 .append("# Written by dispatch init. Edit it freely: dispatch check says if something is wrong.\n")
                 .append("team: ").append(team).append('\n')
-                .append("stateDir: ").append(ConfigText.quoted(state.toAbsolutePath().toString())).append("\n\n")
+                .append("stateDir: ").append(ConfigText.quoted(state.toAbsolutePath().toString())).append('\n');
+        if (answers.branchPrefix() != null) {
+            yaml.append("branchPrefix: ").append(answers.branchPrefix()).append('\n');
+        }
+        yaml.append('\n')
                 .append("telegram:\n");
         if (shared) {
             yaml.append("  admins:            # who lets people join, from Telegram (ADR 0015)\n")

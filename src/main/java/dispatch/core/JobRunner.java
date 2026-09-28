@@ -105,8 +105,8 @@ public final class JobRunner implements Worker {
     private JobResult deliver(Job job, Path worktree, String startSha, AgentResult result) {
         Delivery.Result delivered;
         try {
-            delivered = delivery.deliver(worktree, job.taskId(), job.baseBranch(), startSha, commit(job, result.summary()),
-                    job.prUrl());
+            delivered = delivery.deliver(worktree, job.taskId(), job.branchName(), job.baseBranch(), startSha,
+                    commit(job, result.summary()), job.prUrl());
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.DELIVERY, e.getMessage(), result);
         }
@@ -126,7 +126,7 @@ public final class JobRunner implements Worker {
         }
         Delivery.Result delivered;
         try {
-            delivered = delivery.redeliver(worktree, job.taskId(), job.baseBranch(), job.baseSha(),
+            delivered = delivery.redeliver(worktree, job.taskId(), job.branchName(), job.baseBranch(), job.baseSha(),
                     commit(job, job.deliverySummary()), job.prUrl());
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.DELIVERY, e.getMessage(), null);
@@ -147,7 +147,7 @@ public final class JobRunner implements Worker {
 
     /** No copyFiles here: planning needs no local secrets, and whatever the agent reads may be quoted in the group. */
     private Path createWorktree(Job job, JobEvents events) {
-        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(config(job.project()), job.taskId());
+        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(config(job.project()), job.taskId(), job.branchName());
         events.worktreeCreated(worktree.path().toString(), worktree.baseSha());
         return worktree.path();
     }
@@ -162,7 +162,7 @@ public final class JobRunner implements Worker {
             return worktree;
         }
         try {
-            Path recreated = workspaces.recreateWorktree(config(job.project()), job.taskId());
+            Path recreated = workspaces.recreateWorktree(config(job.project()), job.taskId(), job.branchName());
             Log.info("worktree.recreated", "task", job.taskId(), "worktree", recreated);
             return recreated;
         } catch (WorkspaceException e) {
