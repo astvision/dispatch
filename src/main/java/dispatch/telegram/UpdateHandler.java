@@ -1310,12 +1310,17 @@ public final class UpdateHandler {
 
     /**
      * A refusal's words under the message that asked, and the command to type where one would help. In a group, someone in
-     * no group is only logged: a busy group's chatter would otherwise be answered with a refusal line each time (G-1b).
+     * no group is only logged: a busy group's chatter would otherwise be answered with a refusal line each time (G-1b). A
+     * blank correction or follow-up is left unanswered.
      */
     private void refuse(Tx tx, Requester who, TaskCommand command, CommandResult.Refused refused, String origin, String chatRef) {
         if (refused.reason() == Refusal.NOT_MEMBER && groups.isGroupChat(chatRef)) {
             tx.afterCommit(() -> Log.warn("member.not_allowed", "requester", who.ref(), "name", who.name(), "chat", chatRef,
                     "answered", false));
+            return;
+        }
+        // A sticker or a bare photo under a plan or result, or in a topic, is chatter; one under a question was meant as an answer.
+        if (refused.reason() == Refusal.EMPTY && (command instanceof TaskCommand.Correct || command instanceof TaskCommand.FollowUp)) {
             return;
         }
         ObjectNode payload = Json.object().put("text", refused.words().render(Language.MN));

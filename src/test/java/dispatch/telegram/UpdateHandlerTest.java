@@ -1403,6 +1403,34 @@ class UpdateHandlerTest {
         assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
     }
 
+    /** A sticker or a bare photo is no correction or follow-up: the chat leaves it be, as it always has (R6). */
+    @Test
+    void aStickerInAFinishedTasksTopicIsLeftUnanswered() {
+        long taskId = completedTask();
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '55' WHERE id = ?", taskId));
+        String outboxBefore = row("SELECT count(*) AS n FROM outbox").get("n");
+        JsonNode sticker = topicMessage(604, 106, 100, "Bold", 55, "");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) sticker.get("message")).remove("text");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) sticker.get("message")).putObject("sticker").put("file_id", "s1");
+
+        handler.handle(sticker);
+
+        assertEquals(outboxBefore, row("SELECT count(*) AS n FROM outbox").get("n"), "no reply");
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"), "and no follow-up");
+    }
+
+    @Test
+    void aBlankReplyToAPlanIsLeftUnanswered() {
+        long taskId = taskAwaitingApproval(List.of());
+        planMessageSentAs(1000);
+        String outboxBefore = row("SELECT count(*) AS n FROM outbox").get("n");
+
+        handler.handle(message(558, 58, 100, "Bold", GROUP, "supergroup", " \n ", botMessage(1000)));
+
+        assertEquals(outboxBefore, row("SELECT count(*) AS n FROM outbox").get("n"), "no reply");
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"), "and no correction");
+    }
+
     @Test
     void commandsInsideATopicAreAnsweredThereAndOtherTopicsStartTasks() {
         long taskId = taskAwaitingApproval(List.of());

@@ -641,8 +641,9 @@ public final class Renderer {
             number++;
         }
         for (JsonNode note : payload.path("notes")) {
+            // A refusal's words can hold what another program wrote, such as git's error: cut as a proposal's own text is.
             html.append("\n").append(note.hasNonNull("words")
-                    ? "ℹ️ " + escape(note.path("words").asText())
+                    ? "ℹ️ " + escapeWithin(note.path("words").asText(), ASSISTANT_ITEM_LIMIT)
                     : format("assistant.note." + note.path("reason").asText(), taskId(note)));
         }
         return new Rendered(html.toString(), keyboard, null);

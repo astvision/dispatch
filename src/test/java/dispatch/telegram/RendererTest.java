@@ -858,7 +858,7 @@ class RendererTest {
     void theLongestAssistantReplyStillFitsOneMessage() {
         String longest = "ы<".repeat(3000);
         // A turn has at most three proposals (Assistant.MAX_ACTIONS), each offered or noted. A note may carry a refusal's
-        // words, which fit a button's notice: 200 characters, here each one escaped.
+        // words, which can hold what another program wrote, such as git's error for an unavailable project.
         for (int offered = 0; offered <= 3; offered++) {
             ObjectNode payload = Json.object().put("reply", longest);
             for (int id = 1; id <= offered; id++) {
@@ -866,11 +866,23 @@ class RendererTest {
                         .put("title", longest).put("text", longest));
             }
             for (int note = offered; note < 3; note++) {
-                payload.withArray("notes").add(Json.object().put("type", "followUp").put("taskId", 123456).put("words", "ы<".repeat(100)));
+                payload.withArray("notes").add(Json.object().put("type", "followUp").put("taskId", 123456).put("words", longest));
             }
 
             assertTrue(renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html().length() <= 4096, offered + " offered, the rest noted");
         }
+    }
+
+    @Test
+    void aNotesLongWordsAreCutAsAProposalsTextIs() {
+        ObjectNode payload = Json.object().put("reply", "Болохгүй байна.");
+        payload.withArray("notes").add(Json.object().put("type", "followUp").put("taskId", 7).put("words", "fatal: " + "x".repeat(2000)));
+
+        String html = renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html();
+
+        String note = html.substring(html.indexOf("ℹ️ ") + "ℹ️ ".length());
+        assertTrue(note.startsWith("fatal: xxx") && note.endsWith("…"), note);
+        assertEquals(500, note.length(), "as long as a proposal's own text may be");
     }
 
     @Test

@@ -309,6 +309,8 @@ class PlanQuestionsTest {
         handler.handle(sticker);
         deliverAll();
 
+        assertEquals("REFUSED", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:100/76'").get("kind"),
+                "a blank answer is told, where a blank correction is left be (R6): the member meant to answer");
         assertEquals(Text.of("refused.emptyAnswer").render(Language.MN), lastSentText());
         assertEquals("0", count("SELECT count(*) AS n FROM plan_answer WHERE task_id = " + taskId));
     }

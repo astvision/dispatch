@@ -27,7 +27,10 @@ import dispatch.store.Runs;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import dispatch.ui.UiServer.Caller;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -260,6 +263,27 @@ class TasksApiTest {
         assertEquals(List.of(question),
                 SqlRows.query(dbFile, "SELECT edit_of FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_of IS NOT NULL").stream()
                         .map(row -> row.get("edit_of")).toList(), "and is redrawn with its answer once it is");
+    }
+
+    /** A refused answer is logged as any command is (ADR 0031): the page's refusal must not take the log line with it. */
+    @Test
+    void aRefusedAnswerIsLoggedLikeAnyCommand() {
+        long taskId = planned(ALI, twoQuestions());
+        PrintStream out = System.out;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        ApiException refused;
+        try {
+            System.setOut(new PrintStream(logged, true, StandardCharsets.UTF_8));
+            refused = assertThrows(ApiException.class, () -> api.answer(ALI_CALLER,
+                    Json.object().put("taskId", taskId).put("planSeq", 1).put("index", 2).put("text", "yes")));
+        } finally {
+            System.setOut(out);
+        }
+
+        assertEquals("409 out_of_order", refused.status() + " " + refused.code());
+        String lines = logged.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("event=task.command command=Answer task=" + taskId
+                + " actor=telegram:200 result=\"REFUSED OUT_OF_ORDER\""), lines);
     }
 
     @Test

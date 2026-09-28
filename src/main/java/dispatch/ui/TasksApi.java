@@ -166,13 +166,13 @@ public final class TasksApi {
         TaskCommand.Choice choice = body.path("option").isIntegralNumber() ? new TaskCommand.Choice.Option(body.path("option").asInt())
                 : body.path("decide").asBoolean(false) ? new TaskCommand.Choice.YouDecide()
                 : new TaskCommand.Choice.Written(body.path("text").asText(""));
-        return db.transactionReturning(tx -> {
-            CommandResult result = commands.run(tx, requester(caller), new TaskCommand.Answer(taskId, planSeq, index, choice));
-            if (result instanceof CommandResult.Refused refused) {
-                throw refused(refused);
-            }
-            return ownTask(tx, caller, taskId).put("result", "ANSWERED");
-        });
+        // Refused after the command's transaction commits: throwing inside it would roll back the command's log line too.
+        CommandResult result = db.transactionReturning(tx -> commands.run(tx, requester(caller),
+                new TaskCommand.Answer(taskId, planSeq, index, choice)));
+        if (result instanceof CommandResult.Refused refused) {
+            throw refused(refused);
+        }
+        return db.transactionReturning(tx -> ownTask(tx, caller, taskId)).put("result", "ANSWERED");
     }
 
     /** {@link TaskService#approve}, exactly as the chat's button: refused while the plan still has open questions. */
