@@ -17,27 +17,28 @@ public final class Drafts {
 
     private static final String COLUMNS = """
             id, requester_ref, requester_name, chat_ref, origin_ref, description, project, status, task_id, prompt_ref, split_state,
-            topics, parent_id, part, created_at, updated_at""";
+            topics, parent_id, part, created_at, updated_at, source_ref""";
 
     private Drafts() {
     }
 
     /**
-     * @param project  null when the member still has to choose
-     * @param parentId the whole message's draft when this is one of its parts, otherwise null
-     * @param part     the part's number from 1, null for a whole message
+     * @param project   null when the member still has to choose
+     * @param parentId  the whole message's draft when this is one of its parts, otherwise null
+     * @param part      the part's number from 1, null for a whole message
+     * @param sourceRef someone's message the draft was given in reply to, whose replies are additions to it; null if none
      */
     public record NewDraft(Requester requester, String chatRef, String originRef, String description, String project, Long parentId,
-                           Integer part) {
+                           Integer part, String sourceRef) {
     }
 
     public static long insert(Tx tx, NewDraft draft, Instant now) {
         return tx.insert("""
                         INSERT INTO draft (requester_ref, requester_name, chat_ref, origin_ref, description, project, status,
-                                           parent_id, part, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                           parent_id, part, created_at, updated_at, source_ref)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 draft.requester().ref(), draft.requester().name(), draft.chatRef(), draft.originRef(), draft.description(),
-                draft.project(), DraftStatus.OPEN, draft.parentId(), draft.part(), now, now);
+                draft.project(), DraftStatus.OPEN, draft.parentId(), draft.part(), now, now, draft.sourceRef());
     }
 
     public static Optional<Draft> find(Tx tx, long id) {
@@ -50,6 +51,15 @@ public final class Drafts {
 
     public static Optional<DraftStatus> statusByOrigin(Tx tx, String originRef) {
         return tx.one("SELECT status FROM draft WHERE origin_ref = ?", row -> DraftStatus.valueOf(row.string("status")), originRef);
+    }
+
+    /**
+     * The drafts given in reply to someone's message {@code messageRef} (G-1b, G-1c), still open or given as tasks: a
+     * split whole is left out for its parts, which carry the same message.
+     */
+    public static List<Draft> fromSource(Tx tx, String messageRef) {
+        return tx.list("SELECT " + COLUMNS + " FROM draft WHERE source_ref = ? AND status IN (?, ?) ORDER BY id", Drafts::map,
+                messageRef, DraftStatus.OPEN, DraftStatus.CREATED);
     }
 
     /** The open drafts message {@code messageRef} gave, matched as {@link Tasks#fromMessage} matches tasks. */
@@ -133,7 +143,8 @@ public final class Drafts {
                 row.longOrNull("parent_id"),
                 row.intOrNull("part"),
                 row.instant("created_at"),
-                row.instant("updated_at"));
+                row.instant("updated_at"),
+                row.string("source_ref"));
     }
 
     private static List<String> topics(String json) {
