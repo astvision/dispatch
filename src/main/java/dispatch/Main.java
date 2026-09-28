@@ -54,9 +54,8 @@ public final class Main {
             case Cli.Run run -> run(run.configFile(), run.logFile());
             case Cli.Init init -> {
                 JLineTerminal terminal = JLineTerminal.system();
-                Locations here = defaults.forInstance(init.instance());
-                System.exit(new InitCommand(terminal, BotApi::create, here, Duration.ofMinutes(3),
-                        ServiceCommand.forThisMachine(terminal, init.instance())).run(init, System.getenv()));
+                System.exit(new InitCommand(terminal, BotApi::create, defaults, Duration.ofMinutes(3),
+                        instance -> ServiceCommand.forThisMachine(terminal, instance)).run(init, System.getenv()));
             }
             case Cli.Service service -> {
                 JLineTerminal terminal = JLineTerminal.system();

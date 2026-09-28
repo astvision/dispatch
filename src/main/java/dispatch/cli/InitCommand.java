@@ -13,10 +13,13 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -58,9 +61,12 @@ public final class InitCommand {
 
     private final Terminal terminal;
     private final Function<String, BotApi> bots;
-    private final Locations locations;
+    private final Locations defaults;
     private final Duration waitForPeople;
-    private final ServiceCommand services;
+    private final Function<String, ServiceCommand> servicesFor;
+    private Locations locations;
+    private ServiceCommand services;
+    private String instance;
     private boolean hinted;
     private boolean advanced;
 
@@ -71,22 +77,73 @@ public final class InitCommand {
      */
     public InitCommand(Terminal terminal, Function<String, BotApi> bots, Locations locations, Duration waitForPeople,
                        ServiceCommand services) {
+        this(terminal, bots, locations, waitForPeople, instance -> services);
+    }
+
+    /**
+     * @param bots          the Telegram client for a bot token
+     * @param defaults      the default instance's locations; a named instance's are derived from them once known (M)
+     * @param waitForPeople how long to wait for someone to press Start, or for the bot to be added to a group
+     * @param servicesFor   the background service offered at the end, chosen once the instance being set up is known (M)
+     */
+    public InitCommand(Terminal terminal, Function<String, BotApi> bots, Locations defaults, Duration waitForPeople,
+                       Function<String, ServiceCommand> servicesFor) {
         this.terminal = terminal;
         this.bots = bots;
-        this.locations = locations;
+        this.defaults = defaults;
         this.waitForPeople = waitForPeople;
-        this.services = services;
+        this.servicesFor = servicesFor;
     }
 
     public int run(Cli.Init options, Map<String, String> processEnvironment) {
         try {
             advanced = options.advanced();
-            init(options.configFile().toAbsolutePath(), options.force(), processEnvironment);
+            String instance = options.instance();
+            Path configFile = options.configFile().toAbsolutePath();
+            if (instance == null && !options.force() && Files.exists(configFile)
+                    && configFile.equals(defaults.configFile().toAbsolutePath())) {
+                instance = anotherInstance(processEnvironment);
+                configFile = defaults.forInstance(instance).configFile().toAbsolutePath();
+            }
+            this.instance = instance;
+            this.locations = defaults.forInstance(instance);
+            this.services = servicesFor.apply(instance);
+            init(configFile, options.force(), processEnvironment);
             return 0;
         } catch (CliException e) {
             terminal.fail(e.getMessage());
             return 1;
         }
+    }
+
+    /** The default instance exists: offer a second bot beside it rather than stopping (M: several instances on one computer). */
+    private String anotherInstance(Map<String, String> env) {
+        List<Instances.Found> here = Instances.discover(defaults, env);
+        String existing = here.stream().filter(found -> found.name() == null && found.config() != null)
+                .map(found -> "bot " + Instances.botId(found.config().secrets().telegramBotToken())).findFirst().orElse("a bot");
+        terminal.say("You already have " + existing + " on this computer.");
+        if (!terminal.confirm("Add another bot here?", false)) {
+            throw new CliException(defaults.configFile() + " already exists; edit it, add projects with dispatch project add, "
+                    + "or start over with dispatch init --force");
+        }
+        Set<String> taken = here.stream().map(Instances.Found::name).filter(Objects::nonNull).collect(Collectors.toSet());
+        String suggestion = "team";
+        for (int n = 2; taken.contains(suggestion); n++) {
+            suggestion = "team-" + n;
+        }
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            String name = required("Name for it", suggestion);
+            try {
+                Locations.validName(name);
+                if (!taken.contains(name)) {
+                    return name;
+                }
+                terminal.warn("an instance named " + name + " already exists");
+            } catch (CliException e) {
+                terminal.warn(e.getMessage());
+            }
+        }
+        throw new CliException("no usable name after " + ATTEMPTS + " tries");
     }
 
     private void init(Path configFile, boolean force, Map<String, String> env) {
@@ -104,7 +161,7 @@ public final class InitCommand {
 
         terminal.step("2/6 The bot");
         terminal.say("Create one with @BotFather (/newbot) in Telegram, then paste its token.");
-        Setup.Bot bot = bot();
+        Setup.Bot bot = bot(env);
         Setup.Updates updates = new Setup.Updates(bot.api());
 
         terminal.step(team ? "3/6 Your team" : "3/6 You");
@@ -122,7 +179,7 @@ public final class InitCommand {
             chat = groupChat(updates, bot.username());
             name = Setup.teamName(required("Team name", chat == null ? name + "-team" : Setup.teamName(chat.title())));
             if (chat != null) {
-                workers = workers();
+                workers = workers(env);
             }
         }
 
@@ -137,7 +194,7 @@ public final class InitCommand {
         terminal.say("Dispatch commits each task's changes as:");
         String authorName = required("Author name", "Dispatch (" + me.name().split("\\s+")[0] + ")");
         String authorEmail = required("Author email", Setup.gitEmail().orElse(null));
-        Setup.Advanced instance = advanced ? advancedAnswers(team) : Setup.Advanced.NONE;
+        Setup.Advanced advancedSettings = advanced ? advancedAnswers(team) : Setup.Advanced.NONE;
 
         summary(bot, team, members, chat, workers, projects, authorName, authorEmail, configFile);
         if (!terminal.confirm("Write this setup?", true)) {
@@ -146,7 +203,8 @@ public final class InitCommand {
         String yaml;
         try {
             yaml = Setup.render(
-                    new Setup.Answers(name, team, members, chat, workers, claude, projects, authorName, authorEmail, instance),
+                    new Setup.Answers(name, team, members, chat, workers, claude, projects, authorName, authorEmail, advancedSettings,
+                            instance == null ? null : "dispatch/" + instance),
                     locations.stateDir());
         } catch (ConfigException e) {
             throw new CliException(e.getMessage());
@@ -171,13 +229,24 @@ public final class InitCommand {
         terminal.say("Next: dispatch check, then dispatch run (or dispatch service install).");
     }
 
-    private Setup.Bot bot() {
+    private Setup.Bot bot(Map<String, String> env) {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
             String token = terminal.askSecret("Bot token");
             try {
                 Setup.Bot bot = BotApi.isBotToken(token)
                         ? terminal.during("Checking the token with Telegram", () -> Setup.bot(token, bots))
                         : Setup.bot(token, bots);
+                // Telegram gives each bot's updates to one reader at a time: another instance on this bot would fight this one for them.
+                String id = Instances.botId(token);
+                Optional<Instances.Found> clash = Instances.discover(defaults, env).stream()
+                        .filter(found -> found.config() != null && !Objects.equals(found.name(), instance))
+                        .filter(found -> id != null && id.equals(Instances.botId(found.config().secrets().telegramBotToken())))
+                        .findFirst();
+                if (clash.isPresent()) {
+                    terminal.warn("@" + bot.username() + " already runs as instance "
+                            + (clash.get().name() == null ? "default" : clash.get().name()) + "; create another bot with @BotFather");
+                    continue;
+                }
                 terminal.ok("@" + bot.username());
                 if (!bot.topicsEnabled()) {
                     terminal.say("  Tip: turn on topics for the bot in @BotFather, and each task gets its own topic.");
@@ -224,15 +293,16 @@ public final class InitCommand {
     }
 
     /** Where teammates' computers reach this one, once there is a group to announce to (ADR 0021): their tasks run there. */
-    private Config.Workers workers() {
+    private Config.Workers workers(Map<String, String> env) {
         terminal.say("Each teammate's tasks run on their own computer; it must reach this one through a tunnel or reverse proxy.");
         String publicUrl = required("Public URL (e.g. https://team.example.com)", null);
-        return new Config.Workers(publicUrl, port());
+        return new Config.Workers(publicUrl, port(env));
     }
 
-    private int port() {
+    private int port(Map<String, String> env) {
+        String defaultPort = String.valueOf(suggestedPort(env));
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            String answer = required("Port Dispatch listens on for teammates' computers", "7880");
+            String answer = required("Port Dispatch listens on for teammates' computers", defaultPort);
             try {
                 int port = Integer.parseInt(answer);
                 if (port >= 1 && port <= 65535) {
@@ -244,6 +314,27 @@ public final class InitCommand {
             terminal.warn("a port is a whole number from 1 to 65535");
         }
         throw new CliException("Port is needed");
+    }
+
+    /** The first port from 7880 up that no other instance already listens on for teammates or the Mini App (M). */
+    private int suggestedPort(Map<String, String> env) {
+        Set<Integer> taken = new HashSet<>();
+        for (Instances.Found found : Instances.discover(defaults, env)) {
+            if (found.config() == null) {
+                continue;
+            }
+            if (found.config().workers() != null) {
+                taken.add(found.config().workers().port());
+            }
+            if (found.config().miniApp() != null) {
+                taken.add(found.config().miniApp().port());
+            }
+        }
+        int port = 7880;
+        while (taken.contains(port)) {
+            port++;
+        }
+        return port;
     }
 
     /**
