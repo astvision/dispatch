@@ -312,6 +312,11 @@ public final class UpdateHandler {
             return;
         }
         if (parsed.isEmpty()) {
+            if (privateChat && repliesTo(tx, message, OutboxKind.TASK_PROMPT)) {
+                // An answer to /help's ✍️ prompt: a task by explicit intent, as /task's text is, never an assistant turn.
+                tasks.draft(tx, who, null, text(message), origin, attachments(message));
+                return;
+            }
             if (replyToTask(tx, message, who, origin, chatRef)) {
                 return;
             }
@@ -365,7 +370,7 @@ public final class UpdateHandler {
                 }
                 taskId(command.args()).ifPresentOrElse(
                         id -> tasks.cancel(tx, who, id, origin, chatRef),
-                        () -> help(tx, who, message, visible, origin, chatRef, true));
+                        () -> enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "cancel")));
             }
             case "retry" -> {
                 if (!privateChat) {
@@ -374,7 +379,7 @@ public final class UpdateHandler {
                 }
                 taskId(command.args()).ifPresentOrElse(
                         id -> tasks.retry(tx, who, id, origin, chatRef),
-                        () -> help(tx, who, message, visible, origin, chatRef, true));
+                        () -> enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "retry")));
             }
             case "worker" -> {
                 if (!privateChat) {
@@ -648,6 +653,16 @@ public final class UpdateHandler {
 
     private void privateOnly(Tx tx, String chatRef, String origin) {
         enqueue(tx, OutboxKind.PRIVATE_ONLY, chatRef, origin, Json.object().put("bot", botUsername));
+    }
+
+    /** Whether {@code message} replies to one of the bot's sent messages of {@code kind}. */
+    private static boolean repliesTo(Tx tx, JsonNode message, OutboxKind kind) {
+        JsonNode repliedTo = message.path("reply_to_message");
+        if (!repliedTo.has("message_id")) {
+            return false;
+        }
+        String repliedRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
+        return Outbox.findSent(tx, repliedRef).filter(sent -> sent.kind() == kind).isPresent();
     }
 
     /**
@@ -1318,11 +1333,8 @@ public final class UpdateHandler {
         long chatId = message.path("chat").path("id").asLong();
         answer(tx, callbackId, "callback.done");
         if (page.equals("write")) {
-            // Not a new intake: the reply to this prompt replies to none of the tracked messages, so it is drafted (or put to
-            // the assistant) like any plain message.
-            String prompt = renderer.text("help.writePrompt");
-            String placeholder = renderer.text("help.writePlaceholder");
-            tx.afterCommit(() -> bestEffort("sendMessage", () -> api.sendForceReply(chatId, null, prompt, null, placeholder)));
+            // Through the outbox, so the reply is recognised as answering it and drafted as a task (onChatMessage).
+            enqueue(tx, OutboxKind.TASK_PROMPT, Refs.chat(chatId), null, Json.object());
             return;
         }
         TaskAccess.Viewer viewer = access.member(who.ref());
@@ -1347,7 +1359,16 @@ public final class UpdateHandler {
         }
         long messageId = message.path("message_id").asLong();
         Renderer.Rendered redrawn = renderer.render(OutboxKind.HELP, Json.read(redactor.redact(payload.toString())));
-        tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard())));
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> {
+            try {
+                api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard());
+            } catch (TelegramException e) {
+                // 🔄 on numbers that have not moved: nothing to change, nothing to report.
+                if (!String.valueOf(e.getMessage()).contains("message is not modified")) {
+                    throw e;
+                }
+            }
+        }));
     }
 
     /**

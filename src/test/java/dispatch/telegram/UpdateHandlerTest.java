@@ -1447,21 +1447,37 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void writeAsksForTheTaskAsAForcedReplyAndTheReplyIsDraftedLikeAnyMessage() throws Exception {
-        handler.handle(privateCallback(590, 100, "Bold", "help:write"));
+    void writeAsksForTheTaskAsAForcedReplyAndTheReplyIsATaskEvenWithTheAssistantOn() throws Exception {
+        List<dispatch.agent.RunRequest> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        UpdateHandler withAssistant = assistantHandler(asked, Json.read("{\"reply\":\"ок\",\"actions\":[]}"));
 
-        JsonNode prompt = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
-        assertEquals(100, prompt.get("chat_id").asLong());
-        assertEquals(renderer.text("help.writePrompt"), prompt.get("text").asText());
-        assertTrue(prompt.get("reply_markup").get("force_reply").asBoolean(), prompt.toString());
+        withAssistant.handle(privateCallback(590, 100, "Bold", "help:write"));
+
+        Map<String, String> prompt = row("SELECT * FROM outbox WHERE kind = 'TASK_PROMPT'");
+        assertEquals("telegram:100", prompt.get("chat_ref"));
         assertTrue(telegram.drain("editMessageText").isEmpty(), "the home screen stays as it is");
+        long promptId = Long.parseLong(prompt.get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, promptId, 1, "telegram:100/2000", clock.instant()));
 
-        String reply = """
-                {"message_id":1000,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":100,"type":"private"},
-                 "date":1789640000,"text":"%s"}""".formatted(renderer.text("help.writePrompt"));
-        handler.handle(message(591, 91, 100, "Bold", 100L, "private", "Fix the login timeout", reply));
+        withAssistant.handle(message(591, 91, 100, "Bold", 100L, "private", "Fix the login timeout", """
+                {"message_id":2000,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":100,"type":"private"},
+                 "date":1789640000,"text":"prompt"}"""));
 
+        lastAssistant.awaitIdleForTests();
         assertEquals("Fix the login timeout", row("SELECT description FROM draft").get("description"));
+        assertTrue(asked.isEmpty(), "a reply to the task prompt is a task, not an assistant turn");
+    }
+
+    @Test
+    void cancelAndRetryWithoutANumberSayHowToUseThem() {
+        handler.handle(privateCommand(594, 100, "Bold", "/cancel"));
+        handler.handle(privateCommand(595, 100, "Bold", "/retry x"));
+
+        Map<String, String> cancel = row("SELECT * FROM outbox WHERE reply_to_ref = 'telegram:100/594'");
+        assertEquals("TASK_USAGE", cancel.get("kind"));
+        assertEquals("cancel", Json.read(cancel.get("payload")).get("command").asText());
+        JsonNode retry = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/595'").get("payload"));
+        assertEquals("retry", retry.get("command").asText());
     }
 
     @Test

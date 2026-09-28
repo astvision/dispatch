@@ -714,6 +714,21 @@ class RendererTest {
                 "https://t.me/dispatch_backend_bot?start=help"))), rendered.keyboard());
     }
 
+    @Test
+    void theTaskPromptIsAForcedReply() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.TASK_PROMPT, Json.object());
+
+        assertEquals(messages.getString("help.writePrompt"), rendered.html());
+        assertEquals(messages.getString("help.writePlaceholder"), rendered.forceReply());
+    }
+
+    @Test
+    void cancelAndRetryUsageNameTheirCommand() {
+        assertTrue(renderer.render(OutboxKind.TASK_USAGE, Json.object().put("command", "cancel")).html().contains("<code>/cancel дугаар</code>"));
+        assertTrue(renderer.render(OutboxKind.TASK_USAGE, Json.object().put("command", "retry")).html().contains("<code>/retry дугаар</code>"));
+        assertEquals(messages.getString("task.usage"), renderer.render(OutboxKind.TASK_USAGE, Json.object()).html());
+    }
+
     private static ObjectNode homePayload() {
         ObjectNode payload = Json.object().put("privateChat", true).put("page", "home").put("bot", "dispatch_backend_bot")
                 .put("firstName", "Bold").put("running", 0).put("waiting", 0).put("queued", 0).put("computer", false).putNull("miniApp");
@@ -1103,6 +1118,7 @@ class RendererTest {
             }
             case PROJECT_UNAVAILABLE -> Json.object().put("project", "crm").put("reason", "no clone");
             case TASK_USAGE -> Json.object();
+            case TASK_PROMPT -> Json.object();
             case PROJECTS -> {
                 ObjectNode payload = Json.object();
                 payload.putArray("projects").addObject().put("name", "crm").putNull("alias").put("baseBranch", "main")

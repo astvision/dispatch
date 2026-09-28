@@ -184,12 +184,13 @@ public final class Renderer {
                     projectList(payload.path("projects"))));
             case PROJECT_UNAVAILABLE -> plain(format("project.unavailable", escape(payload.path("project").asText()),
                     escape(payload.path("reason").asText())));
-            case TASK_USAGE -> plain(text("task.usage"));
+            case TASK_USAGE -> plain(payload.hasNonNull("command") ? text("usage." + payload.get("command").asText()) : text("task.usage"));
             case PRIVATE_ONLY -> plain(format("privateOnly", escape(payload.path("bot").asText())));
             case NO_PROJECTS -> plain(payload.hasNonNull("names")
                     ? format("group.noProjects", escape(payload.get("names").asText()))
                     : text("noProjects"));
             case HELP -> help(payload);
+            case TASK_PROMPT -> new Rendered(text("help.writePrompt"), List.of(), null, text("help.writePlaceholder"));
             case PROJECTS -> projects(payload.path("projects"));
             case WORKER_PAIRING -> workerPairing(payload);
             case WORKER_REVOKED -> plain(payload.path("found").asBoolean()
