@@ -15,6 +15,7 @@ vi.mock("../api", async (importOriginal) => ({
   approvePlan: vi.fn(),
   rejectPlan: vi.fn(),
   correctPlan: vi.fn(),
+  followUpTask: vi.fn(),
 }));
 
 const ME: api.Me = { ref: "telegram:100", name: "Bold", admin: false, bot: "dispatch_task_bot" };
@@ -185,6 +186,21 @@ describe("the home screen", () => {
     fireEvent.click(within(sheet).getByRole("button", { name: "Илгээх" }));
 
     await waitFor(() => expect(api.correctPlan).toHaveBeenCalledWith(11, 2, "also export XLSX"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("gives a finished task its next step", async () => {
+    vi.mocked(api.getTaskDetail).mockResolvedValue({ ...detailOf(myFinishedTask, planWithQuestions), phase: "COMPLETED", plan: undefined });
+    vi.mocked(api.followUpTask).mockResolvedValue({ result: "QUEUED" });
+    renderHome([myFinishedTask]);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Add the export button/ }));
+    const sheet = await dialog();
+    fireEvent.click(await within(sheet).findByRole("button", { name: "➕ Дараагийн алхам өгөх" }));
+    fireEvent.change(within(sheet).getByLabelText("Дараагийн алхам"), { target: { value: "add XLSX too" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Илгээх" }));
+
+    await waitFor(() => expect(api.followUpTask).toHaveBeenCalledWith(2, "add XLSX too"));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 

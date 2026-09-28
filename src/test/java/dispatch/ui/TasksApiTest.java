@@ -368,6 +368,35 @@ class TasksApiTest {
         assertEquals("PLANNING", phase(taskId));
     }
 
+    @Test
+    void aFinishedTaskTakesAFollowUpFromItsRequesterOnly() {
+        long waiting = planned(ALI, noQuestions());
+        long finished = finished(ALI);
+        String outboxBefore = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
+
+        List<String> answers = List.of(
+                refused(() -> api.followUp(BOLD_CALLER, Json.object().put("taskId", finished).put("text", "add a test"))),
+                refused(() -> api.followUp(ALI_CALLER, Json.object().put("taskId", waiting).put("text", "add a test"))),
+                refused(() -> api.followUp(ALI_CALLER, Json.object().put("taskId", finished).put("text", "  "))));
+        String outboxAfter = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
+        JsonNode followed = api.followUp(ALI_CALLER, Json.object().put("taskId", finished).put("text", "add a test"));
+
+        assertEquals(List.of("403 not_yours", "409 wrong_state", "400 invalid"), answers);
+        assertEquals(outboxBefore, outboxAfter, "a refusal the Mini App shows must not also be sent to the chat");
+        assertEquals("QUEUED", followed.path("result").asText());
+        assertEquals("EXECUTING", phase(finished));
+    }
+
+    private long finished(Requester who) {
+        long taskId = planned(who, noQuestions());
+        db.transaction(tx -> tasks.approve(tx, who, taskId, 1));
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.agentStarted(run.taskId(), run.seq(), null, null);
+        transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, null,
+                new BigDecimal("0.1"), 3, List.of(), null, null, null), List.of("a.txt"), "https://github.com/acme/alm/pull/1");
+        return taskId;
+    }
+
     private Object call(String route, Caller caller, com.fasterxml.jackson.databind.node.ObjectNode body) {
         return switch (route) {
             case "detail" -> api.detail(caller, body);

@@ -486,3 +486,6 @@ export const getSpend = (days: number, signal?: AbortSignal) => post<Spend>("/ap
 export const getLive = (signal?: AbortSignal) => get<Live>("/api/live", signal);
 export const correctPlan = (taskId: number, planSeq: number, text: string) =>
   post<{ result: string }>("/api/tasks/correct", { taskId, planSeq, text });
+/** QUEUED: the task runs again in its session; NEW_TASK: its pull request was merged, so the follow-up is a new task. */
+export const followUpTask = (taskId: number, text: string) =>
+  post<{ result: "QUEUED" | "NEW_TASK" }>("/api/tasks/followUp", { taskId, text });
