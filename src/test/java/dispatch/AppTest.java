@@ -323,6 +323,18 @@ class AppTest {
         perChat.forEach(request -> assertEquals("default", request.path("menu_button").path("type").asText()));
     }
 
+    @Test
+    void aRunningBotOpensItsDeskPortAndAStoppedOneClosesIt() {
+        app = start();
+        dispatch.ui.DeskFile desk = dispatch.ui.DeskFile.read(config.stateDir())
+                .orElseThrow(() -> new AssertionError("no desk.json in " + config.stateDir()));
+
+        assertEquals(app.deskPort(), desk.port());
+        app.stop();
+        app = null;
+        assertEquals(java.util.Optional.empty(), dispatch.ui.DeskFile.read(config.stateDir()));
+    }
+
     private App start() {
         return start((group, member) -> {
             throw new AssertionError("no one joins in this test");

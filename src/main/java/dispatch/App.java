@@ -64,6 +64,7 @@ public final class App {
     private final ActiveRuns activeRuns;
     private final WorkerApi workerApi;
     private final UiServer miniApp;
+    private final dispatch.ui.DeskServer desk;
     private final Consumer<Throwable> onFatal;
     private final AtomicBoolean stopping = new AtomicBoolean();
     private Thread pollerThread;
@@ -77,7 +78,8 @@ public final class App {
      * @param miniApp   null unless the config has a {@code miniApp} block, and when this build bundles no pages
      */
     private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, Sweeper sweeper, Splitter splitter,
-                Assistant assistant, ActiveRuns activeRuns, WorkerApi workerApi, UiServer miniApp, Consumer<Throwable> onFatal) {
+                Assistant assistant, ActiveRuns activeRuns, WorkerApi workerApi, UiServer miniApp, dispatch.ui.DeskServer desk,
+                Consumer<Throwable> onFatal) {
         this.db = db;
         this.poller = poller;
         this.scheduler = scheduler;
@@ -89,6 +91,7 @@ public final class App {
         this.activeRuns = activeRuns;
         this.workerApi = workerApi;
         this.miniApp = miniApp;
+        this.desk = desk;
         this.onFatal = onFatal;
     }
 
@@ -206,6 +209,14 @@ public final class App {
             }
         }
 
+        dispatch.ui.DeskServer desk = null;
+        try {
+            desk = dispatch.ui.DeskServer.start(stateDir, db, tasks, groups, clock, version(), config.team());
+        } catch (java.io.IOException e) {
+            // The bot's own work never waits on the desktop: without a desk port the desktop says the bot is not running.
+            Log.error("desk.unavailable", e, "state_dir", stateDir);
+        }
+
         App[] app = new App[1];
         Scheduler scheduler = new Scheduler(db, config.scheduler().maxConcurrentRuns(), schedulerSignal, clock,
                 run -> Thread.ofVirtual().name("run-" + run.taskId() + "." + run.seq())
@@ -215,7 +226,7 @@ public final class App {
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
         Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1));
         app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], assistant, activeRuns, workerApi, miniApp,
-                onFatal);
+                desk, onFatal);
         app[0].startThreads();
         Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "task_topics", taskTopics, "groups", groups.all().size(),
                 "projects", config.projects().size(), "state_dir", stateDir);
@@ -230,6 +241,16 @@ public final class App {
     /** The port members' computers connect to; 0 in personal mode. Tests start with port 0 and ask afterwards. */
     public int workerPort() {
         return workerApi == null ? 0 : workerApi.port();
+    }
+
+    /** The desk port `dispatch ui` reaches the tasks through (D-2); 0 when it could not open. */
+    public int deskPort() {
+        return desk == null ? 0 : desk.port();
+    }
+
+    /** This build's version, as `dispatch ui` reads its own: the strip compares the two (D-2). */
+    private static String version() {
+        return java.util.Optional.ofNullable(App.class.getPackage().getImplementationVersion()).orElse("dev");
     }
 
     /** The port the tunnel forwards the Mini App to; 0 when it is off. Tests start with port 0 and ask afterwards. */
@@ -266,6 +287,9 @@ public final class App {
             }
             if (miniApp != null) {
                 miniApp.close();
+            }
+            if (desk != null) {
+                desk.close();
             }
             draftExpiry.stop();
             draftExpiryThread.join(Duration.ofSeconds(10));
