@@ -1,6 +1,7 @@
 import { Alert, Button, Card, Input, InputNumber, List, QRCode, Space, Spin, Typography } from "antd";
 import { useCallback, useState } from "react";
 import { answerPerson, nextGroup, nextPerson, stopService, type SetupState } from "../api";
+import { useT } from "../i18n/i18n";
 import { useAction } from "../useAction";
 import type { Draft } from "./SetupPage";
 import { useLongPoll } from "./useLongPoll";
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export default function PeopleStep({ state, draft, update, refresh, next, back }: Props) {
+  const t = useT();
   const [phase, setPhase] = useState<"people" | "group" | "done">("people");
   const link = `https://t.me/${state.bot?.username ?? ""}`;
   const hintAfterMs = state.hintAfterSeconds * 1000;
@@ -59,7 +61,7 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
 
   const conflict = [person.error, group.error].find((e) => e?.code === "conflict");
   const otherError = [person.error, group.error, answering.error].find((e) => e && e.code !== "conflict");
-  const question = person.found && (you ? `Add ${person.found.name} to the team?` : `Is ${person.found.name} you?`);
+  const question = person.found && t(you ? "setup.addToTeam" : "setup.isThisYou", { name: person.found.name });
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
@@ -67,22 +69,22 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
         <QRCode type="svg" value={link} size={140} />
         <Space orientation="vertical">
           <Typography.Paragraph>
-            Open <Typography.Link href={link} target="_blank" rel="noreferrer">{link.replace("https://", "")}</Typography.Link> and press Start.
+            {t("setup.openAndStart")} <Typography.Link href={link} target="_blank" rel="noreferrer">{link.replace("https://", "")}</Typography.Link>
           </Typography.Paragraph>
-          {state.team && <Typography.Paragraph type="secondary">Teammates do the same. Anyone can also ask later: you approve them in Telegram.</Typography.Paragraph>}
+          {state.team && <Typography.Paragraph type="secondary">{t("setup.teammatesToo")}</Typography.Paragraph>}
         </Space>
       </Space>
 
       {state.members.length > 0 && (
-        <List size="small" header={state.team ? "The team" : "You"} dataSource={state.members}
-              renderItem={(m, i) => <List.Item>{m.name} ({m.id}){state.team && i === 0 ? ", admin" : ""}</List.Item>} />
+        <List size="small" header={t(state.team ? "setup.theTeam" : "setup.you")} dataSource={state.members}
+              renderItem={(m, i) => <List.Item>{t(state.team && i === 0 ? "setup.memberAdmin" : "setup.member", { name: m.name, id: m.id })}</List.Item>} />
       )}
 
       {polling && !person.found && !person.error && (
-        <Spin description={you ? "Waiting for a teammate to press Start" : "Waiting for you to press Start"}><div style={{ height: 48 }} /></Spin>
+        <Spin description={t(you ? "setup.waitingTeammate" : "setup.waitingYou")}><div style={{ height: 48 }} /></Spin>
       )}
       {polling && person.quiet && !person.found && (
-        <Alert type="warning" showIcon message="Nothing has reached the bot yet. If Start was pressed:"
+        <Alert type="warning" showIcon message={t("setup.nothingYet")}
                description={<ul style={{ margin: 0, paddingLeft: 20 }}>{state.hints.map((h) => <li key={h}>{h}</li>)}</ul>} />
       )}
       {question && (
@@ -90,8 +92,8 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
           <Space orientation="vertical">
             <Typography.Text strong>{question}</Typography.Text>
             <Space>
-              <Button type="primary" loading={answering.busy} onClick={() => void answer(true)}>{you ? "Add" : "That's me"}</Button>
-              <Button disabled={answering.busy} onClick={() => void answer(false)}>{you ? "Skip" : "Not me"}</Button>
+              <Button type="primary" loading={answering.busy} onClick={() => void answer(true)}>{t(you ? "setup.add" : "setup.thatsMe")}</Button>
+              <Button disabled={answering.busy} onClick={() => void answer(false)}>{t(you ? "setup.skip" : "setup.notMe")}</Button>
             </Space>
           </Space>
         </Card>
@@ -99,7 +101,7 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
 
       {conflict && (
         <Alert type="error" showIcon message={conflict.message}
-               action={<Button danger loading={stopping.busy} onClick={() => void stopAndRetry()}>Stop the background service</Button>} />
+               action={<Button danger loading={stopping.busy} onClick={() => void stopAndRetry()}>{t("setup.stopService")}</Button>} />
       )}
       {stopping.error && <Alert type="error" showIcon message={stopping.error.message} />}
       {otherError && (
@@ -115,53 +117,49 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
                      group.retry();
                    }}
                  >
-                   Try again
+                   {t("common.tryAgain")}
                  </Button>
                } />
       )}
 
       {state.team && you && phase === "people" && (
-        <Button onClick={() => setPhase("group")}>Done adding teammates</Button>
+        <Button onClick={() => setPhase("group")}>{t("setup.doneAdding")}</Button>
       )}
       {state.team && phase === "group" && (
         <Space orientation="vertical" style={{ width: "100%" }}>
-          <Typography.Paragraph>
-            Add @{state.bot?.username} to the team's group now (in the group: Add members). Its members see one line per task there.
-          </Typography.Paragraph>
-          {groupTitle ? <Alert type="success" showIcon message={`Group: ${groupTitle}`} />
-            : <Spin description="Waiting for the bot to be added to a group"><div style={{ height: 48 }} /></Spin>}
-          {!groupTitle && <Button onClick={() => setPhase("done")}>No group</Button>}
+          <Typography.Paragraph>{t("setup.addToGroup", { bot: state.bot?.username ?? "" })}</Typography.Paragraph>
+          {groupTitle ? <Alert type="success" showIcon message={t("setup.groupFound", { title: groupTitle })} />
+            : <Spin description={t("setup.waitingGroup")}><div style={{ height: 48 }} /></Spin>}
+          {!groupTitle && <Button onClick={() => setPhase("done")}>{t("setup.noGroup")}</Button>}
         </Space>
       )}
       {needsWorkers && (
         <Space orientation="vertical" style={{ width: "100%" }}>
-          <Typography.Paragraph type="secondary">
-            Each teammate's tasks run on their own computer, which reaches this one through your tunnel or reverse proxy.
-          </Typography.Paragraph>
+          <Typography.Paragraph type="secondary">{t("setup.workersHow")}</Typography.Paragraph>
           <label>
-            <Typography.Text>Public URL</Typography.Text>
-            <Input value={publicUrl} placeholder="https://team.example.com" aria-label="Public URL"
+            <Typography.Text>{t("setup.publicUrl")}</Typography.Text>
+            <Input value={publicUrl} placeholder="https://team.example.com" aria-label={t("setup.publicUrl")}
                    onChange={(e) => setPublicUrl(e.target.value)} />
           </label>
           {publicUrl.trim() !== "" && !urlOk && (
-            <Typography.Text type="danger">Use an https:// URL (or http://127.0.0.1 for a local test).</Typography.Text>
+            <Typography.Text type="danger">{t("setup.urlMust")}</Typography.Text>
           )}
           <label>
-            <Typography.Text>Port</Typography.Text>
-            <InputNumber min={1} max={65535} value={port} aria-label="Port"
+            <Typography.Text>{t("setup.port")}</Typography.Text>
+            <InputNumber min={1} max={65535} value={port} aria-label={t("setup.port")}
                          onChange={(value) => setPort(value ?? 7880)} />
           </label>
         </Space>
       )}
       {state.team && you && (
         <label>
-          <Typography.Text>Team name</Typography.Text>
-          <Input value={teamName} onChange={(e) => update({ teamName: e.target.value })} aria-label="Team name" />
+          <Typography.Text>{t("setup.teamName")}</Typography.Text>
+          <Input value={teamName} onChange={(e) => update({ teamName: e.target.value })} aria-label={t("setup.teamName")} />
         </label>
       )}
 
       <Space>
-        <Button onClick={back}>Back</Button>
+        <Button onClick={back}>{t("common.back")}</Button>
         <Button type="primary" disabled={!you || (state.team && !teamName.trim()) || (needsWorkers && !urlOk)}
                 onClick={() => {
                   if (state.team) {
@@ -172,7 +170,7 @@ export default function PeopleStep({ state, draft, update, refresh, next, back }
                   }
                   next();
                 }}>
-          Next
+          {t("common.next")}
         </Button>
       </Space>
     </Space>
