@@ -37,7 +37,7 @@ public final class UiRoutes {
      */
     public static UiRoutes management(Path configFile, Locations locations, Function<String, BotApi> bots, Service service,
                                       Map<String, String> environment, String version, Consumer<Config.Telegram> applyGroups) {
-        return new UiRoutes(new OverviewApi(configFile, locations, new Checks(bots), service, environment, version),
+        return new UiRoutes(new OverviewApi(configFile, locations, new Checks(bots, locations), service, environment, version),
                 new ManageApi(configFile, service, environment, bots, applyGroups));
     }
 
