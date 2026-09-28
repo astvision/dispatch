@@ -155,10 +155,14 @@ class ConfigFileTest {
         assertTrue(admins.containsAll(List.of(100L, 201L, 202L)), admins.toString());
     }
 
-    /** Runs both at once, each on a thread of its own: the common pool has one thread on a two-core machine. */
+    /**
+     * Runs both at once, each on a thread of its own: the common pool has one thread on a two-core machine. Not
+     * try-with-resources: its close() waits for a hung edit, where the test must fail after ten seconds.
+     */
     private static void atOnce(Runnable first, Runnable second) throws Exception {
         CyclicBarrier barrier = new CyclicBarrier(2);
-        try (ExecutorService threads = Executors.newFixedThreadPool(2)) {
+        ExecutorService threads = Executors.newFixedThreadPool(2);
+        try {
             Future<?> one = threads.submit(() -> {
                 await(barrier);
                 first.run();
@@ -169,6 +173,8 @@ class ConfigFileTest {
             });
             one.get(10, TimeUnit.SECONDS);
             other.get(10, TimeUnit.SECONDS);
+        } finally {
+            threads.shutdownNow();
         }
     }
 

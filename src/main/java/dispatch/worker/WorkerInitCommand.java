@@ -403,7 +403,7 @@ public final class WorkerInitCommand {
         }
         List<Path> left = new ArrayList<>();
         for (Path path : paths) {
-            if (!delete(path)) {
+            if (!delete(path, root)) {
                 left.add(path);
             }
         }
@@ -412,16 +412,19 @@ public final class WorkerInitCommand {
 
     /**
      * A refused delete is tried once more after making the file and its folder writable: Windows refuses a read-only
-     * file, which git makes of its objects, and POSIX a file in a folder without write permission.
+     * file, which git makes of its objects, and POSIX a file in a folder without write permission. Only what the clone
+     * holds is loosened: never a link's target (setWritable follows links), nor the folder the clone sits in.
      */
-    private static boolean delete(Path path) {
+    private static boolean delete(Path path, Path root) {
         try {
             Files.deleteIfExists(path);
             return true;
         } catch (IOException refused) {
-            path.toFile().setWritable(true);
+            if (!Files.isSymbolicLink(path)) {
+                path.toFile().setWritable(true);
+            }
             Path folder = path.getParent();
-            if (folder != null) {
+            if (folder != null && !path.equals(root)) {
                 folder.toFile().setWritable(true);
             }
             try {

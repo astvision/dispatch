@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 
@@ -212,6 +213,28 @@ class WorkerInitCommandTest extends WorkerApiFixture {
 
         assertEquals(List.of(), WorkerInitCommand.deleteRecursively(root));
         assertFalse(Files.exists(root));
+    }
+
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "symlinks need elevated privileges on Windows")
+    void aFailedClonesCleanupNeverLoosensWhatIsOutsideIt() throws Exception {
+        // A link in the clone to a read-only file elsewhere, in a folder that refuses the link's removal at first.
+        Path outside = Files.writeString(dir.resolve("outside.txt"), "not the clone's");
+        assertTrue(outside.toFile().setWritable(false));
+        Path root = dir.resolve("partial");
+        Path locked = Files.createDirectories(root.resolve("locked"));
+        Files.createSymbolicLink(locked.resolve("link"), outside);
+        assertTrue(locked.toFile().setWritable(false));
+        assertTrue(dir.toFile().setWritable(false));
+        try {
+            assertEquals(List.of(root), WorkerInitCommand.deleteRecursively(root), "the clone's contents go; the clone's own "
+                    + "folder stays, since the folder it sits in is not writable and is not the clone's to change");
+        } finally {
+            dir.toFile().setWritable(true);
+        }
+
+        assertFalse(Files.isWritable(outside), "the link's target is left as it was");
+        assertTrue(Files.exists(outside));
     }
 
     @Test

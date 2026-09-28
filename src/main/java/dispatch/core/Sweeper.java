@@ -69,8 +69,10 @@ public final class Sweeper implements Runnable {
         List<Task> candidates = db.transactionReturning(tx -> Tasks.finishedIdleWithWorktree(tx, clock.instant().minus(idle)));
         int removed = 0;
         for (Task task : candidates) {
-            Path worktree = Path.of(task.worktree());
-            if (!Files.isDirectory(worktree) || stopped) {
+            // Only the worktree this machine made for the task, recorded in the words it wrote them in, is its to sweep:
+            // a member's computer reports its own in its own spelling (ADR 0021), which is never read as a path here.
+            Path worktree = workspaces.worktree(task.id());
+            if (!worktree.toString().equals(task.worktree()) || !Files.isDirectory(worktree) || stopped) {
                 continue;
             }
             try {

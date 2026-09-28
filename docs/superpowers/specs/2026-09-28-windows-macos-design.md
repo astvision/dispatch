@@ -143,7 +143,7 @@ its reason: POSIX file modes (`OwnerOnlyTest` checks Windows ACLs), the systemd 
 elevation), and timing that depends on SIGTERM.
 
 **CI** (`.github/workflows/ci.yml`, X-1):
-- Windows runs the tests with `TMP` and `TEMP` set to `%RUNNER_TEMP%\dispatch тест`, so every temporary path has a space
+- Windows runs the tests with `TMP` and `TEMP` set to `%TEMP%\dispatch тест`, so every temporary path has a space
   and Cyrillic, as under `C:\Users\Батбаяр`.
 - No test depends on the number of cores or on timing. Work that must overlap gets its own threads, not the common pool.
   The flood test's fifth admitted request is investigated as a possible limiter bug before the test is touched. vitest's
@@ -174,8 +174,9 @@ its system drive, where user folders are.
    A short name does not help here: the JDK spells a library's path out in full before loading it, expanding 8.3 names
    again (run 36395743054 loaded `C:\Users\runneradmin\…\dispatch ????` from `C:\Users\RUNNER~1\…`). **X-1:** on
    Windows, when the temporary folder's full name does not fit the code page, `Database.open` has the driver unpack into
-   `%ProgramData%\dispatch-<hash of the user's name>`, created by and checked to belong to the user Dispatch runs as, so no
-   one else can change what is unpacked there. When that fails too, Dispatch stops with an error that says to set `TMP`
+   `%ProgramData%\dispatch-<hash of the user's name>`: created with one ACL entry, the user's, and otherwise accepted only as
+   a plain folder (not a link) the user owns, so no one else can see into it or change what is unpacked there. The
+   driver's files a day old are removed there at each start, since a forced stop leaves them behind. When that fails too, Dispatch stops with an error that says to set `TMP`
    to a folder named in plain letters.
 2. **java.exe's own arguments.** java.exe reads its command line in the code page, so a jar or class path with such
    letters is not found ("Unable to access jarfile …????…"). Java is started by `dispatch.cmd` (`install.ps1`), the Windows
@@ -187,8 +188,8 @@ its system drive, where user folders are.
    arguments.
 
 CI keeps Maven's own temporary files on an ASCII path (`MAVEN_OPTS=-Djava.io.tmpdir=…`), because surefire starts the
-tests' JVM with a jar from there; the tests' JVM takes the Cyrillic `TMP`, created on the system drive (`%TEMP%`), where
-short names exist as they do under a member's user folder.
+tests' JVM with a jar from there; the tests' JVM takes the Cyrillic `TMP`, created on the system drive (`%TEMP%`) as a member's
+user folder is.
 
 ## Services (X-3)
 
