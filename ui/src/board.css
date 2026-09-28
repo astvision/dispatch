@@ -130,6 +130,11 @@ code, .mono {
   font-family: "JetBrains Mono Variable", ui-monospace, monospace;
 }
 
+/* A long path breaks rather than pushing a phone-width page sideways. */
+.board-page code {
+  overflow-wrap: anywhere;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

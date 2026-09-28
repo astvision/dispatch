@@ -187,6 +187,17 @@ class ManageApiTest {
     }
 
     @Test
+    void aTimeoutWithoutItsUnitIsRefusedInThePagesLanguage() throws Exception {
+        String body = settings(version(), "2", "gh").replace("\"planTimeout\":\"15m\"", "\"planTimeout\":\"15\"");
+
+        CliException refused = assertThrows(CliException.class, () -> call("/api/manage/settings", body));
+
+        assertEquals("planTimeout: invalid duration '15' (use a number with s, m or h, e.g. 90s, 15m, 2h)", refused.getMessage());
+        assertEquals("planTimeout: '15' хугацаа буруу (s, m эсвэл h-тэй тоо бичнэ үү, ж: 90s, 15m, 2h)",
+                refused.text().render(dispatch.Language.MN));
+    }
+
+    @Test
     void anInvalidSavesReasonIsWrittenInThePagesLanguage() throws Exception {
         String body = settings(version(), "2", "gh").replace("\"maxConcurrentRuns\":2", "\"maxConcurrentRuns\":0");
 

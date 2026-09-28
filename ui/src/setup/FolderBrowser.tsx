@@ -1,6 +1,6 @@
 import { FolderOutlined } from "@ant-design/icons";
 import { Alert, Button, Input, List, Space, Tag, Typography } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listFolders, type FolderListing } from "../api";
 import { useT } from "../i18n/i18n";
 import { useAction } from "../useAction";
@@ -11,13 +11,17 @@ export default function FolderBrowser({ onPick }: { onPick: (folder: string) => 
   const [listing, setListing] = useState<FolderListing | null>(null);
   const [typedPath, setTypedPath] = useState("");
   const { busy, error, run } = useAction();
+  const latest = useRef(0);
+  const typed = useRef(false);
 
   const open = async (path: string | null) => {
+    const asked = ++latest.current;
     const found = await run(() => listFolders(path));
-    if (found) {
-      setListing(found);
-      setTypedPath(found.path);
-    }
+    // An older listing that answers late never replaces the one asked for after it.
+    if (!found || asked !== latest.current) return;
+    setListing(found);
+    // The first listing, the home folder, does not overwrite a path typed while it loaded.
+    if (path !== null || !typed.current) setTypedPath(found.path);
   };
 
   useEffect(() => {
@@ -31,7 +35,10 @@ export default function FolderBrowser({ onPick }: { onPick: (folder: string) => 
       <label>
         <Typography.Text>{t("setup.folder")}</Typography.Text>
         <Space.Compact style={{ width: "100%" }}>
-          <Input aria-label={t("setup.folder")} className="mono" value={typedPath} onChange={(e) => setTypedPath(e.target.value)} />
+          <Input aria-label={t("setup.folder")} className="mono" value={typedPath} onChange={(e) => {
+            typed.current = true;
+            setTypedPath(e.target.value);
+          }} />
           <Button onClick={() => void open(typedPath)} disabled={busy}>{t("setup.go")}</Button>
         </Space.Compact>
       </label>

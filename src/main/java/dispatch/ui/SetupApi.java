@@ -391,7 +391,8 @@ public final class SetupApi {
             Config.RunLimits.parseDuration(value);
             return value;
         } catch (IllegalArgumentException e) {
-            throw new CliException(Text.of("setup.message2", field, e.getMessage()));
+            // parseDuration's own message is the terminal's English; a page needs it in its own language.
+            throw new CliException(Text.of("setup.durationMust", field, value));
         }
     }
 

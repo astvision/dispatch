@@ -170,15 +170,17 @@ Every planning and execution run reads the project's `CLAUDE.md` (or `.claude/CL
 finds, with what to do about it. It prints a link and opens it in your browser; the link works once, and Ctrl+C stops the
 page. Without a config, the page sets Dispatch up, step by step, as `dispatch init` does.
 
-With a config, the page has a menu:
+The page speaks English or Mongolian: your browser's language, or the **Монгол / English** switch at the top right,
+which it remembers (ADR 0029). A strip across the top shows whether the background service runs and what the checks
+found; the pages are in a rail on the left:
 
-- **Overview:** the version and files, the background service with **Restart**, and what `dispatch check` finds.
-- **Projects:** add a clone with the folder browser; change a project's base branch, alias, model and effort, for both phases or per phase; remove it. A project's model may be any model id (for example `claude-opus-5`), while setup offers Sonnet, Opus and Fable.
-- **People:** each group's members and the admins: rename, remove, make or unmake admin. New people still join by writing to the bot and an admin's approval in Telegram.
-- **Settings:** the timeout and budget per run, how many runs at a time, the commit author, and the Claude Code and GitHub CLI commands.
-- **Logs:** the background service's log, refreshed every 2 seconds, filtered by level and event, with secrets masked.
+- **Overview:** the version and files, the background service with **Install**, **Restart** and **Stop**, and what `dispatch check` finds, with **Check again**.
+- **Projects:** a table of the projects; a row opens it in a side panel, its fields grouped with a line of help under each: base branch and alias, the agent with its model and effort, and a model and effort per phase. **Add a project** opens the panel at the folder browser; **Remove** asks first. A project's model may be any model id (for example `claude-opus-5`), while the lists offer Sonnet, Opus and Fable.
+- **People:** each group with its Telegram chat (and **Unlink the chat**), its projects, and its members with an admin switch, **Rename** and **Remove**. New people still join by writing to the bot and an admin's approval in Telegram.
+- **Settings:** the limits per run, the commit author, and the Claude Code and GitHub CLI commands, each with a line of help.
+- **Logs:** the background service's log as rows, newest first: time, level, event, task and the other fields, secrets masked. Filter by level, event (`run.*` works), task number or any text; **Follow** reads it again every 2 seconds.
 
-A save changes only the lines it must, so your comments and layout stay, and keeps the previous file as `dispatch.yaml.bak`. It is refused when the file changed on disk since the page loaded it: reload and try again. The running Dispatch reads its config when it starts, so after a save the page offers **Restart now**.
+A save changes only the lines it must, so your comments and layout stay, and keeps the previous file as `dispatch.yaml.bak`. It is refused when the file changed on disk since the page loaded it: reload and try again. The running Dispatch reads its config when it starts, so after a save the strip shows **Restart to apply** with **Restart now**.
 
 On a server, from your own computer:
 

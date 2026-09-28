@@ -7,7 +7,7 @@ test("a setting is saved into the config, and the previous config is kept as .ba
   await page.getByLabel("Maximum concurrent runs").fill("3");
   await page.getByRole("button", { name: "Save", exact: true }).click();
 
-  await expect(page.getByText("Saved. Restart to apply")).toBeVisible();
+  await expect(page.getByText("Restart to apply", { exact: true })).toBeVisible();
   expect(config()).toContain("  maxConcurrentRuns: 3\n");
   expect(config()).toContain("# The e2e team's Dispatch\n");
   expect(existsSync(`${paths().configFile}.bak`)).toBe(true);
@@ -28,7 +28,7 @@ test("a save against a config changed on disk is refused until the page reloads 
   await page.getByLabel("Commit author name").fill("Dispatch (e2e)");
   await page.getByRole("button", { name: "Save", exact: true }).click();
 
-  await expect(page.getByText("Saved. Restart to apply")).toBeVisible();
+  await expect(page.getByText("Restart to apply", { exact: true })).toBeVisible();
   expect(config()).toContain("  authorName: 'Dispatch (e2e)'\n");
   expect(config()).toContain("# changed by hand\n");
 });
