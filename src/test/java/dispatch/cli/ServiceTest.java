@@ -227,8 +227,7 @@ class ServiceTest {
         service.install(named(home, "team"));
 
         String unit = Files.readString(home.resolve(".config/systemd/user/dispatch-team.service"));
-        assertTrue(unit.contains(" run --instance team --log-file "), unit);
-        assertFalse(unit.contains("--config"), unit);
+        assertTrue(unit.contains(" run --config \"" + home.resolve(".config/dispatch/team.yaml") + "\" --log-file "), unit);
         assertTrue(commands.run.contains("systemctl --user enable --now dispatch-team.service"), commands.run.toString());
         assertEquals("systemd user service dispatch-team.service", service.describe());
         assertFalse(Files.exists(home.resolve(".config/systemd/user/dispatch.service")), "the default unit is untouched");
@@ -242,7 +241,8 @@ class ServiceTest {
         mac.install(named(home, "team"));
 
         String plist = Files.readString(home.resolve("Library/LaunchAgents/io.dispatch.agent.team.plist"));
-        assertTrue(plist.contains("<string>--instance</string>\n    <string>team</string>"), plist);
+        assertTrue(plist.contains("<string>--config</string>\n    <string>" + home.resolve(".config/dispatch/team.yaml") + "</string>"),
+                plist);
 
         Service windows = Service.forOs("Windows 11", home, commands, "PC\\bold", Service.Kind.DISPATCH, "team");
         assertEquals("Task Scheduler task Dispatch-team", windows.describe());
@@ -252,7 +252,7 @@ class ServiceTest {
     private Service.Spec named(Path home, String instance) {
         Service.Spec base = spec(home);
         return new Service.Spec(base.java(), base.jar(), home.resolve(".config/dispatch/" + instance + ".yaml"),
-                home.resolve("state-" + instance + "/dispatch.log"), base.path(), home.resolve("state-" + instance), instance);
+                home.resolve("state-" + instance + "/dispatch.log"), base.path(), home.resolve("state-" + instance));
     }
 
     private static Service.Spec spec(Path home) {

@@ -20,22 +20,19 @@ public interface Service {
      * @param java     the Java launcher to run Dispatch with
      * @param path     the PATH setup ran with, so claude, git and gh are found where a service's own PATH would miss them
      * @param stateDir where a service definition that needs a file of its own is kept
-     * @param instance null for the default instance, else the name a second instance runs under (Locations.validName)
      */
-    record Spec(Path java, Path jar, Path configFile, Path logFile, String path, Path stateDir, String instance) {
+    record Spec(Path java, Path jar, Path configFile, Path logFile, String path, Path stateDir) {
 
-        public Spec(Path java, Path jar, Path configFile, Path logFile, String path, Path stateDir) {
-            this(java, jar, configFile, logFile, path, stateDir, null);
-        }
-
-        /** What follows {@code -jar dispatch.jar}: a named instance is found by name, so its definition survives a moved config folder. */
+        /**
+         * What follows {@code -jar dispatch.jar}: always the absolute config path this process resolved it to, never
+         * {@code --instance}, which would re-resolve XDG inside the service and break under a shell whose
+         * {@code XDG_CONFIG_HOME} differs from the one setup ran under. A moved config folder needs {@code dispatch
+         * service install --instance NAME} (or plain {@code install} for the default instance) again; a named
+         * instance's unit, label or task name still comes from the instance its writer was made with.
+         */
         public List<String> arguments(Kind kind) {
             List<String> arguments = new java.util.ArrayList<>(kind.command());
-            if (instance != null) {
-                arguments.addAll(List.of("--instance", instance));
-            } else {
-                arguments.addAll(List.of("--config", configFile.toString()));
-            }
+            arguments.addAll(List.of("--config", configFile.toString()));
             arguments.addAll(List.of("--log-file", logFile.toString()));
             return arguments;
         }
@@ -211,17 +208,14 @@ public interface Service {
 
     /**
      * {@code kind.command()} unquoted, then {@code spec.arguments(kind)} quoted with {@code quote} — except a flag
-     * ("--config", "--instance", "--log-file") and an {@code --instance} value, which are never quoted: an instance name
-     * is already validated safe (Locations.validName), unlike a path, which may hold spaces.
+     * ("--config", "--log-file"), which is never quoted.
      */
     static String argumentsLine(Spec spec, Kind kind, java.util.function.UnaryOperator<String> quote) {
         List<String> arguments = spec.arguments(kind);
         StringBuilder line = new StringBuilder(String.join(" ", kind.command()));
         for (int i = kind.command().size(); i < arguments.size(); i++) {
             String argument = arguments.get(i);
-            boolean isFlag = argument.startsWith("--");
-            boolean isInstanceName = i > 0 && arguments.get(i - 1).equals("--instance");
-            line.append(' ').append(isFlag || isInstanceName ? argument : quote.apply(argument));
+            line.append(' ').append(argument.startsWith("--") ? argument : quote.apply(argument));
         }
         return line.toString();
     }

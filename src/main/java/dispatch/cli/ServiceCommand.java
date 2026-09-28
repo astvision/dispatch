@@ -40,7 +40,7 @@ public final class ServiceCommand {
     }
 
     public int run(Cli.Service options, Map<String, String> processEnvironment) {
-        return run(options.action(), () -> specFor(jar, options.configFile(), options.instance(), processEnvironment));
+        return run(options.action(), () -> specFor(jar, options.configFile(), processEnvironment));
     }
 
     /** @param spec read only when the action needs it, so status/stop work on a config this process cannot load */
@@ -118,12 +118,6 @@ public final class ServiceCommand {
             throw new CliException(e.getMessage());
         }
         return specFor(jar, configFile, prepared.config().stateDir(), Service.Kind.DISPATCH.logName(), processEnvironment);
-    }
-
-    /** @param instance null for the default instance, else the name a second instance runs under */
-    public static Service.Spec specFor(Path jar, Path configFile, String instance, Map<String, String> processEnvironment) {
-        Service.Spec spec = specFor(jar, configFile, processEnvironment);
-        return new Service.Spec(spec.java(), spec.jar(), spec.configFile(), spec.logFile(), spec.path(), spec.stateDir(), instance);
     }
 
     /**

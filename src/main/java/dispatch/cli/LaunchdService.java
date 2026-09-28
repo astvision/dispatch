@@ -100,7 +100,7 @@ final class LaunchdService implements Service {
         }
         Git.Result printed = commands.run(List.of("launchctl", "print", domain() + "/" + kind.launchdLabel(instance)));
         if (printed.exitCode() != 0) {
-            return new Status(true, false, "not loaded; start it with: dispatch service start", List.of());
+            return new Status(true, false, "not loaded; start it with: " + kind.manageCommand(instance) + " start", List.of());
         }
         boolean running = printed.stdout().contains("state = running");
         String pid = printed.stdout().lines().map(String::strip).filter(line -> line.startsWith("pid = ")).findFirst().orElse("");
