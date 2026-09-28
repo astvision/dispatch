@@ -1,5 +1,8 @@
 package dispatch.core;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import dispatch.config.Config;
 import dispatch.domain.Attachment;
 import dispatch.domain.RunKind;
 import java.math.BigDecimal;
@@ -26,6 +29,8 @@ import java.util.UUID;
  * @param commitSubject   the delivery commit's subject
  * @param commitTrailers  the delivery commit's trailers: who asked and who approved
  * @param deliverySummary DELIVER only: the failed run's summary, which becomes the commit body
+ * @param branch          the task's branch, set by the team machine that made this job; null uses {@link Config#defaultBranch}
+ *                        so an older worker that never heard of it (before M: several instances) still parses the job
  */
 public record Job(
         long taskId,
@@ -46,11 +51,27 @@ public record Job(
         List<Attachment> attachments,
         String commitSubject,
         List<String> commitTrailers,
-        String deliverySummary) {
+        String deliverySummary,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String branch) {
 
     public Job {
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         commitTrailers = commitTrailers == null ? List.of() : List.copyOf(commitTrailers);
+    }
+
+    /** Before {@code branch} existed: an older worker's job, always the default branch. */
+    public Job(long taskId, int seq, RunKind kind, Project project, String baseBranch, String baseSha, String worktree,
+            String prUrl, UUID sessionId, boolean resume, String prompt, String model, String effort, long timeoutMillis,
+            BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
+            String deliverySummary) {
+        this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
+                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, null);
+    }
+
+    /** The task's branch: the team's prefix when it sent one, else dispatch/<task>. */
+    @JsonIgnore
+    public String branchName() {
+        return branch != null ? branch : Config.defaultBranch(taskId);
     }
 
     /** @param path the clone the run works from, null when the worker keeps its own under {@code repos/<name>} */

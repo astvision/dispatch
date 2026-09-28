@@ -373,7 +373,7 @@ abstract class WorkerApiFixture {
                 Map.of("claude-code", new Config.Agent("claude"), "codex", new Config.Agent("codex")),
                 List.of(alm),
                 new Config.Delivery("Dispatch (backend)", "dispatch-backend@example.com", "gh"),
-                new Config.Workers(publicUrl, 0), null, new Config.Secrets("token", null));
+                new Config.Workers(publicUrl, 0), null, null, new Config.Secrets("token", null));
     }
 
     Groups groups() {

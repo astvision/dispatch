@@ -16,11 +16,13 @@ final class LaunchdService implements Service {
     private final Path plist;
     private final Commands commands;
     private final Kind kind;
+    private final String instance;
 
-    LaunchdService(Path home, Commands commands, Kind kind) {
-        this.plist = home.resolve("Library").resolve("LaunchAgents").resolve(kind.launchdLabel() + ".plist");
+    LaunchdService(Path home, Commands commands, Kind kind, String instance) {
+        this.plist = home.resolve("Library").resolve("LaunchAgents").resolve(kind.launchdLabel(instance) + ".plist");
         this.commands = commands;
         this.kind = kind;
+        this.instance = instance;
     }
 
     @Override
@@ -30,13 +32,13 @@ final class LaunchdService implements Service {
 
     @Override
     public String describe() {
-        return "launchd agent " + kind.launchdLabel();
+        return "launchd agent " + kind.launchdLabel(instance);
     }
 
     @Override
     public void install(Spec spec) {
         StringBuilder arguments = new StringBuilder();
-        for (String argument : kind.command()) {
+        for (String argument : spec.arguments(kind)) {
             arguments.append("    <string>").append(xml(argument)).append("</string>\n");
         }
         Service.write(plist, """
@@ -51,11 +53,7 @@ final class LaunchdService implements Service {
                     <string>%s</string>
                     <string>-jar</string>
                     <string>%s</string>
-                %s    <string>--config</string>
-                    <string>%s</string>
-                    <string>--log-file</string>
-                    <string>%s</string>
-                  </array>
+                %s  </array>
                   <key>EnvironmentVariables</key>
                   <dict>
                     <key>PATH</key><string>%s</string>
@@ -68,9 +66,8 @@ final class LaunchdService implements Service {
                   <key>ThrottleInterval</key><integer>10</integer>
                 </dict>
                 </plist>
-                """.formatted(kind.launchdLabel(), xml(spec.java()), xml(spec.jar()), arguments,
-                xml(spec.configFile()), xml(spec.logFile()), xml(spec.path())));
-        commands.run(List.of("launchctl", "bootout", domain() + "/" + kind.launchdLabel()));
+                """.formatted(kind.launchdLabel(instance), xml(spec.java()), xml(spec.jar()), arguments, xml(spec.path())));
+        commands.run(List.of("launchctl", "bootout", domain() + "/" + kind.launchdLabel(instance)));
         Service.required(commands, List.of("launchctl", "bootstrap", domain(), plist.toString()));
     }
 
@@ -81,7 +78,7 @@ final class LaunchdService implements Service {
 
     @Override
     public void stop() {
-        Service.required(commands, List.of("launchctl", "bootout", domain() + "/" + kind.launchdLabel()));
+        Service.required(commands, List.of("launchctl", "bootout", domain() + "/" + kind.launchdLabel(instance)));
     }
 
     /**
@@ -92,7 +89,7 @@ final class LaunchdService implements Service {
      */
     @Override
     public void restart() {
-        if (commands.run(List.of("launchctl", "kickstart", "-k", domain() + "/" + kind.launchdLabel())).exitCode() != 0) {
+        if (commands.run(List.of("launchctl", "kickstart", "-k", domain() + "/" + kind.launchdLabel(instance))).exitCode() != 0) {
             start();
         }
     }
@@ -102,9 +99,9 @@ final class LaunchdService implements Service {
         if (!Files.exists(plist)) {
             return new Status(false, false, Text.of("service.notInstalled"), List.of());
         }
-        Git.Result printed = commands.run(List.of("launchctl", "print", domain() + "/" + kind.launchdLabel()));
+        Git.Result printed = commands.run(List.of("launchctl", "print", domain() + "/" + kind.launchdLabel(instance)));
         if (printed.exitCode() != 0) {
-            return new Status(true, false, Text.of("service.notLoaded"), List.of());
+            return new Status(true, false, Text.of("service.notLoaded", kind.manageCommand(instance)), List.of());
         }
         boolean running = printed.stdout().contains("state = running");
         String pid = printed.stdout().lines().map(String::strip).filter(line -> line.startsWith("pid = ")).findFirst().orElse("");
@@ -114,7 +111,7 @@ final class LaunchdService implements Service {
 
     @Override
     public void uninstall() {
-        commands.run(List.of("launchctl", "bootout", domain() + "/" + kind.launchdLabel()));
+        commands.run(List.of("launchctl", "bootout", domain() + "/" + kind.launchdLabel(instance)));
         try {
             Files.deleteIfExists(plist);
         } catch (IOException e) {

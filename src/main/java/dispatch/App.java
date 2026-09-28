@@ -155,7 +155,7 @@ public final class App {
             worker = remoteWorkers;
         }
         Coordinator coordinator = new Coordinator(db, projects, transitions, activeRuns, config::planLimits,
-                config::executeLimits, worker, schedulerSignal::wake);
+                config::executeLimits, worker, schedulerSignal::wake, config.branchPrefix());
         TaskService tasks = new TaskService(groups, projects, activeRuns, clock,
                 schedulerSignal::wake, outboxSignal::wake, taskTopics, claude == null ? null : draftId -> splitter[0].start(draftId),
                 config.workers() != null);
@@ -225,7 +225,8 @@ public final class App {
                 Duration.ofSeconds(5), config.workers() == null ? null : dispatch.store.Workers.SEEN_WITHIN,
                 config.workers() == null ? null : tasks);
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
-        Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1));
+        Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1),
+                config.branchPrefix());
         app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], assistant, activeRuns, workerApi, miniApp,
                 desk, onFatal);
         app[0].startThreads();

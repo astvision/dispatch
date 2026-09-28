@@ -45,9 +45,9 @@ class WorkerSweeperTest {
 
     @Test
     void anIdleCleanWorktreeIsRemovedAndABusyOrDirtyOneIsKept() throws Exception {
-        Path idle = workspaces.createWorktree(project(), 1).path();
-        Path dirty = workspaces.createWorktree(project(), 2).path();
-        Path running = workspaces.createWorktree(project(), 3).path();
+        Path idle = workspaces.createWorktree(project(), 1, Config.defaultBranch(1)).path();
+        Path dirty = workspaces.createWorktree(project(), 2, Config.defaultBranch(2)).path();
+        Path running = workspaces.createWorktree(project(), 3, Config.defaultBranch(3)).path();
         Files.writeString(dirty.resolve("notes.txt"), "work in progress\n");
         activeRuns.register(3, 1);
         for (Path worktree : List.of(idle, dirty, running)) {
@@ -64,7 +64,7 @@ class WorkerSweeperTest {
 
     @Test
     void aWorktreeWithAnUnpushedCommitIsKept() throws Exception {
-        Path unpushed = workspaces.createWorktree(project(), 5).path();
+        Path unpushed = workspaces.createWorktree(project(), 5, Config.defaultBranch(5)).path();
         // Empty on purpose: the working tree stays clean, so this isolates the pushed check from the uncommitted
         // one — a worktree straight off origin/main with nothing but a local commit no one has pushed.
         GitFixture.sh(unpushed, "git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit",
@@ -77,7 +77,7 @@ class WorkerSweeperTest {
 
     @Test
     void aWorktreeThatWasUsedRecentlyIsKept() throws Exception {
-        Path recent = workspaces.createWorktree(project(), 4).path();
+        Path recent = workspaces.createWorktree(project(), 4, Config.defaultBranch(4)).path();
         Files.setLastModifiedTime(recent, FileTime.from(clock.instant().minus(Duration.ofDays(30))));
         // A run's own log directory is what says "something happened here", and it lives outside the worktree.
         Files.createDirectories(repos.stateDir.resolve("runs").resolve("4"));

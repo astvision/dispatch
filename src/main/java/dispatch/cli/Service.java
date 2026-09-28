@@ -23,6 +23,20 @@ public interface Service {
      * @param stateDir where a service definition that needs a file of its own is kept
      */
     record Spec(Path java, Path jar, Path configFile, Path logFile, String path, Path stateDir) {
+
+        /**
+         * What follows {@code -jar dispatch.jar}: always the absolute config path this process resolved it to, never
+         * {@code --instance}, which would re-resolve XDG inside the service and break under a shell whose
+         * {@code XDG_CONFIG_HOME} differs from the one setup ran under. A moved config folder needs {@code dispatch
+         * service install --instance NAME} (or plain {@code install} for the default instance) again; a named
+         * instance's unit, label or task name still comes from the instance its writer was made with.
+         */
+        public List<String> arguments(Kind kind) {
+            List<String> arguments = new java.util.ArrayList<>(kind.command());
+            arguments.addAll(List.of("--config", configFile.toString()));
+            arguments.addAll(List.of("--log-file", logFile.toString()));
+            return arguments;
+        }
     }
 
     /**
@@ -95,12 +109,24 @@ public interface Service {
             return systemdUnit;
         }
 
+        public String systemdUnit(String instance) {
+            return instance == null ? systemdUnit : systemdUnit.replace(".service", "-" + instance + ".service");
+        }
+
         public String launchdLabel() {
             return launchdLabel;
         }
 
+        public String launchdLabel(String instance) {
+            return instance == null ? launchdLabel : launchdLabel + "." + instance;
+        }
+
         public String windowsTask() {
             return windowsTask;
+        }
+
+        public String windowsTask(String instance) {
+            return instance == null ? windowsTask : windowsTask + "-" + instance;
         }
 
         /** What it is called in a sentence, e.g. "Dispatch worker runs in the background as …". */
@@ -117,6 +143,10 @@ public interface Service {
             return manageCommand;
         }
 
+        public String manageCommand(String instance) {
+            return instance == null ? manageCommand : manageCommand + " --instance " + instance;
+        }
+
         /** The dispatch arguments before --config and --log-file. */
         public List<String> command() {
             return command;
@@ -125,17 +155,22 @@ public interface Service {
 
     /** @param user the current user: a login name, or DOMAIN\name on Windows */
     static Service forOs(String osName, Path home, Commands commands, String user) {
-        return forOs(osName, home, commands, user, Kind.DISPATCH);
+        return forOs(osName, home, commands, user, Kind.DISPATCH, null);
     }
 
     static Service forOs(String osName, Path home, Commands commands, String user, Kind kind) {
+        return forOs(osName, home, commands, user, kind, null);
+    }
+
+    /** @param instance null for the default instance, else the name a second instance runs under */
+    static Service forOs(String osName, Path home, Commands commands, String user, Kind kind, String instance) {
         if (osName.startsWith("Windows")) {
-            return new WindowsTaskService(commands, user, kind);
+            return new WindowsTaskService(commands, user, kind, instance);
         }
         if (osName.startsWith("Mac")) {
-            return new LaunchdService(home, commands, kind);
+            return new LaunchdService(home, commands, kind, instance);
         }
-        return new SystemdService(home, commands, user, kind);
+        return new SystemdService(home, commands, user, kind, instance);
     }
 
     /** The service for this OS and user, as `dispatch service` and the web UI manage it. */
@@ -145,6 +180,11 @@ public interface Service {
 
     /** @param kind DISPATCH for the team's own instance, WORKER for this computer's `dispatch worker run` */
     static Service forThisMachine(Kind kind) {
+        return forThisMachine(kind, null);
+    }
+
+    /** @param instance null for the default instance, else the name a second instance runs under */
+    static Service forThisMachine(Kind kind, String instance) {
         Path home = Path.of(System.getProperty("user.home"));
         String os = System.getProperty("os.name");
         String user = os.startsWith("Windows") && System.getenv("USERDOMAIN") != null
@@ -157,7 +197,7 @@ public interface Service {
                 return new Git.Result(127, "", e.getMessage());
             }
         };
-        return forOs(os, home, commands, user, kind);
+        return forOs(os, home, commands, user, kind, instance);
     }
 
     /** Runs a service tool; a failure becomes a {@link CliException} with the tool's own words. */
@@ -168,6 +208,20 @@ public interface Service {
             throw new CliException(String.join(" ", commandLine) + " failed" + (output.isEmpty() ? "" : ": " + output));
         }
         return result;
+    }
+
+    /**
+     * {@code kind.command()} unquoted, then {@code spec.arguments(kind)} quoted with {@code quote} — except a flag
+     * ("--config", "--log-file"), which is never quoted.
+     */
+    static String argumentsLine(Spec spec, Kind kind, java.util.function.UnaryOperator<String> quote) {
+        List<String> arguments = spec.arguments(kind);
+        StringBuilder line = new StringBuilder(String.join(" ", kind.command()));
+        for (int i = kind.command().size(); i < arguments.size(); i++) {
+            String argument = arguments.get(i);
+            line.append(' ').append(argument.startsWith("--") ? argument : quote.apply(argument));
+        }
+        return line.toString();
     }
 
     static void write(Path file, String text) {

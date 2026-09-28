@@ -220,6 +220,15 @@ class JobRunnerTest {
     }
 
     @Test
+    void theWorktreeIsOnTheBranchTheJobNames() throws Exception {
+        Job plan = withBranch(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), "dispatch/team/" + TASK);
+
+        runner.run(plan, events, control);
+
+        assertEquals("dispatch/team/" + TASK, GitFixture.sh(Path.of(events.worktree), "git", "rev-parse", "--abbrev-ref", "HEAD"));
+    }
+
+    @Test
     void aPushThatFailsComesBackAsDeliveryAndKeepsTheAgentsResult() throws Exception {
         runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
         GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
@@ -245,6 +254,13 @@ class JobRunnerTest {
         return new Job(TASK, seq, kind, project(copyFiles == null ? List.of() : copyFiles), "main", baseSha, worktree, null,
                 SESSION, false, prompt, null, null, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(),
                 "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null);
+    }
+
+    /** A copy of {@code job} with its team-sent branch set, through the 20-arg constructor. */
+    private static Job withBranch(Job job, String branch) {
+        return new Job(job.taskId(), job.seq(), job.kind(), job.project(), job.baseBranch(), job.baseSha(), job.worktree(),
+                job.prUrl(), job.sessionId(), job.resume(), job.prompt(), job.model(), job.effort(), job.timeoutMillis(),
+                job.budgetUsd(), job.attachments(), job.commitSubject(), job.commitTrailers(), job.deliverySummary(), branch);
     }
 
     private Job.Project project(List<String> copyFiles) {
