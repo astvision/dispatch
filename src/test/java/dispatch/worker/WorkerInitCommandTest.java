@@ -201,12 +201,14 @@ class WorkerInitCommandTest extends WorkerApiFixture {
     @Test
     void aFailedClonesReadOnlyFilesAreRemovedToo() throws Exception {
         // Git makes its object files read-only, and Windows will not delete a read-only file; a folder without write
-        // permission refuses the same way on macOS and Linux.
+        // permission refuses the same way on macOS and Linux (Windows has no such folder).
         Path root = dir.resolve("partial");
         Path pack = Files.createDirectories(root.resolve(".git/objects/pack"));
         Path object = Files.writeString(pack.resolve("pack-1.pack"), "PACK");
         assertTrue(object.toFile().setWritable(false));
-        assertTrue(pack.toFile().setWritable(false));
+        if (!OS.WINDOWS.isCurrentOs()) {
+            assertTrue(pack.toFile().setWritable(false));
+        }
 
         assertEquals(List.of(), WorkerInitCommand.deleteRecursively(root));
         assertFalse(Files.exists(root));
