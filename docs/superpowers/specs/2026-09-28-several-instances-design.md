@@ -62,17 +62,14 @@ team     @astvision_team_bot  team      stopped   (dispatch service start --inst
 ```
 
 A file that does not load is listed with the loader's error, not skipped: something the person made should never vanish
-from the list.
+from the list. `list` works offline: it shows each bot by its id (the digits before the token's colon), not its @username, so it never waits on Telegram.
 
 ## Services
 
-`Service.Kind` stays the two kinds (Dispatch, worker); the instance becomes part of `Service.Spec`, and each OS writer
-derives its names from it: the unit, label or task name above, and the log file in the instance's state directory. The
-service runs `dispatch run --instance team --log-file …` rather than a `--config` path, so the definition does not go
-stale if the config folder moves with `XDG_CONFIG_HOME`. `dispatch service status|start|stop|uninstall --instance team`
-act on that one service; the default instance's service is untouched by anything a named instance does.
-
-The web UI's service controls (`Service.forThisMachine()`) take the instance `dispatch ui` was started for.
+`Service.Kind` stays the two kinds (Dispatch, worker). The instance is given when the service is made
+(`Service.forThisMachine(kind, instance)`), because `stop`, `start`, `status` and `uninstall` never see a spec; each OS
+writer derives its names from it: the unit, label or task name above. `Service.Spec` carries the instance too, so the
+definition runs `dispatch run --instance team --log-file …`; the default instance's definition keeps `--config …`.
 
 ## Init
 
@@ -104,14 +101,19 @@ not start naming branches differently after an upgrade. Two instances may theref
 live under each instance's own state directory, and the prefixes keep their branches apart. `dispatch check` fails when
 two instances on the computer have the same `branchPrefix` and share a clone path.
 
+In team mode a member's worker creates and pushes the branch (ADR 0021), so the prefix travels with the run: the team
+machine's `Coordinator` puts the whole branch name into each `Job` (`branch`), and a worker uses it. The field is left
+out when the team uses the default prefix, so a worker older than this change keeps working with such a team; a team
+with its own prefix needs its members' workers updated.
+
 ## Clashes
 
 - **Bot token:** Telegram delivers a bot's updates to one reader, so init refuses a token another instance on this
   computer already uses ("@x already runs as instance default"), and `dispatch check` fails on it. Tokens are compared by
   the bot id before the colon, never logged.
-- **Ports** (`miniApp.port`, `workers.port`): init and the web setup suggest the first free port no other instance
-  claims; `dispatch check` warns when two instances claim the same one. `dispatch ui` without `--port` takes 7878, or the
-  next free port when 7878 is in use, and prints the one it took.
+- **Ports** (`miniApp.port`, `workers.port`): `dispatch init` suggests the first port from 7880 up that no other
+  instance claims; the web setup keeps its 7880 default. `dispatch check` warns when two instances claim the same one.
+  `dispatch ui` without `--port` takes 7878, or the next free port when 7878 is in use, and prints the one it took.
 
 ## Testing
 
