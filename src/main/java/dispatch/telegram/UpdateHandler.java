@@ -8,7 +8,6 @@ import dispatch.Language;
 import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.config.Config;
-import dispatch.core.AnswerResult;
 import dispatch.core.Assistant;
 import dispatch.core.AssistantActions;
 import dispatch.core.CommandResult;
@@ -21,6 +20,7 @@ import dispatch.core.JoinDecision;
 import dispatch.core.JoinRequestResult;
 import dispatch.core.Membership;
 import dispatch.core.Merges;
+import dispatch.core.Origin;
 import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
 import dispatch.core.Refusal;
@@ -53,6 +53,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 
 /**
@@ -77,6 +78,8 @@ public final class UpdateHandler {
     /** What Telegram accepts as a deep link's start parameter. */
     private static final java.util.regex.Pattern START_PARAMETER = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,64}");
     private static final Duration UNKNOWN_NOTICE_INTERVAL = Duration.ofHours(24);
+    /** The most of a button's notice Telegram shows (answerCallbackQuery), counted as Java counts a string's length. */
+    private static final int NOTICE_LIMIT = 200;
 
     private final Database db;
     private final TaskService tasks;
@@ -311,11 +314,10 @@ public final class UpdateHandler {
                 return;
             }
             Task task = topicTask.get();
-            if (task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED) {
-                tasks.followUp(tx, who, task.id(), text(message), origin, chatRef);
-            } else {
-                tasks.correctLatest(tx, who, task.id(), text(message), origin, chatRef);
-            }
+            TaskCommand more = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED
+                    ? new TaskCommand.FollowUp(task.id(), text(message), new Origin(origin))
+                    : new TaskCommand.Correct(task.id(), OptionalInt.empty(), text(message));
+            reply(tx, who, more, commands.run(tx, who, more), origin, chatRef);
             return;
         }
         if (parsed.isEmpty()) {
@@ -688,7 +690,8 @@ public final class UpdateHandler {
         String repliedRef = Refs.message(chatId, repliedTo.get("message_id").asLong(), null);
         Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef);
         if (sent.isPresent() && RESULTS.contains(sent.get().kind())) {
-            tasks.followUp(tx, who, sent.get().taskId(), text(message), origin, chatRef);
+            TaskCommand followUp = new TaskCommand.FollowUp(sent.get().taskId(), text(message), new Origin(origin));
+            reply(tx, who, followUp, commands.run(tx, who, followUp), origin, chatRef);
             return true;
         }
         if (sent.isEmpty()) {
@@ -701,7 +704,8 @@ public final class UpdateHandler {
             return false;
         }
         int planSeq = Json.read(sent.get().payload()).path("planSeq").asInt();
-        tasks.correct(tx, who, sent.get().taskId(), planSeq, text(message), origin, chatRef);
+        TaskCommand correct = new TaskCommand.Correct(sent.get().taskId(), OptionalInt.of(planSeq), text(message));
+        reply(tx, who, correct, commands.run(tx, who, correct), origin, chatRef);
         return true;
     }
 
@@ -721,24 +725,10 @@ public final class UpdateHandler {
             return false;
         }
         JsonNode question = Json.read(sent.get().payload());
-        String questionRef = sent.get().kind() == OutboxKind.PLAN_QUESTION ? repliedRef : question.path("questionRef").asText();
-        long taskId = sent.get().taskId();
-        AnswerResult result = tasks.answer(tx, who, taskId, question.path("planSeq").asInt(), question.path("index").asInt(),
-                text(message), questionRef, origin, chatRef);
+        TaskCommand answer = new TaskCommand.Answer(sent.get().taskId(), question.path("planSeq").asInt(), question.path("index").asInt(),
+                new TaskCommand.Choice.Written(text(message)));
         // Every refusal is answered in words: a reply has no callback to answer, and silence would look like it was taken.
-        String reason = switch (result) {
-            case ANSWERED, PROMPTED, PROMPT_OPEN -> null;
-            case EMPTY -> "empty";
-            case ALREADY_ANSWERED -> "alreadyAnswered";
-            case NOT_ALLOWED -> "notAllowed";
-            case NOT_FOUND -> "notFound";
-            case NOT_REQUESTER -> "notRequester";
-            case OUT_OF_ORDER -> "stale";
-            case STALE -> "stale";
-        };
-        if (reason != null) {
-            enqueue(tx, OutboxKind.CORRECTION_REFUSED, chatRef, origin, Json.object().put("taskId", taskId).put("reason", reason));
-        }
+        reply(tx, who, answer, commands.run(tx, who, answer), origin, chatRef);
         return true;
     }
 
@@ -756,29 +746,38 @@ public final class UpdateHandler {
         }
         JsonNode message = callback.path("message");
         long chatId = message.path("chat").path("id").asLong();
-        String questionRef = Refs.message(chatId, message.path("message_id").asLong(), null);
-        String chatRef = Refs.chat(chatId);
         int seq = planSeq.get().intValue();
         int question = index.get().intValue();
-        AnswerResult result = switch (parts[4]) {
-            case "w" -> tasks.askForAnswer(tx, who, taskId.get(), seq, question, questionRef);
-            case "d" -> tasks.answer(tx, who, taskId.get(), seq, question, renderer.text("plan.youDecide"), questionRef, questionRef,
-                    chatRef);
-            default -> tasks.chooseOption(tx, who, taskId.get(), seq, question, option.get().intValue(), questionRef, questionRef,
-                    chatRef);
-        };
-        answer(tx, callbackId, switch (result) {
-            case ANSWERED -> "callback.answered";
-            case PROMPTED -> "callback.writeAnswer";
-            case PROMPT_OPEN -> "plan.answerPromptOpen";
-            case EMPTY -> "callback.unknown";
-            case NOT_ALLOWED -> "callback.notAllowed";
-            case NOT_FOUND -> "callback.notFound";
-            case NOT_REQUESTER -> "callback.notRequester";
-            case ALREADY_ANSWERED -> "plan.alreadyAnswered";
-            case OUT_OF_ORDER -> "callback.stale";
-            case STALE -> "callback.stale";
-        });
+        if (parts[4].equals("w")) {
+            askForAnswer(tx, callbackId, who, taskId.get(), seq, question, Refs.message(chatId, message.path("message_id").asLong(), null));
+            return;
+        }
+        TaskCommand.Choice choice = parts[4].equals("d") ? new TaskCommand.Choice.YouDecide()
+                : new TaskCommand.Choice.Option(option.get().intValue());
+        notice(tx, callbackId, commands.run(tx, who, new TaskCommand.Answer(taskId.get(), seq, question, choice)), "callback.answered");
+    }
+
+    /**
+     * ✍️ under a question: the requester writes their own answer as a forced reply under it (G-1d), once. "You decide" stands
+     * in for the words not written yet: it is never empty, so the check says only whether this question may be answered now.
+     */
+    private void askForAnswer(Tx tx, String callbackId, Requester who, long taskId, int planSeq, int index, String questionRef) {
+        Optional<CommandResult.Refused> refused =
+                commands.check(tx, who, new TaskCommand.Answer(taskId, planSeq, index, new TaskCommand.Choice.YouDecide()));
+        if (refused.isPresent()) {
+            notice(tx, callbackId, refused.get(), "callback.writeAnswer");
+            return;
+        }
+        if (Outbox.hasAnswerPrompt(tx, taskId, planSeq, index)) {
+            // The question is unanswered, so its prompt is still open: a second one would only clutter the chat.
+            answer(tx, callbackId, "plan.answerPromptOpen");
+            return;
+        }
+        Outbox.enqueue(tx, taskId, OutboxKind.PLAN_ANSWER_PROMPT, who.ref(), questionRef,
+                Json.object().put("taskId", taskId).put("planSeq", planSeq).put("index", index).put("questionRef", questionRef),
+                clock.instant());
+        tx.afterCommit(wakeOutbox);
+        answer(tx, callbackId, "callback.writeAnswer");
     }
 
     private void onCallback(Tx tx, JsonNode callback) {
@@ -933,14 +932,14 @@ public final class UpdateHandler {
         long chatId = message.path("chat").path("id").asLong();
         long messageId = message.path("message_id").asLong();
         String messageRef = Refs.message(chatId, messageId, null);
-        AssistantActions.Tapped tapped = assistantActions.run(tx, who, actionId, messageRef, Refs.chat(chatId));
-        String notice = tapped.refusal().map(words -> words.render(Language.MN)).orElseGet(() -> renderer.text(switch (tapped.outcome()) {
-            case DONE -> "callback.assistantDone";
-            case USED -> "callback.assistantUsed";
-            case STALE -> "callback.wrongState";
-            case NOT_ALLOWED -> "callback.notAllowed";
-        }));
-        tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callback.path("id").asText(), notice)));
+        AssistantActions.Tapped tapped = assistantActions.run(tx, who, actionId, messageRef);
+        notice(tx, callback.path("id").asText(), tapped.refusal().map(words -> words.render(Language.MN))
+                .orElseGet(() -> renderer.text(switch (tapped.outcome()) {
+                    case DONE -> "callback.assistantDone";
+                    case USED -> "callback.assistantUsed";
+                    case STALE -> "callback.wrongState";
+                    case NOT_ALLOWED -> "callback.notAllowed";
+                })));
         Optional<Outbox.Sent> reply = Outbox.findSent(tx, messageRef).filter(sent -> sent.kind() == OutboxKind.ASSISTANT_REPLY);
         if (reply.isEmpty() || tapped.outcome() == AssistantActions.Outcome.NOT_ALLOWED) {
             return;
@@ -971,13 +970,14 @@ public final class UpdateHandler {
 
     /**
      * The button under an addition offered to its requester: applies it the way its task can take it now. Once it is
-     * applied, or its task is closed, the offer loses its button; what the task made of it is said under the offer.
+     * applied, or its task is closed, the offer loses its button; a task that refuses it says why under the offer.
      */
     private void onAdditionButton(Tx tx, JsonNode callback, Requester who, long additionId) {
         JsonNode message = callback.path("message");
         long chatId = message.path("chat").path("id").asLong();
         long messageId = message.path("message_id").asLong();
-        GroupAdditions.Outcome outcome = additions.apply(tx, who, additionId, Refs.message(chatId, messageId, null), Refs.chat(chatId));
+        GroupAdditions.Applied applied = additions.apply(tx, who, additionId, Refs.message(chatId, messageId, null));
+        GroupAdditions.Outcome outcome = applied.outcome();
         tx.afterCommit(() -> Log.info("group.addition_tapped", "addition", additionId, "member", who.ref(), "outcome", outcome));
         answer(tx, callback.path("id").asText(), switch (outcome) {
             case DONE -> "callback.additionDone";
@@ -988,6 +988,8 @@ public final class UpdateHandler {
             case CLOSED -> "callback.additionClosed";
             case USED -> "callback.additionUsed";
         });
+        applied.refusal().ifPresent(words -> enqueue(tx, OutboxKind.REFUSED, Refs.chat(chatId), Refs.message(chatId, messageId, null),
+                Json.object().put("text", words.render(Language.MN))));
         if (outcome == GroupAdditions.Outcome.DONE || outcome == GroupAdditions.Outcome.SPLIT || outcome == GroupAdditions.Outcome.CLOSED) {
             tx.afterCommit(() -> bestEffort("editMessageReplyMarkup", () -> api.editMessageReplyMarkup(chatId, messageId, List.of())));
         }
@@ -1283,8 +1285,7 @@ public final class UpdateHandler {
     }
 
     private void answer(Tx tx, String callbackId, String textKey) {
-        String text = renderer.text(textKey);
-        tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callbackId, text)));
+        notice(tx, callbackId, renderer.text(textKey));
     }
 
     /**
@@ -1295,8 +1296,12 @@ public final class UpdateHandler {
     private void reply(Tx tx, Requester who, TaskCommand command, CommandResult result, String origin, String chatRef) {
         switch (result) {
             case CommandResult.Refused refused -> refuse(tx, who, command, refused, origin, chatRef);
-            case CommandResult.Done done when !done.toldActor() && command instanceof TaskCommand.Cancel ->
-                    enqueue(tx, OutboxKind.TASK_CANCELLED, chatRef, origin, Json.object().put("taskId", done.taskId()).put("by", who.name()));
+            case CommandResult.Done done when !done.toldActor() && command instanceof TaskCommand.Cancel -> {
+                // The task's number goes with it, so the sender's log names the task as it does for the task's news.
+                Outbox.enqueue(tx, done.taskId(), OutboxKind.TASK_CANCELLED, chatRef, origin,
+                        Json.object().put("taskId", done.taskId()).put("by", who.name()), clock.instant());
+                tx.afterCommit(wakeOutbox);
+            }
             case CommandResult.Done done -> { }
             case CommandResult.Created created -> { }
             case CommandResult.Unchanged unchanged -> { }
@@ -1304,8 +1309,8 @@ public final class UpdateHandler {
     }
 
     /**
-     * A refusal's words under the message that asked. In a group, someone in no group is only logged: a busy group's chatter
-     * would otherwise be answered with a refusal line each time (G-1b).
+     * A refusal's words under the message that asked, and the command to type where one would help. In a group, someone in
+     * no group is only logged: a busy group's chatter would otherwise be answered with a refusal line each time (G-1b).
      */
     private void refuse(Tx tx, Requester who, TaskCommand command, CommandResult.Refused refused, String origin, String chatRef) {
         if (refused.reason() == Refusal.NOT_MEMBER && groups.isGroupChat(chatRef)) {
@@ -1313,13 +1318,29 @@ public final class UpdateHandler {
                     "answered", false));
             return;
         }
-        enqueue(tx, OutboxKind.REFUSED, chatRef, origin, Json.object().put("text", refused.words().render(Language.MN)));
+        ObjectNode payload = Json.object().put("text", refused.words().render(Language.MN));
+        // A follow-up needs an execution to continue; the step there is to retry the task, typed as a command.
+        if (refused.reason() == Refusal.NOT_EXECUTED && command instanceof TaskCommand.FollowUp followUp) {
+            payload.put("hint", "/retry " + followUp.taskId());
+        }
+        enqueue(tx, OutboxKind.REFUSED, chatRef, origin, payload);
     }
 
     /** A button's notice for a task command (ADR 0031): its refusal's words, or the words of {@code doneKey} once done. */
     private void notice(Tx tx, String callbackId, CommandResult result, String doneKey) {
-        String text = result instanceof CommandResult.Refused refused ? refused.words().render(Language.MN) : renderer.text(doneKey);
-        tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callbackId, text)));
+        notice(tx, callbackId,
+                result instanceof CommandResult.Refused refused ? refused.words().render(Language.MN) : renderer.text(doneKey));
+    }
+
+    /**
+     * Answers a button with {@code text} as its notice, cut to what Telegram shows there: a refusal's words can run longer,
+     * such as those giving an unavailable project's reason (ADR 0031).
+     */
+    private void notice(Tx tx, String callbackId, String text) {
+        // "…" takes the last place, and one more goes where the cut would split an emoji's surrogate pair.
+        String shown = text.length() <= NOTICE_LIMIT ? text
+                : text.substring(0, NOTICE_LIMIT - (Character.isHighSurrogate(text.charAt(NOTICE_LIMIT - 2)) ? 2 : 1)) + "…";
+        tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callbackId, shown)));
     }
 
     /** /help: the home screen in a private chat; in a group, a card with nothing personal and a link to the private chat. */

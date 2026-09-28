@@ -65,7 +65,7 @@ class AssistantActionsTest {
         Projects projects = new Projects(List.of(life, crm), project -> Optional.empty());
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { });
-        actions = new AssistantActions(tasks, groups, projects, clock, "Чи шийд");
+        actions = new AssistantActions(tasks, groups, projects, clock);
     }
 
     @AfterEach
@@ -115,10 +115,22 @@ class AssistantActionsTest {
     }
 
     @Test
+    void aYouDecideAnswerShowsTheWordsTheAgentWillRead() {
+        long taskId = planned(ALI, twoQuestions());
+
+        AssistantActions.Checked checked = check(ALI, Json.object().put("type", "answer").put("task", taskId).put("question", 1)
+                .put("decide", true));
+
+        assertTrue(checked.valid(), checked.payload().toString());
+        assertEquals(Text.of("answer.youDecide").render(Language.MN), checked.payload().path("answer").asText());
+    }
+
+    @Test
     void onlyTheCurrentQuestionIsAnsweredAndNeverWithMoreTextThanTheReplyShows() {
         long taskId = planned(ALI, twoQuestions());
 
-        assertEquals("order", reason(check(ALI, Json.object().put("type", "answer").put("task", taskId).put("question", 2).put("option", 1))),
+        assertEquals(Text.of("refused.outOfOrder", taskId).render(Language.MN),
+                words(check(ALI, Json.object().put("type", "answer").put("task", taskId).put("question", 2).put("option", 1))),
                 "the chat asks one question at a time");
         assertEquals("tooLong", reason(check(ALI, Json.object().put("type", "answer").put("task", taskId).put("question", 1)
                 .put("text", "x".repeat(AssistantActions.SHOWN_TEXT + 1)))), "the member confirms only what they can read");
@@ -178,7 +190,8 @@ class AssistantActionsTest {
                 words(check(ALI, Json.object().put("type", "cancel").put("task", 999))));
         assertEquals(Text.of("refused.notFailed", bolds, Text.of("phase.planning")).render(Language.MN),
                 words(check(BOLD, Json.object().put("type", "retry").put("task", bolds))), "it has not failed");
-        assertEquals("phase", reason(check(BOLD, Json.object().put("type", "followUp").put("task", bolds).put("text", "also X"))));
+        assertEquals(Text.of("refused.wrongPhase", bolds, Text.of("phase.planning")).render(Language.MN),
+                words(check(BOLD, Json.object().put("type", "followUp").put("task", bolds).put("text", "also X"))));
         assertTrue(check(BOLD, Json.object().put("type", "cancel").put("task", bolds)).valid());
     }
 
@@ -219,7 +232,7 @@ class AssistantActionsTest {
                         List.of("life")))));
         Projects adminProjects = new Projects(List.of(life), project -> Optional.empty());
         TaskService adminTasks = new TaskService(adminGroups, adminProjects, new ActiveRuns(), clock, () -> { }, () -> { });
-        AssistantActions adminActions = new AssistantActions(adminTasks, adminGroups, adminProjects, clock, "Чи шийд");
+        AssistantActions adminActions = new AssistantActions(adminTasks, adminGroups, adminProjects, clock);
         long taskId = create(BOLD, "life", "Fix the login");
 
         AssistantActions.Checked checked = db.transactionReturning(tx ->
@@ -262,7 +275,7 @@ class AssistantActionsTest {
     }
 
     private AssistantActions.Tapped run(Requester who, long id) {
-        return db.transactionReturning(tx -> actions.run(tx, who, id, REPLY, who.ref()));
+        return db.transactionReturning(tx -> actions.run(tx, who, id, REPLY));
     }
 
     /** A proposal stored as it stands, as one checked before its task moved on would be, whatever a check would say now. */

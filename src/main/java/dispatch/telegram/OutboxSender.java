@@ -190,17 +190,20 @@ public final class OutboxSender implements Runnable {
 
     /**
      * A redraw of a message that may not be sent yet (ADR 0031): it edits it once it is, waits while it is on its way, and
-     * is dropped if it never will be, since there is nothing to redraw.
+     * is dropped if it never will be, or its row is gone, since there is nothing to redraw.
      */
     private void redrawRow(Outbox.Message message, int attempts, Renderer.Rendered rendered) {
-        Outbox.Original original = db.transactionReturning(tx -> Outbox.original(tx, message.editOf())).orElseThrow();
-        switch (original.status()) {
-            case "SENT" -> edit(message, attempts, rendered, original.sentRef());
+        Optional<Outbox.Original> original = db.transactionReturning(tx -> Outbox.original(tx, message.editOf()));
+        // A row gone is dropped as a failed one is: throwing here would stop every message behind this one.
+        switch (original.map(Outbox.Original::status).orElse("GONE")) {
+            case "SENT" -> edit(message, attempts, rendered, original.get().sentRef());
             case "PENDING" -> db.transaction(tx -> Outbox.retryLater(tx, message.id(), message.attempts(),
                     clock.instant().plus(WAIT_FOR_ORIGINAL), "waiting for the message it redraws"));
             default -> {
-                db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, "the message it redraws was never sent"));
-                Log.warn("outbox.redraw_dropped", "id", message.id(), "kind", message.kind(), "original", message.editOf());
+                String error = original.isEmpty() ? "the message it redraws is gone" : "the message it redraws was never sent";
+                db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, error));
+                Log.warn("outbox.redraw_dropped", "id", message.id(), "kind", message.kind(), "original", message.editOf(),
+                        "error", error);
             }
         }
     }

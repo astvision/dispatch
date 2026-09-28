@@ -246,6 +246,22 @@ class TasksApiTest {
         assertTrue(correction.contains("Keep the old default? → Та хамгийн боломжит"), "the chat's own 'you decide' words: " + correction);
     }
 
+    /** The Mini App can answer before the outbox has sent the question: it is then sent once, and redrawn (ADR 0031). */
+    @Test
+    void aWrittenAnswerBeforeTheQuestionIsSentSendsNoSecondQuestion() {
+        long taskId = planned(ALI, new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(),
+                List.of(new PlanQuestion("Which environments?", List.of("staging", "prod")))));
+        String question = SqlRows.single(dbFile, "SELECT id FROM outbox WHERE kind = 'PLAN_QUESTION' AND status = 'PENDING'").get("id");
+
+        api.answer(ALI_CALLER, Json.object().put("taskId", taskId).put("planSeq", 1).put("index", 1).put("text", "Only staging"));
+
+        assertEquals(List.of(question), SqlRows.query(dbFile, "SELECT id FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_of IS NULL")
+                .stream().map(row -> row.get("id")).toList(), "the question goes out once");
+        assertEquals(List.of(question),
+                SqlRows.query(dbFile, "SELECT edit_of FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_of IS NOT NULL").stream()
+                        .map(row -> row.get("edit_of")).toList(), "and is redrawn with its answer once it is");
+    }
+
     @Test
     void questionsAreAnsweredInOrderAndAnOlderPlanIsStale() {
         long taskId = planned(ALI, twoQuestions());

@@ -70,7 +70,7 @@ class AssistantTest {
         agent = new StubAgent();
         AssistantHome home = new AssistantHome(dir.resolve("assistant"), dbFile, "/usr/bin/java", "/opt/dispatch.jar", "/usr/bin:/bin");
         home.install();
-        assistant = new Assistant(db, tasks, new AssistantActions(tasks, groups, projects, clock, "Чи шийд"), groups, projects, agent,
+        assistant = new Assistant(db, tasks, new AssistantActions(tasks, groups, projects, clock), groups, projects, agent,
                 home, project -> Optional.of(dir.resolve("clones").resolve(project)), clock, Duration.ofSeconds(5), typed::add, () -> { });
     }
 

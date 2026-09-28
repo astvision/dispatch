@@ -288,7 +288,10 @@ class MergeButtonTest {
         assertEquals("2", count("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId), "no follow-up run on the merged branch");
         Map<String, String> told = row("SELECT chat_ref, reply_to_ref, payload FROM outbox WHERE kind = 'FOLLOW_UP_NEW_TASK'");
         assertEquals("telegram:" + BOLD, told.get("chat_ref"));
-        assertEquals("telegram:" + BOLD + "/961", told.get("reply_to_ref"), "said under the reply, at once, not when its plan comes");
+        assertEquals("telegram:" + BOLD + "/10", told.get("reply_to_ref"),
+                "the merged task's news, under the message that gave it, at once, not when its plan comes (ADR 0031)");
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = ?", "telegram:" + BOLD + "/961"),
+                "no reply under the follow-up");
         JsonNode payload = Json.read(told.get("payload"));
         assertEquals(taskId, payload.get("taskId").asLong());
         assertEquals(Long.parseLong(next.get("id")), payload.get("newTaskId").asLong());

@@ -35,6 +35,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -229,7 +230,7 @@ class RunExecutorTest {
         long id = queue("Fix the login timeout");
         runNext();
         String worktree = row("SELECT worktree FROM task WHERE id = ?", id).get("worktree");
-        db.transaction(tx -> tasks.correct(tx, BOLD, id, 1, "Also cover the mobile login", CHAT + "/200", CHAT));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Correct(id, OptionalInt.of(1), "Also cover the mobile login")));
 
         runNext();
 
@@ -437,8 +438,8 @@ class RunExecutorTest {
         runNext();
         String baseSha = row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha");
 
-        assertEquals(FollowUpResult.QUEUED, db.transactionReturning(tx ->
-                tasks.followUp(tx, BOLD, id, "Also log the timeout value", CHAT + "/400", CHAT)));
+        assertEquals(new CommandResult.Done(id, true), db.transactionReturning(tx ->
+                tasks.commands().run(tx, BOLD, new TaskCommand.FollowUp(id, "Also log the timeout value", new Origin(CHAT + "/400")))));
         runNext();
 
         Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
@@ -457,19 +458,6 @@ class RunExecutorTest {
     }
 
     @Test
-    void followUpNeedsATaskThatReachedExecution() throws Exception {
-        long id = queue("SCENARIO:fail");
-        runNext();
-        assertFailed(id, "AGENT", "fatal");
-
-        assertEquals(FollowUpResult.REFUSED, db.transactionReturning(tx -> tasks.followUp(tx, BOLD, id, "and this", CHAT + "/400", CHAT)));
-
-        assertEquals("FAILED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
-        assertEquals("notExecuted", Json.read(row("SELECT payload FROM outbox WHERE kind = 'FOLLOW_UP_REFUSED'").get("payload"))
-                .get("reason").asText());
-    }
-
-    @Test
     void sweepRemovesAnIdleDeliveredWorktreeAndAFollowUpRecreatesIt() throws Exception {
         long id = queue("Fix the login timeout");
         runNext();
@@ -482,7 +470,8 @@ class RunExecutorTest {
         assertFalse(Files.exists(worktree));
         assertEquals("dispatch/" + id, GitFixture.sh(repos.repo("alm"), "git", "branch", "--list", "dispatch/" + id,
                 "--format=%(refname:short)"), "the branch stays for a later run");
-        db.transaction(tx -> tasks.followUp(tx, BOLD, id, "Also log the timeout value", CHAT + "/400", CHAT));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.FollowUp(id, "Also log the timeout value", new Origin(CHAT + "/400"))));
         runNext();
         assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
         assertTrue(Files.isDirectory(worktree));
@@ -560,7 +549,8 @@ class RunExecutorTest {
         runNext();
         approve(id);
         runNext();
-        db.transaction(tx -> tasks.followUp(tx, BOLD, id, "Also log the timeout value", CHAT + "/400", CHAT));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.FollowUp(id, "Also log the timeout value", new Origin(CHAT + "/400"))));
         db.transaction(tx -> tx.update("UPDATE task SET updated_at = '2026-09-17T10:00:00.000Z' WHERE id = ?", id));
 
         assertEquals(0, sweeper.sweep());

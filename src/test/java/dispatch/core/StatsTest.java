@@ -23,6 +23,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -190,7 +191,7 @@ class StatsTest {
         planned(id, 1, planCost);
         int seq = 1;
         if (corrected) {
-            db.transaction(tx -> tasks.correct(tx, who, id, 1, "Also this", who.ref() + "/c" + id, who.ref()));
+            db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Correct(id, OptionalInt.of(1), "Also this")));
             planned(id, ++seq, "0.05");
         }
         int planSeq = seq;

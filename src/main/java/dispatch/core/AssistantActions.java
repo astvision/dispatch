@@ -8,7 +8,6 @@ import dispatch.Text;
 import dispatch.config.Config;
 import dispatch.domain.Requester;
 import dispatch.store.Conversations;
-import dispatch.store.Outbox;
 import dispatch.store.Tx;
 import java.time.Clock;
 import java.util.Optional;
@@ -48,17 +47,14 @@ public final class AssistantActions {
     private final Groups groups;
     private final Projects projects;
     private final Clock clock;
-    private final String youDecide;
     private final TaskAccess access;
 
-    /** @param youDecide what a "you decide" answer says, in the same words as the chat's own button */
-    public AssistantActions(TaskService tasks, Groups groups, Projects projects, Clock clock, String youDecide) {
+    public AssistantActions(TaskService tasks, Groups groups, Projects projects, Clock clock) {
         this.tasks = tasks;
         this.commands = tasks.commands();
         this.groups = groups;
         this.projects = projects;
         this.clock = clock;
-        this.youDecide = youDecide;
         this.access = new TaskAccess(groups);
     }
 
@@ -76,12 +72,12 @@ public final class AssistantActions {
             payload.put("title", verdict.task().title());
         }
         return switch (type) {
-            case "answer" -> answer(tx, verdict, action, payload);
+            case "answer" -> answer(tx, who, taskId, verdict, action, payload);
             case "approve" -> decision(verdict, TaskAccess.Action.APPROVE, payload);
             case "reject" -> decision(verdict, TaskAccess.Action.REJECT, payload);
             case "cancel" -> offered(tx, who, new TaskCommand.Cancel(taskId), payload);
             case "retry" -> offered(tx, who, new TaskCommand.Retry(taskId), payload);
-            case "followUp" -> followUp(verdict, action, payload);
+            case "followUp" -> followUp(tx, who, taskId, action, payload);
             default -> note(payload, "unknown");
         };
     }
@@ -89,20 +85,20 @@ public final class AssistantActions {
     /**
      * Runs the member's proposed action {@code actionId} once.
      *
-     * @param messageRef the assistant's reply that holds the button; what the action's own messages answer under
-     * @param chatRef    the member's private chat
+     * @param messageRef the assistant's reply that holds the button: where what the action gives comes from, a draft or a
+     *                   merged task's follow-up
      */
-    public Tapped run(Tx tx, Requester who, long actionId, String messageRef, String chatRef) {
+    public Tapped run(Tx tx, Requester who, long actionId, String messageRef) {
         Optional<JsonNode> taken = Conversations.takeAction(tx, actionId, who.ref(), clock.instant());
         if (taken.isEmpty()) {
             return new Tapped(Outcome.USED, Optional.empty());
         }
-        Tapped tapped = carryOut(tx, who, taken.get(), actionId, messageRef, chatRef);
+        Tapped tapped = carryOut(tx, who, taken.get(), actionId, messageRef);
         Conversations.recordOutcome(tx, actionId, tapped.outcome().name());
         return tapped;
     }
 
-    private Tapped carryOut(Tx tx, Requester who, JsonNode action, long actionId, String messageRef, String chatRef) {
+    private Tapped carryOut(Tx tx, Requester who, JsonNode action, long actionId, String messageRef) {
         long taskId = action.path("taskId").asLong();
         int planSeq = action.path("planSeq").asInt();
         return switch (action.path("type").asText()) {
@@ -113,7 +109,12 @@ public final class AssistantActions {
                 case DUPLICATE -> Outcome.USED;
                 case NOT_ALLOWED -> Outcome.NOT_ALLOWED;
             }, Optional.empty());
-            case "answer" -> new Tapped(answered(tx, who, action, taskId, planSeq, messageRef, chatRef), Optional.empty());
+            case "answer" -> {
+                // As check stored it: an option's index, or the words the reply showed, which a "you decide" is too.
+                TaskCommand.Choice choice = action.has("option") ? new TaskCommand.Choice.Option(action.get("option").asInt())
+                        : new TaskCommand.Choice.Written(action.path("answer").asText());
+                yield tapped(commands.run(tx, who, new TaskCommand.Answer(taskId, planSeq, action.path("question").asInt(), choice)));
+            }
             case "approve" -> new Tapped(switch (tasks.approve(tx, who, taskId, planSeq)) {
                 case APPROVED -> Outcome.DONE;
                 case STALE_PLAN, WRONG_STATE, OPEN_QUESTIONS -> Outcome.STALE;
@@ -126,12 +127,9 @@ public final class AssistantActions {
             }, Optional.empty());
             case "cancel" -> tapped(commands.run(tx, who, new TaskCommand.Cancel(taskId)));
             case "retry" -> tapped(commands.run(tx, who, new TaskCommand.Retry(taskId)));
-            case "followUp" -> {
-                // Answers in the chat itself, a refusal included, exactly as a reply to the task's result does. Unique per
-                // action as a draft's is: a merged task's follow-up becomes a task with this as its origin.
-                tasks.followUp(tx, who, taskId, action.path("text").asText(), messageRef + "#a" + actionId, chatRef);
-                yield new Tapped(Outcome.DONE, Optional.empty());
-            }
+            // Unique per action, as a draft's is: a merged task's follow-up becomes a task with this as its origin.
+            case "followUp" -> tapped(commands.run(tx, who, new TaskCommand.FollowUp(taskId, action.path("text").asText(),
+                    new Origin(messageRef + "#a" + actionId))));
             default -> throw new IllegalStateException("stored action of unknown type: " + action);
         };
     }
@@ -163,15 +161,20 @@ public final class AssistantActions {
         return new Checked(true, payload.put("project", project));
     }
 
-    private Checked answer(Tx tx, TaskAccess.Verdict verdict, JsonNode action, ObjectNode payload) {
-        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.ANSWER);
-        // "No question is open" is only a refusal once we know which question was named.
-        if (refused.isPresent() && refused.get() != Refusal.ALREADY_ANSWERED) {
-            return note(payload, reason(refused.get()));
-        }
+    /**
+     * An answer to the named question, refused as the command would refuse it (ADR 0031). A question the waiting plan does
+     * not have, and words longer than the reply shows, are notes of their own.
+     */
+    private Checked answer(Tx tx, Requester who, long taskId, TaskAccess.Verdict verdict, JsonNode action, ObjectNode payload) {
         int index = action.path("question").asInt(0);
+        TaskCommand.Answer answer = new TaskCommand.Answer(taskId, verdict.planSeq(), index, choice(action));
+        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.ANSWER);
+        // Which question is named matters only on a plan that waits for its answers: the command refuses anything else first.
+        if (refused.isPresent() && refused.get() != Refusal.ALREADY_ANSWERED) {
+            return offered(tx, who, answer, payload);
+        }
         JsonNode question = null;
-        for (JsonNode candidate : tasks.currentPlan(tx, verdict.task().id()).orElseThrow().withArray("questions")) {
+        for (JsonNode candidate : tasks.currentPlan(tx, taskId).orElseThrow().withArray("questions")) {
             if (candidate.path("index").asInt() == index) {
                 question = candidate;
             }
@@ -179,21 +182,29 @@ public final class AssistantActions {
         if (question == null) {
             return note(payload, "noQuestion");
         }
-        Optional<Refusal> answerRefused = verdict.answerRefusal(verdict.planSeq(), index);
-        if (answerRefused.isPresent()) {
-            return note(payload, reason(answerRefused.get()));
-        }
         payload.put("planSeq", verdict.planSeq()).put("question", index);
-        JsonNode options = question.path("options");
-        int option = action.path("option").asInt(0);
-        if (option >= 1 && option <= options.size()) {
-            return new Checked(true, payload.put("option", option - 1).put("answer", options.get(option - 1).asText()));
+        switch (answer.choice()) {
+            case TaskCommand.Choice.Option option ->
+                    payload.put("option", option.index()).put("answer", question.path("options").path(option.index()).asText());
+            case TaskCommand.Choice.YouDecide decide -> payload.put("answer", Text.of("answer.youDecide").render(Language.MN));
+            case TaskCommand.Choice.Written written -> {
+                String text = written.text().strip();
+                if (!shown(text)) {
+                    return note(payload, "tooLong");
+                }
+                payload.put("answer", text);
+            }
         }
-        if (action.path("decide").asBoolean(false)) {
-            return new Checked(true, payload.put("answer", youDecide));
+        return offered(tx, who, answer, payload);
+    }
+
+    /** What a proposed answer says: its option counts from 1, as the member reads the question, where a button's counts from 0. */
+    private static TaskCommand.Choice choice(JsonNode action) {
+        if (action.has("option")) {
+            return new TaskCommand.Choice.Option(action.path("option").asInt() - 1);
         }
-        String text = action.path("text").asText("").strip();
-        return text.isEmpty() ? note(payload, "empty") : shown(text) ? new Checked(true, payload.put("answer", text)) : note(payload, "tooLong");
+        return action.path("decide").asBoolean(false) ? new TaskCommand.Choice.YouDecide()
+                : new TaskCommand.Choice.Written(action.path("text").asText(""));
     }
 
     private static boolean shown(String text) {
@@ -209,17 +220,16 @@ public final class AssistantActions {
         return new Checked(true, payload.put("planSeq", verdict.planSeq()));
     }
 
-    /** A follow-up continues the task's building session, so the task must have got as far as execution. */
-    private static Checked followUp(TaskAccess.Verdict verdict, JsonNode action, ObjectNode payload) {
-        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.FOLLOW_UP);
-        if (refused.isPresent()) {
-            return note(payload, reason(refused.get()));
-        }
+    /**
+     * More work on a finished task, refused as the command would refuse it. The check reads a follow-up's origin only to
+     * find a repeat, and a page's never repeats; the tap gives the proposal's own.
+     */
+    private Checked followUp(Tx tx, Requester who, long taskId, JsonNode action, ObjectNode payload) {
         String text = action.path("text").asText("").strip();
-        if (text.isEmpty()) {
-            return note(payload, "empty");
+        if (!shown(text)) {
+            return note(payload, "tooLong");
         }
-        return shown(text) ? new Checked(true, payload.put("text", text)) : note(payload, "tooLong");
+        return offered(tx, who, new TaskCommand.FollowUp(taskId, text, Origin.page()), payload.put("text", text));
     }
 
     /** A button only for what would run now; otherwise a note in the refusal's own words (ADR 0031). */
@@ -241,20 +251,6 @@ public final class AssistantActions {
             // Given by a task command, never by task access, so never a proposal's own refusal (ADR 0031).
             case EMPTY, UNKNOWN_PROJECT, PROJECT_UNAVAILABLE ->
                     throw new IllegalStateException("task access never refuses a proposal as " + refusal);
-        };
-    }
-
-    private Outcome answered(Tx tx, Requester who, JsonNode action, long taskId, int planSeq, String messageRef, String chatRef) {
-        int index = action.path("question").asInt();
-        // The question's own message is redrawn with the answer, as when its button is pressed.
-        String questionRef = Outbox.sentQuestion(tx, taskId, planSeq, index).orElse(null);
-        AnswerResult result = action.has("option")
-                ? tasks.chooseOption(tx, who, taskId, planSeq, index, action.get("option").asInt(), questionRef, messageRef, chatRef)
-                : tasks.answer(tx, who, taskId, planSeq, index, action.path("answer").asText(), questionRef, messageRef, chatRef);
-        return switch (result) {
-            case ANSWERED, PROMPTED, PROMPT_OPEN -> Outcome.DONE;
-            case ALREADY_ANSWERED, STALE, EMPTY, OUT_OF_ORDER -> Outcome.STALE;
-            case NOT_ALLOWED, NOT_FOUND, NOT_REQUESTER -> Outcome.NOT_ALLOWED;
         };
     }
 

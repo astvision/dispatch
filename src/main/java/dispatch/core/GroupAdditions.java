@@ -2,6 +2,7 @@ package dispatch.core;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
+import dispatch.Text;
 import dispatch.domain.Draft;
 import dispatch.domain.DraftStatus;
 import dispatch.domain.OutboxKind;
@@ -18,6 +19,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 /**
  * Additions: more instructions someone writes in a linked group as a reply to the message a task came from, or to the one
@@ -39,7 +41,7 @@ public final class GroupAdditions {
         DONE,
         /** Its task is being planned or carried out: nothing changed, and the button works again later. */
         BUSY,
-        /** Its task refused it and said why under the offer, e.g. nothing was carried out to follow up; the button stays. */
+        /** Its task refused it, e.g. nothing was carried out to follow up: the refusal says why, and the button stays. */
         REFUSED,
         /** It is still a draft, not given as a task yet: nothing changed, and the button works once it is one. */
         NOT_YET,
@@ -51,14 +53,18 @@ public final class GroupAdditions {
         USED
     }
 
-    private final TaskService tasks;
+    /** How a tap ended, and a refusal's words when the task refused it (ADR 0031): the channel says them under the offer. */
+    public record Applied(Outcome outcome, Optional<Text> refusal) {
+    }
+
+    private final TaskCommands commands;
     private final Clock clock;
     private final Runnable wakeOutbox;
     private final String requestedBy;
 
     /** @param requestedBy what ends an applied addition's text before its author's name, as a mentioned task's text ends */
     public GroupAdditions(TaskService tasks, Clock clock, Runnable wakeOutbox, String requestedBy) {
-        this.tasks = tasks;
+        this.commands = tasks.commands();
         this.clock = clock;
         this.wakeOutbox = wakeOutbox;
         this.requestedBy = requestedBy;
@@ -143,13 +149,13 @@ public final class GroupAdditions {
     }
 
     /**
-     * {@code who} tapped addition {@code additionId}'s button, on {@code messageRef} in their private chat {@code chatRef}:
-     * what the task says about it goes under that message.
+     * {@code who} tapped addition {@code additionId}'s button on {@code messageRef}, the offer in their private chat: a
+     * follow-up comes from there, and a merged task's new task records it as its origin.
      */
-    public Outcome apply(Tx tx, Requester who, long additionId, String messageRef, String chatRef) {
+    public Applied apply(Tx tx, Requester who, long additionId, String messageRef) {
         Optional<Additions.Addition> unused = Additions.findUnused(tx, additionId, who.ref());
         if (unused.isEmpty()) {
-            return Outcome.USED;
+            return new Applied(Outcome.USED, Optional.empty());
         }
         Additions.Addition addition = unused.get();
         Optional<Task> given = Tasks.findByOrigin(tx, addition.originRef());
@@ -158,43 +164,40 @@ public final class GroupAdditions {
             // again; a draft discarded or expired never will be a task.
             Optional<DraftStatus> draft = Drafts.statusByOrigin(tx, addition.originRef());
             if (draft.equals(Optional.of(DraftStatus.OPEN))) {
-                return Outcome.NOT_YET;
+                return new Applied(Outcome.NOT_YET, Optional.empty());
             }
             if (draft.equals(Optional.of(DraftStatus.SPLIT))) {
                 // Its own parts only: a draft given in reply to the same message was offered this addition already.
                 send(tx, offersFrom(tx, addition.originRef(), List.of()), addition.author(), addition.text(), false, null, null);
                 Additions.markUsed(tx, additionId, clock.instant());
-                return Outcome.SPLIT;
+                return new Applied(Outcome.SPLIT, Optional.empty());
             }
-            return closed(tx, additionId);
+            return new Applied(closed(tx, additionId), Optional.empty());
         }
         Task task = given.get();
         String instruction = addition.text() + "\n\n" + requestedBy + " " + addition.author();
-        return switch (task.phase()) {
-            case AWAITING_APPROVAL -> applied(tx, additionId,
-                    tasks.correctLatest(tx, who, task.id(), instruction, messageRef, chatRef) == CorrectResult.CORRECTED);
-            case COMPLETED, FAILED -> {
-                // A merged task's follow-up becomes a new task: taken all the same.
-                FollowUpResult result = tasks.followUp(tx, who, task.id(), instruction, messageRef, chatRef);
-                yield applied(tx, additionId, result == FollowUpResult.QUEUED || result == FollowUpResult.NEW_TASK);
-            }
-            case PLANNING, EXECUTING -> Outcome.BUSY;
-            case REJECTED, CANCELLED -> closed(tx, additionId);
+        TaskCommand command = switch (task.phase()) {
+            case AWAITING_APPROVAL -> new TaskCommand.Correct(task.id(), OptionalInt.empty(), instruction);
+            // A merged task's follow-up becomes a new task: taken all the same.
+            case COMPLETED, FAILED -> new TaskCommand.FollowUp(task.id(), instruction, new Origin(messageRef));
+            case PLANNING, EXECUTING -> null;
+            case REJECTED, CANCELLED -> null;
         };
+        if (command == null) {
+            return new Applied(task.phase().isActive() ? Outcome.BUSY : closed(tx, additionId), Optional.empty());
+        }
+        CommandResult result = commands.run(tx, who, command);
+        if (result instanceof CommandResult.Refused refused) {
+            // The button stays: the task may take it later, e.g. once it has something to follow up.
+            return new Applied(Outcome.REFUSED, Optional.of(refused.words()));
+        }
+        Additions.markUsed(tx, additionId, clock.instant());
+        return new Applied(Outcome.DONE, Optional.empty());
     }
 
     private Outcome closed(Tx tx, long additionId) {
         Additions.markUsed(tx, additionId, clock.instant());
         return Outcome.CLOSED;
-    }
-
-    /** DONE, and used up, when the task took it; otherwise the task has already said why under the offer. */
-    private Outcome applied(Tx tx, long additionId, boolean taken) {
-        if (!taken) {
-            return Outcome.REFUSED;
-        }
-        Additions.markUsed(tx, additionId, clock.instant());
-        return Outcome.DONE;
     }
 
     /** The first {@link #SHOWN_TEXT} characters and an ellipsis, never splitting an emoji's surrogate pair. */

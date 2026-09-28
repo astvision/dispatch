@@ -857,16 +857,20 @@ class RendererTest {
     @Test
     void theLongestAssistantReplyStillFitsOneMessage() {
         String longest = "ы<".repeat(3000);
-        ObjectNode payload = Json.object().put("reply", longest);
-        for (int id = 1; id <= 3; id++) {
-            payload.withArray("actions").add(Json.object().put("id", id).put("type", "followUp").put("taskId", 123456).put("title", longest)
-                    .put("text", longest));
-        }
-        for (int note = 0; note < 3; note++) {
-            payload.withArray("notes").add(Json.object().put("type", "approve").put("taskId", 123456).put("reason", "openQuestions"));
-        }
+        // A turn has at most three proposals (Assistant.MAX_ACTIONS), each offered or noted. A note may carry a refusal's
+        // words, which fit a button's notice: 200 characters, here each one escaped.
+        for (int offered = 0; offered <= 3; offered++) {
+            ObjectNode payload = Json.object().put("reply", longest);
+            for (int id = 1; id <= offered; id++) {
+                payload.withArray("actions").add(Json.object().put("id", id).put("type", "followUp").put("taskId", 123456)
+                        .put("title", longest).put("text", longest));
+            }
+            for (int note = offered; note < 3; note++) {
+                payload.withArray("notes").add(Json.object().put("type", "followUp").put("taskId", 123456).put("words", "ы<".repeat(100)));
+            }
 
-        assertTrue(renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html().length() <= 4096);
+            assertTrue(renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html().length() <= 4096, offered + " offered, the rest noted");
+        }
     }
 
     @Test

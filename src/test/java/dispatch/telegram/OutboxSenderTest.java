@@ -18,6 +18,9 @@ import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import java.net.http.HttpClient;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -155,6 +158,28 @@ class OutboxSenderTest {
 
         assertEquals("FAILED", row(redraw).get("status"));
         assertTrue(telegram.calls().isEmpty(), "nothing to redraw: " + telegram.calls());
+    }
+
+    @Test
+    void aRedrawWhoseMessageIsGoneIsDroppedAndTheOutboxGoesOn() throws Exception {
+        long question = enqueueQuestion();
+        long redraw = enqueueRedrawOf(question);
+        long next = enqueue(OutboxKind.TASK_QUEUED, Json.object().put("taskId", 42).put("project", "alm"));
+        Database.prepareSqlite();
+        // Nothing in the store deletes a row another one redraws: only a connection without foreign keys can.
+        try (Connection raw = DriverManager.getConnection("jdbc:sqlite:" + dbFile); Statement statement = raw.createStatement()) {
+            statement.execute("PRAGMA foreign_keys = OFF");
+            statement.executeUpdate("DELETE FROM outbox WHERE id = " + question);
+        }
+
+        assertTrue(sender.deliverDue());
+        assertTrue(sender.deliverDue());
+
+        Map<String, String> dropped = row(redraw);
+        assertEquals("FAILED", dropped.get("status"));
+        assertEquals("the message it redraws is gone", dropped.get("last_error"));
+        assertEquals(List.of("sendMessage"), telegram.calls(), "the message after it still went out");
+        assertEquals("SENT", row(next).get("status"));
     }
 
     @Test

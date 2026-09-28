@@ -7,10 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
+import dispatch.Language;
+import dispatch.Text;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
+import dispatch.core.GroupAdditions;
 import dispatch.core.Groups;
 import dispatch.core.Membership;
 import dispatch.core.Projects;
@@ -198,14 +201,24 @@ class GroupAdditionsTest {
         db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         transitions.failed(taskId, 1, FailureReason.AGENT, "model overloaded", null);
         String additionId = offered(90, 91, "Also show the full position in a tooltip");
+        long last = Long.parseLong(row("SELECT max(id) AS id FROM outbox").get("id"));
+        GroupAdditions additions = new GroupAdditions(tasks, clock, () -> { }, renderer.text("group.requestedBy"));
+
+        // Its planning failed, so nothing was ever carried out to follow up; after /retry the plan could take it.
+        assertEquals(new GroupAdditions.Applied(GroupAdditions.Outcome.REFUSED, Optional.of(Text.of("refused.notExecuted", taskId))),
+                db.transactionReturning(tx -> additions.apply(tx, new Requester("telegram:" + ALI, "Ali"), Long.parseLong(additionId),
+                        "telegram:" + ALI + "/88")));
+        assertEquals(Long.toString(last), row("SELECT max(id) AS id FROM outbox").get("id"),
+                "the task writes nothing: the channel says why");
 
         handler.handle(UpdateHandlerTest.privateCallback(650, ALI, "Ali", "ad:" + additionId));
 
-        // Its planning failed, so nothing was ever carried out to follow up; after /retry the plan could take it.
         assertEquals(renderer.text("callback.additionRefused"),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
-        assertEquals("1", count("SELECT count(*) AS n FROM outbox WHERE kind = 'FOLLOW_UP_REFUSED' AND reply_to_ref = ?",
-                "telegram:" + ALI + "/88"), "the reason is said under the offer");
+        Map<String, String> refused = row("SELECT * FROM outbox WHERE id > ?", last);
+        assertEquals("REFUSED", refused.get("kind"), "the channel's reply alone: the refused command wrote nothing");
+        assertEquals("telegram:" + ALI + "/88", refused.get("reply_to_ref"), "the reason is said under the offer");
+        assertEquals(Text.of("refused.notExecuted", taskId).render(Language.MN), Json.read(refused.get("payload")).get("text").asText());
         assertEquals(null, row("SELECT used_at FROM addition WHERE id = ?", additionId).get("used_at"), "and it can still be added");
         assertTrue(sent("editMessageReplyMarkup").isEmpty(), "so its button stays");
     }

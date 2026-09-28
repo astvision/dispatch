@@ -269,6 +269,8 @@ public final class TaskCommands {
         Outbox.questionRow(tx, task.id(), planSeq, index).ifPresent(row -> Outbox.enqueueEditOf(tx, task.id(), OutboxKind.PLAN_QUESTION,
                 task.requester().ref(), row, questionPayload(task.id(), planSeq, questions, index).put("answer", text), now));
         tx.afterCommit(wakeOutbox);
+        tx.afterCommit(() -> Log.info("task.question_answered", "task", task.id(), "plan", planSeq, "question", index,
+                "requester", who.ref()));
         Map<Integer, String> answers = PlanAnswers.of(tx, task.id(), planSeq);
         for (int next = 1; next <= questions.size(); next++) {
             if (!answers.containsKey(next)) {
@@ -302,7 +304,7 @@ public final class TaskCommands {
                 questionPayload(task.id(), planSeq, questions, index), now);
     }
 
-    static ObjectNode questionPayload(long taskId, int planSeq, List<PlanQuestion> questions, int index) {
+    private static ObjectNode questionPayload(long taskId, int planSeq, List<PlanQuestion> questions, int index) {
         PlanQuestion question = questions.get(index - 1);
         ObjectNode payload = Json.object().put("taskId", taskId).put("planSeq", planSeq).put("index", index)
                 .put("total", questions.size()).put("text", question.text());
@@ -311,7 +313,7 @@ public final class TaskCommands {
     }
 
     /** The correction that carries every answer, in the requester's language like the buttons they pressed. */
-    static String answersText(List<PlanQuestion> questions, Map<Integer, String> answers) {
+    private static String answersText(List<PlanQuestion> questions, Map<Integer, String> answers) {
         StringBuilder text = new StringBuilder("Асуултын хариулт:");
         for (int index = 1; index <= questions.size(); index++) {
             text.append('\n').append(index).append(". ").append(questions.get(index - 1).text()).append(" → ").append(answers.get(index));

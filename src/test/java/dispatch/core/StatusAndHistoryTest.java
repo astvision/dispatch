@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -153,7 +154,8 @@ class StatusAndHistoryTest {
         claim();
         clock.advance(Duration.ofSeconds(90));
         transitions.planSucceeded(id, 1, PLAN, result("0.16"));
-        db.transaction(tx -> tasks.correct(tx, BOLD, id, 1, "Also describe the logs target", CHAT + "/51", CHAT));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Correct(id, OptionalInt.of(1), "Also describe the logs target")));
         claim();
         transitions.planSucceeded(id, 2, PLAN, result("0.10"));
         db.transaction(tx -> tasks.approve(tx, BOLD, id, 2));
