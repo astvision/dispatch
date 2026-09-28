@@ -6,6 +6,9 @@ instance a computer already has is unchanged: it keeps `dispatch.yaml`, `dispatc
 service name and `dispatch/<task>` branches, exactly as before. A named instance (`--instance team`) gets its own
 sibling config, secrets file, state directory and service, named after it (`team.yaml`, `dispatch-team.service`, and
 so on for launchd and Task Scheduler), so its `repos/` and `worktrees/` can never collide with another instance's.
+The service definition itself always runs `dispatch run --config <its absolute config path> --log-file …`, exactly
+like the default instance's; only its unit, label or task name says which instance it is. A moved config folder
+needs `dispatch service install --instance NAME` again, same as the default instance needs it for `--config`.
 
 `dispatch init`, run again on a computer that already has an instance, offers to add another beside it instead of
 refusing; `dispatch list` shows every instance found in the config folder, each by its bot id (never its @username,
@@ -30,8 +33,9 @@ explicit key defaulting to today's value changes nothing for anyone who doesn't 
 ## Consequences
 
 - A team on the default prefix keeps working with workers on the previous version, because `Job.branch` is left out
-  for it; a team that sets its own `branchPrefix` needs its members to update their workers first, since an older
-  worker does not know to prefix branches Dispatch itself expects.
+  for it; a team that sets its own `branchPrefix` needs its members to update their workers first. An older worker
+  deserializes the `Job` it receives strictly (`FAIL_ON_UNKNOWN_PROPERTIES`), so a `branch` field it does not know
+  about rejects the whole job outright, and every run fails until that member updates Dispatch.
 - Setting `branchPrefix` on an instance that already has tasks points their retries and follow-ups at branches that
   no longer exist (the old ones were `dispatch/<task>`, not `<prefix>/<task>`); it should only be set once, when the
   instance is created — which is what `init` does for a named instance, and why the default instance never gets one.

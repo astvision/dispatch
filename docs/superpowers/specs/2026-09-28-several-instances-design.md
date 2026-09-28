@@ -49,16 +49,18 @@ above; `instance == null` returns today's values. The secrets file is already fo
 ## Commands
 
 Every command that reads an instance's config takes `--instance NAME`: `run`, `check`, `service`, `project add`, `ui`,
-`init` and `ask`. `--config FILE` still works and wins over `--instance`, for the server layout and for tests. The
-`worker` commands do not take it: a computer's worker is one per computer (W changes what it connects to, not how many
-there are).
+`init` and `ask`. `--config FILE` still exists too, for the server layout and for tests. Where a command only reads
+its config once (`run`, `check`, `project add`, `ask`), `--config` wins when both are given. Where a command derives
+something durable from the instance's name (`service`, `ui`, `init`), the combination is refused instead of silently
+picking one: "--config and --instance both name the bot to use; give one of them". The `worker` commands do not take
+`--instance`: a computer's worker is one per computer (W changes what it connects to, not how many there are).
 
 `dispatch list` (new) prints one line per instance found in the config folder — every `*.yaml` except `worker.yaml` whose
 content loads as a Dispatch config:
 
 ```
-default  @dispatch_task_bot   personal  running
-team     @astvision_team_bot  team      stopped   (dispatch service start --instance team)
+default  bot 6217700981   personal  running
+team     bot 6889012734   team      stopped   (dispatch service start --instance team)
 ```
 
 A file that does not load is listed with the loader's error, not skipped: something the person made should never vanish
@@ -68,8 +70,11 @@ from the list. `list` works offline: it shows each bot by its id (the digits bef
 
 `Service.Kind` stays the two kinds (Dispatch, worker). The instance is given when the service is made
 (`Service.forThisMachine(kind, instance)`), because `stop`, `start`, `status` and `uninstall` never see a spec; each OS
-writer derives its names from it: the unit, label or task name above. `Service.Spec` carries the instance too, so the
-definition runs `dispatch run --instance team --log-file …`; the default instance's definition keeps `--config …`.
+writer derives its names from it: the unit, label or task name above. `Service.Spec` carries no instance of its own:
+every definition runs `dispatch run --config <the instance's absolute config path> --log-file …`, exactly like the
+default instance's, so a moved config folder needs `dispatch service install --instance NAME` again to pick up the
+new one — re-resolving XDG paths inside the service itself would break under a shell whose `XDG_CONFIG_HOME` differs
+from the one setup ran under.
 
 ## Init
 
@@ -77,7 +82,7 @@ definition runs `dispatch run --instance team --log-file …`; the default insta
 "already exists". It asks:
 
 ```
-You already have @dispatch_task_bot on this computer.
+You already have bot 6217700981 on this computer.
 Add another bot here? [y/N]
 Name for it (team):
 ```
