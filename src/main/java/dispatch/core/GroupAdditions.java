@@ -159,8 +159,11 @@ public final class GroupAdditions {
         return switch (task.phase()) {
             case AWAITING_APPROVAL -> applied(tx, additionId,
                     tasks.correctLatest(tx, who, task.id(), instruction, messageRef, chatRef) == CorrectResult.CORRECTED);
-            case COMPLETED, FAILED -> applied(tx, additionId,
-                    tasks.followUp(tx, who, task.id(), instruction, messageRef, chatRef) == FollowUpResult.QUEUED);
+            case COMPLETED, FAILED -> {
+                // A merged task's follow-up becomes a new task: taken all the same.
+                FollowUpResult result = tasks.followUp(tx, who, task.id(), instruction, messageRef, chatRef);
+                yield applied(tx, additionId, result == FollowUpResult.QUEUED || result == FollowUpResult.NEW_TASK);
+            }
             case PLANNING, EXECUTING -> Outcome.BUSY;
             case REJECTED, CANCELLED -> closed(tx, additionId);
         };

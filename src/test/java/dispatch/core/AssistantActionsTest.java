@@ -196,6 +196,21 @@ class AssistantActionsTest {
     }
 
     @Test
+    void followUpsOnMergedTasksProposedInOneReplyEachBecomeATaskOfTheirOwn() {
+        long first = merged(BOLD);
+        long second = merged(BOLD);
+        long a = propose(BOLD, check(BOLD, Json.object().put("type", "followUp").put("task", first).put("text", "Also log it")));
+        long b = propose(BOLD, check(BOLD, Json.object().put("type", "followUp").put("task", second).put("text", "Also cover mobile")));
+
+        assertEquals(AssistantActions.Outcome.DONE, run(BOLD, a));
+        assertEquals(AssistantActions.Outcome.DONE, run(BOLD, b));
+
+        assertEquals("[Also log it, Also cover mobile]", SqlRows.query(dbFile,
+                        "SELECT title FROM task WHERE id NOT IN (?, ?) ORDER BY id", first, second).stream().map(row -> row.get("title")).toList()
+                .toString(), "both taps made their task, though both name the same reply");
+    }
+
+    @Test
     void someoneElsesButtonDoesNothing() {
         long id = propose(ALI, check(ALI, Json.object().put("type", "draft").put("text", "Export")));
 
@@ -241,6 +256,18 @@ class AssistantActionsTest {
 
     private String phase(long taskId) {
         return SqlRows.single(dbFile, "SELECT phase FROM task WHERE id = ?", taskId).get("phase");
+    }
+
+    /** A task of {@code who}'s, planned, carried out, delivered and merged from its result's button. */
+    private long merged(Requester who) {
+        long id = planned(who, noQuestions());
+        db.transaction(tx -> tasks.approve(tx, who, id, 1));
+        db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.agentStarted(id, 2, null, null);
+        transitions.completed(id, 2, new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", new BigDecimal("0.1"), 3, List.of(), null,
+                null, null), List.of("Makefile"), "https://github.com/acme/life/pull/" + id);
+        db.transaction(tx -> dispatch.store.Tasks.merged(tx, id, clock.instant()));
+        return id;
     }
 
     private long create(Requester who, String project, String title) {

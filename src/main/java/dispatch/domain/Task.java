@@ -6,7 +6,7 @@ import java.util.UUID;
 
 /**
  * A task as stored. Nullable: buildSessionId, baseSha, worktree, planJson, prUrl, topicRef, failureReason, failureDetail,
- * startedAt, completedAt.
+ * startedAt, completedAt, mergedAt.
  *
  * @param sessionId      the planning session: the plan and its corrections (ADR 0017)
  * @param buildSessionId the building session, once the first execution run started it from the approved plan
@@ -14,6 +14,7 @@ import java.util.UUID;
  * @param chatRef   channel reference of the chat the task belongs to: its project's group chat, or the requester's private
  *                  chat when that group has none (ADR 0014)
  * @param topicRef  the task's own topic in the requester's private chat, once the channel created one
+ * @param mergedAt  when its pull request was found merged, through the Merge button
  */
 public record Task(
         long id,
@@ -38,7 +39,8 @@ public record Task(
         Instant createdAt,
         Instant startedAt,
         Instant completedAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        Instant mergedAt) {
 
     /**
      * The message that gave the task, if it was written in the chat the task belongs to: its group chat before ADR 0012,

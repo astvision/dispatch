@@ -30,7 +30,7 @@ public final class Database implements AutoCloseable {
             "db/013-attachments.sql", "db/014-agent-started.sql", "db/015-workers.sql",
             "db/016-worker-readiness.sql", "db/017-telegram-usernames.sql", "db/018-plan-answers.sql",
             "db/019-member-prefs.sql", "db/020-assistant.sql", "db/021-draft-discarded.sql", "db/022-worker-capacity.sql",
-            "db/023-additions.sql");
+            "db/023-additions.sql", "db/024-merged.sql");
 
     private final Connection connection;
     private final ReentrantLock lock = new ReentrantLock();

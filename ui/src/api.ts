@@ -305,7 +305,7 @@ export interface ProjectSummary {
 export type TaskState = "running" | "queued" | "awaitingApproval" | "finished";
 
 /** What the viewer may do with a task now, as the server's task access decided (ADR 0027). */
-export type TaskAction = "approve" | "correct" | "answer" | "reject" | "priority" | "cancel" | "retry" | "followUp";
+export type TaskAction = "approve" | "correct" | "answer" | "reject" | "priority" | "cancel" | "retry" | "followUp" | "merge";
 
 /** One row of a task list. A task that is not the viewer's own carries the headline fields only (ADR 0020). */
 export interface TaskRow {

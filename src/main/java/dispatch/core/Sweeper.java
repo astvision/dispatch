@@ -16,8 +16,9 @@ import java.util.Optional;
 
 /**
  * Removes worktrees of tasks that finished and stayed idle for {@code idle}, checking every {@code interval}. A completed or
- * failed task's worktree goes only when nothing in it would be lost; a rejected or cancelled task's goes anyway, with the
- * discarded paths logged. Its branch stays, so a later run can recreate it.
+ * failed task's worktree goes only when nothing in it would be lost, which for a merged task means only that it is clean;
+ * a rejected or cancelled task's goes anyway, with the discarded paths logged. Its branch stays, so a later run can
+ * recreate it.
  */
 public final class Sweeper implements Runnable {
 
@@ -90,7 +91,10 @@ public final class Sweeper implements Runnable {
         }
         Workspaces.WorktreeState state = workspaces.state(task.worktree(), task.id(), task.baseSha());
         boolean abandoned = task.phase() == Phase.REJECTED || task.phase() == Phase.CANCELLED;
-        if (!abandoned && !state.disposable()) {
+        // Merged: its delivered work is on the base branch, while its own branch may be gone from origin, deleted by the
+        // merge. That excuses "not pushed" only; changes never delivered (a follow-up refused at delivery) are kept.
+        boolean merged = task.mergedAt() != null && state.uncommitted().isEmpty();
+        if (!abandoned && !merged && !state.disposable()) {
             Log.warn("sweeper.kept", "task", task.id(), "phase", task.phase(), "uncommitted", state.uncommitted().size(),
                     "pushed", state.pushed(), "worktree", task.worktree());
             return false;

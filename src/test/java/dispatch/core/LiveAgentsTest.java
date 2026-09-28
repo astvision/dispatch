@@ -105,7 +105,7 @@ class LiveAgentsTest {
         Instant now = Instant.now();
         return new Task(1, "calc", "Fix add()", description, Phase.PLANNING, Priority.NORMAL,
                 new Requester("telegram:100", "Bold"), "telegram:100/1", "telegram:100", UUID.randomUUID(), null, "main",
-                null, null, null, null, null, null, null, now, null, null, now);
+                null, null, null, null, null, null, null, now, null, null, now, null);
     }
 
     private static void report(String step, AgentResult result) {

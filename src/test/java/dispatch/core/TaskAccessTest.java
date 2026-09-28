@@ -161,6 +161,15 @@ class TaskAccessTest {
                         Refusal.WRONG_PHASE),
                 row("the requester follows up a cancelled task", TaskAccessTest::cancelled, BOLD, Action.FOLLOW_UP,
                         Refusal.WRONG_PHASE),
+                row("the requester merges a completed task's pull request", TaskAccessTest::completed, BOLD, Action.MERGE, null),
+                row("a member of the group merges someone else's", TaskAccessTest::completed, ALI, Action.MERGE,
+                        Refusal.NOT_REQUESTER),
+                row("the requester merges a task that delivered nothing", TaskAccessTest::completedWithoutChanges, BOLD, Action.MERGE,
+                        Refusal.WRONG_PHASE),
+                row("the requester merges a failed execution", TaskAccessTest::failedExecution, BOLD, Action.MERGE,
+                        Refusal.WRONG_PHASE),
+                row("the requester merges an active task", TaskAccessTest::executing, BOLD, Action.MERGE, Refusal.WRONG_PHASE),
+                row("the requester merges a merged task", TaskAccessTest::merged, BOLD, Action.MERGE, Refusal.MERGED),
                 row("a requester who left the group approves their own plan", TaskAccessTest::afterLeavingTheGroup, BOLD,
                         Action.APPROVE, null),
                 row("a requester who left the group cancels their own task", TaskAccessTest::afterLeavingTheGroup, BOLD,
@@ -315,6 +324,20 @@ class TaskAccessTest {
     private long completed() {
         long id = executing();
         transitions.completed(id, 2, RESULT, List.of("README.md"), "https://github.com/acme/alm/pull/7");
+        return id;
+    }
+
+    /** Its execution changed nothing, so there is no pull request. */
+    private long completedWithoutChanges() {
+        long id = executing();
+        transitions.completed(id, 2, RESULT, List.of(), null);
+        return id;
+    }
+
+    /** Its pull request merged from the result's button. */
+    private long merged() {
+        long id = completed();
+        db.transaction(tx -> dispatch.store.Tasks.merged(tx, id, clock.instant()));
         return id;
     }
 

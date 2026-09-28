@@ -347,8 +347,8 @@ class StatusAndHistoryTest {
         assertEquals("[\"priority\",\"cancel\"]", mine.path("queued").get(0).path("actions").toString());
         assertEquals("[]", theirs.path("queued").get(0).path("actions").toString(), "someone else's task is theirs to act on");
         assertEquals(done, history.path("tasks").get(0).path("taskId").asLong());
-        assertEquals("[]", history.path("tasks").get(0).path("actions").toString(),
-                "completed, and its execution never started an agent here: nothing to retry or follow up");
+        assertEquals("[\"merge\"]", history.path("tasks").get(0).path("actions").toString(),
+                "completed, and its execution never started an agent here: nothing to follow up, but its pull request merges");
     }
 
     @Test
@@ -362,11 +362,24 @@ class StatusAndHistoryTest {
     }
 
     @Test
-    void aCompletedExecutionWhoseAgentStartedOffersOnlyFollowUp() {
+    void aCompletedExecutionWhoseAgentStartedOffersFollowUpAndMerge() {
         long id = executingWithAgentStarted("Add make help", "111");
         transitions.completed(id, 2, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
 
         JsonNode history = db.transactionReturning(tx -> tasks.historyPayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE)));
+
+        assertEquals("[\"followUp\",\"merge\"]", history.path("tasks").get(0).path("actions").toString());
+    }
+
+    @Test
+    void aTeamBotListsNoMergeSinceItsMembersComputersDeliver() {
+        long id = executingWithAgentStarted("Add make help", "112");
+        transitions.completed(id, 2, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
+        TaskService team = new TaskService(groups, new Projects(List.of(new Config.Project("life", null, "https://github.com/acme/life.git",
+                null, "master", "claude-code", null, null, List.of(), null, null, null)), p -> Optional.empty()), activeRuns, clock,
+                () -> { }, () -> { }, false, draftId -> { }, true);
+
+        JsonNode history = db.transactionReturning(tx -> team.historyPayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE)));
 
         assertEquals("[\"followUp\"]", history.path("tasks").get(0).path("actions").toString());
     }

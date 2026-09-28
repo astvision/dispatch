@@ -40,7 +40,9 @@ public final class TaskAccess {
         PRIORITY("priority"),
         CANCEL("cancel"),
         RETRY("retry"),
-        FOLLOW_UP("followUp");
+        FOLLOW_UP("followUp"),
+        /** Its delivered pull request, from the result's Merge button (ADR 0007, amended). */
+        MERGE("merge");
 
         private final String json;
 
@@ -73,7 +75,9 @@ public final class TaskAccess {
         /** Only a failed task's failed step is retried (ADR 0008). */
         NOT_FAILED,
         /** A follow-up continues an execution, and this task never started one (ADR 0006). */
-        NOT_EXECUTED
+        NOT_EXECUTED,
+        /** Its pull request is merged already. */
+        MERGED
     }
 
     /**
@@ -257,6 +261,12 @@ public final class TaskAccess {
                 }
                 boolean executed = Runs.agentStartedBefore(tx, task.id(), RunKind.EXECUTE, Integer.MAX_VALUE);
                 yield executed ? Optional.empty() : Optional.of(Refusal.NOT_EXECUTED);
+            }
+            case MERGE -> {
+                if (task.mergedAt() != null) {
+                    yield Optional.of(Refusal.MERGED);
+                }
+                yield phase == Phase.COMPLETED && task.prUrl() != null ? Optional.empty() : Optional.of(Refusal.WRONG_PHASE);
             }
         };
     }

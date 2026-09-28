@@ -16,6 +16,7 @@ import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
 import dispatch.core.JobRunner;
 import dispatch.core.Membership;
+import dispatch.core.Merges;
 import dispatch.core.Projects;
 import dispatch.core.Recovery;
 import dispatch.core.RunTransitions;
@@ -104,8 +105,8 @@ public final class App {
         Path stateDir = config.stateDir();
         Git git = new Git("git", config.secrets().ghToken(), Duration.ofMinutes(5));
         Workspaces workspaces = new Workspaces(stateDir, git);
-        Delivery delivery = new Delivery(git, new Gh(config.delivery().ghCommand(), config.secrets().ghToken(), Duration.ofMinutes(2)),
-                config.delivery().authorName(), config.delivery().authorEmail());
+        Gh gh = new Gh(config.delivery().ghCommand(), config.secrets().ghToken(), Duration.ofMinutes(2));
+        Delivery delivery = new Delivery(git, gh, config.delivery().authorName(), config.delivery().authorEmail());
         Redactor redactor = Redactor.fromEnvironment(environment);
         // Team mode never runs a task's agent or holds a worktree here; each member's own computer does (ADR 0021).
         (config.workers() == null ? workspaces.createDirectories() : workspaces.createTeamDirectories())
@@ -121,7 +122,9 @@ public final class App {
         Signal outboxSignal = new Signal();
         Projects projects = new Projects(config.projects(), workspaces::unavailableReason);
         ActiveRuns activeRuns = new ActiveRuns();
-        RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake);
+        // Only a personal bot merges from Telegram: in team mode each member's own computer holds the credentials that delivered it.
+        boolean mergeFromTelegram = config.workers() == null;
+        RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake, mergeFromTelegram);
         Groups groups = new Groups(config.telegram());
         Splitter[] splitter = new Splitter[1];
         Map<String, String> agentCommands = new java.util.LinkedHashMap<>();
@@ -188,7 +191,7 @@ public final class App {
                 api, renderer, redactor, botUsername, clock, outboxSignal::wake, workerKeys,
                 config.workers() == null ? null : config.workers().publicUrl(),
                 config.miniApp() == null ? null : config.miniApp().publicUrl(), groupLinks, assistant,
-                assistant == null ? null : assistantActions);
+                assistant == null ? null : assistantActions, mergeFromTelegram ? merges(db, groups, gh, stateDir, clock, outboxSignal) : null);
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         UiServer miniApp = null;
@@ -303,6 +306,25 @@ public final class App {
     private static java.util.Set<String> memberRefs(Groups groups) {
         return groups.all().stream().flatMap(group -> group.members().stream())
                 .map(member -> "telegram:" + member.id()).collect(java.util.stream.Collectors.toSet());
+    }
+
+    /**
+     * The Merge button's GitHub side: gh runs in the state directory, outside any clone, so it never touches a checkout;
+     * each merge on a virtual thread of its own, off the thread that handles Telegram updates.
+     */
+    private static Merges merges(Database db, Groups groups, Gh gh, Path stateDir, Clock clock, Signal outbox) {
+        Merges.PullRequests pullRequests = new Merges.PullRequests() {
+            @Override
+            public String state(String url) {
+                return gh.pullRequestState(stateDir, url);
+            }
+
+            @Override
+            public void squashMerge(String url) {
+                gh.squashMerge(stateDir, url);
+            }
+        };
+        return new Merges(db, groups, pullRequests, clock, outbox::wake, task -> Thread.ofVirtual().name("merge").start(task));
     }
 
     /** Best effort: a group's menu fails while the bot is not yet in it, and works again on the next start. */

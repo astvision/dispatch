@@ -174,6 +174,24 @@ class GroupAdditionsTest {
     }
 
     @Test
+    void anAdditionToAMergedTaskBecomesANewTask() throws Exception {
+        long taskId = taskFromTheManagersMention(90);
+        planReady(taskId);
+        executing(taskId);
+        transitions.completed(taskId, 2, new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Fixed the width", new BigDecimal("0.10"),
+                5, List.of(), null, null, null), List.of("src/PositionColumn.tsx"), "https://github.com/acme/alm/pull/30");
+        db.transaction(tx -> dispatch.store.Tasks.merged(tx, taskId, clock.instant()));
+        String additionId = offered(90, 91, "Also show the full position in a tooltip");
+
+        handler.handle(UpdateHandlerTest.privateCallback(655, ALI, "Ali", "ad:" + additionId));
+
+        assertEquals(renderer.text("callback.additionDone"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals("Also show the full position in a tooltip\n\nХүсэлт: Nomin\n\n↩️ #" + taskId + " https://github.com/acme/alm/pull/30",
+                row("SELECT description FROM task WHERE id <> ?", taskId).get("description"), "its merged branch takes nothing more");
+    }
+
+    @Test
     void aTapTheTaskRefusesSaysWhyAndKeepsTheAdditionForLater() throws Exception {
         long taskId = taskFromTheManagersMention(90);
         db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();

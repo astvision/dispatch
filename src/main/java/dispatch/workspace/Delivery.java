@@ -52,6 +52,7 @@ public final class Delivery {
         if (files.isEmpty()) {
             return new Result(List.of(), null, existingPrUrl);
         }
+        requireOpen(worktree, existingPrUrl);
         commit(worktree, commit);
         String commitSha = head(worktree);
 
@@ -86,6 +87,7 @@ public final class Delivery {
             return new Result(List.of(), null, existingPrUrl);
         }
         if (!head.equals(pushed)) {
+            requireOpen(worktree, existingPrUrl);
             push(worktree, branch);
         }
         String prUrl = existingPrUrl != null
@@ -94,6 +96,30 @@ public final class Delivery {
         List<String> files = git.run(worktree, "diff", "--name-only", baseSha, head).lines().filter(line -> !line.isBlank()).toList();
         Log.info("delivery.redone", "task", taskId, "commit", head, "files", files.size(), "pr", prUrl);
         return new Result(files, head, prUrl);
+    }
+
+    /**
+     * More commits reach a task's pull request only while it is open. Pushed onto one merged or closed on GitHub, a follow-up
+     * would be reported as delivered while it reaches nothing; the Merge button records its own merges, so this catches a
+     * merge done on GitHub. Checked only when there is something to push; nothing is committed or pushed after it
+     * fails, so the follow-up's changes stay in the worktree. A lookup GitHub cannot answer blocks nothing: this guards a
+     * rare case, and follow-ups were delivered without it before.
+     */
+    private void requireOpen(Path worktree, String prUrl) {
+        if (prUrl == null) {
+            return;
+        }
+        String state;
+        try {
+            state = gh.pullRequestState(worktree, prUrl);
+        } catch (WorkspaceException e) {
+            Log.warn("delivery.pr_state_unknown", "pr", prUrl, "error", e.getMessage());
+            return;
+        }
+        if (!state.equals("OPEN")) {
+            throw new WorkspaceException("pull request " + prUrl + " is " + state.toLowerCase(java.util.Locale.ROOT)
+                    + ", so this follow-up was not delivered; give it as a new task");
+        }
     }
 
     /** The branch's commit on origin, null if it was never pushed. */

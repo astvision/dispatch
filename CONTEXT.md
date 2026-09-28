@@ -61,7 +61,7 @@ More instructions someone writes in a linked group by replying to the message a 
 _Avoid_: Amendment, comment, note
 
 **Delivery**:
-Handing an execution run's changes to the team: committing them to the task's branch, pushing, and opening or updating the task's draft pull request.
+Handing an execution run's changes to the team: committing them to the task's branch, pushing, and opening or updating the task's draft pull request. On a personal bot, its requester may then merge that pull request with one tap; a merged task takes no more commits.
 _Avoid_: Publish, deploy, release
 
 **Run**:
