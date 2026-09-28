@@ -55,6 +55,7 @@ class TasksApiTest {
     private TaskService tasks;
     private TasksApi api;
     private RunTransitions transitions;
+    private Groups groups;
 
     @BeforeEach
     void setUp() {
@@ -66,7 +67,7 @@ class TasksApiTest {
                 null, null, List.of(), null, null, null);
         // Bold is the admin. TaskService decides what someone may do from this config, never from the Caller it is
         // handed, so the admin has to be an admin here for the cancel rules to hold.
-        Groups groups = new Groups(new Config.Telegram(List.of(100L), List.of(new Config.Group("backend", -100L,
+        groups = new Groups(new Config.Telegram(List.of(100L), List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))));
         tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.empty()), new ActiveRuns(), clock,
                 () -> { }, () -> { });
@@ -314,6 +315,56 @@ class TasksApiTest {
         assertEquals("[\"correct\",\"answer\",\"reject\",\"priority\",\"cancel\"]", detail.path("actions").toString());
         assertEquals(1, detail.path("plan").path("current").asInt());
         assertEquals(2, answered.path("plan").path("current").asInt(), "the next question is the one to answer");
+    }
+
+    @Test
+    void theDesksOwnerSeesEveryTaskInFullAndTellsTheirOwnApart() {
+        long theirs = planned(ALI, noQuestions());
+        long mine = create(BOLD, "Fix the login timeout");
+        TasksApi desk = new TasksApi(db, tasks, groups, true);
+
+        JsonNode listed = desk.list(BOLD_CALLER, Json.object().put("scope", "group"));
+        JsonNode timeline = desk.timeline(BOLD_CALLER, Json.object().put("taskId", theirs));
+        JsonNode detail = desk.detail(BOLD_CALLER, Json.object().put("taskId", theirs));
+
+        assertFalse(item(listed, theirs).path("mine").asBoolean(), "Ali's task is not Bold's: " + listed);
+        assertTrue(item(listed, mine).path("mine").asBoolean());
+        assertFalse(timeline.path("headline").asBoolean(false), "the owner reads a member's task in full: " + timeline);
+        assertEquals("0.1", timeline.path("costUsd").asText());
+        assertEquals("dispatch/" + theirs, timeline.path("branch").asText());
+        assertEquals("[\"cancel\"]", detail.path("actions").toString(), "seen in full, still decided by Ali alone");
+        assertEquals(0, detail.path("plan").path("current").asInt());
+    }
+
+    @Test
+    void aMemberStillSeesATeammatesTaskAsItsHeadline() {
+        long theirs = planned(ALI, noQuestions());
+
+        JsonNode timeline = api.timeline(BOLD_CALLER, Json.object().put("taskId", theirs));
+        JsonNode listed = api.list(BOLD_CALLER, Json.object().put("scope", "group"));
+
+        assertTrue(timeline.path("headline").asBoolean(), "ADR 0020 holds for members: " + timeline);
+        assertFalse(item(listed, theirs).path("mine").asBoolean());
+    }
+
+    @Test
+    void aPlanIsCorrectedByTextOnlyByItsRequesterAndOnlyTheLatestOne() {
+        long taskId = planned(ALI, noQuestions());
+        TasksApi desk = new TasksApi(db, tasks, groups, true);
+
+        ApiException notYours = assertThrows(ApiException.class, () -> desk.correct(BOLD_CALLER,
+                Json.object().put("taskId", taskId).put("planSeq", 1).put("text", "use 60 s")));
+        ApiException stale = assertThrows(ApiException.class, () -> desk.correct(ALI_CALLER,
+                Json.object().put("taskId", taskId).put("planSeq", 7).put("text", "use 60 s")));
+        ApiException empty = assertThrows(ApiException.class, () -> desk.correct(ALI_CALLER,
+                Json.object().put("taskId", taskId).put("planSeq", 1).put("text", "  ")));
+        JsonNode corrected = desk.correct(ALI_CALLER, Json.object().put("taskId", taskId).put("planSeq", 1).put("text", "use 60 s"));
+
+        assertEquals("not_yours", notYours.code());
+        assertEquals("stale", stale.code());
+        assertEquals("invalid", empty.code());
+        assertEquals("CORRECTED", corrected.path("result").asText());
+        assertEquals("PLANNING", phase(taskId));
     }
 
     private Object call(String route, Caller caller, com.fasterxml.jackson.databind.node.ObjectNode body) {

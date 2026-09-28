@@ -877,9 +877,17 @@ public final class TaskService {
         return task == null ? null : task.requester().name();
     }
 
-    /** Whether {@code viewer} gave the task and so sees all of it; a group chat owns nothing (ADR 0020). */
+    /**
+     * Whether {@code viewer} sees all of the task: its requester, or the owner on the desktop (D-2); a group chat owns
+     * nothing (ADR 0020).
+     */
     private static boolean isOwn(TaskAccess.Viewer viewer, Task task) {
         return task != null && viewer.sees(task) == TaskAccess.Sight.FULL;
+    }
+
+    /** Whether {@code viewer} gave the task: what "mine" means on a list, apart from how much of it they see (D-2). */
+    private static boolean isMine(TaskAccess.Viewer viewer, Task task) {
+        return task != null && viewer.ref() != null && task.requester().ref().equals(viewer.ref());
     }
 
     /** What {@code viewer} may do with each listed task now; nothing for a group chat, which acts on no task (ADR 0027). */
@@ -967,7 +975,7 @@ public final class TaskService {
                     // Mini App's My tasks page, which keeps only the viewer's own and cannot go by name — two members
                     // may share a first name.
                     .put("requester", requesterName(task))
-                    .put("mine", own);
+                    .put("mine", isMine(viewer, task));
             putActions(item, actions.get(run.taskId()));
             if (isRunning) {
                 item.put("startedAt", text(run.startedAt()));
@@ -993,7 +1001,7 @@ public final class TaskService {
             boolean own = isOwn(viewer, task);
             ObjectNode item = awaiting.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                     .put("priority", task.priority().name()).put("requester", task.requester().name())
-                    .put("mine", own).put("since", text(task.updatedAt()));
+                    .put("mine", isMine(viewer, task)).put("since", text(task.updatedAt()));
             putActions(item, actions.get(task.id()));
             if (own) {
                 // What the Mini App's home shows on the requester's own waiting task: the question it waits on, if any.
@@ -1060,7 +1068,12 @@ public final class TaskService {
 
     /** The content of a history message; also what the Mini App's task list reads (spec: Task pages). */
     public ObjectNode historyPayload(Tx tx, TaskAccess.Viewer viewer) {
-        List<Task> finished = Tasks.finished(tx, viewer.projects(), viewer.ref(), HISTORY_SIZE);
+        return historyPayload(tx, viewer, HISTORY_SIZE);
+    }
+
+    /** @param limit how many of the most recently finished tasks; the desktop lists a month's (D-2) */
+    public ObjectNode historyPayload(Tx tx, TaskAccess.Viewer viewer, int limit) {
+        List<Task> finished = Tasks.finished(tx, viewer.projects(), viewer.ref(), limit);
         Map<Long, BigDecimal> costs = Runs.costs(tx, finished.stream().map(Task::id).toList());
         Map<Long, List<TaskAccess.Action>> actions = actionsOf(tx, viewer, finished);
         ObjectNode payload = Json.object();
@@ -1069,7 +1082,7 @@ public final class TaskService {
             boolean own = isOwn(viewer, task);
             BigDecimal cost = own ? costs.get(task.id()) : null;
             ObjectNode item = listed.addObject().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
-                    .put("mine", own)
+                    .put("mine", isMine(viewer, task))
                     .put("phase", task.phase().name()).put("priority", task.priority().name())
                     .put("requester", task.requester().name()).put("createdAt", text(task.createdAt())).put("prUrl", task.prUrl()).put("failureReason", name(task.failureReason()))
                     .put("costUsd", cost == null ? null : cost.toPlainString()).put("completedAt", text(task.completedAt()));
@@ -1100,7 +1113,7 @@ public final class TaskService {
         Task task = found.get();
         ObjectNode payload = Json.object().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                 .put("requester", task.requester().name()).put("phase", task.phase().name()).put("priority", task.priority().name())
-                .put("prUrl", task.prUrl())
+                .put("prUrl", task.prUrl()).put("baseBranch", task.baseBranch()).put("branch", task.branch())
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
                 .put("completedAt", text(task.completedAt()));
         putActions(payload, actionsOf(tx, viewer, List.of(task)).get(task.id()));
