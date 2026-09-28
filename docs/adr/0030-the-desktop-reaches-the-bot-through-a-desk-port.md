@@ -7,8 +7,9 @@ owner-only, as a draft moved into place, and deletes it on a clean stop. A crash
 nothing, its token opens nothing, and the next start replaces it.
 
 The desk port serves no page and sends no CORS header. It answers only the task routes — the Mini App's `TasksApi` (list,
-detail, timeline, approve, reject, answer, cancel, retry), the correction of a plan by text, and `/api/live` — and only
-to a request with `Authorization: desk <token>`, compared in constant time, and the Host `127.0.0.1:<port>`.
+detail, timeline, approve, reject, answer, cancel, retry), the correction of a plan by text, and `/api/live`; since D-2b
+also giving a task and the spend per day (`DeskTasksApi`, which the Mini App does not serve) — and only to a request
+with `Authorization: desk <token>`, compared in constant time, and the Host `127.0.0.1:<port>`.
 `dispatch ui` forwards `/api/tasks/*` and `/api/live` to it through `DeskProxy`, which reads `desk.json` on every call,
 so a restarted bot's new port and token take effect at once. A missing file, a refused connection or a wait over
 5 seconds answers `503 bot_not_running`, in the page's language. The browser never holds the token: the page's own

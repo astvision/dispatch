@@ -284,6 +284,7 @@ code, .mono {
 .spend-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
 
 /* The live Тойм (D-2b): four counters, then what waits and runs beside the spend; one column on a narrow screen. */
+.live-board { display: grid; gap: 12px; }
 .counters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .counter { background: #172427; border: 1px solid #24363a; border-radius: 6px; padding: 10px 12px; }
 .counter-label { font-size: 12px; opacity: 0.8; }

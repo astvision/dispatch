@@ -81,7 +81,7 @@ export default function LiveBoard({ navigate }: { navigate: (path: string) => vo
   const waiting = live.tasks.awaitingApproval.filter((row) => row.mine);
   const { running, queued } = live.tasks;
   return (
-    <>
+    <div className="live-board">
       <div className="counters">
         <Counter colour={running.length > 0 ? "green" : "quiet"} label={t("overview.live.running")} value={String(running.length)} />
         <Counter colour={waiting.length > 0 ? "amber" : "quiet"} label={t("overview.live.waitingOnYou")} value={String(waiting.length)} />
@@ -115,6 +115,6 @@ export default function LiveBoard({ navigate }: { navigate: (path: string) => vo
         <div className="overview-col"><SpendChart /></div>
       </div>
       <TaskDrawer taskId={open} onClose={() => setOpen(null)} onChanged={reloadLive} navigate={navigate} />
-    </>
+    </div>
   );
 }
