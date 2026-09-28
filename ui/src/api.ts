@@ -348,6 +348,8 @@ export interface TaskRow {
   /** On the viewer's own task awaiting approval: how many of its plan's questions are open, and the first of them. */
   openQuestions?: number;
   question?: string;
+  /** On the viewer's own waiting task: the plan an approval refers to (D-2b's Overview). */
+  planSeq?: number;
 }
 
 export interface TaskRun {
@@ -445,6 +447,9 @@ export const rejectPlan = (taskId: number, planSeq: number) => post<{ result: st
 // The desktop's tasks (D-2), which `dispatch ui` passes on to the running bot's desk port.
 
 /** What the strip's lamps and the Overview count, from the running bot's desk port. */
+/** A task as the live reading lists it: a list row without its state, which the list it is in says. */
+export type LiveTask = Omit<TaskRow, "state">;
+
 export interface Live {
   version: string;
   name: string;
@@ -454,7 +459,28 @@ export interface Live {
   waitingOnOthers: number;
   todayUsd: string;
   monthUsd: string;
+  /** How many runs the bot runs at once (its scheduler.maxConcurrentRuns). */
+  maxConcurrent: number;
+  /** The projects the desktop's admin may give a task in. */
+  projects: string[];
+  tasks: { running: LiveTask[]; queued: LiveTask[]; awaitingApproval: LiveTask[] };
 }
+
+export interface Spend {
+  from: string;
+  to: string;
+  /** Every day from `from` to `to`, oldest first; `usd` holds the projects that cost something that day. */
+  days: { day: string; usd: Record<string, string> }[];
+  /** Each project with finished runs in the window, costliest first; `unpriced` runs reported no cost (Codex, Gemini CLI). */
+  projects: { project: string; usd: string; runs: number; unpriced: number }[];
+  totalUsd: string;
+}
+
+export type Priority = "URGENT" | "NORMAL" | "LOW";
+
+export const giveTask = (project: string, text: string, priority: Priority) =>
+  post<{ taskId: number }>("/api/tasks/new", { project, text, priority });
+export const getSpend = (days: number, signal?: AbortSignal) => post<Spend>("/api/tasks/spend", { days }, signal);
 
 export const getLive = (signal?: AbortSignal) => get<Live>("/api/live", signal);
 export const correctPlan = (taskId: number, planSeq: number, text: string) =>

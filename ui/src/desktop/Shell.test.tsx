@@ -111,7 +111,8 @@ test("before setup the strip says so and the rail offers setup only", async () =
 });
 
 const live: api.Live = { version: "0.2.0", name: "acme", running: 1, queued: 0,
-  waitingOnYou: [{ taskId: 14, title: "Fix the login timeout" }], waitingOnOthers: 0, todayUsd: "3.40", monthUsd: "41.20" };
+  waitingOnYou: [{ taskId: 14, title: "Fix the login timeout" }], waitingOnOthers: 0, todayUsd: "3.40", monthUsd: "41.20",
+  maxConcurrent: 2, projects: ["alm"], tasks: { running: [], queued: [], awaitingApproval: [] } };
 
 test("the strip counts what runs, what waits on you and today's spend, beside the instance's name", async () => {
   vi.mocked(api.getOverview).mockResolvedValue({ ...running, name: "acme" });

@@ -107,3 +107,26 @@ describe("the launch data on every request", () => {
     expect(ApiError).toBeDefined();
   });
 });
+
+describe("the desk's own calls", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    vi.resetModules();
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ taskId: 12 }) });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.doMock("./telegram", () => ({ inTelegram: false, initData: null }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.doUnmock("./telegram");
+  });
+
+  it("gives a task with its project, words and priority", async () => {
+    const { giveTask } = await import("./api");
+    await expect(giveTask("alm", "Fix the login timeout", "URGENT")).resolves.toEqual({ taskId: 12 });
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/tasks/new");
+    expect(JSON.parse(init.body)).toEqual({ project: "alm", text: "Fix the login timeout", priority: "URGENT" });
+  });
+});

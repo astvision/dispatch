@@ -25,7 +25,8 @@ const overview: Overview = {
   findings: [],
 };
 const live: api.Live = { version: "0.2.0", name: "acme", running: 0, queued: 0, waitingOnYou: [], waitingOnOthers: 0,
-  todayUsd: "0.00", monthUsd: "0.00" };
+  todayUsd: "0.00", monthUsd: "0.00",
+  maxConcurrent: 2, projects: ["alm"], tasks: { running: [], queued: [], awaitingApproval: [] } };
 const twoAdmins: ConfigView = {
   ...teamConfig, admins: [100, 300],
   groups: [{ ...teamConfig.groups[0], members: [...teamConfig.groups[0].members, { id: 300, name: "Saraa", admin: true }] }],
