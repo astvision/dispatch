@@ -9,6 +9,7 @@ import dispatch.core.AnswerResult;
 import dispatch.core.ApproveResult;
 import dispatch.core.CancelResult;
 import dispatch.core.CorrectResult;
+import dispatch.core.FollowUpResult;
 import dispatch.core.Groups;
 import dispatch.core.RejectResult;
 import dispatch.core.RetryResult;
@@ -24,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.BiFunction;
 
 /**
@@ -78,7 +80,8 @@ public final class TasksApi {
                 "/api/tasks/answer", this::answer,
                 "/api/tasks/approve", this::approve,
                 "/api/tasks/reject", this::reject,
-                "/api/tasks/correct", this::correct);
+                "/api/tasks/correct", this::correct,
+                "/api/tasks/followUp", this::followUp);
     }
 
     /**
@@ -272,6 +275,41 @@ public final class TasksApi {
             return corrected;
         });
         return Json.object().put("result", result.name());
+    }
+
+    /**
+     * More work on a finished task, written in the Mini App: {@link TaskService#followUp}, as a reply to the task's result
+     * in the chat. A merged task's follow-up becomes a new task, found again by its desk origin. Refused here only.
+     */
+    ObjectNode followUp(Caller caller, JsonNode body) {
+        long taskId = taskId(body);
+        String text = body.path("text").asText("");
+        FollowUpResult result = db.transactionReturning(tx -> {
+            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.FOLLOW_UP);
+            if (refused.isPresent()) {
+                throw followUpRefused(refused.get(), taskId);
+            }
+            if (text.isBlank()) {
+                throw new ApiException(400, "invalid", Text.of("refusal.followUpEmpty"));
+            }
+            FollowUpResult followed = tasks.followUp(tx, requester(caller), taskId, text,
+                    TaskService.DESK_ORIGIN + UUID.randomUUID(), caller.ref());
+            if (followed != FollowUpResult.QUEUED && followed != FollowUpResult.NEW_TASK) {
+                throw new IllegalStateException("task #" + taskId + " was allowed a follow-up but came back " + followed);
+            }
+            return followed;
+        });
+        return Json.object().put("result", result.name());
+    }
+
+    private static ApiException followUpRefused(TaskAccess.Refusal refusal, long taskId) {
+        return switch (refusal) {
+            case NOT_MEMBER -> notMember();
+            case NOT_FOUND -> notFound(taskId);
+            case NOT_REQUESTER -> new ApiException(403, "not_yours", NOT_YOURS);
+            case WRONG_PHASE, NOT_EXECUTED -> new ApiException(409, "wrong_state", Text.of("refusal.followUpNotFinished"));
+            default -> throw new IllegalStateException("task access never refuses a follow-up as " + refusal);
+        };
     }
 
     private static ApiException correctRefused(TaskAccess.Refusal refusal, long taskId) {
