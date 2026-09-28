@@ -40,7 +40,7 @@ public final class ServiceCommand {
     }
 
     public int run(Cli.Service options, Map<String, String> processEnvironment) {
-        return run(options.action(), () -> specFor(jar, options.configFile(), processEnvironment));
+        return run(options.action(), () -> specFor(jar, options.configFile(), options.instance(), processEnvironment));
     }
 
     /** @param spec read only when the action needs it, so status/stop work on a config this process cannot load */

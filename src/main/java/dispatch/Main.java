@@ -51,12 +51,13 @@ public final class Main {
             case Cli.Run run -> run(run.configFile(), run.logFile());
             case Cli.Init init -> {
                 JLineTerminal terminal = JLineTerminal.system();
-                System.exit(new InitCommand(terminal, BotApi::create, defaults, Duration.ofMinutes(3), ServiceCommand.forThisMachine(terminal))
-                        .run(init, System.getenv()));
+                Locations here = defaults.forInstance(init.instance());
+                System.exit(new InitCommand(terminal, BotApi::create, here, Duration.ofMinutes(3),
+                        ServiceCommand.forThisMachine(terminal, init.instance())).run(init, System.getenv()));
             }
             case Cli.Service service -> {
                 JLineTerminal terminal = JLineTerminal.system();
-                System.exit(ServiceCommand.forThisMachine(terminal).run(service, System.getenv()));
+                System.exit(ServiceCommand.forThisMachine(terminal, service.instance()).run(service, System.getenv()));
             }
             case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create).run(check.configFile(), System.getenv()));
             case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(JLineTerminal.system()).run(add, System.getenv()));
@@ -81,7 +82,8 @@ public final class Main {
     private static void ui(Cli.Ui options, Locations defaults) throws InterruptedException {
         UiServer server;
         try {
-            server = new UiCommand(System.out, BotApi::create, defaults, Service.forThisMachine(), "/ui").start(options, System.getenv());
+            server = new UiCommand(System.out, BotApi::create, defaults.forInstance(options.instance()),
+                    Service.forThisMachine(Service.Kind.DISPATCH, options.instance()), "/ui").start(options, System.getenv());
         } catch (CliException e) {
             System.err.println(e.getMessage());
             System.exit(1);

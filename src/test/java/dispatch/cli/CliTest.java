@@ -74,12 +74,13 @@ class CliTest {
 
     @Test
     void uiDefaultsToPort7878AndOpensTheBrowser() {
-        assertEquals(new Cli.Ui(DEFAULT_CONFIG, 7878, true), parse("ui"));
+        assertEquals(new Cli.Ui(DEFAULT_CONFIG, 7878, true, null, false), parse("ui"));
     }
 
     @Test
     void uiTakesAPortAndCanLeaveTheBrowserClosed() {
-        assertEquals(new Cli.Ui(Path.of("x.yaml"), 9000, false), parse("ui", "--port", "9000", "--no-browser", "--config", "x.yaml"));
+        assertEquals(new Cli.Ui(Path.of("x.yaml"), 9000, false, null, true),
+                parse("ui", "--port", "9000", "--no-browser", "--config", "x.yaml"));
     }
 
     @Test
@@ -133,6 +134,36 @@ class CliTest {
                 .getMessage().contains("worker service needs one of"));
         assertTrue(assertThrows(CliException.class, () -> Cli.parse(new String[] {"worker", "nope"}, defaults))
                 .getMessage().contains("unknown command 'worker nope'"));
+    }
+
+    @Test
+    void instanceNamesTheConfigOfEveryCommand() {
+        Locations defaults = DEFAULTS;
+        Path team = defaults.forInstance("team").configFile();
+
+        assertEquals(team, ((Cli.Run) Cli.parse(new String[]{"run", "--instance", "team"}, defaults)).configFile());
+        assertEquals(team, ((Cli.Check) Cli.parse(new String[]{"check", "--instance", "team"}, defaults)).configFile());
+        Cli.Service service = (Cli.Service) Cli.parse(new String[]{"service", "status", "--instance", "team"}, defaults);
+        assertEquals(team, service.configFile());
+        assertEquals("team", service.instance());
+        assertEquals("team", ((Cli.Init) Cli.parse(new String[]{"init", "--instance", "team"}, defaults)).instance());
+        assertEquals("team", ((Cli.Ui) Cli.parse(new String[]{"ui", "--instance", "team"}, defaults)).instance());
+    }
+
+    @Test
+    void configWinsOverInstance() {
+        Locations defaults = DEFAULTS;
+        Cli.Run run = (Cli.Run) Cli.parse(new String[]{"run", "--instance", "team", "--config", "/etc/dispatch/x.yaml"}, defaults);
+
+        assertEquals(Path.of("/etc/dispatch/x.yaml"), run.configFile());
+    }
+
+    @Test
+    void aBadInstanceNameAndWorkerCommandsAreRefused() {
+        Locations defaults = DEFAULTS;
+
+        assertThrows(CliException.class, () -> Cli.parse(new String[]{"run", "--instance", "Team"}, defaults));
+        assertThrows(CliException.class, () -> Cli.parse(new String[]{"worker", "run", "--instance", "team"}, defaults));
     }
 
     private static Cli.Invocation parse(String... args) {

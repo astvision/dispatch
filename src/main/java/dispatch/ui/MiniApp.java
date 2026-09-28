@@ -59,8 +59,11 @@ public final class MiniApp {
             return Optional.empty();
         }
         // Inside dispatch run: a management change the bot can take live (an unlink) goes straight to its groups.
-        UiRoutes management = UiRoutes.management(configFile, Locations.current(), bots, Service.forThisMachine(),
-                environment, version(), groups::replace);
+        // The running bot knows only its own config file; the instance it belongs to comes from that file's name.
+        Locations here = Locations.current();
+        String instance = here.instanceOf(configFile);
+        UiRoutes management = UiRoutes.management(configFile, here.forInstance(instance), bots,
+                Service.forThisMachine(Service.Kind.DISPATCH, instance), environment, version(), groups::replace);
         Map<String, BiFunction<Caller, JsonNode, Object>> post = new HashMap<>(management.post(true));
         post.putAll(new TasksApi(db, tasks, groups).routes());
         post.put("/api/me/prefs", (caller, body) -> setPrefs(caller, body, db, clock));
