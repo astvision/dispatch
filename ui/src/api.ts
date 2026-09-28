@@ -1,5 +1,6 @@
 // Typed calls to the dispatch ui server. Every page goes through here, so errors look the same everywhere.
 
+import { currentLanguage, translate } from "./i18n/i18n";
 import { inTelegram, initData } from "./telegram";
 
 export type Level = "OK" | "WARN" | "FAIL";
@@ -41,19 +42,22 @@ async function send<T>(path: string, init: RequestInit): Promise<T> {
   let response: Response;
   try {
     // Inside Telegram every request proves itself with the signed launch data: there is no cookie and no session.
-    const headers = initData ? { ...init.headers, Authorization: `tma ${initData}` } : init.headers;
+    // Every request asks for the page's language, so the server writes its messages in it.
+    const headers = {
+      ...init.headers,
+      "Accept-Language": currentLanguage(),
+      ...(initData ? { Authorization: `tma ${initData}` } : {}),
+    };
     response = await fetch(path, { credentials: "same-origin", ...init, headers });
   } catch {
-    if (init.signal?.aborted) throw new ApiError("aborted", "the request was stopped");
-    throw new ApiError("unreachable", inTelegram
-      ? "Dispatch is not answering; it may be restarting"
-      : "dispatch ui is not running; start it again and open the link it prints");
+    if (init.signal?.aborted) throw new ApiError("aborted", translate("api.stopped"));
+    throw new ApiError("unreachable", translate(inTelegram ? "api.restarting" : "api.notRunning"));
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(body?.error ?? "http", body?.message ?? `the server answered ${response.status}`);
+    throw new ApiError(body?.error ?? "http", body?.message ?? translate("api.answered", { status: response.status }));
   }
-  if (body === null) throw new ApiError("http", "the server answered without a result");
+  if (body === null) throw new ApiError("http", translate("api.noResult"));
   return body as T;
 }
 
@@ -278,7 +282,9 @@ export const removeMember = (version: string, group: string, id: number) =>
   post<Saved>("/api/manage/people/remove", { version, group, id });
 export const setAdmin = (version: string, id: number, admin: boolean) => post<Saved>("/api/manage/people/admin", { version, id, admin });
 export const unlinkGroup = (version: string, name: string) => post<Saved>("/api/manage/groups/unlink", { version, name });
-export const getLogs = (filter: { lines?: number; level?: LogLevel | null; event?: string | null }, signal?: AbortSignal) =>
+/** The log's last lines that match: a level, an event containing {@code event}, a task, and any text (any case). */
+export const getLogs = (filter: { lines?: number; level?: LogLevel | null; event?: string | null; task?: number | null; text?: string | null },
+                        signal?: AbortSignal) =>
   post<Logs>("/api/manage/logs", filter, signal);
 export const restartService = () => post<ServiceView>("/api/service/restart");
 

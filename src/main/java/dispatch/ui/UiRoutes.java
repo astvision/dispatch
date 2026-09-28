@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.cli.Checks;
 import dispatch.cli.Locations;
@@ -21,7 +22,7 @@ import java.util.function.Function;
  */
 public final class UiRoutes {
 
-    static final String NOT_ADMIN = "only an admin may manage Dispatch; ask one of them, or use dispatch ui on the machine";
+    static final Text NOT_ADMIN = Text.of("refusal.notAdmin");
 
     private final OverviewApi overview;
     private final ManageApi manage;

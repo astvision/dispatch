@@ -18,6 +18,7 @@ import dispatch.domain.Attachment;
 import dispatch.store.Database;
 import dispatch.store.Workers;
 import dispatch.telegram.TelegramNames;
+import dispatch.Text;
 import dispatch.ui.ApiException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -223,14 +224,14 @@ public final class WorkerApi implements AutoCloseable {
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
         if (!hosts.contains(hostOf(exchange))) {
-            throw new ApiException(403, "host", "this request was not addressed to this Dispatch");
+            throw new ApiException(403, "host", Text.raw("this request was not addressed to this Dispatch"));
         }
         String path = exchange.getRequestURI().getPath();
         if (!Set.of(PAIR, NEXT, PROGRESS, ATTACHMENT, RESULT, PROJECTS).contains(path)) {
-            throw new ApiException(404, "not_found", "no such worker API: " + path);
+            throw new ApiException(404, "not_found", Text.raw("no such worker API: " + path));
         }
         if (!exchange.getRequestMethod().equals("POST")) {
-            throw new ApiException(405, "method", path + " only answers POST");
+            throw new ApiException(405, "method", Text.raw(path + " only answers POST"));
         }
         JsonNode body = body(exchange);
         if (path.equals(PAIR)) {
@@ -256,7 +257,7 @@ public final class WorkerApi implements AutoCloseable {
         if (inFlight.incrementAndGet() > MAX_IN_FLIGHT_PER_WORKER) {
             inFlight.decrementAndGet();
             throw new ApiException(429, "too_many_requests",
-                    "this worker already has " + MAX_IN_FLIGHT_PER_WORKER + " requests running; wait for one to finish");
+                    Text.raw("this worker already has " + MAX_IN_FLIGHT_PER_WORKER + " requests running; wait for one to finish"));
         }
         try {
             action.run();
@@ -301,7 +302,7 @@ public final class WorkerApi implements AutoCloseable {
                 json(exchange, 200, Json.write(Json.object().put("ok", true)));
             }
             case ATTACHMENT -> attachment(exchange, worker, requiredLong(body, "taskId"), required(body, "fileRef").asText());
-            default -> throw new ApiException(404, "not_found", "no such worker API: " + path);
+            default -> throw new ApiException(404, "not_found", Text.raw("no such worker API: " + path));
         }
     }
 
@@ -314,7 +315,7 @@ public final class WorkerApi implements AutoCloseable {
     private void attachment(HttpExchange exchange, Workers.Paired worker, long taskId, String fileRef) throws IOException {
         Job job = workers.leased(worker, taskId);
         Attachment file = job.attachments().stream().filter(candidate -> candidate.fileRef().equals(fileRef)).findFirst()
-                .orElseThrow(() -> new ApiException(404, "not_found", "task " + taskId + " has no such file"));
+                .orElseThrow(() -> new ApiException(404, "not_found", Text.raw("task " + taskId + " has no such file")));
         Path copy = config.stateDir().resolve("outgoing")
                 .resolve(taskId + "-" + WorkerKeys.sha256(file.fileRef()).substring(0, 16) + "-" + UUID.randomUUID());
         byte[] bytes;
@@ -333,7 +334,7 @@ public final class WorkerApi implements AutoCloseable {
             // The real cause can carry the download URL (a bot-token query parameter, for a Telegram-backed source):
             // logged here, on the team machine, never echoed back to the worker that asked.
             Log.error("worker_api.attachment_failed", e, "task", taskId, "worker", worker.id());
-            throw new ApiException(500, "internal", "something went wrong fetching this file on the team machine");
+            throw new ApiException(500, "internal", Text.raw("something went wrong fetching this file on the team machine"));
         } finally {
             Files.deleteIfExists(copy);
         }
@@ -357,7 +358,7 @@ public final class WorkerApi implements AutoCloseable {
     private static Integer capacity(JsonNode body) {
         Integer capacity = optionalInt(body, "maxConcurrentRuns");
         if (capacity != null && capacity < 1) {
-            throw new ApiException(400, "invalid", "maxConcurrentRuns: at least 1");
+            throw new ApiException(400, "invalid", Text.raw("maxConcurrentRuns: at least 1"));
         }
         return capacity;
     }
@@ -371,13 +372,13 @@ public final class WorkerApi implements AutoCloseable {
         try {
             return Json.MAPPER.treeToValue(node, JobResult.class);
         } catch (JsonProcessingException e) {
-            throw new ApiException(400, "invalid", "result: not a JobResult");
+            throw new ApiException(400, "invalid", Text.raw("result: not a JobResult"));
         }
     }
 
     private static JsonNode required(JsonNode body, String field) {
         if (!body.hasNonNull(field)) {
-            throw new ApiException(400, "invalid", field + ": required");
+            throw new ApiException(400, "invalid", Text.raw(field + ": required"));
         }
         return body.get(field);
     }
@@ -385,7 +386,7 @@ public final class WorkerApi implements AutoCloseable {
     private static long requiredLong(JsonNode body, String field) {
         JsonNode value = required(body, field);
         if (!value.isIntegralNumber()) {
-            throw new ApiException(400, "invalid", field + ": must be a whole number");
+            throw new ApiException(400, "invalid", Text.raw(field + ": must be a whole number"));
         }
         return value.asLong();
     }
@@ -393,7 +394,7 @@ public final class WorkerApi implements AutoCloseable {
     private static int requiredInt(JsonNode body, String field) {
         JsonNode value = required(body, field);
         if (!value.isIntegralNumber()) {
-            throw new ApiException(400, "invalid", field + ": must be a whole number");
+            throw new ApiException(400, "invalid", Text.raw(field + ": must be a whole number"));
         }
         return value.asInt();
     }
@@ -405,7 +406,7 @@ public final class WorkerApi implements AutoCloseable {
         }
         JsonNode value = body.get(field);
         if (!value.isIntegralNumber()) {
-            throw new ApiException(400, "invalid", field + ": must be a whole number");
+            throw new ApiException(400, "invalid", Text.raw(field + ": must be a whole number"));
         }
         return value.asInt();
     }
@@ -418,7 +419,7 @@ public final class WorkerApi implements AutoCloseable {
         String header = exchange.getRequestHeaders().getFirst("Authorization");
         String key = header != null && header.startsWith("Bearer ") ? header.substring("Bearer ".length()).strip() : null;
         // Unknown and revoked answer alike, so nobody can learn which keys ever existed.
-        return keys.authenticate(key).orElseThrow(() -> new ApiException(401, "unauthorized", WRONG_KEY));
+        return keys.authenticate(key).orElseThrow(() -> new ApiException(401, "unauthorized", Text.raw(WRONG_KEY)));
     }
 
     private ObjectNode pair(JsonNode body) {
@@ -429,12 +430,12 @@ public final class WorkerApi implements AutoCloseable {
         // blank once cleaned, which is the one thing that check rejects. Validated once, here; cleaned twice.
         String name = TelegramNames.clean(body.path("name").asText(""));
         if (name.isEmpty() || name.length() > MAX_NAME_LENGTH) {
-            throw new ApiException(400, "invalid", "name: required, at most 40 characters");
+            throw new ApiException(400, "invalid", Text.raw("name: required, at most 40 characters"));
         }
         WorkerKeys.NewKey paired = keys.pair(code, name)
                 .orElseThrow(() -> new ApiException(401, "pairing_code",
-                        "this pairing code is unknown, used already or older than "
-                                + WorkerKeys.CODE_LIFETIME.toMinutes() + " minutes; ask the bot for a new one with /worker"));
+                        Text.raw("this pairing code is unknown, used already or older than "
+                                + WorkerKeys.CODE_LIFETIME.toMinutes() + " minutes; ask the bot for a new one with /worker")));
         return Json.object().put("workerId", paired.workerId()).put("key", paired.key()).put("team", config.team());
     }
 
@@ -472,12 +473,12 @@ public final class WorkerApi implements AutoCloseable {
             } catch (ApiException | IOException ignored) {
                 // the 413 below is what matters; a failed drain just means the connection closes instead of reusing.
             }
-            throw new ApiException(413, "too_large", "the request is larger than " + MAX_BODY / 1024 + " KiB");
+            throw new ApiException(413, "too_large", Text.raw("the request is larger than " + MAX_BODY / 1024 + " KiB"));
         }
         try {
             return raw.length == 0 ? Json.object() : Json.MAPPER.readTree(raw);
         } catch (JsonProcessingException e) {
-            throw new ApiException(400, "invalid", "the request is not JSON");
+            throw new ApiException(400, "invalid", Text.raw("the request is not JSON"));
         }
     }
 
@@ -500,7 +501,7 @@ public final class WorkerApi implements AutoCloseable {
         } catch (TimeoutException e) {
             read.cancel(true);
             throw new ApiException(400, "invalid",
-                    "the request body did not arrive within " + bodyReadTimeout.toSeconds() + "s");
+                    Text.raw("the request body did not arrive within " + bodyReadTimeout.toSeconds() + "s"));
         } catch (ExecutionException e) {
             if (e.getCause() instanceof IOException io) {
                 throw io;
@@ -508,7 +509,7 @@ public final class WorkerApi implements AutoCloseable {
             throw new IllegalStateException("reading the request body failed", e.getCause());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new ApiException(503, "stopping", "Dispatch is stopping");
+            throw new ApiException(503, "stopping", Text.raw("Dispatch is stopping"));
         }
     }
 

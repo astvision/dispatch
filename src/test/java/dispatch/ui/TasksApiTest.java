@@ -190,6 +190,14 @@ class TasksApiTest {
                 () -> assertEquals(outboxBefore, outboxAfter, "a refusal the Mini App shows must not also be sent to the chat"));
     }
 
+    @Test
+    void aRefusalCarriesItsWordsInBothLanguages() {
+        ApiException refused = assertThrows(ApiException.class, () -> api.cancel(ALI_CALLER, Json.object().put("taskId", 9999)));
+
+        assertEquals("no task #9999 here", refused.getMessage(), "the log and the terminal read English");
+        assertEquals("#9999 даалгавар энд алга", refused.text().render(dispatch.Language.MN));
+    }
+
     /** A refusal as its status and code, e.g. "403 not_yours". */
     private static String refused(org.junit.jupiter.api.function.Executable call) {
         ApiException refused = assertThrows(ApiException.class, call);

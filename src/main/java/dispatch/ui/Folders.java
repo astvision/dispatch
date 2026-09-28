@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import dispatch.cli.CliException;
 import java.io.IOException;
 import java.nio.file.AccessDeniedException;
@@ -34,7 +35,7 @@ final class Folders {
     static Listing list(String requested, Path home) {
         Path dir = folder(requested, home);
         if (!Files.isDirectory(dir)) {
-            throw new CliException(dir + " is not a folder");
+            throw new CliException(Text.of("setup.isNot", dir));
         }
         List<Entry> folders = new ArrayList<>();
         try (DirectoryStream<Path> children = Files.newDirectoryStream(dir, Files::isDirectory)) {
@@ -46,11 +47,11 @@ final class Folders {
                 folders.add(new Entry(name, child.toString(), Files.exists(child.resolve(".git"))));
             }
         } catch (AccessDeniedException e) {
-            throw new CliException("cannot open " + dir + ": permission denied");
+            throw new CliException(Text.of("setup.folderDenied", dir));
         } catch (java.nio.file.DirectoryIteratorException e) {
-            throw new CliException("cannot open " + dir + ": " + e.getCause().getMessage());
+            throw new CliException(Text.of("setup.folderUnreadable", dir, e.getCause().getMessage()));
         } catch (IOException e) {
-            throw new CliException("cannot open " + dir + ": " + e.getMessage());
+            throw new CliException(Text.of("setup.folderUnreadable", dir, e.getMessage()));
         }
         folders.sort(Comparator.comparing(entry -> entry.name().toLowerCase(Locale.ROOT)));
         boolean truncated = folders.size() > MAX_ENTRIES;
@@ -73,7 +74,7 @@ final class Folders {
             // not the server process's own working directory, which the page never shows.
             return (given.isAbsolute() ? given : home.resolve(given)).toAbsolutePath().normalize();
         } catch (InvalidPathException e) {
-            throw new CliException(text + " is not a folder");
+            throw new CliException(Text.of("setup.isNot", text));
         }
     }
 }

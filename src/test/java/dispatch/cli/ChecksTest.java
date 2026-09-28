@@ -60,8 +60,8 @@ class ChecksTest {
         List<Checks.Finding> findings = checks().run(config, Map.of(), seen::add);
 
         assertEquals(findings, seen, "every finding is passed on as it is found");
-        assertEquals(new Checks.Finding(Checks.Level.OK, "config", "config " + config), findings.getFirst());
-        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "bot", "bot @" + FakeTelegram.BOT_USERNAME + " (topics off)")),
+        assertEquals(line(Checks.Level.OK, "config", "config " + config), line(findings.getFirst()));
+        assertTrue(lines(findings).contains(line(Checks.Level.OK, "bot", "bot @" + FakeTelegram.BOT_USERNAME + " (topics off)")),
                 findings.toString());
         assertTrue(findings.stream().anyMatch(f -> f.area().equals("project alm") && f.level() == Checks.Level.OK), findings.toString());
         assertTrue(findings.stream().anyMatch(f -> f.area().equals("gh") && f.level() == Checks.Level.WARN), findings.toString());
@@ -87,8 +87,11 @@ class ChecksTest {
 
         Checks.Finding project = findings.stream().filter(f -> f.area().equals("project alm")).findFirst()
                 .orElseThrow(() -> new AssertionError(findings.toString()));
-        assertTrue(project.message().contains("not cloned yet"), project.message());
-        assertFalse(project.message().contains(REPO_CREDENTIAL), project.message());
+        assertTrue(project.message().english().contains("not cloned yet"), project.message().english());
+        assertFalse(project.message().english().contains(REPO_CREDENTIAL), project.message().english());
+        String mongolian = project.message().render(dispatch.Language.MN);
+        assertTrue(mongolian.contains("клон хийгээгүй"), mongolian);
+        assertFalse(mongolian.contains(REPO_CREDENTIAL), "masked in the page's language too: " + mongolian);
     }
 
     @Test
@@ -98,8 +101,21 @@ class ChecksTest {
         assertEquals(1, findings.size(), findings.toString());
         assertEquals(Checks.Level.FAIL, findings.getFirst().level());
         assertEquals("config", findings.getFirst().area());
-        assertTrue(findings.getFirst().message().contains("dispatch init"), findings.toString());
+        assertTrue(findings.getFirst().message().english().contains("dispatch init"), findings.toString());
         assertTrue(Checks.failed(findings));
+    }
+
+    @Test
+    void anInvalidConfigsReasonIsWrittenInThePagesLanguage() throws IOException {
+        writeConfig();
+        Files.writeString(config, Files.readString(config).replace("maxConcurrentRuns: 1", "maxConcurrentRuns: 0"));
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        assertEquals(1, findings.size(), findings.toString());
+        String mongolian = findings.getFirst().message().render(dispatch.Language.MN);
+        assertTrue(mongolian.contains("буруу байна"), mongolian);
+        assertTrue(mongolian.contains("scheduler.maxConcurrentRuns: заавал, хамгийн багадаа 1"), mongolian);
     }
 
     @Test
@@ -118,7 +134,7 @@ class ChecksTest {
         Checks.Finding claude = findings.stream().filter(f -> f.area().equals("claude-code")).findFirst()
                 .orElseThrow(() -> new AssertionError(findings.toString()));
         assertEquals(Checks.Level.WARN, claude.level(), findings.toString());
-        assertTrue(claude.message().contains("splitting a message"), claude.message());
+        assertTrue(claude.message().english().contains("splitting a message"), claude.message().english());
         assertFalse(Checks.failed(findings), findings.toString());
     }
 
@@ -135,7 +151,7 @@ class ChecksTest {
         Checks.Finding codex = area(findings, "codex");
         assertEquals(Checks.Level.FAIL, codex.level());
         assertEquals("codex: cannot run dispatch-test-missing-codex-binary; install the Codex CLI (npm install -g @openai/codex)"
-                + " or set agents.codex.command to its full path", codex.message());
+                + " or set agents.codex.command to its full path", codex.message().english());
     }
 
     @Test
@@ -157,7 +173,7 @@ class ChecksTest {
 
         Checks.Finding found = area(findings, "codex");
         assertEquals(Checks.Level.WARN, found.level(), findings.toString());
-        assertEquals("codex: codex-cli 0.155.1, but not logged in: run " + codex + " login", found.message(),
+        assertEquals("codex: codex-cli 0.155.1, but not logged in: run " + codex + " login", found.message().english(),
                 "the command as configured, which is the one to log in with");
     }
 
@@ -173,9 +189,9 @@ class ChecksTest {
 
         List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
 
-        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "gh",
+        assertTrue(lines(findings).contains(line(Checks.Level.OK, "gh",
                 "gh: not needed here; members' computers make the pull requests")), findings.toString());
-        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "workers",
+        assertTrue(lines(findings).contains(line(Checks.Level.OK, "workers",
                 "workers: nothing listens on 127.0.0.1:" + free + " yet; it starts with dispatch run")),
                 findings.toString());
         assertFalse(Checks.failed(findings), findings.toString());
@@ -187,7 +203,7 @@ class ChecksTest {
 
         List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
 
-        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "miniApp",
+        assertTrue(lines(findings).contains(line(Checks.Level.OK, "miniApp",
                 "miniApp: off; nothing is served to Telegram and the bot shows no Manage button")), findings.toString());
         assertFalse(Checks.failed(findings), findings.toString());
     }
@@ -201,7 +217,7 @@ class ChecksTest {
 
         List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
 
-        assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "miniApp",
+        assertTrue(lines(findings).contains(line(Checks.Level.OK, "miniApp",
                 "miniApp: nothing listens on 127.0.0.1:" + free + " yet; it starts with dispatch run")), findings.toString());
         assertFalse(Checks.failed(findings), findings.toString());
     }
@@ -217,9 +233,9 @@ class ChecksTest {
 
             List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
 
-            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "miniApp",
+            assertTrue(lines(findings).contains(line(Checks.Level.OK, "miniApp",
                     "miniApp: 127.0.0.1:" + port + " answers as this Dispatch")), findings.toString());
-            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "miniApp",
+            assertTrue(lines(findings).contains(line(Checks.Level.OK, "miniApp",
                     "miniApp: http://127.0.0.1:" + port + " reaches this Dispatch")), findings.toString());
         } finally {
             dispatchLike.stop(0);
@@ -242,9 +258,9 @@ class ChecksTest {
             Checks.Finding warning = findings.stream()
                     .filter(finding -> finding.area().equals("miniApp") && finding.level() == Checks.Level.WARN)
                     .findFirst().orElseThrow(() -> new AssertionError(findings.toString()));
-            assertTrue(warning.message().contains("http://127.0.0.1:" + unreachable), warning.message());
-            assertTrue(warning.message().contains("tunnel or reverse proxy"), warning.message());
-            assertTrue(warning.message().contains("127.0.0.1:" + port), warning.message());
+            assertTrue(warning.message().english().contains("http://127.0.0.1:" + unreachable), warning.message().english());
+            assertTrue(warning.message().english().contains("tunnel or reverse proxy"), warning.message().english());
+            assertTrue(warning.message().english().contains("127.0.0.1:" + port), warning.message().english());
             assertFalse(Checks.failed(findings), "a tunnel that is not up yet is a warning, not a failure");
         } finally {
             dispatchLike.stop(0);
@@ -260,9 +276,9 @@ class ChecksTest {
             List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
 
             int port = dispatchLike.getAddress().getPort();
-            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "workers",
+            assertTrue(lines(findings).contains(line(Checks.Level.OK, "workers",
                     "workers: 127.0.0.1:" + port + " answers as this Dispatch")), findings.toString());
-            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "workers",
+            assertTrue(lines(findings).contains(line(Checks.Level.OK, "workers",
                     "workers: http://127.0.0.1:" + port + " reaches this Dispatch")), findings.toString());
         } finally {
             dispatchLike.stop(0);
@@ -278,7 +294,7 @@ class ChecksTest {
 
             List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
 
-            assertTrue(findings.contains(new Checks.Finding(Checks.Level.OK, "workers",
+            assertTrue(lines(findings).contains(line(Checks.Level.OK, "workers",
                     "workers: http://127.0.0.1:" + port + "/ reaches this Dispatch")), findings.toString());
         } finally {
             dispatchLike.stop(0);
@@ -300,7 +316,7 @@ class ChecksTest {
 
             List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
 
-            assertTrue(findings.contains(new Checks.Finding(Checks.Level.WARN, "workers",
+            assertTrue(lines(findings).contains(line(Checks.Level.WARN, "workers",
                     "workers: something other than Dispatch answers on 127.0.0.1:" + other.getAddress().getPort()
                             + "; stop it or set another workers.port")), findings.toString());
         } finally {
@@ -360,5 +376,18 @@ class ChecksTest {
 
     private static String quoted(Path path) {
         return path.toString().replace("'", "''");
+    }
+
+    /** A finding as `dispatch check` prints it, with its level and area in front: comparable with one written out. */
+    private static String line(Checks.Level level, String area, String message) {
+        return level + " " + area + ": " + message;
+    }
+
+    private static String line(Checks.Finding finding) {
+        return line(finding.level(), finding.area(), finding.message().english());
+    }
+
+    private static java.util.List<String> lines(java.util.List<Checks.Finding> findings) {
+        return findings.stream().map(ChecksTest::line).toList();
     }
 }

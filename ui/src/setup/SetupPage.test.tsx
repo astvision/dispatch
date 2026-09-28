@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import * as api from "../api";
+import { LanguageProvider } from "../i18n/i18n";
 import SetupPage from "./SetupPage";
 
 // The real module, with the calls this file answers itself; ApiError stays the real class.
@@ -51,4 +52,20 @@ test("resumes at the People step when a team setup already has members, so the t
   render(<SetupPage onDone={vi.fn()} />);
 
   expect(await screen.findByLabelText("Team name")).toBeInTheDocument();
+});
+
+test("in Mongolian the wizard, its steps and its choices are Mongolian", async () => {
+  vi.mocked(api.getSetupState).mockResolvedValue({
+    configExists: false, configFile: "/home/bold/.config/dispatch/dispatch.yaml", team: false, bot: null, members: [],
+    candidate: null, group: null, claudeFound: null, authorEmail: null, hints: [], hintAfterSeconds: 20,
+  });
+
+  render(<LanguageProvider storage={{ getItem: () => null, setItem: () => {} }} languages={["mn"]}><SetupPage onDone={vi.fn()} /></LanguageProvider>);
+
+  expect(await screen.findByText("Dispatch-ийг тохируулах")).toBeInTheDocument();
+  for (const step of ["Хэн", "Бот", "Та", "Claude Code", "Төслүүд", "Коммит", "Дүгнэлт"]) expect(screen.getByText(step)).toBeInTheDocument();
+  expect(screen.getByText("Эцэст нь хураангуйг батлах хүртэл юу ч бичигдэхгүй.")).toBeInTheDocument();
+  // The server's refusal for a personal bot names this choice by these words (texts_mn.properties, setup.personalOneMember).
+  expect(screen.getByText(/^Миний баг:/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Дараах" })).toBeInTheDocument();
 });

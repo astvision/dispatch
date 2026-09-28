@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { unlinkGroup } from "../api";
-import { MiniManaged, useMiniConfig } from "./data";
+import { useManagedConfig } from "../manage/useManagedConfig";
+import { MiniManaged } from "./data";
 import { Row, Section } from "./List";
 
 /** Asks on the page before unlinking, like ProjectPage's RemoveRows: Telegram's webview shows no confirm() dialog. */
@@ -18,7 +19,7 @@ function GroupRow({ name, subtitle, busy, onUnlink }: { name: string; subtitle: 
 
 /** The groups Telegram has linked to a project, each unlinkable on the spot; how to link a new one is Telegram's own job. */
 export default function GroupsPage() {
-  const { config, loadError, reload, save, saving, saveError } = useMiniConfig();
+  const { config, loadError, reload, save, saving, saveError } = useManagedConfig();
   return (
     <MiniManaged config={config} loadError={loadError} saveError={saveError} reload={reload}>
       {(current) => {

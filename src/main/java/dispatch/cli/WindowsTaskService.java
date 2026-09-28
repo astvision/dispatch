@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Text;
 import dispatch.workspace.Git;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -112,11 +113,12 @@ final class WindowsTaskService implements Service {
     public Status status() {
         Git.Result query = commands.run(List.of("schtasks", "/Query", "/TN", kind.windowsTask(), "/FO", "LIST"));
         if (query.exitCode() != 0) {
-            return new Status(false, false, "not installed", List.of());
+            return new Status(false, false, Text.of("service.notInstalled"), List.of());
         }
-        String state = query.stdout().lines().map(String::strip).filter(line -> line.startsWith("Status:"))
-                .map(line -> line.substring("Status:".length()).strip()).findFirst().orElse("unknown");
-        return new Status(true, state.equalsIgnoreCase("Running"), state, List.of());
+        java.util.Optional<String> state = query.stdout().lines().map(String::strip).filter(line -> line.startsWith("Status:"))
+                .map(line -> line.substring("Status:".length()).strip()).findFirst();
+        return new Status(true, state.map(word -> word.equalsIgnoreCase("Running")).orElse(false),
+                state.<Text>map(Text::raw).orElse(Text.of("service.unknown")), List.of());
     }
 
     @Override

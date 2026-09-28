@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Log;
 import dispatch.cli.Locations;
@@ -115,7 +116,7 @@ public final class MiniApp {
         try {
             value = GroupAck.fromValue(body.path("groupAck").asText(""));
         } catch (IllegalArgumentException e) {
-            throw new ApiException(400, "invalid", "groupAck must be one of reaction, reactionAndLine, silent");
+            throw new ApiException(400, "invalid", Text.of("refusal.groupAck"));
         }
         db.transaction(tx -> MemberPrefs.setGroupAck(tx, userId(caller.ref()), value, clock.instant()));
         return Map.of("groupAck", value.value());

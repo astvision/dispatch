@@ -189,7 +189,7 @@ describe("the Mini App", () => {
       execute: null,
     }));
     await waitFor(() => expect(window.location.pathname).toBe("/p/crm"));
-    expect(await screen.findByText("Saved. Restart to apply")).toBeInTheDocument();
+    expect(await screen.findByText("Хадгалсан. Дахин эхлүүлбэл хэрэгжинэ")).toBeInTheDocument();
   });
 
   it("saves a choice as soon as it is tapped, keeping the phase's other choice", async () => {
@@ -199,7 +199,7 @@ describe("the Mini App", () => {
     render(<App />);
 
     const effort = await screen.findByRole("heading", { name: "Effort" });
-    fireEvent.click(within(effort.closest("section")!).getByRole("button", { name: /^High/ }));
+    fireEvent.click(within(effort.closest("section")!).getByRole("button", { name: /^Өндөр/ }));
 
     await waitFor(() => expect(api.editProject).toHaveBeenCalledWith("v1", expect.objectContaining({
       plan: { model: "fable", effort: "high" },
@@ -227,8 +227,8 @@ describe("the Mini App", () => {
     window.history.pushState(null, "", "/p/crm/edit/effort");
     const { unmount } = render(<App />);
 
-    expect(await row("Extra high")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Max/ })).not.toBeInTheDocument();
+    expect(await row("Маш өндөр")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Дээд/ })).not.toBeInTheDocument();
     unmount();
 
     window.history.pushState(null, "", "/p/crm/edit/model");
@@ -249,7 +249,7 @@ describe("the Mini App", () => {
     expect(await row("Агент")).toHaveTextContent("Gemini CLI");
     expect(screen.queryByRole("button", { name: /^Effort/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Төлөвлөх/ })).not.toBeInTheDocument();
-    expect(await row("Model")).toHaveTextContent("Gemini CLI's default");
+    expect(await row("Model")).toHaveTextContent("Gemini CLI-ийн үндсэн");
   });
 
   it("asks on the page before removing a project, then goes back to the projects", async () => {
@@ -311,6 +311,34 @@ describe("the Mini App", () => {
 
     expect(await row("Төсөл нэмэх")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/projects");
+  });
+
+  it("shows the shared People page in Mongolian", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    window.history.pushState(null, "", "/people");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Хүмүүс" })).toBeInTheDocument();
+    expect(screen.getAllByText("Нэр солих")).toHaveLength(2);
+    expect(screen.getByRole("switch", { name: "Админ: Ali" })).toBeInTheDocument();
+  });
+
+  it("asks the server in Mongolian, so its refusals come back in Mongolian", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    // As UiServer does: the refusal in the language the request asked for.
+    const fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const mongolian = (init?.headers as Record<string, string>)["Accept-Language"] === "mn";
+      return new Response(JSON.stringify({ error: "bad_request", message: mongolian ? "Лог уншиж чадсангүй" : "cannot read the log" }),
+        { status: 400 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    window.history.pushState(null, "", "/logs");
+
+    render(<App />);
+
+    expect(await screen.findByText("Лог уншиж чадсангүй")).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 
   it("asks a member to reopen the Mini App when the launch data went stale", async () => {

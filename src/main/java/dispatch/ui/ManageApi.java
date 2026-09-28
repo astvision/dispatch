@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Log;
 import dispatch.Redactor;
@@ -52,7 +53,7 @@ import java.util.regex.Pattern;
  */
 public final class ManageApi {
 
-    static final String CHANGED = "the config changed on disk since this page loaded it; reload to see the change";
+    static final Text CHANGED = Text.of("refusal.changed");
     static final int DEFAULT_LOG_LINES = 200;
     static final int MAX_LOG_LINES = 2000;
     /** ponytail: only the log's last MiB is read, so a narrow filter can find fewer lines than asked; read further back in chunks if that matters. */
@@ -60,6 +61,8 @@ public final class ManageApi {
     private static final Set<String> LEVELS = Set.of("INFO", "WARN", "ERROR");
     private static final Pattern LEVEL = Pattern.compile("(?:^| )level=(\\S+)");
     private static final Pattern EVENT = Pattern.compile("(?:^| )event=(\\S+)");
+    /** A task's number as its own field: task=12, never task=120. */
+    private static final Pattern TASK = Pattern.compile("(?:^| )task=(\\d+)(?= |$)");
     /** Claude Code accepts both short names (opus) and full model ids (claude-opus-5); only the shape is checked here. */
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._-]{1,100}");
     /** The agents a project can run on (ADR 0026). */
@@ -171,7 +174,7 @@ public final class ManageApi {
         String executeTimeout = requiredDuration(body, "executeTimeout");
         BigDecimal executeBudget = requiredBudget(body, "executeBudgetUsd");
         if (!body.path("maxConcurrentRuns").isIntegralNumber()) {
-            throw new CliException("maxConcurrentRuns must be a whole number");
+            throw new CliException(Text.of("manage.maxconcurrentrunsMust"));
         }
         String runs = String.valueOf(body.path("maxConcurrentRuns").asLong());
         String authorName = SetupApi.text(body, "authorName");
@@ -195,7 +198,7 @@ public final class ManageApi {
             if (claude == null) {
                 // Without Claude Code (projects on Codex or Gemini only, ADR 0026) the page shows no command to keep.
                 if (current != null) {
-                    throw new CliException("claudeCommand is needed");
+                    throw new CliException(Text.of("manage.claudecommandIs"));
                 }
                 return edited;
             }
@@ -268,12 +271,11 @@ public final class ManageApi {
         return save(body, (text, config) -> {
             project(config, name);
             if (config.projects().size() == 1) {
-                throw new CliException(name + " is the only project; add another before removing it");
+                throw new CliException(Text.of("manage.isThe", name));
             }
             Config.Group group = groupOf(config, name);
             if (group.projects().size() == 1) {
-                throw new CliException(name + " is the only project of group " + group.name() + ", and a group needs one; "
-                        + "add another to that group first");
+                throw new CliException(Text.of("manage.isTheOnly", name, group.name()));
             }
             String edited = ConfigEdit.remove(text, At.of("telegram", "groups").item("name", group.name()).key("projects").value(name));
             return ConfigEdit.remove(edited, At.of("projects").item("name", name));
@@ -293,7 +295,7 @@ public final class ManageApi {
                 }
             }
             if (!found) {
-                throw new CliException("nobody with id " + id + " is a member");
+                throw new CliException(Text.of("manage.nobodyWith", id));
             }
             return edited;
         });
@@ -305,9 +307,9 @@ public final class ManageApi {
         return save(body, (text, config) -> {
             Config.Group group = group(config, groupName);
             Config.Member member = group.members().stream().filter(candidate -> candidate.id() == id).findFirst()
-                    .orElseThrow(() -> new CliException("nobody with id " + id + " is a member of group " + groupName));
+                    .orElseThrow(() -> new CliException(Text.of("manage.nobodyWithId", id, groupName)));
             if (group.members().size() == 1) {
-                throw new CliException(member.name() + " is the only member of group " + groupName + ", and a group needs one");
+                throw new CliException(Text.of("manage.isTheOnlyMember", member.name(), groupName));
             }
             List<Long> admins = config.telegram().admins();
             boolean memberElsewhere = config.telegram().groups().stream()
@@ -315,7 +317,7 @@ public final class ManageApi {
             String edited = ConfigEdit.remove(text, members(groupName).item("id", String.valueOf(id)));
             if (admins.contains(id) && !memberElsewhere) {
                 if (realAdminCount(config) == 1) {
-                    throw new CliException(member.name() + " is the team's only admin; make someone else admin first");
+                    throw new CliException(Text.of("manage.isTheTeam", member.name()));
                 }
                 edited = ConfigEdit.remove(edited, At.of("telegram", "admins").value(String.valueOf(id)));
             }
@@ -329,12 +331,11 @@ public final class ManageApi {
         return save(body, (text, config) -> {
             List<Long> admins = config.telegram().admins();
             if (admins.isEmpty()) {
-                throw new CliException("a personal bot has no admins: only its one member uses it. For admins, set up a team's bot "
-                        + "(dispatch init --force, then My team)");
+                throw new CliException(Text.of("manage.aPersonal"));
             }
             Config.Member member = config.telegram().groups().stream().flatMap(group -> group.members().stream())
                     .filter(candidate -> candidate.id() == id).findFirst()
-                    .orElseThrow(() -> new CliException("nobody with id " + id + " is a member"));
+                    .orElseThrow(() -> new CliException(Text.of("manage.nobodyWithIdIs", id)));
             if (admin == admins.contains(id)) {
                 return text;
             }
@@ -342,7 +343,7 @@ public final class ManageApi {
                 return ConfigEdit.append(text, At.of("telegram", "admins"), String.valueOf(id));
             }
             if (realAdminCount(config) == 1) {
-                throw new CliException(member.name() + " is the team's only admin; make someone else admin first");
+                throw new CliException(Text.of("manage.isTheTeamS", member.name()));
             }
             return ConfigEdit.remove(text, At.of("telegram", "admins").value(String.valueOf(id)));
         });
@@ -409,13 +410,24 @@ public final class ManageApi {
         JsonNode requested = body.path("lines");
         int lines = requested.isMissingNode() || requested.isNull() ? DEFAULT_LOG_LINES : requested.asInt(0);
         if (!requested.isMissingNode() && !requested.isNull() && (!requested.isIntegralNumber() || lines < 1 || lines > MAX_LOG_LINES)) {
-            throw new CliException("lines must be a whole number from 1 to " + MAX_LOG_LINES);
+            throw new CliException(Text.of("manage.linesMust", MAX_LOG_LINES));
         }
         String level = SetupApi.optionalText(body, "level");
         if (level != null && !LEVELS.contains(level)) {
-            throw new CliException("level must be one of INFO, WARN, ERROR, or left out");
+            throw new CliException(Text.of("manage.levelMust"));
         }
         String event = SetupApi.optionalText(body, "event");
+        JsonNode taskField = body.path("task");
+        String task = null;
+        if (!taskField.isMissingNode() && !taskField.isNull()) {
+            if (!taskField.isIntegralNumber() || taskField.asLong() < 1) {
+                throw new CliException(Text.of("manage.logsTask"));
+            }
+            task = Long.toString(taskField.asLong());
+        }
+        String text = SetupApi.optionalText(body, "text");
+        String wantedText = text == null ? null : text.toLowerCase(java.util.Locale.ROOT);
+        String wantedTask = task;
         RunCommand.Prepared prepared = prepare();
         Path file = prepared.config().stateDir().resolve("dispatch.log");
         if (!Files.exists(file)) {
@@ -427,7 +439,9 @@ public final class ManageApi {
         String redacted = redactor.redact(rawTail);
         List<String> allLines = redacted.lines().toList();
         List<String> matching = allLines.stream()
-                .filter(line -> matches(line, LEVEL, level, true) && matches(line, EVENT, event, false))
+                .filter(line -> matches(line, LEVEL, level, true) && matches(line, EVENT, event, false)
+                        && matches(line, TASK, wantedTask, true)
+                        && (wantedText == null || line.toLowerCase(java.util.Locale.ROOT).contains(wantedText)))
                 .toList();
         List<String> result = matching.subList(Math.max(0, matching.size() - lines), matching.size());
         return new Logs(file.toString(), true, result);
@@ -472,7 +486,7 @@ public final class ManageApi {
             }
             return text;
         } catch (IOException e) {
-            throw new CliException("cannot read " + file + ": " + e.getMessage());
+            throw new CliException(Text.of("manage.cannotRead", file, e.getMessage()));
         }
     }
 
@@ -487,7 +501,7 @@ public final class ManageApi {
     /** Restarts the background service; not offered when Dispatch is not installed as one (spec: Restart). */
     private OverviewApi.ServiceView restart() {
         if (!service.status().installed()) {
-            throw new CliException("Dispatch does not run as a background service here; stop it and start it again where it runs");
+            throw new CliException(Text.of("manage.dispatchDoes"));
         }
         service.restart();
         return OverviewApi.serviceView(service);
@@ -516,7 +530,7 @@ public final class ManageApi {
                 try {
                     result = edit.apply(text, config);
                 } catch (ConfigException e) {
-                    throw new CliException(e.getMessage());
+                    throw new CliException(e.text());
                 }
                 // A change function that answers the text unchanged (e.g. setAdmin to the state it already has) is
                 // still validated below, but the file and dispatch.yaml.bak must stay untouched: overwriting the
@@ -532,14 +546,16 @@ public final class ManageApi {
                     // the atomic move; that second pass is what actually decides what lands on disk.
                     ConfigFile.parse(configFile, result, environment);
                 } catch (ConfigException e) {
-                    throw new CliException(e.getMessage());
+                    throw new CliException(e.text());
                 }
                 edited.set(result);
                 changed.set(true);
                 backup(currentBytes);
                 return result;
             });
-        } catch (ConfigException | UncheckedIOException e) {
+        } catch (ConfigException e) {
+            throw new CliException(e.text());
+        } catch (UncheckedIOException e) {
             throw new CliException(e.getMessage());
         }
         return new Saved(true, changed.get(), version(edited.get().getBytes(StandardCharsets.UTF_8)));
@@ -554,7 +570,7 @@ public final class ManageApi {
                 Files.setPosixFilePermissions(backup, Files.getPosixFilePermissions(configFile));
             }
         } catch (IOException e) {
-            throw new CliException("cannot keep the previous config as " + backup + " (" + e.getMessage() + "); nothing was changed");
+            throw new CliException(Text.of("manage.cannotKeep", backup, e.getMessage()));
         }
     }
 
@@ -562,9 +578,9 @@ public final class ManageApi {
         try {
             return Files.readAllBytes(configFile);
         } catch (NoSuchFileException e) {
-            throw new CliException("no config at " + configFile + "; set Dispatch up first");
+            throw new CliException(Text.of("manage.noConfig", configFile));
         } catch (IOException e) {
-            throw new CliException("cannot read " + configFile + ": " + e.getMessage());
+            throw new CliException(Text.of("manage.cannot2", configFile, e.getMessage()));
         }
     }
 
@@ -572,7 +588,7 @@ public final class ManageApi {
         try {
             return RunCommand.prepare(configFile, processEnvironment);
         } catch (ConfigException e) {
-            throw new CliException(e.getMessage());
+            throw new CliException(e.text());
         }
     }
 
@@ -628,7 +644,7 @@ public final class ManageApi {
     private static String modelId(JsonNode body, String field) {
         String value = SetupApi.optionalText(body, field);
         if (value != null && !MODEL_ID.matcher(value).matches()) {
-            throw new CliException("model: use a model name like opus or a model id like claude-opus-5");
+            throw new CliException(Text.of("manage.modelUse"));
         }
         return value;
     }
@@ -640,7 +656,7 @@ public final class ManageApi {
     private static String requiredDuration(JsonNode body, String field) {
         String value = SetupApi.duration(body, field);
         if (value == null) {
-            throw new CliException(field + " is needed");
+            throw new CliException(Text.of("manage.isNeeded", field));
         }
         return value;
     }
@@ -648,7 +664,7 @@ public final class ManageApi {
     private static BigDecimal requiredBudget(JsonNode body, String field) {
         BigDecimal value = SetupApi.budget(body, field);
         if (value == null) {
-            throw new CliException(field + " is needed");
+            throw new CliException(Text.of("manage.is2", field));
         }
         return value;
     }
@@ -657,7 +673,7 @@ public final class ManageApi {
         try {
             return ProjectProbe.of(Path.of(folder), git);
         } catch (InvalidPathException e) {
-            throw new CliException(folder + " is not a folder");
+            throw new CliException(Text.of("manage.isNot", folder));
         }
     }
 
@@ -667,23 +683,23 @@ public final class ManageApi {
 
     private static Config.Project project(Config config, String name) {
         return config.projects().stream().filter(project -> project.name().equals(name)).findFirst()
-                .orElseThrow(() -> new CliException("no project named " + name));
+                .orElseThrow(() -> new CliException(Text.of("manage.noProject", name)));
     }
 
     private static Config.Group group(Config config, String name) {
         return config.telegram().groups().stream().filter(group -> group.name().equals(name)).findFirst()
-                .orElseThrow(() -> new CliException("no group named " + name));
+                .orElseThrow(() -> new CliException(Text.of("manage.noGroup", name)));
     }
 
     private static Config.Group groupOf(Config config, String project) {
         return config.telegram().groups().stream().filter(group -> group.projects().contains(project)).findFirst()
-                .orElseThrow(() -> new CliException(project + " is not listed in any group"));
+                .orElseThrow(() -> new CliException(Text.of("manage.isNotListed", project)));
     }
 
     private static String onlyGroup(Config config) {
         List<String> names = config.telegram().groups().stream().map(Config.Group::name).toList();
         if (names.size() != 1) {
-            throw new CliException("the config has several groups (" + String.join(", ", names) + "); choose one");
+            throw new CliException(Text.of("manage.severalGroups", String.join(", ", names)));
         }
         return names.getFirst();
     }

@@ -3,13 +3,18 @@ package dispatch.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import dispatch.cli.CliException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 class FoldersTest {
@@ -42,6 +47,29 @@ class FoldersTest {
 
         assertEquals(List.of("crm"), work.folders().stream().map(Folders.Entry::name).toList());
         assertTrue(missing.getMessage().contains("is not a folder"), missing.getMessage());
+    }
+
+    @Test
+    void aMissingFolderIsExplainedInThePagesLanguage() {
+        CliException missing = assertThrows(CliException.class, () -> Folders.list(home.resolve("nope").toString(), home));
+
+        assertEquals(home.resolve("nope") + " хавтас биш", missing.text().render(dispatch.Language.MN));
+    }
+
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "a folder's POSIX permission bits")
+    void aFolderThatCannotBeOpenedSaysSoInThePagesLanguage() throws IOException {
+        assumeFalse("root".equals(System.getProperty("user.name")), "root reads any folder");
+        Path locked = Files.createDirectory(home.resolve("locked"));
+        Files.setPosixFilePermissions(locked, Set.of());
+        try {
+            CliException refused = assertThrows(CliException.class, () -> Folders.list(locked.toString(), home));
+
+            assertEquals("cannot open " + locked + ": permission denied", refused.getMessage());
+            assertEquals(locked + " хавтсыг нээж чадсангүй: эрх хүрэхгүй", refused.text().render(dispatch.Language.MN));
+        } finally {
+            Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("rwx------"));
+        }
     }
 
     @Test

@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -269,7 +270,7 @@ class InitCommandTest {
 
         @Override
         public Service.Status status() {
-            return new Service.Status(installed != null, installed != null, "running", List.of());
+            return new Service.Status(installed != null, installed != null, Text.raw("running"), List.of());
         }
 
         @Override

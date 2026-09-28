@@ -1,7 +1,6 @@
 import { Alert, Button, Result, Spin } from "antd";
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { ApiError, getConfig, listProjects, listTasks, type ConfigView, type ProjectSummary, type Saved } from "../api";
-import { useManagedConfig } from "../manage/useManagedConfig";
+import { useEffect, useState, type ReactNode } from "react";
+import { ApiError, getConfig, listProjects, listTasks, type ConfigView, type ProjectSummary } from "../api";
 
 const asApiError = (e: unknown) => (e instanceof ApiError ? e : new ApiError("unknown", String(e)));
 
@@ -49,42 +48,6 @@ export function useActiveCounts(scope: "me" | "group") {
   }, [scope]);
 
   return counts;
-}
-
-/**
- * A config save takes effect on restart. The Mini App moves on from the screen that saved, so "restart to apply" is
- * kept here, above every screen, rather than on the screen that is gone.
- */
-interface RestartNeeded {
-  /** Null until something was saved; then whether a background service can be restarted from here. */
-  installed: boolean | null;
-  mark: (installed: boolean) => void;
-}
-
-export const RestartContext = createContext<RestartNeeded>({ installed: null, mark: () => {} });
-
-export function useRestartNeeded() {
-  const [installed, setInstalled] = useState<boolean | null>(null);
-  return { installed, mark: setInstalled };
-}
-
-/**
- * The management config for a Mini App screen. A save that needs a restart says so to the shell at once, from the save
- * itself: the screen that saved usually moves on straight after, before any effect of its own would run.
- */
-export function useMiniConfig() {
-  const managed = useManagedConfig();
-  const { mark } = useContext(RestartContext);
-  const installed = managed.config?.service.installed ?? false;
-  const { save: saveConfig } = managed;
-
-  const save = useCallback((call: (version: string) => Promise<Saved>) => saveConfig(async (version) => {
-    const result = await call(version);
-    if (result.restartNeeded) mark(installed);
-    return result;
-  }), [saveConfig, mark, installed]);
-
-  return { ...managed, save };
 }
 
 /** Loading, a load error and a refused save, as ManagedPage does, but without its own restart notice. */

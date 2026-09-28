@@ -1,10 +1,12 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.Json;
+import dispatch.Language;
 import dispatch.cli.Checks;
 import dispatch.cli.Locations;
 import dispatch.cli.Service;
@@ -61,11 +63,28 @@ class OverviewApiTest {
         assertEquals("0.1.0-test", overview.version());
         assertEquals(config.toString(), overview.configFile());
         assertEquals(dir.resolve("state").toString(), overview.stateDir(), "the config's state directory");
-        assertEquals(new OverviewApi.ServiceView("stub service", true, true, "active (running)", List.of("a note")), overview.service());
+        assertEquals(new OverviewApi.ServiceView("stub service", true, true, Text.raw("active (running)"), List.of(Text.raw("a note"))), overview.service());
         assertTrue(overview.findings().stream().anyMatch(f -> f.area().equals("bot") && f.level() == Checks.Level.OK), overview.findings().toString());
         String json = Json.write(overview);
         assertTrue(json.contains("\"level\":\"OK\""), json);
         assertFalse(json.contains(TOKEN), "the bot token never reaches the browser");
+    }
+
+    @Test
+    void theChecksAreWrittenInTheLanguageThePageAsksFor() throws IOException {
+        GitFixture repos = GitFixture.create(dir, "alm");
+        String yaml = new String(OverviewApiTest.class.getResourceAsStream("/personal.yaml").readAllBytes())
+                .replace("STATE_DIR", dir.resolve("state").toString().replace("'", "''"))
+                .replace("CLONE", repos.repo("alm").toString().replace("'", "''"))
+                .replace("command: 'claude'", "command: '" + JAVA.replace("'", "''") + "'");
+        Files.writeString(config, yaml);
+        OverviewApi.Overview overview = api(new StubService(true, true, "active (running)"), Map.of("TELEGRAM_BOT_TOKEN", TOKEN)).get();
+
+        String mongolian = Json.write(overview, Language.MN);
+        String english = Json.write(overview, Language.EN);
+
+        assertTrue(mongolian.contains("miniApp: унтраалттай; Telegram-д юу ч үзүүлэхгүй, бот Удирдах товч харуулахгүй"), mongolian);
+        assertTrue(english.contains("miniApp: off; nothing is served to Telegram and the bot shows no Manage button"), english);
     }
 
     @Test
@@ -114,7 +133,7 @@ class OverviewApiTest {
 
         @Override
         public Service.Status status() {
-            return new Service.Status(installed, running, detail, List.of("a note"));
+            return new Service.Status(installed, running, Text.raw(detail), List.of(Text.raw("a note")));
         }
 
         @Override

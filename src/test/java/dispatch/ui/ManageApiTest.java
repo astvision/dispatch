@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -183,6 +184,28 @@ class ManageApiTest {
         assertTrue(refused.getMessage().contains(config.toString()), "names the config, not a draft: " + refused.getMessage());
         assertArrayEquals(before, Files.readAllBytes(config));
         assertFalse(Files.exists(dir.resolve("dispatch.yaml.bak")), "a save that fails validation must not touch the backup either");
+    }
+
+    @Test
+    void aTimeoutWithoutItsUnitIsRefusedInThePagesLanguage() throws Exception {
+        String body = settings(version(), "2", "gh").replace("\"planTimeout\":\"15m\"", "\"planTimeout\":\"15\"");
+
+        CliException refused = assertThrows(CliException.class, () -> call("/api/manage/settings", body));
+
+        assertEquals("planTimeout: invalid duration '15' (use a number with s, m or h, e.g. 90s, 15m, 2h)", refused.getMessage());
+        assertEquals("planTimeout: '15' хугацаа буруу (s, m эсвэл h-тэй тоо бичнэ үү, ж: 90s, 15m, 2h)",
+                refused.text().render(dispatch.Language.MN));
+    }
+
+    @Test
+    void anInvalidSavesReasonIsWrittenInThePagesLanguage() throws Exception {
+        String body = settings(version(), "2", "gh").replace("\"maxConcurrentRuns\":2", "\"maxConcurrentRuns\":0");
+
+        CliException refused = assertThrows(CliException.class, () -> call("/api/manage/settings", body));
+
+        String mongolian = refused.text().render(dispatch.Language.MN);
+        assertTrue(mongolian.contains("scheduler.maxConcurrentRuns: заавал, хамгийн багадаа 1"), mongolian);
+        assertTrue(mongolian.contains(config.toString()), "still names the config: " + mongolian);
     }
 
     @Test
@@ -499,6 +522,36 @@ class ManageApiTest {
     }
 
     @Test
+    void theLogIsFilteredByTaskAndByAnyText() throws Exception {
+        Path log = dir.resolve("state/dispatch.log");
+        Files.createDirectories(log.getParent());
+        Files.writeString(log, """
+                ts=2026-09-22T10:00:00.000Z level=INFO event=run.finished task=12 run=1
+                ts=2026-09-22T10:00:01.000Z level=INFO event=run.finished task=120 run=1
+                ts=2026-09-22T10:00:02.000Z level=ERROR event=outbox.failed error="Bad Request: message is not modified"
+                ts=2026-09-22T10:00:03.000Z level=INFO event=task.created task=12
+                """);
+
+        JsonNode twelve = call("/api/manage/logs", "{\"task\":12}");
+        JsonNode badRequest = call("/api/manage/logs", "{\"text\":\"bad request\"}");
+        JsonNode both = call("/api/manage/logs", "{\"task\":12,\"text\":\"run.\"}");
+
+        assertEquals(List.of("ts=2026-09-22T10:00:00.000Z level=INFO event=run.finished task=12 run=1",
+                "ts=2026-09-22T10:00:03.000Z level=INFO event=task.created task=12"), lines(twelve), "task=120 is another task");
+        assertEquals(List.of("ts=2026-09-22T10:00:02.000Z level=ERROR event=outbox.failed error=\"Bad Request: message is not modified\""),
+                lines(badRequest), "any text, ignoring case");
+        assertEquals(List.of("ts=2026-09-22T10:00:00.000Z level=INFO event=run.finished task=12 run=1"), lines(both));
+        CliException refused = assertThrows(CliException.class, () -> call("/api/manage/logs", "{\"task\":0}"));
+        assertTrue(refused.getMessage().contains("task must be a whole number from 1"), refused.getMessage());
+    }
+
+    private static List<String> lines(JsonNode logs) {
+        List<String> lines = new java.util.ArrayList<>();
+        logs.path("lines").forEach(line -> lines.add(line.asText()));
+        return lines;
+    }
+
+    @Test
     void beforeTheServiceWritesItsLogThereIsNone() throws Exception {
         JsonNode logs = call("/api/manage/logs", "{}");
 
@@ -665,7 +718,7 @@ class ManageApiTest {
 
         @Override
         public Service.Status status() {
-            return new Service.Status(installed, installed, installed ? "running" : "not installed", List.of());
+            return new Service.Status(installed, installed, Text.raw(installed ? "running" : "not installed"), List.of());
         }
 
         @Override

@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Text;
 import dispatch.workspace.Git;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -99,15 +100,16 @@ final class LaunchdService implements Service {
     @Override
     public Status status() {
         if (!Files.exists(plist)) {
-            return new Status(false, false, "not installed", List.of());
+            return new Status(false, false, Text.of("service.notInstalled"), List.of());
         }
         Git.Result printed = commands.run(List.of("launchctl", "print", domain() + "/" + kind.launchdLabel()));
         if (printed.exitCode() != 0) {
-            return new Status(true, false, "not loaded; start it with: dispatch service start", List.of());
+            return new Status(true, false, Text.of("service.notLoaded"), List.of());
         }
         boolean running = printed.stdout().contains("state = running");
         String pid = printed.stdout().lines().map(String::strip).filter(line -> line.startsWith("pid = ")).findFirst().orElse("");
-        return new Status(true, running, running ? "running" + (pid.isEmpty() ? "" : ", " + pid) : "loaded, not running", List.of());
+        Text detail = !running ? Text.of("service.loadedNotRunning") : pid.isEmpty() ? Text.of("service.running") : Text.of("service.runningWith", pid);
+        return new Status(true, running, detail, List.of());
     }
 
     @Override

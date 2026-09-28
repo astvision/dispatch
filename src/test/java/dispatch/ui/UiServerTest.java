@@ -113,6 +113,18 @@ class UiServerTest {
     }
 
     @Test
+    void anErrorIsWrittenInTheLanguageThePageAsksFor() throws Exception {
+        String cookie = login();
+
+        HttpResponse<String> mongolian = get(path("/api/nothing"), cookie, "mn-MN,mn;q=0.9");
+        HttpResponse<String> english = get(path("/api/nothing"), cookie, "en-US");
+
+        assertEquals(404, mongolian.statusCode());
+        assertTrue(mongolian.body().contains("Ийм API алга: /api/nothing"), mongolian.body());
+        assertTrue(english.body().contains("no such API: /api/nothing"), english.body());
+    }
+
+    @Test
     void theBundledPagesAreServedAndUnknownPagesGetTheApp() throws Exception {
         String cookie = login();
 
@@ -196,7 +208,7 @@ class UiServerTest {
                 Map.<String, BiFunction<UiServer.Caller, JsonNode, Object>>of(
                 "/api/echo", (caller, body) -> Map.of("got", body.path("name").asText()),
                 "/api/busy", (caller, body) -> {
-                    throw new ApiException(409, "conflict", "Dispatch is running with this bot; stop it first");
+                    throw new ApiException(409, "conflict", dispatch.Text.raw("Dispatch is running with this bot; stop it first"));
                 }))) {
             String cookie = cookie(get(posting.loginUri(), null).headers().firstValue("Set-Cookie").orElseThrow());
             String origin = "http://127.0.0.1:" + posting.port();
@@ -233,9 +245,16 @@ class UiServerTest {
     }
 
     private HttpResponse<String> get(URI uri, String cookie) throws Exception {
+        return get(uri, cookie, null);
+    }
+
+    private HttpResponse<String> get(URI uri, String cookie, String acceptLanguage) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(uri).GET();
         if (cookie != null) {
             request.header("Cookie", cookie);
+        }
+        if (acceptLanguage != null) {
+            request.header("Accept-Language", acceptLanguage);
         }
         return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }

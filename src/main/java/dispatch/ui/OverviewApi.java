@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import dispatch.Text;
 import dispatch.cli.Checks;
 import dispatch.cli.CliException;
 import dispatch.cli.Locations;
@@ -14,7 +15,7 @@ import java.util.Map;
 /** GET /api/overview: what Dispatch is, where its files are, whether its service runs and what `dispatch check` finds. */
 public final class OverviewApi {
 
-    public record ServiceView(String name, boolean installed, boolean running, String detail, List<String> notes) {
+    public record ServiceView(String name, boolean installed, boolean running, Text detail, List<Text> notes) {
     }
 
     /** @param configured whether the config file exists; before setup, the page says how to set Dispatch up */
