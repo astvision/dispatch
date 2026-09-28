@@ -85,7 +85,8 @@ English).
   wrote goes in as an argument, as it came.
 - The HTTP layer renders with the request's language: `mn` when the first range of `Accept-Language` has the primary tag
   `mn`, else `en`. `api.ts` sends `Accept-Language` with every request. The terminal, and every log line, render English.
-- A check's area is shown by a label from the bundle (`area.bot`, `area.config`, …); the finding keeps the area key.
+- A check's area stays its key in the finding (`bot`, `config`, a project's name); the page labels the known ones from
+  its dictionary (`area.bot` → "Бот") and shows a project's name as it is.
 
 ## The look (D-1)
 
