@@ -313,6 +313,34 @@ describe("the Mini App", () => {
     expect(window.location.pathname).toBe("/projects");
   });
 
+  it("shows the shared People page in Mongolian", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    window.history.pushState(null, "", "/people");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Хүмүүс" })).toBeInTheDocument();
+    expect(screen.getAllByText("Нэр солих")).toHaveLength(2);
+    expect(screen.getByRole("switch", { name: "Админ: Ali" })).toBeInTheDocument();
+  });
+
+  it("asks the server in Mongolian, so its refusals come back in Mongolian", async () => {
+    vi.mocked(api.getMe).mockResolvedValue(ADMIN);
+    // As UiServer does: the refusal in the language the request asked for.
+    const fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const mongolian = (init?.headers as Record<string, string>)["Accept-Language"] === "mn";
+      return new Response(JSON.stringify({ error: "bad_request", message: mongolian ? "Лог уншиж чадсангүй" : "cannot read the log" }),
+        { status: 400 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    window.history.pushState(null, "", "/logs");
+
+    render(<App />);
+
+    expect(await screen.findByText("Лог уншиж чадсангүй")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("asks a member to reopen the Mini App when the launch data went stale", async () => {
     vi.mocked(api.getMe).mockRejectedValue(new api.ApiError("expired", "this Mini App has been open too long"));
 
