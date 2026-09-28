@@ -6,6 +6,7 @@ import { useLanguage, useT, type Key } from "../i18n/i18n";
 import { RestartContext } from "../restart";
 import { RestartStatus } from "../RestartNotice";
 import { useRestart } from "../useRestart";
+import MemberChoice from "./MemberChoice";
 import { useDesktopStatus } from "./status";
 
 export interface ShellPage {
@@ -120,13 +121,14 @@ export default function Shell({ pages, selected, onSelect, children }: {
   children: ReactNode;
 }) {
   const t = useT();
-  const { overview, error, live } = useDesktopStatus();
+  const { overview, error, live, needsMember, reloadLive } = useDesktopStatus();
   const restart = useContext(RestartContext);
   const items = pages.map(({ key, label }) => ({ key, label: t(label) }));
   const go = ({ key }: { key: string }) => onSelect(key);
 
   return (
     <div className="board">
+      <MemberChoice open={needsMember} onChosen={reloadLive} />
       <header className="board-strip">
         <span className="board-menu">
           <Dropdown menu={{ items, selectable: true, selectedKeys: [selected], onClick: go }} trigger={["click"]}>

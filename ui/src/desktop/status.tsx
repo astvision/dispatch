@@ -1,7 +1,8 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { getLive, type ApiError, type Live, type Overview } from "../api";
 import { RestartContext, useRestartNeeded } from "../restart";
 import { useOverview } from "../useOverview";
+import { chooseMember } from "./member";
 import { usePolling } from "./usePolling";
 
 export interface DesktopStatus {
@@ -15,9 +16,11 @@ export interface DesktopStatus {
   botRunning: boolean | null;
   liveError: ApiError | null;
   reloadLive: () => void;
+  /** The desk cannot tell which admin the desktop acts as: the page asks (MemberChoice). */
+  needsMember: boolean;
 }
 
-const NO_LIVE = { live: null, botRunning: null, liveError: null, reloadLive: () => {} };
+const NO_LIVE = { live: null, botRunning: null, liveError: null, reloadLive: () => {}, needsMember: false };
 
 const StatusContext = createContext<DesktopStatus>({ overview: null, error: null, loading: false, reload: async () => {}, ...NO_LIVE });
 
@@ -36,12 +39,20 @@ function LiveReading({ children }: { children: ReactNode }) {
   const status = useContext(StatusContext);
   const { data, error, reload } = usePolling(getLive);
   const stopped = error?.code === "bot_not_running";
+  const forgotten = error?.code === "not_owner";
+
+  useEffect(() => {
+    // A remembered admin the config no longer names: forget them, so the page asks again.
+    if (forgotten) chooseMember(null);
+  }, [forgotten]);
+
   const value: DesktopStatus = {
     ...status,
     live: stopped ? null : data,
     botRunning: stopped ? false : data ? true : null,
     liveError: error,
     reloadLive: reload,
+    needsMember: error?.code === "choose_member" || forgotten,
   };
   return <StatusContext.Provider value={value}>{children}</StatusContext.Provider>;
 }

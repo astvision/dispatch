@@ -254,4 +254,6 @@ export const en = {
   "strip.waitingOnYou": "{count} waiting on you",
   "strip.today": "Today ${usd}",
   "strip.newVersion": "Restart the service to run {version}",
+  "member.title": "Which admin are you?",
+  "member.hint": "The desktop acts as you: your own plans are yours to decide.",
 } as const;
