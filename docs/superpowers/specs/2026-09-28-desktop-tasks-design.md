@@ -21,8 +21,8 @@ behind `ssh -L`, ADR 0018); attachments on a desktop task; editing a task's text
 ## Success criteria
 
 1. With the bot running, every task of the instance shows in full on the desktop within 5 seconds of changing, and the
-   owner can approve, reject, correct and answer their own task's plan, cancel or retry any task, and give a task, each
-   taking effect at once in the bot and in Telegram.
+   owner can approve, reject, correct and answer their own task's plan, retry their own failed task, cancel any task,
+   and give a task, each taking effect at once in the bot and in Telegram.
 2. With the bot stopped, the desktop still opens; the task pages and lamps say the bot is not running, and a task's log
    still reads.
 3. Nothing new listens beyond 127.0.0.1, and nothing on the machine but the owner's own account can use the new channel.
@@ -33,7 +33,7 @@ behind `ssh -L`, ADR 0018); attachments on a desktop task; editing a task's text
 
 | Question | Decision | Why |
 |---|---|---|
-| Whose tasks | Every task of the instance, in full; the owner acts as their own member | The owner runs this machine and could read its database anyway; decisions keep ADR 0020: a plan is decided by its requester, cancel and retry by the requester or an admin |
+| Whose tasks | Every task of the instance, in full; the owner acts as their own member | The owner runs this machine and could read its database anyway; decisions keep ADR 0020: a plan and a retry are the requester's, a cancel the requester's or an admin's |
 | The channel | The bot's desk port: `dispatch run` listens on 127.0.0.1 with a per-start token in an owner-only file; `dispatch ui` forwards the task calls | One place applies the task rules (`TaskService`, `TaskAccess`); actions take effect at once; the live lamps see what really runs. Rejected: reading the database and posting orders through it (a second intake loop, a second of lag, version skew); the bot serving the desktop (ADR 0018) |
 | Scope | The list, a side panel, a task's page, its actions, giving a task, a task's log, the live Overview with spend per day, the strip's lamps, notifications | The owner chose all four additions |
 | A task's layout | The list with a side panel; the panel's Дэлгэрэнгүй opens the task's own page (`/tasks/<id>`) | The owner's choice: quick moves between waiting tasks, and a page of its own for reading, links and notifications |
@@ -53,8 +53,8 @@ behind `ssh -L`, ADR 0018); attachments on a desktop task; editing a task's text
   - `POST /api/tasks/new`: a task from the desktop (below);
   - `GET /api/live`: what is running and queued, what waits on the owner and on others (ids and headlines), today's and
     this month's spend, the bot's version;
-  - `GET /api/tasks/spend?days=30`: cost per day and per project, from `run.cost_usd` by the day the run started, in the
-    bot's time zone.
+  - `POST /api/tasks/spend` `{"days": 30}`: cost per day and per project, from `run.cost_usd` by the day the run
+    started, in the bot's time zone (a body, since `UiServer`'s GET routes read no query string).
 - **In `dispatch ui`.** `DeskProxy` forwards `/api/tasks/*` and `/api/live` to the bot: it reads `desk.json` on every
   call (so a restarted bot's new port and token are picked up at once), forwards the method, body, `Accept-Language`
   and the owner's chosen member, and waits at most 5 seconds. A missing file, a refused connection or a timeout answers
@@ -66,13 +66,15 @@ behind `ssh -L`, ADR 0018); attachments on a desktop task; editing a task's text
 - **The owner viewer** (`TaskAccess.owner()`) sees every task in full: another member's plan, questions, costs and log,
   which ADR 0020 hides from members, not from the machine's owner.
 - **Acting.** Each action runs as the owner's member, through the same `TaskService` calls as Telegram's, so ADR 0020's
-  rules apply unchanged: approve, reject, correct and answer only the owner's own tasks; cancel and retry any task as an
+  rules apply unchanged: approve, reject, correct, answer and retry only the owner's own tasks; cancel any task as an
   admin. The page shows only the buttons that apply, and the bot refuses the others anyway.
 - **Which member.** A personal bot's one member. On a team, `telegram.admins`: with one admin, that one; with several,
   the desktop asks once which one you are and remembers it in the browser. The bot checks that the member it is given is
   an admin (or the personal bot's member) and refuses otherwise.
 - **A task given on the desktop** is `TaskService.create` with the origin `desk:<uuid>`: the owner's private chat gets
-  "#12 given from the desktop: …" and then the plan as usual, so Telegram stays in step.
+  "#12 given from the desktop: …" and then the plan as usual, so Telegram stays in step. That origin is no Telegram
+  message, so the outbox sends the task's messages without a reply target (today `Refs.messageId` refuses a reference
+  that is not Telegram's).
 
 ## The pages
 
@@ -83,10 +85,10 @@ behind `ssh -L`, ADR 0018); attachments on a desktop task; editing a task's text
   word) and age or elapsed time; it opens the task in the side panel.
 - **The side panel** (a drawer like D-1's, 520 px wide; the whole width below 640 px): the headline, project, person, priority and
   cost; the plan's steps; its open questions with the offered choices and a box for your own answer; the actions
-  (Батлах, Засвар бичих, Татгалзах on your own plan; Цуцлах while it runs; Дахин оролдох after it failed; the pull request
+  (Батлах, Засвар бичих, Татгалзах on your own plan; Цуцлах while it runs; Дахин оролдох after your own task failed; the pull request
   once done); and Дэлгэрэнгүй, which opens the task's page.
 - **The task's page** (`/tasks/<id>`, with Back to the list): the same plan, questions and actions on the left; beside
-  them the facts (branch, priority, pull request), each run's kind, model, duration and cost, the timeline, and the
+  them the facts (branch, priority, pull request), each run's kind, duration and cost, the timeline, and the
   task's own log rows (D-1's Logs rows for `task=<id>`, read by `dispatch ui` from the log file, so they show even when
   the bot is stopped). The Logs page's task numbers link here.
 - **Даалгавар өгөх** opens a side panel: the project (every project), the text and the priority (🔴 🟡 🟢). Given, the
