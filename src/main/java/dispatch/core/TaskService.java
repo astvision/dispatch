@@ -120,16 +120,13 @@ public final class TaskService {
     }
 
     /**
-     * The group a task was given in by mentioning the bot, and the first name it calls the giver by (G-1b).
+     * The group a task was given in, by mentioning the bot (G-1b) or its developer (G-1c), and the first name it calls the
+     * one it is for by.
      *
      * @param chatRef   the group chat, where the prompt's delivery is confirmed or, if refused, the giver is asked to press Start
      * @param sourceRef someone's message there the task was given in reply to, whose replies are additions to it; null if none
      */
     public record GroupOrigin(String chatRef, String firstName, String sourceRef) {
-
-        public GroupOrigin(String chatRef, String firstName) {
-            this(chatRef, firstName, null);
-        }
     }
 
     /**

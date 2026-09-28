@@ -23,17 +23,13 @@ public final class Drafts {
     }
 
     /**
-     * @param project  null when the member still has to choose
-     * @param parentId the whole message's draft when this is one of its parts, otherwise null
-     * @param part     the part's number from 1, null for a whole message
+     * @param project   null when the member still has to choose
+     * @param parentId  the whole message's draft when this is one of its parts, otherwise null
+     * @param part      the part's number from 1, null for a whole message
+     * @param sourceRef someone's message the draft was given in reply to, whose replies are additions to it; null if none
      */
     public record NewDraft(Requester requester, String chatRef, String originRef, String description, String project, Long parentId,
                            Integer part, String sourceRef) {
-
-        public NewDraft(Requester requester, String chatRef, String originRef, String description, String project, Long parentId,
-                        Integer part) {
-            this(requester, chatRef, originRef, description, project, parentId, part, null);
-        }
     }
 
     public static long insert(Tx tx, NewDraft draft, Instant now) {

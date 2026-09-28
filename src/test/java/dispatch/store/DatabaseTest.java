@@ -149,7 +149,7 @@ class DatabaseTest {
             assertEquals(null, draft.splitState());
             assertEquals(java.util.List.of(), draft.topics());
             long part = upgraded.transactionReturning(tx -> Drafts.insert(tx, new Drafts.NewDraft(
-                    new dispatch.domain.Requester("telegram:100", "Bold"), "telegram:100", "telegram:100/5#1", "Fix login", "crm", 3L, 1),
+                    new dispatch.domain.Requester("telegram:100", "Bold"), "telegram:100", "telegram:100/5#1", "Fix login", "crm", 3L, 1, null),
                     java.time.Instant.parse("2026-09-17T10:01:00Z")));
             assertEquals(3L, upgraded.transactionReturning(tx -> Drafts.find(tx, part)).orElseThrow().parentId());
         }

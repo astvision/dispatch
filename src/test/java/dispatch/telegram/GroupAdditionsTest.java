@@ -511,6 +511,50 @@ class GroupAdditionsTest {
                         .map(found -> found.get("origin_ref")).toList().toString());
     }
 
+    @Test
+    void chatterInAForumTopicIsNoAdditionToATaskGivenThere() {
+        // Telegram puts a topic's creation message under every message in the topic that replies to nothing: neither the
+        // task nor the chatter after it answers anyone.
+        String topic = topicCreated(7, MANAGER, "Nomin");
+        JsonNode mention = UpdateHandlerTest.mention(850, 91, 100, "Bold", "@" + FakeTelegram.BOT_USERNAME + " fix the login", topic);
+        ((ObjectNode) mention.get("message")).put("message_thread_id", 7).put("is_topic_message", true);
+        handler.handle(mention);
+        JsonNode chatter = UpdateHandlerTest.message(851, 92, ALI, "Ali", GROUP, "supergroup", "Lunch at noon?", topic);
+        ((ObjectNode) chatter.get("message")).put("message_thread_id", 7).put("is_topic_message", true);
+
+        handler.handle(chatter);
+
+        assertEquals(null, row("SELECT source_ref FROM draft").get("source_ref"), "the topic is where it was given, not what it answers");
+        assertEquals("0", count("SELECT count(*) AS n FROM addition"));
+    }
+
+    @Test
+    void aSplitDraftsPartsAreOfferedItAgainButNoOtherDraftFromTheSameMessage() {
+        db.transaction(tx -> TelegramUsers.record(tx, 100, "bold_dev", clock.instant()));
+        // Nomin gives Bold a task; Bold, replying to her message, passes the export on to Ali (G-1c).
+        handler.handle(UpdateHandlerTest.people(860, 90, MANAGER, "Nomin", "@bold_dev fix the list and the export", null, "@bold_dev"));
+        handler.handle(UpdateHandlerTest.people(861, 91, 100, "Bold", "@ali_dev you take the export", humanMessage(90, MANAGER, "Nomin"),
+                "@ali_dev"));
+        handler.handle(UpdateHandlerTest.message(862, 92, MANAGER, "Nomin", GROUP, "supergroup", "Both before Friday",
+                humanMessage(90, MANAGER, "Nomin")));
+        assertEquals("1", count("SELECT count(*) AS n FROM addition WHERE member_ref = ?", "telegram:" + ALI), "Ali's draft answers her too");
+        long boldsDraft = Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = ?", "telegram:" + GROUP + "/90").get("id"));
+        Requester bold = new Requester("telegram:100", "Bold");
+        db.transaction(tx -> {
+            tasks.split(tx, bold, boldsDraft, "telegram:100/5");
+            tasks.splitProposed(tx, boldsDraft, List.of("Fix the list", "Fix the export"));
+            tasks.acceptSplit(tx, bold, boldsDraft);
+        });
+        String boldsAddition = row("SELECT id FROM addition WHERE member_ref = ?", "telegram:100").get("id");
+
+        handler.handle(UpdateHandlerTest.privateCallback(863, 100, "Bold", "ad:" + boldsAddition));
+
+        assertEquals("[telegram:" + GROUP + "/90#1, telegram:" + GROUP + "/90#2]",
+                SqlRows.query(dbFile, "SELECT origin_ref FROM addition WHERE member_ref = 'telegram:100' AND used_at IS NULL"
+                        + " ORDER BY origin_ref").stream().map(found -> found.get("origin_ref")).toList().toString());
+        assertEquals("1", count("SELECT count(*) AS n FROM addition WHERE member_ref = ?", "telegram:" + ALI), "Ali has hers already");
+    }
+
     /** The approved plan's execution (run 2) has started, its agent running. */
     private void executing(long taskId) {
         db.transaction(tx -> tasks.approve(tx, new Requester("telegram:" + ALI, "Ali"), taskId, 1));
@@ -558,6 +602,14 @@ class GroupAdditionsTest {
         return """
                 {"message_id":%d,"from":{"id":%d,"is_bot":false,"first_name":"%s"},"chat":{"id":%d,"type":"supergroup"},
                  "date":1789640000,"text":"the original"}""".formatted(messageId, fromId, firstName, GROUP);
+    }
+
+    /** The service message that opened forum topic {@code threadId}, as Telegram puts it under each message there. */
+    private static String topicCreated(long threadId, long fromId, String firstName) {
+        return """
+                {"message_id":%d,"message_thread_id":%d,"from":{"id":%d,"is_bot":false,"first_name":"%s"},
+                 "chat":{"id":%d,"type":"supergroup","is_forum":true},"date":1789640000,
+                 "forum_topic_created":{"name":"Positions","icon_color":7322096}}""".formatted(threadId, threadId, fromId, firstName, GROUP);
     }
 
     private void deliverAll() {
