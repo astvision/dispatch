@@ -53,6 +53,15 @@ jobs:
         with:
           name: ui-dist
           path: ui/dist
+      - name: Temporary files under a space and Cyrillic (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # As under C:\Users\Батбаяр: every temporary path from here on has a space and Cyrillic in it.
+          $dir = Join-Path $env:RUNNER_TEMP 'dispatch тест'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          "TMP=$dir" >> $env:GITHUB_ENV
+          "TEMP=$dir" >> $env:GITHUB_ENV
       - name: Build and test
         shell: bash
         run: ./mvnw --batch-mode -Pui verify
