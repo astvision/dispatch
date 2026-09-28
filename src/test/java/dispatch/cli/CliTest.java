@@ -159,6 +159,22 @@ class CliTest {
     }
 
     @Test
+    void configAndInstanceTogetherAreRefusedForServiceUiAndInit() {
+        Locations defaults = DEFAULTS;
+        String message = "--config and --instance both name the bot to use; give one of them";
+
+        assertEquals(message, assertThrows(CliException.class,
+                () -> Cli.parse(new String[]{"service", "status", "--config", "x.yaml", "--instance", "team"}, defaults))
+                .getMessage());
+        assertEquals(message, assertThrows(CliException.class,
+                () -> Cli.parse(new String[]{"ui", "--config", "x.yaml", "--instance", "team"}, defaults))
+                .getMessage());
+        assertEquals(message, assertThrows(CliException.class,
+                () -> Cli.parse(new String[]{"init", "--config", "x.yaml", "--instance", "team"}, defaults))
+                .getMessage());
+    }
+
+    @Test
     void aBadInstanceNameAndWorkerCommandsAreRefused() {
         Locations defaults = DEFAULTS;
 

@@ -175,6 +175,7 @@ public final class Cli {
                     throw new CliException("service needs one of: " + String.join(", ", SERVICE_ACTIONS));
                 }
                 arguments.allow(1, Set.of("config", "instance"));
+                arguments.refuseConfigWithInstance();
                 yield new Service(arguments.configFile(defaults), arguments.positional().getFirst(), arguments.instance());
             }
             case "project" -> {
@@ -192,6 +193,7 @@ public final class Cli {
             }
             case "init" -> {
                 arguments.allow(0, Set.of("config", "force", "advanced", "instance"));
+                arguments.refuseConfigWithInstance();
                 yield new Init(arguments.configFile(defaults), arguments.switches().contains("force"),
                         arguments.switches().contains("advanced"), arguments.instance());
             }
@@ -201,6 +203,7 @@ public final class Cli {
             }
             case "ui" -> {
                 arguments.allow(0, Set.of("config", "port", "no-browser", "instance"));
+                arguments.refuseConfigWithInstance();
                 yield new Ui(arguments.configFile(defaults), port(arguments.values().getOrDefault("port", "7878")),
                         !arguments.switches().contains("no-browser"), arguments.instance(), arguments.values().containsKey("port"));
             }
@@ -322,6 +325,17 @@ public final class Cli {
 
         String instance() {
             return values.containsKey("instance") ? Locations.validName(values.get("instance")) : null;
+        }
+
+        /**
+         * For a command whose spec (service definition, init'd files) is derived from {@code Locations} rather than
+         * only read once (service, init, ui): --config and --instance would each pick a different bot, so a command
+         * that writes or installs something durable under one of them refuses to guess which.
+         */
+        void refuseConfigWithInstance() {
+            if (values.containsKey("config") && values.containsKey("instance")) {
+                throw new CliException("--config and --instance both name the bot to use; give one of them");
+            }
         }
 
         Path configFile(Locations defaults) {
