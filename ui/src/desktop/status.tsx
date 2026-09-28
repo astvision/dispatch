@@ -39,12 +39,15 @@ function LiveReading({ children }: { children: ReactNode }) {
   const status = useContext(StatusContext);
   const { data, error, reload } = usePolling(getLive);
   const stopped = error?.code === "bot_not_running";
-  const forgotten = error?.code === "not_owner";
+  const refused = error?.code === "not_owner";
 
   useEffect(() => {
-    // A remembered admin the config no longer names: forget them, so the page asks again.
-    if (forgotten) chooseMember(null);
-  }, [forgotten]);
+    // A remembered admin the desk no longer accepts: forget them and read again at once. With one candidate the desk
+    // then answers; with several it says choose_member, and only that makes the page ask.
+    if (!refused) return;
+    chooseMember(null);
+    reload();
+  }, [refused, reload]);
 
   const value: DesktopStatus = {
     ...status,
@@ -52,7 +55,7 @@ function LiveReading({ children }: { children: ReactNode }) {
     botRunning: stopped ? false : data ? true : null,
     liveError: error,
     reloadLive: reload,
-    needsMember: error?.code === "choose_member" || forgotten,
+    needsMember: error?.code === "choose_member",
   };
   return <StatusContext.Provider value={value}>{children}</StatusContext.Provider>;
 }

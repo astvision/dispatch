@@ -59,10 +59,12 @@ The desktop's task pages reach the running bot through its desk port (ADR 0030).
 directory, itself created owner-only; a clean stop deletes it, and a restart replaces the token. The port answers only
 the task routes, only with that token (compared in constant time) and its own `127.0.0.1` Host, serves no page and
 sends no CORS header, so a web page cannot reach it. `dispatch ui` adds the token when it forwards a page's call; the
-browser never holds it. Whoever can read `desk.json` can act on tasks as the owner's member until the bot restarts: see
-every task in full, and approve, answer or retry the owner's own, and cancel any. That is the owner's OS account, which
-can already read the database and run `dispatch ui`. The member the desk acts as must be one who may manage the
-instance (a personal bot's one member, or an admin); the bot refuses any other.
+browser never holds it. Whoever can read `desk.json` can act on tasks until the bot restarts, and whoever holds a
+`dispatch ui` session can while both run: see every task in full, and act as any admin the config names (on a personal
+bot, its one member) — approve, answer or retry that admin's own tasks, and cancel any task. The page names the admin
+it acts as, and the bot checks only that the name is an admin's; it refuses any other, and on a team with no admin it
+answers only that nobody may manage it. None of this goes beyond the owner's OS account, which can already read and
+change the database.
 
 ## The Telegram Mini App
 

@@ -59,6 +59,18 @@ class DeskAuthTest {
     }
 
     @Test
+    void aTeamWithNoAdminHasNobodyToChoose() {
+        Groups noAdmins = new Groups(new Config.Telegram(List.of(), List.of(new Config.Group("backend", -100L,
+                List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))));
+        DeskAuth auth = new DeskAuth(4000, TOKEN, noAdmins);
+
+        ApiException refused = assertThrows(ApiException.class, () -> auth.caller(exchange(Map.of("Authorization", "desk " + TOKEN))));
+
+        assertEquals(403, refused.status());
+        assertEquals("no_owner", refused.code());
+    }
+
+    @Test
     void aPersonalBotIsItsOneMember() {
         DeskAuth auth = new DeskAuth(4000, TOKEN, personal);
 

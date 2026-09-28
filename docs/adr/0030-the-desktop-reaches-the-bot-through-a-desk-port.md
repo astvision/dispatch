@@ -19,7 +19,9 @@ the owner runs the machine and can read its database anyway. Acting is unchanged
 member, through the same `TaskService` calls as Telegram's buttons, so ADR 0020 decides it. The owner approves, rejects,
 corrects, answers and retries only their own tasks, and cancels any task as an admin. That member is a personal bot's
 one member, or a team's only admin; with several admins the page asks once which one you are, remembers it in the
-browser and sends it with each call, and the bot refuses a member who may not manage the instance.
+browser and sends it with each call. The bot trusts that answer as far as the config goes: it refuses a member who may
+not manage the instance, so the desktop can act as any admin, and on a team with no admin it answers only that nobody
+may manage it.
 
 We rejected:
 - **Reading the database and posting orders through it.** The bot would need a second intake loop polling a table,
@@ -34,8 +36,8 @@ We rejected:
 
 - The bot has a second listener. It is small by design — loopback only, task routes only, a per-start token in an
   owner-only file — and `DeskAuthTest`, `DeskServerTest` and `DeskProxyTest` are its boundary's tests.
-- Whoever can read `desk.json` can act as the owner's member on tasks until the bot restarts. That is the owner's own
-  account, which can already read the database and run `dispatch ui`.
+- Whoever can read `desk.json` can act on tasks as any admin until the bot restarts. That is the owner's own account,
+  which can already read and change the database and run `dispatch ui`.
 - The task pages and the strip's task lamps need the bot running. While it is stopped they say so, and the rest of the
   desktop works, a task's log included (`dispatch ui` reads the log file itself).
 - A desk action takes effect at once in the bot and in Telegram: it is the call a button makes.

@@ -1,4 +1,4 @@
-import { Button, Flex, Modal, Spin, Typography } from "antd";
+import { Button, Flex, Modal, Typography } from "antd";
 import { useEffect, useState } from "react";
 import { getConfig, type ConfigView } from "../api";
 import { useT } from "../i18n/i18n";
@@ -30,21 +30,20 @@ export default function MemberChoice({ open, onChosen }: { open: boolean; onChos
     };
   }, [open]);
 
-  // Gone entirely once answered, rather than kept hidden: it is asked rarely and needs no closing animation.
-  if (!open) return null;
+  // Gone entirely once answered, rather than kept hidden: it is asked rarely and needs no closing animation. Nor is it
+  // shown before the config names the admins, or when it names none: a dialog that cannot close must offer a choice.
+  if (!open || !admins?.length) return null;
   return (
     <Modal open title={t("member.title")} closable={false} mask={{ closable: false }} keyboard={false} footer={null}>
       <Typography.Paragraph type="secondary">{t("member.hint")}</Typography.Paragraph>
-      {admins === null ? <Spin /> : (
-        <Flex vertical gap={8}>
-          {admins.map((admin) => (
-            <Button key={admin.ref} block onClick={() => {
-              chooseMember(admin.ref);
-              onChosen();
-            }}>{admin.name}</Button>
-          ))}
-        </Flex>
-      )}
+      <Flex vertical gap={8}>
+        {admins.map((admin) => (
+          <Button key={admin.ref} block onClick={() => {
+            chooseMember(admin.ref);
+            onChosen();
+          }}>{admin.name}</Button>
+        ))}
+      </Flex>
     </Modal>
   );
 }

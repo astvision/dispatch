@@ -57,12 +57,41 @@ test("a remembered admin who is no longer one is forgotten and the page asks aga
   chooseMember("telegram:200");
   vi.mocked(api.getOverview).mockResolvedValue(overview);
   vi.mocked(api.getConfig).mockResolvedValue(twoAdmins);
-  vi.mocked(api.getLive).mockRejectedValue(new api.ApiError("not_owner", "telegram:200 may not act for this Dispatch"));
+  vi.mocked(api.getLive)
+    .mockRejectedValueOnce(new api.ApiError("not_owner", "telegram:200 may not act for this Dispatch"))
+    .mockRejectedValue(new api.ApiError("choose_member", "choose which admin you are"));
 
   renderDesktop();
 
   expect(await screen.findByText("Which admin are you?")).toBeInTheDocument();
   expect(chosenMember()).toBeNull();
+});
+
+test("a remembered member the desk refuses is forgotten and the desk read again at once, asking nothing", async () => {
+  chooseMember("telegram:999");
+  vi.mocked(api.getOverview).mockResolvedValue(overview);
+  vi.mocked(api.getLive)
+    .mockRejectedValueOnce(new api.ApiError("not_owner", "telegram:999 may not act for this Dispatch"))
+    .mockResolvedValue(live);
+
+  renderDesktop();
+
+  // Well inside the 5-second beat: the second reading is the retry, not the next poll.
+  await screen.findByText("0 running");
+  expect(chosenMember()).toBeNull();
+  expect(api.getConfig).not.toHaveBeenCalled();
+});
+
+test("a desk that asks while the config names no admin opens no dialog it could never close", async () => {
+  vi.mocked(api.getOverview).mockResolvedValue(overview);
+  vi.mocked(api.getConfig).mockResolvedValue({ ...teamConfig, admins: [] });
+  vi.mocked(api.getLive).mockRejectedValue(new api.ApiError("choose_member", "choose which admin you are"));
+
+  renderDesktop();
+
+  await vi.waitFor(() => expect(api.getConfig).toHaveBeenCalled());
+  await Promise.resolve();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 test("a desk that knows who you are never asks", async () => {

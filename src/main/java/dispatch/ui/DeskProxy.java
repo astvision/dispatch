@@ -2,8 +2,10 @@ package dispatch.ui;
 
 import dispatch.Json;
 import dispatch.Language;
+import dispatch.Log;
 import dispatch.Text;
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -56,8 +58,13 @@ final class DeskProxy implements UiServer.Forward {
         try {
             HttpResponse<byte[]> answer = http.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
             return new UiServer.Forwarded(answer.statusCode(), answer.body());
+        } catch (ConnectException e) {
+            // Refused: a stopped bot, or one that crashed and left its file. No news, and the page asks every 5 seconds.
+            return notRunning(language);
         } catch (IOException e) {
-            // Refused, reset or timed out: a stopped bot, or one that crashed and left its file.
+            // Taken but not answered in time, or cut off: a bot that runs but is stuck, which the page can only call
+            // stopped. The line says what really happened.
+            Log.warn("desk.unanswered", "port", desk.get().port(), "path", path, "error", e.toString());
             return notRunning(language);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

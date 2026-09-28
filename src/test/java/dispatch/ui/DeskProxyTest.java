@@ -2,6 +2,8 @@ package dispatch.ui;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
@@ -13,7 +15,11 @@ import dispatch.core.Projects;
 import dispatch.core.TaskService;
 import dispatch.store.Database;
 import dispatch.testing.TestClock;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -73,12 +79,52 @@ class DeskProxyTest {
         desk.close();
         new DeskFile(closedPort, DeskFile.newToken(), "0.3.0", "acme").write(state);
 
-        UiServer.Forwarded answer = proxy.forward("/api/live", "GET", new byte[0], Language.MN, null);
+        UiServer.Forwarded[] answer = new UiServer.Forwarded[1];
+        String logged = stdout(() -> answer[0] = proxy.forward("/api/live", "GET", new byte[0], Language.MN, null));
 
-        assertEquals(503, answer.status());
-        JsonNode body = Json.read(new String(answer.json(), UTF_8));
+        assertEquals(503, answer[0].status());
+        JsonNode body = Json.read(new String(answer[0].json(), UTF_8));
         assertEquals("bot_not_running", body.path("error").asText());
         assertEquals("Бот ажиллахгүй байна", body.path("message").asText());
+        // The page asks every 5 seconds: a stopped bot is no news.
+        assertFalse(logged.contains("desk."), logged);
+    }
+
+    @Test
+    void aBotThatTakesTheCallButNeverAnswersIsLoggedNotJustCalledStopped() throws IOException {
+        desk.close();
+        try (ServerSocket stuck = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            new DeskFile(stuck.getLocalPort(), DeskFile.newToken(), "0.3.0", "acme").write(state);
+            Thread.ofVirtual().start(() -> {
+                // Takes each connection and hangs up without a word, as a bot stuck past the timeout ends up doing.
+                try {
+                    while (true) {
+                        stuck.accept().close();
+                    }
+                } catch (IOException closedWithTheTest) {
+                    // The test is over.
+                }
+            });
+
+            UiServer.Forwarded[] answer = new UiServer.Forwarded[1];
+            String logged = stdout(() -> answer[0] = proxy.forward("/api/live", "GET", new byte[0], Language.EN, null));
+
+            assertEquals(503, answer[0].status());
+            assertTrue(logged.contains("event=desk.unanswered"), logged);
+            assertTrue(logged.contains("path=/api/live"), logged);
+        }
+    }
+
+    private static String stdout(Runnable call) {
+        PrintStream out = System.out;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(logged, true, UTF_8));
+            call.run();
+        } finally {
+            System.setOut(out);
+        }
+        return logged.toString(UTF_8);
     }
 
     @Test

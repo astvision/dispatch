@@ -49,20 +49,28 @@ final class DeskAuth implements UiServer.Auth {
             throw new ApiException(401, "desk_token", Text.of("refusal.deskToken"));
         }
         String named = exchange.getRequestHeaders().getFirst(MEMBER_HEADER);
-        String ref = named != null && !named.isBlank() ? named.strip()
-                : onlyCandidate().orElseThrow(() -> new ApiException(409, "choose_member", Text.of("refusal.chooseMember")));
+        String ref = named != null && !named.isBlank() ? named.strip() : onlyCandidate();
         if (!groups.mayManage(ref)) {
             throw new ApiException(403, "not_owner", Text.of("refusal.notOwner", ref));
         }
         return new UiServer.Caller(ref, groups.memberName(ref).orElse(ref), true);
     }
 
-    /** The one member the owner can be: a personal bot's member, or a team's only admin. */
-    private Optional<String> onlyCandidate() {
+    /**
+     * The one member the owner can be when the page names none: a personal bot's member, or a team's only admin. A team
+     * with several admins is asked which one; a team with none has nobody the desk may act as.
+     */
+    private String onlyCandidate() {
         List<String> candidates = groups.isPersonal()
                 ? groups.all().stream().flatMap(group -> group.members().stream()).map(member -> "telegram:" + member.id())
                         .distinct().toList()
                 : groups.admins();
-        return candidates.size() == 1 ? Optional.of(candidates.getFirst()) : Optional.empty();
+        if (candidates.isEmpty()) {
+            throw new ApiException(403, "no_owner", Text.of("refusal.noOwner"));
+        }
+        if (candidates.size() > 1) {
+            throw new ApiException(409, "choose_member", Text.of("refusal.chooseMember"));
+        }
+        return candidates.getFirst();
     }
 }

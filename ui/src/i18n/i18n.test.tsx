@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { detectLanguage, LanguageProvider, useLanguage, useT } from "./i18n";
+import { mn } from "./mn";
 
 const blocked = {
   getItem: (): string | null => {
@@ -73,4 +74,10 @@ test("the Mini App's fixed language ignores the browser and the switch", () => {
 test("a page outside any provider reads English, as the tests do", () => {
   render(<Probe />);
   expect(screen.getByText("Projects")).toBeInTheDocument();
+});
+
+// D-1's rule: no English word on a Mongolian page but code values, names and other programs' words. "Desktop" is what
+// the code calls these pages, so it is the likeliest to slip in.
+test("no Mongolian phrase calls the pages the desktop", () => {
+  expect(Object.entries(mn).filter(([, phrase]) => /\bdesk(top)?\b(?!\.json)/i.test(phrase))).toEqual([]);
 });

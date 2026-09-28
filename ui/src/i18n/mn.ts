@@ -256,7 +256,7 @@ export const mn: Record<Key, string> = {
   "strip.today": "Өнөөдөр ${usd}",
   "strip.newVersion": "Сервисийг дахин эхлүүлбэл {version} ажиллана",
   "member.title": "Та аль админ бэ?",
-  "member.hint": "Desktop таны нэрийн өмнөөс ажиллана: өөрийн төлөвлөгөөгөө та шийднэ.",
+  "member.hint": "Энэ хуудас таны нэрийн өмнөөс ажиллана: өөрийн төлөвлөгөөгөө та шийднэ.",
   "tasks.title": "Даалгавар",
   "tasks.group.waitingOnYou": "Таныг хүлээж",
   "tasks.group.running": "Явж байна",
