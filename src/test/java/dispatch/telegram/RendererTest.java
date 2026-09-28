@@ -604,6 +604,14 @@ class RendererTest {
     }
 
     @Test
+    void aTaskGivenOnTheDesktopSaysWhereItCameFromInThePrivateChat() {
+        String html = renderer.render(OutboxKind.TASK_GIVEN_ON_DESK, Json.object().put("taskId", 12).put("project", "alm")
+                .put("priority", "URGENT").put("title", "Fix the login timeout")).html();
+
+        assertEquals("🖥 <b>#12</b> alm · 🔴\nХөтөч дээрээс өгсөн: Fix the login timeout", html);
+    }
+
+    @Test
     void everyKindRendersWithinTelegramLimitsWithoutPlaceholders() {
         for (OutboxKind kind : OutboxKind.values()) {
             for (boolean fellBack : new boolean[] {false, true}) {
@@ -924,6 +932,8 @@ class RendererTest {
         return switch (kind) {
             case TASK_QUEUED -> Json.object().put("taskId", 1).put("project", "autoland-management").put("requester", "Bold")
                     .put("priority", "URGENT").put("title", "Fix the login timeout");
+            case TASK_GIVEN_ON_DESK -> Json.object().put("taskId", 12).put("project", "alm").put("priority", "URGENT")
+                    .put("title", "Fix the login timeout");
             case TOPIC_CREATE -> Json.object().put("taskId", 7).put("project", "life").put("title", "Fix it");
             case DRAFT_PROMPT -> draftPayload(List.of("alm", "crm", "life", "billing"), null, "OPEN", null);
             case DRAFT_EXPIRED -> Json.object();
