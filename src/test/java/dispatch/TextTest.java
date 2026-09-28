@@ -1,6 +1,8 @@
 package dispatch;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -90,6 +92,26 @@ class TextTest {
     }
 
     /**
+     * MessageFormat does not reject a lone apostrophe: it quotes to the end of the message, and the page silently loses
+     * every word after it ("members' computers" would lose " computers"). A written apostrophe is doubled.
+     */
+    @Test
+    void noMessageHasAnApostropheThatWouldQuoteTheRestAway() throws IOException {
+        assertTrue(loneApostrophe("members' computers"));
+        assertFalse(loneApostrophe("members'' computers, and '{'braces'}' quoted on purpose"));
+        for (String name : List.of("texts_en.properties", "texts_mn.properties")) {
+            Properties bundle = bundle(name);
+            Set<String> broken = new TreeSet<>();
+            for (String key : bundle.stringPropertyNames()) {
+                if (loneApostrophe(bundle.getProperty(key))) {
+                    broken.add(key);
+                }
+            }
+            assertEquals(Set.of(), broken, name);
+        }
+    }
+
+    /**
      * A key the code names but the English bundle lacks would answer a page with a 500 on that path; not every message's
      * path has a test of its own, so the names are read from the source. Keys are always literals, never built.
      */
@@ -109,6 +131,11 @@ class TextTest {
             }
         }
         assertEquals(Set.of(), unknown);
+    }
+
+    /** What is left once written apostrophes ('') and quoted braces ('{', '}') are taken out must hold no apostrophe. */
+    private static boolean loneApostrophe(String pattern) {
+        return pattern.replace("''", "").replace("'{'", "").replace("'}'", "").contains("'");
     }
 
     private static Set<String> placeholders(String pattern) {

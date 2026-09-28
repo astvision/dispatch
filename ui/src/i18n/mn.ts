@@ -245,4 +245,9 @@ export const mn: Record<Key, string> = {
   "setup.workers": "Компьютерууд",
   "setup.workersAt": "{url} (порт {port})",
   "setup.write": "Тохиргоог бичих",
+  "api.stopped": "хүсэлтийг зогсоосон",
+  "api.restarting": "Dispatch хариу өгөхгүй байна; дахин эхэлж байж магадгүй",
+  "api.notRunning": "dispatch ui ажиллахгүй байна; дахин эхлүүлээд хэвлэсэн холбоосыг нь нээнэ үү",
+  "api.answered": "сервер {status} гэж хариуллаа",
+  "api.noResult": "сервер үр дүнгүй хариуллаа",
 };

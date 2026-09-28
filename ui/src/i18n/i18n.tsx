@@ -33,6 +33,9 @@ function format(language: Language, key: Key, params?: Record<string, string | n
   return params ? phrase.replace(/\{(\w+)\}/g, (whole, name: string) => (name in params ? String(params[name]) : whole)) : phrase;
 }
 
+/** t() for code outside React (api.ts): the phrase in the language the page speaks now. */
+export const translate: Translate = (key, params) => format(current, key, params);
+
 interface Chosen {
   language: Language;
   choose: (language: Language) => void;

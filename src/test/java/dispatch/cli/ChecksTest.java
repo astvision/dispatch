@@ -106,6 +106,19 @@ class ChecksTest {
     }
 
     @Test
+    void anInvalidConfigsReasonIsWrittenInThePagesLanguage() throws IOException {
+        writeConfig();
+        Files.writeString(config, Files.readString(config).replace("maxConcurrentRuns: 1", "maxConcurrentRuns: 0"));
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        assertEquals(1, findings.size(), findings.toString());
+        String mongolian = findings.getFirst().message().render(dispatch.Language.MN);
+        assertTrue(mongolian.contains("буруу байна"), mongolian);
+        assertTrue(mongolian.contains("scheduler.maxConcurrentRuns: заавал, хамгийн багадаа 1"), mongolian);
+    }
+
+    @Test
     void teamModeWarnsRatherThanFailsWhenClaudeCannotRun() throws IOException {
         // ADR 0021: no task's agent ever runs on the team machine, but splitting a message with ✂️ still does, so a
         // missing claude there is worth a warning, not a failure that would also flip dispatch check's exit code.

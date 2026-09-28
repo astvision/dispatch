@@ -26,6 +26,18 @@ describe("the launch data on every request", () => {
     expect(init.headers).toMatchObject({ Authorization: "tma user=%7B%22id%22%3A1%7D&hash=abc" });
   });
 
+  it("says in the page's language that a server cannot be reached", async () => {
+    vi.doMock("./telegram", () => ({ inTelegram: false, initData: null }));
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    const { render } = await import("@testing-library/react");
+    const { createElement } = await import("react");
+    const { LanguageProvider } = await import("./i18n/i18n");
+    const { getOverview } = await import("./api");
+    render(createElement(LanguageProvider, { fixed: "mn", children: null }));
+
+    await expect(getOverview()).rejects.toThrow("dispatch ui ажиллахгүй байна; дахин эхлүүлээд хэвлэсэн холбоосыг нь нээнэ үү");
+  });
+
   it("asks for the page's language, so the server writes its messages in it", async () => {
     vi.doMock("./telegram", () => ({ inTelegram: false, initData: null }));
     vi.doMock("./i18n/i18n", () => ({ currentLanguage: () => "mn" }));

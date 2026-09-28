@@ -7,6 +7,12 @@ import { PATHS_FILE, PORT, STATE_FILE } from "./dispatch";
 
 const TARGET = path.join(import.meta.dirname, "..", "..", "target");
 
+/**
+ * As long as a Windows state folder (C:\\Users\\…\\AppData\\Local\\dispatch\\state), so the phone-width test meets
+ * a path that cannot fit on one line of a 390-pixel page.
+ */
+const STATE = path.join("state", "Users-Bold-AppData-Local-dispatch-state-of-this-computer");
+
 /** A git clone with one commit on main, as ProjectProbe expects. */
 function clone(folder: string) {
   mkdirSync(folder, { recursive: true });
@@ -47,7 +53,7 @@ export default async function globalSetup() {
     const configFile = path.join(dir, "dispatch.yaml");
     writeFileSync(configFile, `# The e2e team's Dispatch
 team: acme
-stateDir: ${yamlPath(path.join(dir, "state"))}
+stateDir: ${yamlPath(path.join(dir, STATE))}
 
 telegram:
   admins:

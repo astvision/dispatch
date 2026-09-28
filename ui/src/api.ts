@@ -1,6 +1,6 @@
 // Typed calls to the dispatch ui server. Every page goes through here, so errors look the same everywhere.
 
-import { currentLanguage } from "./i18n/i18n";
+import { currentLanguage, translate } from "./i18n/i18n";
 import { inTelegram, initData } from "./telegram";
 
 export type Level = "OK" | "WARN" | "FAIL";
@@ -50,16 +50,14 @@ async function send<T>(path: string, init: RequestInit): Promise<T> {
     };
     response = await fetch(path, { credentials: "same-origin", ...init, headers });
   } catch {
-    if (init.signal?.aborted) throw new ApiError("aborted", "the request was stopped");
-    throw new ApiError("unreachable", inTelegram
-      ? "Dispatch is not answering; it may be restarting"
-      : "dispatch ui is not running; start it again and open the link it prints");
+    if (init.signal?.aborted) throw new ApiError("aborted", translate("api.stopped"));
+    throw new ApiError("unreachable", translate(inTelegram ? "api.restarting" : "api.notRunning"));
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(body?.error ?? "http", body?.message ?? `the server answered ${response.status}`);
+    throw new ApiError(body?.error ?? "http", body?.message ?? translate("api.answered", { status: response.status }));
   }
-  if (body === null) throw new ApiError("http", "the server answered without a result");
+  if (body === null) throw new ApiError("http", translate("api.noResult"));
   return body as T;
 }
 

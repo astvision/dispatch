@@ -67,7 +67,7 @@ public final class Checks {
             prepared = RunCommand.prepare(configFile, processEnvironment);
         } catch (CliException | ConfigException e) {
             Run failed = new Run(onEach, Redactor.fromEnvironment(processEnvironment));
-            Text why = e instanceof CliException refused ? refused.text() : Text.raw(e.getMessage());
+            Text why = e instanceof CliException refused ? refused.text() : ((ConfigException) e).text();
             failed.add(Level.FAIL, "config", Text.of("check.configInvalid", why));
             return failed.findings;
         }

@@ -244,4 +244,9 @@ export const en = {
   "setup.workers": "Workers",
   "setup.workersAt": "{url} (port {port})",
   "setup.write": "Write this setup",
+  "api.stopped": "the request was stopped",
+  "api.restarting": "Dispatch is not answering; it may be restarting",
+  "api.notRunning": "dispatch ui is not running; start it again and open the link it prints",
+  "api.answered": "the server answered {status}",
+  "api.noResult": "the server answered without a result",
 } as const;

@@ -318,7 +318,9 @@ public final class Setup {
                 ConfigLoader.load(draft, ProjectAddCommand.validationEnvironment(Map.of()));
             } catch (ConfigException e) {
                 Files.deleteIfExists(draft);
-                throw new CliException(Text.of("setupStep.thisSetup", e.getMessage().replace(draft.toString(), configFile.toString())));
+                String drafted = draft.toString();
+                throw new CliException(Text.of("setupStep.thisSetup",
+                        e.text().map(words -> words.replace(drafted, configFile.toString()))));
             }
             SecretsFile.write(SecretsFile.beside(configFile), Map.of("TELEGRAM_BOT_TOKEN", token));
             Files.move(draft, configFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
