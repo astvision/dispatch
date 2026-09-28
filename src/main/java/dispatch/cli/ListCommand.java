@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Redactor;
 import java.io.PrintStream;
 import java.util.List;
 import java.util.Map;
@@ -22,14 +23,16 @@ public final class ListCommand {
             out.println("no Dispatch set up on this computer yet: dispatch init");
             return 0;
         }
-        found.forEach(this::print);
+        // A loader error can embed a raw value from the file (e.g. a token pasted into the wrong field): never printed as is.
+        Redactor redactor = Redactor.fromEnvironment(env);
+        found.forEach(instance -> print(instance, redactor));
         return 0;
     }
 
-    private void print(Instances.Found found) {
+    private void print(Instances.Found found, Redactor redactor) {
         String name = found.name() == null ? "default" : found.name();
         if (found.error() != null) {
-            out.println(name + "  (does not load: " + firstLine(found.error()) + ")");
+            out.println(name + "  (does not load: " + redactor.redact(firstLine(found.error())) + ")");
             return;
         }
         String bot = "bot " + Instances.botId(found.config().secrets().telegramBotToken());
