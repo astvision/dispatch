@@ -31,6 +31,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -411,5 +412,13 @@ class TasksApiTest {
     private static JsonNode item(JsonNode listed, long taskId) {
         return StreamSupport.stream(listed.path("tasks").spliterator(), false)
                 .filter(task -> task.path("taskId").asLong() == taskId).findFirst().orElseThrow();
+    }
+
+    @Test
+    void theMiniAppGivesNoTaskAndCountsNoSpend() {
+        Set<String> routes = new TasksApi(db, tasks, groups).routes().keySet();
+
+        assertFalse(routes.contains("/api/tasks/new"));
+        assertFalse(routes.contains("/api/tasks/spend"));
     }
 }

@@ -2,6 +2,7 @@ package dispatch.ui;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dispatch.Json;
 import dispatch.core.Groups;
 import dispatch.core.TaskAccess;
 import dispatch.core.TaskService;
@@ -23,20 +24,25 @@ final class LiveApi {
     }
 
     record Live(String version, String name, int running, int queued, List<Waiting> waitingOnYou, int waitingOnOthers,
-                String todayUsd, String monthUsd) {
+                String todayUsd, String monthUsd, int maxConcurrent, List<String> projects, ObjectNode tasks) {
     }
 
     private final Database db;
     private final TaskService tasks;
+    private final Groups groups;
     private final TaskAccess access;
     private final Clock clock;
     private final String version;
     private final String name;
+    private final int maxConcurrent;
 
-    LiveApi(Database db, TaskService tasks, Groups groups, Clock clock, String version, String name) {
+    /** @param maxConcurrent how many runs the bot runs at once (its scheduler.maxConcurrentRuns), for the Overview */
+    LiveApi(Database db, TaskService tasks, Groups groups, Clock clock, String version, String name, int maxConcurrent) {
         this.db = db;
         this.tasks = tasks;
+        this.groups = groups;
         this.access = new TaskAccess(groups);
+        this.maxConcurrent = maxConcurrent;
         this.clock = clock;
         this.version = version;
         this.name = name;
@@ -58,8 +64,13 @@ final class LiveApi {
                     others++;
                 }
             }
+            ObjectNode lists = Json.object();
+            lists.set("running", status.withArray("running"));
+            lists.set("queued", status.withArray("queued"));
+            lists.set("awaitingApproval", status.withArray("awaitingApproval"));
+            List<String> projects = groups.projectsOfMember(caller.ref()).stream().sorted().toList();
             return new Live(version, name, status.withArray("running").size(), status.withArray("queued").size(), mine, others,
-                    usd(Runs.spentSince(tx, today)), usd(Runs.spentSince(tx, month)));
+                    usd(Runs.spentSince(tx, today)), usd(Runs.spentSince(tx, month)), maxConcurrent, projects, lists);
         });
     }
 

@@ -48,3 +48,35 @@ test("a failure keeps the last answer and is replaced by the next success", asyn
   expect(result.current.data).toBe(2);
   expect(result.current.error).toBeNull();
 });
+
+test("while hidden it keeps a slower beat when given one", async () => {
+  vi.useFakeTimers();
+  const read = vi.fn().mockResolvedValue(1);
+  renderHook(() => usePolling(read, 5000, undefined, 30_000));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  act(() => setVisibility("hidden"));
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(read).toHaveBeenCalledTimes(2); // the beat set while in view
+  await act(() => vi.advanceTimersByTimeAsync(29_000));
+  expect(read).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(read).toHaveBeenCalledTimes(3);
+});
+
+test("a tab shown again while a reading is out starts no second beat", async () => {
+  vi.useFakeTimers();
+  let answer: (value: number) => void = () => {};
+  const read = vi.fn()
+    .mockResolvedValueOnce(1)
+    .mockImplementationOnce(() => new Promise<number>((done) => { answer = done; }))
+    .mockResolvedValue(3);
+  renderHook(() => usePolling(read, 5000));
+  await act(() => vi.advanceTimersByTimeAsync(5000)); // the first answer, and the second reading out
+  act(() => setVisibility("hidden"));
+  act(() => setVisibility("visible"));
+  await act(async () => answer(2));
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(read).toHaveBeenCalledTimes(3);
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(read).toHaveBeenCalledTimes(4);
+});

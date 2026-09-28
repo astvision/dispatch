@@ -1,8 +1,10 @@
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { getLive, type ApiError, type Live, type Overview } from "../api";
 import { RestartContext, useRestartNeeded } from "../restart";
+import { useT } from "../i18n/i18n";
 import { useOverview } from "../useOverview";
 import { chooseMember } from "./member";
+import { newlyWaiting, notificationsOn, setNotifications, showNotice, type Switched } from "./notify";
 import { usePolling } from "./usePolling";
 
 export interface DesktopStatus {
@@ -18,9 +20,18 @@ export interface DesktopStatus {
   reloadLive: () => void;
   /** The desk cannot tell which admin the desktop acts as: the page asks (MemberChoice). */
   needsMember: boolean;
+  /** The Мэдэгдэл switch (D-2b): on only when this browser allows notifications and the owner turned them on here. */
+  notifications: boolean;
+  setNotifications: (on: boolean) => Promise<Switched>;
 }
 
-const NO_LIVE = { live: null, botRunning: null, liveError: null, reloadLive: () => {}, needsMember: false };
+const NO_LIVE = {
+  live: null, botRunning: null, liveError: null, reloadLive: () => {}, needsMember: false, notifications: false,
+  setNotifications: async (): Promise<Switched> => "unsupported",
+};
+
+/** With notifications on, a hidden tab still reads the bot this often, to tell of a task that starts waiting (D-2b). */
+const HIDDEN_BEAT_MS = 30_000;
 
 const StatusContext = createContext<DesktopStatus>({ overview: null, error: null, loading: false, reload: async () => {}, ...NO_LIVE });
 
@@ -37,7 +48,10 @@ export function StatusProvider({ children }: { children: ReactNode }) {
 /** The running bot, read every few seconds while the desktop is in view (D-2): the strip's task lamps. */
 function LiveReading({ children }: { children: ReactNode }) {
   const status = useContext(StatusContext);
-  const { data, error, reload } = usePolling(getLive);
+  const t = useT();
+  const [notifying, setNotifying] = useState(notificationsOn);
+  const { data, error, reload } = usePolling(getLive, 5000, undefined, notifying ? HIDDEN_BEAT_MS : undefined);
+  const seen = useRef<number[] | null>(null);
   const stopped = error?.code === "bot_not_running";
   const refused = error?.code === "not_owner";
 
@@ -49,6 +63,26 @@ function LiveReading({ children }: { children: ReactNode }) {
     reload();
   }, [refused, reload]);
 
+  useEffect(() => {
+    if (!data) return;
+    const fresh = newlyWaiting(seen.current, data.waitingOnYou);
+    seen.current = data.waitingOnYou.map((task) => task.taskId);
+    if (!notifying) return;
+    for (const task of fresh) {
+      if (!showNotice(t("notify.waiting", { id: task.taskId, title: task.title }), task.taskId)) {
+        // A browser that would not show one (its permission taken back) turns the switch off rather than fail every beat.
+        void setNotifications(false).then(() => setNotifying(false));
+        return;
+      }
+    }
+  }, [data, notifying, t]);
+
+  const switchNotifications = useCallback(async (on: boolean) => {
+    const now = await setNotifications(on);
+    setNotifying(now === "on");
+    return now;
+  }, []);
+
   const value: DesktopStatus = {
     ...status,
     live: stopped ? null : data,
@@ -56,6 +90,8 @@ function LiveReading({ children }: { children: ReactNode }) {
     liveError: error,
     reloadLive: reload,
     needsMember: error?.code === "choose_member",
+    notifications: notifying,
+    setNotifications: switchNotifications,
   };
   return <StatusContext.Provider value={value}>{children}</StatusContext.Provider>;
 }

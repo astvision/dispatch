@@ -76,6 +76,21 @@ class OutboxSenderTest {
     }
 
     @Test
+    void aReplyTargetOutsideTelegramIsSentAsAPlainMessage() throws Exception {
+        // A task given on the desktop (D-2b) comes from "desk:…": there is no Telegram message to reply to.
+        long id = db.transactionReturning(tx -> Outbox.enqueue(tx, null, OutboxKind.TASK_QUEUED, "telegram:100", "desk:5f0c9a2e",
+                Json.object().put("taskId", 42).put("project", "alm").put("requester", "Bold").put("priority", "NORMAL")
+                        .put("title", "Fix the login timeout"), clock.instant()));
+
+        assertTrue(sender.deliverDue());
+
+        JsonNode body = telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json();
+        assertEquals(100, body.get("chat_id").asLong());
+        assertFalse(body.has("reply_parameters"), body.toString());
+        assertEquals("SENT", row(id).get("status"));
+    }
+
+    @Test
     void editRedrawsItsMessageInPlaceAndLeavesRepliesPointingAtTheOriginal() throws Exception {
         long id = enqueueEdit(Json.object().put("draftId", 7).put("title", "Fix login timeout").put("status", "CREATED")
                 .put("project", "life").put("taskId", 9).put("priority", "URGENT"));

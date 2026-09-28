@@ -6,6 +6,8 @@ public enum OutboxKind {
     TOPIC_CREATE,
     /** The group's line about a task given privately (ADR 0012). */
     TASK_QUEUED,
+    /** The requester's own line about a task they gave on the desktop (D-2b), so the chat hears of it as of any other. */
+    TASK_GIVEN_ON_DESK,
     /** Asks for a draft's project and priority; edited in place as they are chosen. */
     DRAFT_PROMPT,
     DRAFT_EXPIRED,

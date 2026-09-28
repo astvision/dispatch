@@ -64,6 +64,9 @@ public final class TaskService {
     private static final int HISTORY_SIZE = 10;
     private static final int INSTRUCTION_LENGTH = 200;
 
+    /** Where a task given on the desktop comes from (D-2b): no Telegram message, so nothing in the chat to reply to. */
+    public static final String DESK_ORIGIN = "desk:";
+
     private final Groups groups;
     private final Projects projects;
     private final ActiveRuns activeRuns;
@@ -398,7 +401,7 @@ public final class TaskService {
             return CreateResult.EMPTY;
         }
         Set<String> mine = groups.projectsOfMember(who.ref());
-        Optional<Config.Project> found = projects.find(projectKey).filter(project -> mine.contains(project.name()));
+        Optional<Config.Project> found = memberProject(who, projectKey);
         if (found.isEmpty()) {
             ObjectNode payload = Json.object().put("given", projectKey);
             ArrayNode known = payload.putArray("projects");
@@ -420,6 +423,45 @@ public final class TaskService {
         }
         insertTask(tx, who, project, text.strip(), priority, originRef, now);
         return CreateResult.CREATED;
+    }
+
+    /** What giving a task on the desktop came to: the new task's number, or why not ({@code reason}: an unavailable project's). */
+    public record Given(CreateResult result, long taskId, String reason) {
+    }
+
+    /**
+     * A task given on the desktop (D-2b), as the requester's own: {@link #create}'s checks, answered to the page and never
+     * to the chat, then the task with a {@link #DESK_ORIGIN} origin, and a line in the requester's private chat saying
+     * where it came from, so the chat stays in step.
+     */
+    public Given give(Tx tx, Requester who, String projectKey, String text, Priority priority) {
+        if (!groups.isMember(who.ref())) {
+            return new Given(CreateResult.NOT_ALLOWED, 0, null);
+        }
+        if (text == null || text.isBlank()) {
+            return new Given(CreateResult.EMPTY, 0, null);
+        }
+        Optional<Config.Project> project = memberProject(who, projectKey);
+        if (project.isEmpty()) {
+            return new Given(CreateResult.UNKNOWN_PROJECT, 0, null);
+        }
+        Optional<String> unavailable = projects.unavailableReason(project.get());
+        if (unavailable.isPresent()) {
+            return new Given(CreateResult.PROJECT_UNAVAILABLE, 0, unavailable.get());
+        }
+        Instant now = clock.instant();
+        long id = insertTask(tx, who, project.get(), text.strip(), priority, DESK_ORIGIN + UUID.randomUUID(), now);
+        Task task = Tasks.find(tx, id).orElseThrow();
+        Outbox.enqueueForRequester(tx, task, OutboxKind.TASK_GIVEN_ON_DESK, Json.object().put("taskId", id)
+                .put("project", task.project()).put("priority", priority.name()).put("title", task.title()), now);
+        tx.afterCommit(wakeOutbox);
+        return new Given(CreateResult.CREATED, id, null);
+    }
+
+    /** The project {@code projectKey} names (its name or alias), if it is one of the requester's groups' projects. */
+    private Optional<Config.Project> memberProject(Requester who, String projectKey) {
+        Set<String> mine = groups.projectsOfMember(who.ref());
+        return projects.find(projectKey).filter(project -> mine.contains(project.name()));
     }
 
     private long insertTask(Tx tx, Requester who, Config.Project project, String description, Priority priority, String originRef,
@@ -1006,6 +1048,7 @@ public final class TaskService {
             if (own) {
                 // What the Mini App's home shows on the requester's own waiting task: the question it waits on, if any.
                 currentPlan(tx, task.id()).ifPresent(plan -> {
+                    item.put("planSeq", plan.path("planSeq").asInt());
                     List<JsonNode> open = new ArrayList<>();
                     plan.withArray("questions").forEach(question -> {
                         if (question.path("answer").isNull()) {

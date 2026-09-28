@@ -1,4 +1,4 @@
-import { Alert, Button, Flex, Spin, Typography } from "antd";
+import { Button, Flex, Result, Spin, Typography } from "antd";
 import { getLogs, taskTimeline, type Timeline } from "../../api";
 import { useT, type Key } from "../../i18n/i18n";
 import { LogRows } from "../../manage/LogsPage";
@@ -67,7 +67,10 @@ export default function TaskPage({ taskId, navigate }: { taskId: number; navigat
       </Button>
       <div className="task-page">
         <section className="panel-box">
-          {botDown ? <Alert type="info" showIcon message={t("tasks.botNotRunning")} /> : <TaskView taskId={taskId} layout="page" />}
+          {botDown
+            ? <Result status="info" title={t("tasks.botNotRunning")}
+                      extra={<Button onClick={() => navigate("/")}>{t("tasks.openOverview")}</Button>} />
+            : <TaskView taskId={taskId} layout="page" />}
         </section>
         <Flex vertical gap={12}>
           {timeline.data && <Facts timeline={timeline.data} />}

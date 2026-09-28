@@ -129,6 +129,8 @@ public final class Renderer {
             case TASK_QUEUED -> plain(format("task.queued", taskId(payload), escape(payload.path("project").asText()),
                     escape(payload.path("requester").asText()), icon(payload).strip(),
                     escapeWithin(payload.path("title").asText(), TITLE_LIMIT)));
+            case TASK_GIVEN_ON_DESK -> plain(format("task.givenOnDesk", taskId(payload), escape(payload.path("project").asText()),
+                    icon(payload).strip(), escapeWithin(payload.path("title").asText(), TITLE_LIMIT)));
             case TOPIC_CREATE -> plain(escape(topicName(payload.path("taskId").asLong(), payload.path("project").asText(),
                     payload.path("title").asText(), null)));
             case DRAFT_PROMPT -> draftPrompt(payload);

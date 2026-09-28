@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import type { Overview } from "./api";
-import { StatusProvider } from "./desktop/status";
+import type { Live, Overview } from "./api";
+import { DesktopProviders, StatusProvider } from "./desktop/status";
 import { renderOnBoard } from "./desktop/testing";
 import { LanguageProvider } from "./i18n/i18n";
 import OverviewPage from "./OverviewPage";
@@ -132,4 +132,35 @@ test("in the Mini App, whose server cannot, neither Install nor Stop is offered"
 
   expect(await screen.findByRole("button", { name: "Restart" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+});
+
+const live: Live = { version: "0.1.0", name: "bold", running: 0, queued: 0, waitingOnYou: [], waitingOnOthers: 0,
+  todayUsd: "0.00", monthUsd: "0.00", maxConcurrent: 2, projects: ["alm"], tasks: { running: [], queued: [], awaitingApproval: [] } };
+const spend = { from: "2026-08-30", to: "2026-09-28", days: [], projects: [], totalUsd: "0.00" };
+
+function renderDesktop() {
+  render(
+    <LanguageProvider storage={remembered} languages={["en-US"]}>
+      <DesktopProviders><OverviewPage installAndStop live navigate={vi.fn()} /></DesktopProviders>
+    </LanguageProvider>,
+  );
+}
+
+test("the desktop's Overview puts the service and the checks on a line each, opening D-1's full panels", async () => {
+  serve({ "/api/overview": { body: overview }, "/api/live": { body: live }, "/api/tasks/spend": { body: spend } });
+  renderDesktop();
+
+  expect(await screen.findByText("Nothing waits on you.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Details" }));
+  expect(await screen.findByRole("button", { name: "Restart" })).toBeInTheDocument();
+});
+
+test("with the bot stopped the desktop's Overview says so beside the service and its Restart", async () => {
+  serve({ "/api/overview": { body: overview },
+          "/api/live": { status: 503, body: { error: "bot_not_running", message: "The bot is not running" } } });
+  renderDesktop();
+
+  expect(await screen.findByText("The bot is not running: start the service to see what it does.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Restart" })).toBeInTheDocument();
 });

@@ -62,3 +62,15 @@ test("back leads to the list", async () => {
 
   expect(navigate).toHaveBeenCalledWith("/tasks");
 });
+
+test("with the bot stopped the task's page says so and offers the Overview", async () => {
+  vi.mocked(api.getTaskDetail).mockRejectedValue(new api.ApiError("bot_not_running", "The bot is not running"));
+  vi.mocked(api.taskTimeline).mockRejectedValue(new api.ApiError("bot_not_running", "The bot is not running"));
+  vi.mocked(api.getLogs).mockResolvedValue(logs);
+  const navigate = vi.fn();
+  render(<TaskPage taskId={14} navigate={navigate} />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open the overview" }));
+
+  expect(navigate).toHaveBeenCalledWith("/");
+});

@@ -189,6 +189,18 @@ public final class Runs {
                 .stream().reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    /** A finished run's start, project and reported cost (null for Codex and Gemini CLI, which report none). */
+    public record Started(Instant startedAt, String project, BigDecimal costUsd) {
+    }
+
+    /** The runs started at or after {@code since} that have finished, oldest first: the desk's spend per day (D-2b). */
+    public static List<Started> startedSince(Tx tx, Instant since) {
+        return tx.list("""
+                SELECT r.started_at, t.project, r.cost_usd FROM run r JOIN task t ON t.id = r.task_id
+                WHERE r.started_at >= ? AND r.finished_at IS NOT NULL ORDER BY r.started_at""",
+                row -> new Started(row.instant("started_at"), row.string("project"), row.decimal("cost_usd")), since);
+    }
+
     public static List<Cost> costsOf(Tx tx, List<Long> taskIds) {
         if (taskIds.isEmpty()) {
             return List.of();

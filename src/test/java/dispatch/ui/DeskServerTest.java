@@ -1,6 +1,7 @@
 package dispatch.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
@@ -18,6 +19,7 @@ import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Runs;
+import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -66,7 +68,7 @@ class DeskServerTest {
         tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.empty()), new ActiveRuns(), clock,
                 () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { });
-        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme");
+        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme", 2);
     }
 
     @AfterEach
@@ -107,6 +109,60 @@ class DeskServerTest {
 
         assertEquals(alis, listed.path("tasks").get(0).path("taskId").asLong());
         assertEquals(false, listed.path("tasks").get(0).path("mine").asBoolean());
+    }
+
+    @Test
+    void theSpendPerDayIsServedToTheDesk() throws Exception {
+        planned(BOLD);
+
+        JsonNode spend = Json.read(post("/api/tasks/spend", "{\"days\":30}").body());
+
+        assertEquals(30, spend.path("days").size());
+        assertEquals("2026-09-28", spend.path("days").get(29).path("day").asText());
+        assertEquals("0.10", spend.path("days").get(29).path("usd").path("alm").asText());
+        assertEquals("0.10", spend.path("totalUsd").asText());
+    }
+
+    @Test
+    void aTaskGivenOnTheDeskIsTheAdminsOwnAndQueuesItsPlan() throws Exception {
+        JsonNode given = Json.read(post("/api/tasks/new", "{\"project\":\"alm\",\"text\":\"Fix the login timeout\",\"priority\":\"URGENT\"}").body());
+        JsonNode queued = Json.read(get("/api/live").body()).path("tasks").path("queued");
+
+        assertTrue(given.path("taskId").asLong() > 0, given.toString());
+        assertEquals(given.path("taskId").asLong(), queued.get(0).path("taskId").asLong());
+        assertTrue(queued.get(0).path("mine").asBoolean());
+    }
+
+    @Test
+    void whatTheDeskMayNotGiveIsRefusedInThePagesLanguageAndNotInTheChat() throws Exception {
+        HttpResponse<String> empty = post("/api/tasks/new", "{\"project\":\"alm\",\"text\":\"  \"}", "mn");
+        HttpResponse<String> unknown = post("/api/tasks/new", "{\"project\":\"crm\",\"text\":\"Fix it\"}", "en");
+        HttpResponse<String> priority = post("/api/tasks/new", "{\"project\":\"alm\",\"text\":\"Fix it\",\"priority\":\"SOON\"}", "en");
+
+        assertEquals(400, empty.statusCode());
+        assertEquals("даалгаварт хэдэн үг бичнэ үү", Json.read(empty.body()).path("message").asText());
+        assertEquals(404, unknown.statusCode());
+        assertEquals("crm is not one of your projects", Json.read(unknown.body()).path("message").asText());
+        assertEquals(400, priority.statusCode());
+        assertEquals("0", SqlRows.single(dir.resolve("dispatch.db"), "SELECT count(*) AS n FROM outbox").get("n"));
+    }
+
+    @Test
+    void theLiveSummaryCarriesWhatTheOverviewShows() throws Exception {
+        planned(BOLD);
+
+        JsonNode live = Json.read(get("/api/live").body());
+
+        assertEquals(2, live.path("maxConcurrent").asInt());
+        assertEquals("[\"alm\"]", live.path("projects").toString());
+        JsonNode waiting = live.path("tasks").path("awaitingApproval").get(0);
+        assertEquals(1, waiting.path("planSeq").asInt());
+        assertTrue(waiting.path("actions").toString().contains("approve"), waiting.toString());
+    }
+
+    private HttpResponse<String> post(String path, String body, String language) throws Exception {
+        return http.send(authorized(path).header("Content-Type", "application/json").header("Accept-Language", language)
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build(), BodyHandlers.ofString());
     }
 
     @Test

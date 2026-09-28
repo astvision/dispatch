@@ -3,9 +3,11 @@ import { useMemo, useState } from "react";
 import { listTasks, type TaskRow } from "../../api";
 import { useT, type Key, type Translate } from "../../i18n/i18n";
 import { useNarrow } from "../../useNarrow";
+import { useDesktopStatus } from "../status";
 import { usePolling } from "../usePolling";
+import GiveTask from "./GiveTask";
 import { age, grouped, type Filter, type TaskGroup } from "./groups";
-import TaskView from "./TaskView";
+import TaskDrawer from "./TaskDrawer";
 
 const FINISHED: Record<string, Key> = {
   COMPLETED: "tasks.state.completed", FAILED: "tasks.state.failed", REJECTED: "tasks.state.rejected", CANCELLED: "tasks.state.cancelled",
@@ -54,6 +56,8 @@ export default function TasksPage({ navigate }: { navigate: (path: string) => vo
   const { data, error, reload } = usePolling((signal) => listTasks("group", signal));
   const [filter, setFilter] = useState<Filter>({ project: null, person: null, text: "" });
   const [open, setOpen] = useState<number | null>(null);
+  const [giving, setGiving] = useState(false);
+  const { live } = useDesktopStatus();
   const rows = data?.tasks ?? [];
   const now = new Date();
   const projects = useMemo(() => [...new Set(rows.map((row) => row.project))].sort(), [rows]);
@@ -71,14 +75,18 @@ export default function TasksPage({ navigate }: { navigate: (path: string) => vo
   const groups = grouped(rows, filter, now);
   return (
     <Flex vertical gap={12}>
-      <Typography.Title level={4} style={{ margin: 0 }}>{t("tasks.title")}</Typography.Title>
+      <Flex justify="space-between" align="center" wrap gap={8}>
+        <Typography.Title level={4} style={{ margin: 0 }}>{t("tasks.title")}</Typography.Title>
+        <Button type="primary" onClick={() => setGiving(true)}>{t("give.open")}</Button>
+      </Flex>
       <Flex wrap gap={8}>
-        <Select aria-label={t("tasks.allProjects")} style={{ minWidth: 160 }} value={filter.project}
-                options={[{ value: null, label: t("tasks.allProjects") }, ...projects.map((name) => ({ value: name, label: name }))]}
-                onChange={(project) => setFilter({ ...filter, project })} />
-        <Select aria-label={t("tasks.everyone")} style={{ minWidth: 140 }} value={filter.person}
-                options={[{ value: null, label: t("tasks.everyone") }, ...people.map((name) => ({ value: name, label: name }))]}
-                onChange={(person) => setFilter({ ...filter, person })} />
+        {/* "" is "all": antd warns about an option whose value is null. */}
+        <Select aria-label={t("tasks.allProjects")} style={{ minWidth: 160 }} value={filter.project ?? ""}
+                options={[{ value: "", label: t("tasks.allProjects") }, ...projects.map((name) => ({ value: name, label: name }))]}
+                onChange={(project) => setFilter({ ...filter, project: project || null })} />
+        <Select aria-label={t("tasks.everyone")} style={{ minWidth: 140 }} value={filter.person ?? ""}
+                options={[{ value: "", label: t("tasks.everyone") }, ...people.map((name) => ({ value: name, label: name }))]}
+                onChange={(person) => setFilter({ ...filter, person: person || null })} />
         <Input allowClear aria-label={t("tasks.search")} placeholder={t("tasks.search")} style={{ width: 220 }} value={filter.text}
                onChange={(e) => setFilter({ ...filter, text: e.target.value })} />
       </Flex>
@@ -91,11 +99,14 @@ export default function TasksPage({ navigate }: { navigate: (path: string) => vo
           {list.map((row) => <Row key={row.taskId} row={row} group={group} now={now} onOpen={() => setOpen(row.taskId)} />)}
         </section>
       ))}
-      <Drawer open={open !== null} onClose={() => setOpen(null)} placement="right" size={narrow ? "100%" : 520} destroyOnHidden
-              title={open === null ? null : `#${open}`}>
-        {open !== null && (
-          <TaskView key={open} taskId={open} layout="panel" onChanged={reload} onDetails={() => navigate(`/tasks/${open}`)} />
-        )}
+      <TaskDrawer taskId={open} onClose={() => setOpen(null)} onChanged={reload} navigate={navigate} />
+      <Drawer open={giving} onClose={() => setGiving(false)} placement="right" size={narrow ? "100%" : 520} destroyOnHidden
+              title={t("give.title")}>
+        {giving && <GiveTask projects={live?.projects ?? []} onGiven={(taskId) => {
+          setGiving(false);
+          setOpen(taskId);
+          reload();
+        }} />}
       </Drawer>
     </Flex>
   );

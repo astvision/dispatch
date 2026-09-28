@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.sun.net.httpserver.HttpServer;
 import dispatch.Json;
 import dispatch.Language;
 import dispatch.config.Config;
@@ -19,6 +20,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -55,7 +57,7 @@ class DeskProxyTest {
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))));
         tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.empty()), new ActiveRuns(), clock,
                 () -> { }, () -> { });
-        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme");
+        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme", 2);
         proxy = new DeskProxy(() -> state);
     }
 
@@ -115,6 +117,38 @@ class DeskProxyTest {
         }
     }
 
+    @Test
+    void anotherBotOnAStaleFilesPortIsABotThatIsNotRunning() throws IOException {
+        try (DeskServer other = DeskServer.start(dir.resolve("other"), db, tasks, groups, clock, "0.3.0", "other", 2)) {
+            new DeskFile(other.port(), DeskFile.newToken(), "0.3.0", "acme").write(state);
+
+            UiServer.Forwarded answer = proxy.forward("/api/live", "GET", new byte[0], Language.EN, null);
+
+            assertEquals(503, answer.status());
+            assertEquals("bot_not_running", Json.read(new String(answer.json(), UTF_8)).path("error").asText());
+        }
+    }
+
+    @Test
+    void aProgramThatIsNoBotOnAStaleFilesPortIsABotThatIsNotRunning() throws IOException {
+        HttpServer web = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        web.createContext("/", exchange -> {
+            byte[] page = "<html>hello</html>".getBytes(UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html");
+            exchange.sendResponseHeaders(200, page.length);
+            exchange.getResponseBody().write(page);
+            exchange.close();
+        });
+        web.start();
+        try {
+            new DeskFile(web.getAddress().getPort(), DeskFile.newToken(), "0.3.0", "acme").write(state);
+
+            assertEquals(503, proxy.forward("/api/live", "GET", new byte[0], Language.EN, null).status());
+        } finally {
+            web.stop(0);
+        }
+    }
+
     private static String stdout(Runnable call) {
         PrintStream out = System.out;
         ByteArrayOutputStream logged = new ByteArrayOutputStream();
@@ -130,7 +164,7 @@ class DeskProxyTest {
     @Test
     void aRestartedBotIsFoundAtItsNewPort() throws IOException {
         desk.close();
-        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme");
+        desk = DeskServer.start(state, db, tasks, groups, clock, "0.3.0", "acme", 2);
 
         assertEquals(200, proxy.forward("/api/live", "GET", new byte[0], Language.EN, null).status());
     }

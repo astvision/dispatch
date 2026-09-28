@@ -30,7 +30,7 @@ export function Lamp({ colour, title, children }: { colour: Colour; title?: stri
   return <span className={`lamp ${colour}`} title={title}><i aria-hidden="true" /><span>{children}</span></span>;
 }
 
-function ServiceLamp({ overview }: { overview: Overview }) {
+export function ServiceLamp({ overview }: { overview: Overview }) {
   const t = useT();
   if (!overview.configured) return <Lamp colour="quiet">{t("strip.service.notSetUp")}</Lamp>;
   if (!overview.service.installed) return <Lamp colour="quiet">{t("strip.service.none")}</Lamp>;
@@ -40,7 +40,7 @@ function ServiceLamp({ overview }: { overview: Overview }) {
 }
 
 /** A problem outweighs a warning: the lamp shows the worst level and how many findings are at it. */
-function ChecksLamp({ overview }: { overview: Overview }) {
+export function ChecksLamp({ overview }: { overview: Overview }) {
   const t = useT();
   const fails = overview.findings.filter((finding) => finding.level === "FAIL").length;
   if (fails > 0) return <Lamp colour="red">{t(fails === 1 ? "strip.checksFail.one" : "strip.checksFail.other", { count: fails })}</Lamp>;

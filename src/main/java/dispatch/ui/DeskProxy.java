@@ -57,6 +57,11 @@ final class DeskProxy implements UiServer.Forward {
         }
         try {
             HttpResponse<byte[]> answer = http.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+            if (!fromTheBot(answer)) {
+                // A crashed bot's port taken by another program, or by another bot that refuses this file's token.
+                Log.warn("desk.stale_port", "port", desk.get().port(), "status", answer.statusCode());
+                return notRunning(language);
+            }
             return new UiServer.Forwarded(answer.statusCode(), answer.body());
         } catch (ConnectException e) {
             // Refused: a stopped bot, or one that crashed and left its file. No news, and the page asks every 5 seconds.
@@ -70,6 +75,12 @@ final class DeskProxy implements UiServer.Forward {
             Thread.currentThread().interrupt();
             return notRunning(language);
         }
+    }
+
+    /** The bot's own answer: JSON, and never a refusal of the token it wrote itself. */
+    private static boolean fromTheBot(HttpResponse<byte[]> answer) {
+        boolean json = answer.headers().firstValue("Content-Type").orElse("").startsWith("application/json");
+        return json && answer.statusCode() != 401;
     }
 
     private static UiServer.Forwarded notRunning(Language language) {
