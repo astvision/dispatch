@@ -82,7 +82,7 @@ dispatch service status                          # also: start, stop, install, u
 dispatch project add ~/work/crm --effort high    # add another clone, then: dispatch service stop && dispatch service start
 dispatch project add ~/work/api --agent codex     # on Codex (or gemini): adds agents.codex.command when missing
 dispatch run                                     # run in this terminal instead of the background
-dispatch ui                                      # manage it in your browser: projects, people, settings, logs
+dispatch ui                                      # manage it in your browser: tasks, projects, people, settings, logs
 ```
 
 The service is a systemd user service on Linux, a launchd agent on macOS and a Task Scheduler task on Windows. It starts at login and restarts after a failure. On Linux, it keeps running after you log out only once lingering is on; `dispatch service status` says so.
@@ -174,6 +174,7 @@ The page speaks English or Mongolian: your browser's language, or the **Монг
 which it remembers (ADR 0029). A strip across the top shows whether the background service runs and what the checks
 found; the pages are in a rail on the left:
 
+- **Tasks:** every task of the instance, grouped by what it needs: waiting on you, running, queued, waiting on someone else, and finished in the last 30 days; filter by project, person, or `#14` and any words. A row opens the task in a side panel: its plan and open questions with their choices, and the buttons that apply to you (**Approve**, **Write a correction**, **Reject** on your own plan, **Cancel the task**, **Retry** after your own task failed, **Pull request**). **Details** opens the task's own page, with its facts, its runs and its rows of the log; the Logs page's task numbers link there. The task pages need the bot running (`dispatch run` or the background service); while it is stopped they say so, and the strip's task lamps — running, waiting on you, today's spend — go out.
 - **Overview:** the version and files, the background service with **Install**, **Restart** and **Stop**, and what `dispatch check` finds, with **Check again**.
 - **Projects:** a table of the projects; a row opens it in a side panel, its fields grouped with a line of help under each: base branch and alias, the agent with its model and effort, and a model and effort per phase. **Add a project** opens the panel at the folder browser; **Remove** asks first. A project's model may be any model id (for example `claude-opus-5`), while the lists offer Sonnet, Opus and Fable.
 - **People:** each group with its Telegram chat (and **Unlink the chat**), its projects, and its members with an admin switch, **Rename** and **Remove**. New people still join by writing to the bot and an admin's approval in Telegram.

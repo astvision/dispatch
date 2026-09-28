@@ -237,7 +237,7 @@ code, .mono {
 
 @media (max-width: 640px) {
   .task-row { grid-template-columns: 44px minmax(0, 1fr); }
-  .task-project, .task-person, .task-age { display: none; }
+  .task-row .task-project, .task-row .task-person, .task-row .task-age { display: none; }
   .task-row .lamp { grid-column: 2; }
 }
 
@@ -266,4 +266,11 @@ code, .mono {
 .task-facts > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; }
 .task-facts dt { opacity: 0.65; }
 .task-facts dd { margin: 0; overflow-wrap: anywhere; }
+/* On a task's own page every log row is that task's: the fields stack under the event, and the number goes. */
+.task-page .log-row { grid-template-columns: 64px 10px minmax(0, 1fr); }
+.task-page .log-fields { grid-column: 1 / -1; }
+.task-page .log-task { display: none; }
 .task-run { display: grid; grid-template-columns: 48px minmax(0, 1fr) 80px 56px 64px; gap: 8px; padding: 4px 0; font-size: 12.5px; }
+@media (max-width: 640px) {
+  .task-run { grid-template-columns: 44px minmax(0, 1fr) auto auto auto; }
+}

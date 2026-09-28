@@ -61,8 +61,11 @@ export default function TasksPage({ navigate }: { navigate: (path: string) => vo
 
   if (error?.code === "bot_not_running") {
     return (
-      <Result status="info" title={t("tasks.botNotRunning")}
-              extra={<Button onClick={() => navigate("/")}>{t("tasks.openOverview")}</Button>} />
+      <Flex vertical gap={12}>
+        <Typography.Title level={4} style={{ margin: 0 }}>{t("tasks.title")}</Typography.Title>
+        <Result status="info" title={t("tasks.botNotRunning")}
+                extra={<Button onClick={() => navigate("/")}>{t("tasks.openOverview")}</Button>} />
+      </Flex>
     );
   }
   const groups = grouped(rows, filter, now);

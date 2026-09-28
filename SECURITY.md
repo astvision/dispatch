@@ -52,6 +52,18 @@ Requests with another Host (DNS rebinding) or, for changes, another Origin are r
 browser. Whoever has the link or a session acts as you, with what you may do in a shell: don't paste the link where
 others see it, and stop `dispatch ui` when you are done. Setup's folder browser lists folder names on the machine that runs Dispatch and says which are git clones; it never shows a file's contents. The Logs page shows the service log with Dispatch's secrets and common token formats masked. A save keeps the previous config as `dispatch.yaml.bak`, with the config's own permissions.
 
+### The desk port
+
+The desktop's task pages reach the running bot through its desk port (ADR 0030). `dispatch run` listens on
+`127.0.0.1` at a port the OS picks, and writes the port and a new 256-bit token to `desk.json` in the owner-only state
+directory, itself created owner-only; a clean stop deletes it, and a restart replaces the token. The port answers only
+the task routes, only with that token (compared in constant time) and its own `127.0.0.1` Host, serves no page and
+sends no CORS header, so a web page cannot reach it. `dispatch ui` adds the token when it forwards a page's call; the
+browser never holds it. Whoever can read `desk.json` can act on tasks as the owner's member until the bot restarts: see
+every task in full, and approve, answer or retry the owner's own, and cancel any. That is the owner's OS account, which
+can already read the database and run `dispatch ui`. The member the desk acts as must be one who may manage the
+instance (a personal bot's one member, or an admin); the bot refuses any other.
+
 ## The Telegram Mini App
 
 Off unless the config has a `miniApp` block, in a team and in personal mode alike — **turning it on puts a

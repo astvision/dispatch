@@ -49,7 +49,7 @@ function EntryView({ entry, onTask }: { entry: Entry; onTask?: (taskId: number) 
             <span className="sr-only">{level ? t(level.word) : row.level}</span>
           </span>
           <span className="mono">{row.event}</span>
-          <span className="mono">
+          <span className="log-task mono">
             {row.task !== null && (onTask
               ? <a href={`/tasks/${row.task}`} onClick={(e) => {
                   e.preventDefault();

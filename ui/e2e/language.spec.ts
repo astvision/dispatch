@@ -26,7 +26,7 @@ test("no page scrolls sideways at phone width, in either language", async ({ pag
   for (const language of ["English", "Монгол"]) {
     await page.goto("/");
     await page.getByRole("button", { name: language }).click();
-    for (const path of ["/", "/projects", "/people", "/settings", "/logs"]) {
+    for (const path of ["/", "/tasks", "/projects", "/people", "/settings", "/logs"]) {
       await page.goto(path);
       await expect(page.locator(".board-page h4.ant-typography")).toBeVisible();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
