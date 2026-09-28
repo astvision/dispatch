@@ -39,6 +39,9 @@ public final class ConfigLoader {
     /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
     private static final Pattern CREDENTIAL_URL = Pattern.compile("^https?://[^/@]*@", Pattern.CASE_INSENSITIVE);
     private static final Pattern SECRET_KEY = Pattern.compile("(?i).*(token|secret|password|passwd|apikey|api_key|credential).*");
+    /** Segments of letters, digits, '.', '_' or '-' separated by single '/', e.g. dispatch/team (M: several instances). */
+    private static final Pattern BRANCH_PREFIX =
+            Pattern.compile("[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*(/[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*)*");
     /** Keys of the single-group config that ADR 0012 replaced with telegram.groups. */
     private static final Set<String> SINGLE_GROUP_KEYS = Set.of("groupChatId", "members");
 
@@ -68,6 +71,10 @@ public final class ConfigLoader {
         Config.Delivery delivery = validateDelivery(raw.delivery(), errors);
         Config.Workers workers = validateWorkers(raw.workers(), telegram, errors);
         Config.MiniApp miniApp = validateMiniApp(raw.miniApp(), errors);
+        if (raw.branchPrefix() != null && !BRANCH_PREFIX.matcher(raw.branchPrefix()).matches()) {
+            errors.add("branchPrefix: segments of letters, digits, '.', '_' or '-' separated by single '/', e.g. dispatch/team; got '"
+                    + raw.branchPrefix() + "'");
+        }
 
         String token = env.get("TELEGRAM_BOT_TOKEN");
         if (isBlank(token)) {
@@ -79,7 +86,7 @@ public final class ConfigLoader {
             throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));
         }
         return new Config(raw.team(), stateDir, telegram, raw.scheduler(), worktrees, raw.limits(), Map.copyOf(agents),
-                projects, delivery, workers, miniApp, new Config.Secrets(token, ghToken));
+                projects, delivery, workers, miniApp, raw.branchPrefix(), new Config.Secrets(token, ghToken));
     }
 
     private static ConfigFile read(Path file) {
@@ -455,6 +462,7 @@ public final class ConfigLoader {
             Map<String, Config.Agent> agents,
             List<Config.Project> projects,
             Config.Workers workers,
-            Config.MiniApp miniApp) {
+            Config.MiniApp miniApp,
+            String branchPrefix) {
     }
 }

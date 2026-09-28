@@ -30,15 +30,23 @@ public final class Sweeper implements Runnable {
     private final Duration idle;
     private final Duration interval;
     private final Signal signal = new Signal();
+    private final String branchPrefix;
     private volatile boolean stopped;
 
     public Sweeper(Database db, Projects projects, Workspaces workspaces, Clock clock, Duration idle, Duration interval) {
+        this(db, projects, workspaces, clock, idle, interval, null);
+    }
+
+    /** @param branchPrefix the instance's own prefix for task branches (M: several instances on one computer); null for "dispatch" */
+    public Sweeper(Database db, Projects projects, Workspaces workspaces, Clock clock, Duration idle, Duration interval,
+                   String branchPrefix) {
         this.db = db;
         this.projects = projects;
         this.workspaces = workspaces;
         this.clock = clock;
         this.idle = idle;
         this.interval = interval;
+        this.branchPrefix = branchPrefix;
     }
 
     @Override
@@ -93,7 +101,8 @@ public final class Sweeper implements Runnable {
             Log.warn("sweeper.project_gone", "task", task.id(), "project", task.project(), "worktree", task.worktree());
             return false;
         }
-        Workspaces.WorktreeState state = workspaces.state(worktree, task.id(), task.baseSha());
+        String branch = branchPrefix == null ? Config.defaultBranch(task.id()) : branchPrefix + "/" + task.id();
+        Workspaces.WorktreeState state = workspaces.state(worktree, branch, task.baseSha());
         boolean abandoned = task.phase() == Phase.REJECTED || task.phase() == Phase.CANCELLED;
         // Merged: its delivered work is on the base branch, while its own branch may be gone from origin, deleted by the
         // merge. That excuses "not pushed" only; changes never delivered (a follow-up refused at delivery) are kept.

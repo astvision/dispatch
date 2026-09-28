@@ -42,7 +42,7 @@ class DeliveryTest {
         git = new Git("git", null, Duration.ofSeconds(30));
         gh = FakeGh.install(dir.resolve("bin"));
         Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, null, List.of(), null, null, null);
-        worktree = new Workspaces(repos.stateDir, git).createWorktree(alm, 42).path();
+        worktree = new Workspaces(repos.stateDir, git).createWorktree(alm, 42, Config.defaultBranch(42)).path();
         start = delivery(null).head(worktree);
     }
 
@@ -52,7 +52,7 @@ class DeliveryTest {
         Files.createDirectories(worktree.resolve("src"));
         Files.writeString(worktree.resolve("src/Timeout.java"), "class Timeout {}\n");
 
-        Delivery.Result result = delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        Delivery.Result result = delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null);
 
         assertEquals(List.of("README.md", "src/Timeout.java"), result.files());
         assertEquals(result.commitSha(), origin("rev-parse", "refs/heads/dispatch/42"));
@@ -75,7 +75,7 @@ class DeliveryTest {
         Delivery.Commit commit = new Delivery.Commit("dispatch #42: Add make help",
                 "Added the help target.\n\nSummary: listed every target with its description.", List.of("Requested-by: Bold", "Approved-by: Ali"));
 
-        delivery(null).deliver(worktree, 42, "main", start, commit, null);
+        delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, commit, null);
 
         assertEquals("Requested-by: Bold\nApproved-by: Ali",
                 origin("log", "-1", "--format=%(trailers:only,unfold)", "refs/heads/dispatch/42").strip());
@@ -86,13 +86,13 @@ class DeliveryTest {
     @Test
     void aFollowUpOntoAPullRequestMergedOnGitHubFailsInsteadOfBeingStranded() throws IOException {
         Files.writeString(worktree.resolve("README.md"), "v2\n");
-        delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null);
         String delivered = origin("rev-parse", "refs/heads/dispatch/42");
         Files.writeString(worktree.resolve("fake-gh.state"), "MERGED\n");
         Files.writeString(worktree.resolve("README.md"), "v3\n");
 
         WorkspaceException refused = assertThrows(WorkspaceException.class,
-                () -> delivery(null).deliver(worktree, 42, "main", delivered, COMMIT, FakeGh.PR_URL));
+                () -> delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", delivered, COMMIT, FakeGh.PR_URL));
 
         assertTrue(refused.getMessage().contains(FakeGh.PR_URL) && refused.getMessage().contains("merged"), refused.getMessage());
         assertEquals(delivered, origin("rev-parse", "refs/heads/dispatch/42"), "nothing pushed onto the merged branch");
@@ -101,13 +101,13 @@ class DeliveryTest {
     @Test
     void aFollowUpOntoAClosedPullRequestFailsToo() throws IOException {
         Files.writeString(worktree.resolve("README.md"), "v2\n");
-        delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null);
         String delivered = origin("rev-parse", "refs/heads/dispatch/42");
         Files.writeString(worktree.resolve("fake-gh.state"), "CLOSED\n");
         Files.writeString(worktree.resolve("README.md"), "v3\n");
 
         WorkspaceException refused = assertThrows(WorkspaceException.class,
-                () -> delivery(null).deliver(worktree, 42, "main", delivered, COMMIT, FakeGh.PR_URL));
+                () -> delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", delivered, COMMIT, FakeGh.PR_URL));
 
         assertTrue(refused.getMessage().contains("closed"), refused.getMessage());
     }
@@ -115,11 +115,11 @@ class DeliveryTest {
     @Test
     void aFollowUpWithNothingToDeliverNeedsNoOpenPullRequest() throws IOException {
         Files.writeString(worktree.resolve("README.md"), "v2\n");
-        delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null);
         String delivered = origin("rev-parse", "refs/heads/dispatch/42");
         Files.writeString(worktree.resolve("fake-gh.state"), "MERGED\n");
 
-        Delivery.Result result = delivery(null).deliver(worktree, 42, "main", delivered, COMMIT, FakeGh.PR_URL);
+        Delivery.Result result = delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", delivered, COMMIT, FakeGh.PR_URL);
 
         assertEquals(List.of(), result.files(), "a follow-up that only answered delivers nothing, and needs no pull request open");
     }
@@ -127,12 +127,12 @@ class DeliveryTest {
     @Test
     void aFollowUpWhosePullRequestCannotBeLookedUpIsStillDelivered() throws IOException {
         Files.writeString(worktree.resolve("README.md"), "v2\n");
-        delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null);
         String delivered = origin("rev-parse", "refs/heads/dispatch/42");
         Files.writeString(worktree.resolve("README.md"), "v3\n");
         String unreadable = FakeGh.PR_URL + "#GH:fail";
 
-        Delivery.Result result = delivery(null).deliver(worktree, 42, "main", delivered, COMMIT, unreadable);
+        Delivery.Result result = delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", delivered, COMMIT, unreadable);
 
         assertEquals(unreadable, result.prUrl(), "a lookup GitHub could not answer guards nothing, so it blocks nothing");
         assertEquals(result.commitSha(), origin("rev-parse", "refs/heads/dispatch/42"));
@@ -141,17 +141,17 @@ class DeliveryTest {
     @Test
     void aRedeliveryWhosePushAlreadyLandedNeedsNoOpenPullRequest() throws IOException {
         Files.writeString(worktree.resolve("README.md"), "v2\n");
-        Delivery.Result first = delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        Delivery.Result first = delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null);
         Files.writeString(worktree.resolve("fake-gh.state"), "MERGED\n");
 
-        Delivery.Result again = delivery(null).redeliver(worktree, 42, "main", start, COMMIT, FakeGh.PR_URL);
+        Delivery.Result again = delivery(null).redeliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, FakeGh.PR_URL);
 
         assertEquals(first.commitSha(), again.commitSha(), "nothing left to push, so nothing to refuse");
     }
 
     @Test
     void runWithoutChangesDeliversNothing() {
-        Delivery.Result result = delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        Delivery.Result result = delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null);
 
         assertEquals(List.of(), result.files());
         assertNull(result.commitSha());
@@ -165,7 +165,7 @@ class DeliveryTest {
         Files.writeString(worktree.resolve("README.md"), "v2\n");
         GitFixture.sh(worktree, "git", "-c", "user.name=Agent", "-c", "user.email=agent@example.com", "commit", "--quiet", "-am", "agent");
 
-        Delivery.Result result = delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        Delivery.Result result = delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null);
 
         assertEquals(List.of("README.md"), result.files());
         assertEquals(start, origin("rev-parse", "refs/heads/dispatch/42^"));
@@ -176,7 +176,7 @@ class DeliveryTest {
     void laterDeliveryPushesToTheExistingPullRequest() throws IOException {
         Files.writeString(worktree.resolve("README.md"), "v2\n");
 
-        Delivery.Result result = delivery(null).deliver(worktree, 42, "main", start, COMMIT, "https://github.com/acme/alm/pull/3");
+        Delivery.Result result = delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, "https://github.com/acme/alm/pull/3");
 
         assertEquals("https://github.com/acme/alm/pull/3", result.prUrl());
         assertEquals(result.commitSha(), origin("rev-parse", "refs/heads/dispatch/42"));
@@ -190,7 +190,7 @@ class DeliveryTest {
         GitFixture.sh(worktree, "git", "remote", "set-url", "origin", dir.resolve("missing.git").toString());
 
         WorkspaceException error = assertThrows(WorkspaceException.class,
-                () -> delivery(null).deliver(worktree, 42, "main", start, COMMIT, null));
+                () -> delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null));
 
         assertTrue(error.getMessage().contains("git push"), error.getMessage());
         assertTrue(error.getMessage().contains("does not appear to be a git repository"), error.getMessage());
@@ -202,7 +202,7 @@ class DeliveryTest {
         Delivery.Commit failing = new Delivery.Commit("dispatch #42: GH:fail", "body", List.of());
 
         WorkspaceException error = assertThrows(WorkspaceException.class,
-                () -> delivery(null).deliver(worktree, 42, "main", start, failing, null));
+                () -> delivery(null).deliver(worktree, 42, Config.defaultBranch(42), "main", start, failing, null));
 
         assertTrue(error.getMessage().contains("gh pr create failed (exit 1)"), error.getMessage());
         assertTrue(error.getMessage().contains("Resource not accessible"), error.getMessage());
@@ -212,7 +212,7 @@ class DeliveryTest {
     void tokenReachesGhThroughTheEnvironmentNotTheCommandLine() throws IOException {
         Files.writeString(worktree.resolve("README.md"), "v2\n");
 
-        delivery("github_pat_SECRET").deliver(worktree, 42, "main", start, COMMIT, null);
+        delivery("github_pat_SECRET").deliver(worktree, 42, Config.defaultBranch(42), "main", start, COMMIT, null);
 
         assertTrue(Files.readAllLines(worktree.resolve("fake-gh.env")).contains("GH_TOKEN=github_pat_SECRET"));
         assertFalse(Files.readString(worktree.resolve("fake-gh.args")).contains("github_pat_SECRET"));

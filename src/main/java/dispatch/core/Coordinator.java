@@ -39,10 +39,19 @@ public final class Coordinator {
     private final Function<Config.Project, Config.RunLimits> executeLimits;
     private final Worker worker;
     private final Runnable wakeScheduler;
+    private final String branchPrefix;
 
     public Coordinator(Database db, Projects projects, RunTransitions transitions, ActiveRuns activeRuns,
                        Function<Config.Project, Config.RunLimits> planLimits,
                        Function<Config.Project, Config.RunLimits> executeLimits, Worker worker, Runnable wakeScheduler) {
+        this(db, projects, transitions, activeRuns, planLimits, executeLimits, worker, wakeScheduler, null);
+    }
+
+    /** @param branchPrefix the instance's own prefix for task branches (M: several instances on one computer); null for "dispatch" */
+    public Coordinator(Database db, Projects projects, RunTransitions transitions, ActiveRuns activeRuns,
+                       Function<Config.Project, Config.RunLimits> planLimits,
+                       Function<Config.Project, Config.RunLimits> executeLimits, Worker worker, Runnable wakeScheduler,
+                       String branchPrefix) {
         this.db = db;
         this.projects = projects;
         this.transitions = transitions;
@@ -51,6 +60,7 @@ public final class Coordinator {
         this.executeLimits = executeLimits;
         this.worker = worker;
         this.wakeScheduler = wakeScheduler;
+        this.branchPrefix = branchPrefix;
     }
 
     public void execute(ClaimedRun claimed) {
@@ -132,7 +142,8 @@ public final class Coordinator {
         return new Job(task.id(), run.seq(), run.kind(), on, task.baseBranch(), task.baseSha(),
                 task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
-                trailers(task, run.kind()), deliverySummary);
+                trailers(task, run.kind()), deliverySummary,
+                branchPrefix == null ? null : branchPrefix + "/" + task.id());
     }
 
     /**

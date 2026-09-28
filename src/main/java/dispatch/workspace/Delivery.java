@@ -40,8 +40,8 @@ public final class Delivery {
     }
 
     /** @param existingPrUrl the task's pull request from an earlier delivery, null if none */
-    public Result deliver(Path worktree, long taskId, String baseBranch, String startSha, Commit commit, String existingPrUrl) {
-        String branch = "dispatch/" + taskId;
+    public Result deliver(Path worktree, long taskId, String branch, String baseBranch, String startSha, Commit commit,
+                          String existingPrUrl) {
         if (!head(worktree).equals(startSha)) {
             // The agent committed despite its rules. Without this, its work would be pushed as someone else's commits,
             // or reported as "no changes" because the working tree is clean.
@@ -72,8 +72,8 @@ public final class Delivery {
      * @param baseSha where the task's branch started, for a branch that was never pushed
      * @return the files the task's branch changes; empty when there is nothing to deliver at all
      */
-    public Result redeliver(Path worktree, long taskId, String baseBranch, String baseSha, Commit commit, String existingPrUrl) {
-        String branch = "dispatch/" + taskId;
+    public Result redeliver(Path worktree, long taskId, String branch, String baseBranch, String baseSha, Commit commit,
+                            String existingPrUrl) {
         String pushed = pushedHead(worktree, branch);
         String start = pushed != null ? pushed : baseSha;
         if (!head(worktree).equals(start)) {

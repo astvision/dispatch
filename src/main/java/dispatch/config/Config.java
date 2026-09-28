@@ -23,10 +23,22 @@ public record Config(
         Delivery delivery,
         Workers workers,
         MiniApp miniApp,
+        /** Task branches are {@code <branchPrefix>/<task>}; null uses "dispatch" (M: several instances on one computer). */
+        String branchPrefix,
         Secrets secrets) {
 
     public boolean isTeam() {
         return isTeam(telegram);
+    }
+
+    /** The task's branch name: the instance's own prefix, or "dispatch" by default. */
+    public String branch(long taskId) {
+        return (branchPrefix == null ? "dispatch" : branchPrefix) + "/" + taskId;
+    }
+
+    /** The branch a job with no {@code branch} of its own names (Job.branchName): what an instance without a prefix uses. */
+    public static String defaultBranch(long taskId) {
+        return "dispatch/" + taskId;
     }
 
     /**

@@ -1,6 +1,7 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import dispatch.Json;
 import dispatch.agent.AgentOutcome;
@@ -68,6 +69,26 @@ class JobJsonTest {
         JobResult parsed = Json.MAPPER.treeToValue(node, JobResult.class);
 
         assertEquals(List.of(), parsed.files());
+    }
+
+    @Test
+    void theDefaultBranchIsLeftOutSoOlderWorkersStillReadTheJob() throws Exception {
+        Job job = new Job(7, 1, RunKind.PLAN, new Job.Project("alm", "r", null, "main", "claude-code", List.of()), "main",
+                null, null, null, null, false, "p", null, null, 1000, BigDecimal.ONE, List.of(), "s", List.of(), null);
+
+        String json = Json.write(job);
+
+        assertFalse(json.contains("\"branch\""), json);
+        assertEquals("dispatch/7", Json.MAPPER.readValue(json, Job.class).branchName());
+    }
+
+    @Test
+    void aTeamsOwnPrefixTravelsWithTheJob() throws Exception {
+        Job job = new Job(7, 1, RunKind.PLAN, new Job.Project("alm", "r", null, "main", "claude-code", List.of()), "main",
+                null, null, null, null, false, "p", null, null, 1000, BigDecimal.ONE, List.of(), "s", List.of(), null,
+                "dispatch/team/7");
+
+        assertEquals("dispatch/team/7", Json.MAPPER.readValue(Json.write(job), Job.class).branchName());
     }
 
     @Test
