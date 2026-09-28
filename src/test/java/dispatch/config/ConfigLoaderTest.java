@@ -149,6 +149,13 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void branchForIsNullForTheDefaultPrefixSoAnOlderWorkerKeepsParsing() {
+        assertNull(Config.branchFor(null, 12));
+        assertNull(Config.branchFor("dispatch", 12));
+        assertEquals("dispatch/team/12", Config.branchFor("dispatch/team", 12));
+    }
+
+    @Test
     void aliasMayRepeatItsOwnProjectName() throws IOException {
         Config config = ConfigLoader.load(write(VALID.replace("alias: alm", "alias: Autoland-Management")), ENV);
 

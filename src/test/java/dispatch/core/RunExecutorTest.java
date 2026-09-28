@@ -488,6 +488,21 @@ class RunExecutorTest {
     }
 
     @Test
+    void sweepChecksTheInstancesOwnPrefixedBranchNotTheDefaultOne() throws Exception {
+        long id = queue("Fix the login timeout", "team");
+        runNext();
+        approve(id);
+        runNext();
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        assertEquals("team/" + id, GitFixture.sh(repos.repo("alm"), "git", "branch", "--list", "team/" + id,
+                "--format=%(refname:short)"), "delivered under the instance's own prefix, not dispatch/" + id);
+
+        assertEquals(1, sweeper.sweep(), "team/" + id + " is pushed; the sweeper must check that branch, not dispatch/" + id);
+
+        assertFalse(Files.exists(worktree));
+    }
+
+    @Test
     void sweepRemovesAMergedTasksWorktreeThoughItsBranchIsGoneFromOrigin() throws Exception {
         long id = queue("Fix the login timeout");
         runNext();
@@ -632,6 +647,11 @@ class RunExecutorTest {
     }
 
     private long queue(String description) throws IOException {
+        return queue(description, null);
+    }
+
+    /** @param branchPrefix the instance's own prefix for task branches; null for the default instance's "dispatch" */
+    private long queue(String description, String branchPrefix) throws IOException {
         Config.Project alm = new Config.Project("alm", null, repos.origin.toString(), null, "main", "claude-code", null, "high", copyFiles, null,
                 new Config.PhaseSettings("opus", null), new Config.PhaseSettings(null, "low"));
         Git git = new Git("git", null, Duration.ofSeconds(30));
@@ -640,7 +660,7 @@ class RunExecutorTest {
                 Duration.ofSeconds(30)), "Dispatch (backend)", "dispatch-backend@example.com");
         Projects projects = new Projects(List.of(alm), workspaces::unavailableReason);
         sweeper = new Sweeper(db, projects, workspaces, java.time.Clock.fixed(Instant.parse("2026-09-25T10:00:00Z"), java.time.ZoneOffset.UTC),
-                Duration.ofDays(7), Duration.ofHours(1));
+                Duration.ofDays(7), Duration.ofHours(1), branchPrefix);
         TestClock clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Groups groups = new Groups(List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm"))));
@@ -661,7 +681,7 @@ class RunExecutorTest {
                                 throw new java.io.UncheckedIOException(e);
                             }
                         }),
-                schedulerWakes::incrementAndGet);
+                schedulerWakes::incrementAndGet, branchPrefix);
         db.transaction(tx -> tasks.create(tx, BOLD, "alm", description, Priority.NORMAL, BOLD.ref() + "/" + System.nanoTime()));
         return Long.parseLong(row("SELECT max(id) AS id FROM task").get("id"));
     }

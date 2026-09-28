@@ -101,7 +101,8 @@ public final class Sweeper implements Runnable {
             Log.warn("sweeper.project_gone", "task", task.id(), "project", task.project(), "worktree", task.worktree());
             return false;
         }
-        String branch = branchPrefix == null ? Config.defaultBranch(task.id()) : branchPrefix + "/" + task.id();
+        String prefixed = Config.branchFor(branchPrefix, task.id());
+        String branch = prefixed == null ? Config.defaultBranch(task.id()) : prefixed;
         Workspaces.WorktreeState state = workspaces.state(worktree, branch, task.baseSha());
         boolean abandoned = task.phase() == Phase.REJECTED || task.phase() == Phase.CANCELLED;
         // Merged: its delivered work is on the base branch, while its own branch may be gone from origin, deleted by the

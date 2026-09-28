@@ -142,8 +142,7 @@ public final class Coordinator {
         return new Job(task.id(), run.seq(), run.kind(), on, task.baseBranch(), task.baseSha(),
                 task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
-                trailers(task, run.kind()), deliverySummary,
-                branchPrefix == null ? null : branchPrefix + "/" + task.id());
+                trailers(task, run.kind()), deliverySummary, Config.branchFor(branchPrefix, task.id()));
     }
 
     /**

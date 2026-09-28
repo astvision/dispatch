@@ -42,6 +42,14 @@ public record Config(
     }
 
     /**
+     * The branch a {@link dispatch.core.Job} carries for a worker to use, or null when the instance uses the default
+     * prefix: the field is then left out, so a worker older than this change keeps working (ADR 0028).
+     */
+    public static String branchFor(String branchPrefix, long taskId) {
+        return branchPrefix == null || branchPrefix.equals("dispatch") ? null : branchPrefix + "/" + taskId;
+    }
+
+    /**
      * A team: admins decide who joins, or several people share it; its tasks run on their own computers (ADR 0021).
      * A personal bot has one member and no admins (ADR 0014), and its runs happen in this process even when it links
      * group chats for announcements.
