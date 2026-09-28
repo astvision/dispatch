@@ -1,6 +1,7 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import dispatch.Json;
 import dispatch.agent.AgentOutcome;
@@ -125,7 +126,7 @@ class GroupAckTest {
     void rejectingReactsWithThumbsDown() {
         long id = awaitingApprovalGroupOriginTask("36");
 
-        db.transaction(tx -> tasks.reject(tx, BOLD, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Reject(id, 1)));
 
         assertEquals("👎", lastReactionEmoji(id));
     }
@@ -181,11 +182,9 @@ class GroupAckTest {
 
     @Test
     void aTaskGivenDirectlyRatherThanByMentioningTheBotGetsNoReaction() {
-        String origin = BOLD.ref() + "/40";
-        CreateResult result = db.transactionReturning(tx ->
-                tasks.create(tx, BOLD, "autoland-management", "Fix login timeout", Priority.NORMAL, origin));
-        assertEquals(CreateResult.CREATED, result);
-        long id = Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        CommandResult result = db.transactionReturning(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Give("autoland-management", "Fix login timeout", Priority.NORMAL, new Origin(BOLD.ref() + "/40"))));
+        long id = assertInstanceOf(CommandResult.Created.class, result).taskId();
 
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE task_id = ? AND kind = 'GROUP_REACTION'", id).get("n"));
     }
@@ -210,7 +209,7 @@ class GroupAckTest {
 
     private long executingGroupOriginTask(String messageId) {
         long id = awaitingApprovalGroupOriginTask(messageId);
-        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 10, clock.instant())).orElseThrow();
         assertEquals(2, run.seq());
         return id;

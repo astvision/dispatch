@@ -14,8 +14,10 @@ import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Groups;
 import dispatch.core.Membership;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
@@ -380,9 +382,9 @@ class PlanQuestionsTest {
 
     /** @param requesterName what the task calls Bold, its requester */
     private long taskWithTwoQuestions(String requesterName) {
-        String origin = "telegram:100/" + System.nanoTime();
-        db.transaction(tx -> tasks.create(tx, new Requester("telegram:100", requesterName), "alm", "Fix the login timeout", Priority.NORMAL,
-                origin));
+        Origin origin = new Origin("telegram:100/" + System.nanoTime());
+        db.transaction(tx -> tasks.commands().run(tx, new Requester("telegram:100", requesterName),
+                new TaskCommand.Give("alm", "Fix the login timeout", Priority.NORMAL, origin)));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(),
                 List.of(new PlanQuestion("Which environments?", List.of("staging", "prod")),

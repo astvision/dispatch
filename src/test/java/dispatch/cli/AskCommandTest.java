@@ -2,6 +2,7 @@ package dispatch.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,9 +12,12 @@ import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
+import dispatch.core.CommandResult;
 import dispatch.core.Groups;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
@@ -22,7 +26,6 @@ import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Runs;
-import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -205,8 +208,8 @@ class AskCommandTest {
     }
 
     private long create(Requester who, String title) {
-        String origin = who.ref() + "/" + Math.abs(title.hashCode());
-        db.transaction(tx -> tasks.create(tx, who, "alm", title, Priority.NORMAL, origin));
-        return Long.parseLong(SqlRows.single(dbFile, "SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        Origin origin = new Origin(who.ref() + "/" + Math.abs(title.hashCode()));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, who,
+                new TaskCommand.Give("alm", title, Priority.NORMAL, origin)))).taskId();
     }
 }

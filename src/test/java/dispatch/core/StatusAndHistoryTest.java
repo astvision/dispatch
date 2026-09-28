@@ -1,6 +1,7 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -90,7 +91,7 @@ class StatusAndHistoryTest {
         long queued = create("Rename the report", "3");
         clock.advance(Duration.ofMinutes(4));
 
-        db.transaction(tx -> tasks.changePriority(tx, BOLD, queued, Priority.URGENT));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Reprioritize(queued, Priority.URGENT)));
         db.transaction(tx -> tasks.status(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), "telegram:100/99", "telegram:100"));
 
         Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'STATUS'");
@@ -158,7 +159,7 @@ class StatusAndHistoryTest {
                 new TaskCommand.Correct(id, OptionalInt.of(1), "Also describe the logs target")));
         claim();
         transitions.planSucceeded(id, 2, PLAN, result("0.10"));
-        db.transaction(tx -> tasks.approve(tx, BOLD, id, 2));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 2)));
         claim();
         clock.advance(Duration.ofSeconds(62));
         transitions.completed(id, 3, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
@@ -202,7 +203,7 @@ class StatusAndHistoryTest {
         long other = createFor(ALI, "alm", "Backend work", "70");
         claim();
         transitions.planSucceeded(other, 1, PLAN, result("0.10"));
-        db.transaction(tx -> tasks.reject(tx, ALI, other, 1));
+        db.transaction(tx -> tasks.commands().run(tx, ALI, new TaskCommand.Reject(other, 1)));
         long mine = create("Mobile work", "71");
 
         db.transaction(tx -> tasks.status(tx, new TaskAccess.Viewer(null, LIFE), CHAT + "/72", CHAT));
@@ -387,8 +388,8 @@ class StatusAndHistoryTest {
     }
 
     private long createFor(Requester who, String project, String text, String messageId) {
-        db.transaction(tx -> tasks.create(tx, who, project, text, Priority.NORMAL, who.ref() + "/" + messageId));
-        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", who.ref() + "/" + messageId).get("id"));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, who,
+                new TaskCommand.Give(project, text, Priority.NORMAL, new Origin(who.ref() + "/" + messageId))))).taskId();
     }
 
     private long create(String text, String messageId) {
@@ -403,7 +404,7 @@ class StatusAndHistoryTest {
         long id = create(text, messageId);
         claim();
         transitions.planSucceeded(id, 1, PLAN, result("0.05"));
-        db.transaction(tx -> tasks.reject(tx, BOLD, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Reject(id, 1)));
     }
 
     private long completed(String text, String messageId) {
@@ -415,7 +416,7 @@ class StatusAndHistoryTest {
         long id = create(text, messageId);
         claim();
         transitions.planSucceeded(id, 1, PLAN, result("0.16"));
-        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
         claim();
         transitions.agentStarted(id, 2, null, null);
         return id;
@@ -425,7 +426,7 @@ class StatusAndHistoryTest {
         long id = createFor(who, "life", text, messageId);
         claim();
         transitions.planSucceeded(id, 1, PLAN, result("0.16"));
-        db.transaction(tx -> tasks.approve(tx, who, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Approve(id, 1)));
         claim();
         transitions.completed(id, 2, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
         return id;

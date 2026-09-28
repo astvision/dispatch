@@ -1,6 +1,7 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dispatch.agent.AgentOutcome;
@@ -90,7 +91,7 @@ class PersonalGroupTest {
         transitions.planSucceeded(rejected, claim().seq(), PLAN, result());
         long cancelled = create("9");
 
-        db.transaction(tx -> tasks.reject(tx, BOLD, rejected, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Reject(rejected, 1)));
         db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(cancelled)));
 
         Map<String, String> rejection = row("SELECT * FROM outbox WHERE kind = 'TASK_REJECTED'");
@@ -102,10 +103,8 @@ class PersonalGroupTest {
     }
 
     private long create(String messageId) {
-        String origin = BOLD.ref() + "/" + messageId;
-        assertEquals(CreateResult.CREATED, db.transactionReturning(tx -> tasks.create(tx, BOLD, "alm", "Fix the login timeout",
-                Priority.NORMAL, origin)));
-        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Give("alm", "Fix the login timeout", Priority.NORMAL, new Origin(BOLD.ref() + "/" + messageId))))).taskId();
     }
 
     private ClaimedRun claim() {

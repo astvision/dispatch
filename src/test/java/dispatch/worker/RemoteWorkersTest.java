@@ -2,6 +2,7 @@ package dispatch.worker;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,11 +10,13 @@ import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
+import dispatch.core.CommandResult;
 import dispatch.core.Coordinator;
 import dispatch.core.Groups;
 import dispatch.core.Job;
 import dispatch.core.JobEvents;
 import dispatch.core.JobResult;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
 import dispatch.core.TaskCommand;
@@ -541,12 +544,13 @@ class RemoteWorkersTest {
     }
 
     private long queue(Requester who, String description) {
-        db.transaction(tx -> tasks.create(tx, who, "alm", description, Priority.NORMAL, who.ref() + "/" + System.nanoTime()));
-        return Long.parseLong(row("SELECT max(id) AS id FROM task").get("id"));
+        Origin origin = new Origin(who.ref() + "/" + System.nanoTime());
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, who,
+                new TaskCommand.Give("alm", description, Priority.NORMAL, origin)))).taskId();
     }
 
     private void approveAndQueueExecution(long taskId) {
-        db.transaction(tx -> tasks.approve(tx, BOLD, taskId, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(taskId, 1)));
     }
 
     private static AgentResult agentResult() {

@@ -2,6 +2,7 @@ package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -577,11 +578,11 @@ class RunExecutorTest {
     void sweepDiscardsARejectedTasksWorktreeEvenWithChangesButNeverARecentOne() throws Exception {
         long rejected = queue("Fix the login timeout");
         runNext();
-        db.transaction(tx -> tasks.reject(tx, BOLD, rejected, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Reject(rejected, 1)));
         Files.writeString(repos.stateDir.resolve("worktrees/" + rejected + "/scratch.txt"), "notes");
         long recent = queue("Rename the report");
         runNext();
-        db.transaction(tx -> tasks.reject(tx, BOLD, recent, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Reject(recent, 1)));
         db.transaction(tx -> tx.update("UPDATE task SET updated_at = '2026-09-24T10:00:00.000Z' WHERE id = ?", recent));
 
         assertEquals(1, sweeper.sweep());
@@ -663,8 +664,8 @@ class RunExecutorTest {
                             }
                         }),
                 schedulerWakes::incrementAndGet, branchPrefix);
-        db.transaction(tx -> tasks.create(tx, BOLD, "alm", description, Priority.NORMAL, BOLD.ref() + "/" + System.nanoTime()));
-        return Long.parseLong(row("SELECT max(id) AS id FROM task").get("id"));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Give("alm", description, Priority.NORMAL, new Origin(BOLD.ref() + "/" + System.nanoTime()))))).taskId();
     }
 
     private Coordinator executorUnderTest;
@@ -699,7 +700,8 @@ class RunExecutorTest {
     }
 
     private void approve(long id) {
-        assertEquals(ApproveResult.APPROVED, db.transactionReturning(tx -> tasks.approve(tx, BOLD, id, 1)));
+        assertEquals(new CommandResult.Done(id, true),
+                db.transactionReturning(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1))));
     }
 
     private void assertFailed(long id, String reason, String detailFragment) {

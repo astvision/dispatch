@@ -3,6 +3,7 @@ package dispatch.ui;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -13,9 +14,12 @@ import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
+import dispatch.core.CommandResult;
 import dispatch.core.Groups;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
@@ -301,19 +305,22 @@ class TasksApiTest {
         assertEquals("out_of_order", outOfOrder.code());
         assertEquals("stale", stale.code());
         assertEquals("stale", staleApproval.code());
-        assertTrue(staleApproval.getMessage().contains("newer one"), staleApproval.getMessage());
+        assertEquals(Text.of("refused.stalePlan", taskId), staleApproval.text(), "the words the chat shows too");
     }
 
     @Test
     void aPlanWithOpenQuestionsCannotBeApproved() {
         long taskId = planned(ALI, twoQuestions());
+        String outboxBefore = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
 
         ApiException refused = assertThrows(ApiException.class, () -> api.approve(ALI_CALLER,
                 Json.object().put("taskId", taskId).put("planSeq", 1)));
 
         assertEquals(409, refused.status());
         assertEquals("open_questions", refused.code());
+        assertEquals(Text.of("refused.openQuestions", taskId), refused.text());
         assertEquals("AWAITING_APPROVAL", phase(taskId));
+        assertEquals(outboxBefore, SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n"), "the page alone answers it");
     }
 
     @Test
@@ -425,7 +432,7 @@ class TasksApiTest {
 
     private long finished(Requester who) {
         long taskId = planned(who, noQuestions());
-        db.transaction(tx -> tasks.approve(tx, who, taskId, 1));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Approve(taskId, 1)));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         transitions.agentStarted(run.taskId(), run.seq(), null, null);
         transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, null,
@@ -465,9 +472,9 @@ class TasksApiTest {
     }
 
     private long create(Requester who, String title) {
-        String origin = who.ref() + "/" + Math.abs(title.hashCode());
-        db.transaction(tx -> tasks.create(tx, who, "alm", title, Priority.NORMAL, origin));
-        return Long.parseLong(SqlRows.single(dbFile, "SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        Origin origin = new Origin(who.ref() + "/" + Math.abs(title.hashCode()));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, who,
+                new TaskCommand.Give("alm", title, Priority.NORMAL, origin)))).taskId();
     }
 
     private static List<Long> taskIds(JsonNode listed) {

@@ -10,7 +10,6 @@ import dispatch.domain.Attachment;
 import dispatch.domain.Draft;
 import dispatch.domain.GroupAck;
 import dispatch.domain.DraftStatus;
-import dispatch.domain.GroupReaction;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
@@ -19,7 +18,6 @@ import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Run;
 import dispatch.domain.RunCause;
-import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
 import dispatch.domain.SplitState;
 import dispatch.domain.Task;
@@ -27,7 +25,6 @@ import dispatch.store.Attachments;
 import dispatch.store.Conversations;
 import dispatch.store.Drafts;
 import dispatch.store.MemberPrefs;
-import dispatch.store.Events;
 import dispatch.store.Outbox;
 import dispatch.store.PlanAnswers;
 import dispatch.store.Runs;
@@ -50,7 +47,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
-import java.util.UUID;
 import java.util.function.LongConsumer;
 
 /**
@@ -63,16 +59,12 @@ public final class TaskService {
     private static final int HISTORY_SIZE = 10;
     private static final int INSTRUCTION_LENGTH = 200;
 
-    /** Where a task given on the desktop comes from (D-2b): no Telegram message, so nothing in the chat to reply to. */
-    public static final String DESK_ORIGIN = "desk:";
-
     private final Groups groups;
     private final Projects projects;
     private final ActiveRuns activeRuns;
     private final TaskAccess access;
     private final TaskCommands commands;
     private final Clock clock;
-    private final Runnable wakeScheduler;
     private final Runnable wakeOutbox;
     private final boolean taskTopics;
     private final LongConsumer startSplit;
@@ -103,7 +95,6 @@ public final class TaskService {
         this.access = new TaskAccess(groups);
         this.commands = new TaskCommands(groups, projects, activeRuns, clock, wakeScheduler, wakeOutbox, taskTopics, requiresWorker);
         this.clock = clock;
-        this.wakeScheduler = wakeScheduler;
         this.wakeOutbox = wakeOutbox;
     }
 
@@ -202,7 +193,6 @@ public final class TaskService {
 
     /** Choosing the priority gives the task, provided the project is chosen and still one the member can use. */
     public DraftChoice choosePriority(Tx tx, Requester who, long draftId, Priority priority) {
-        Instant now = clock.instant();
         Optional<Draft> found = Drafts.find(tx, draftId);
         Optional<DraftChoice> refused = refusal(found, who);
         if (refused.isPresent()) {
@@ -217,9 +207,14 @@ public final class TaskService {
         if (project.isEmpty()) {
             return DraftChoice.PROJECT_UNAVAILABLE;
         }
-        long taskId = commands.insertTask(tx, who, project.get(), draft.description(), priority, draft.originRef(), now);
-        Drafts.created(tx, draftId, taskId, now);
-        Attachments.giveToTask(tx, draftId, taskId);
+        CommandResult given = commands.run(tx, who, new TaskCommand.Give(project.get().name(), draft.description(), priority,
+                new Origin(draft.originRef())));
+        if (!(given instanceof CommandResult.Created created)) {
+            // The project stopped taking tasks, or the member left its groups, since the prompt offered it.
+            return DraftChoice.PROJECT_UNAVAILABLE;
+        }
+        Drafts.created(tx, draftId, created.taskId(), clock.instant());
+        Attachments.giveToTask(tx, draftId, created.taskId());
         return DraftChoice.CREATED;
     }
 
@@ -385,91 +380,6 @@ public final class TaskService {
         return stale.size();
     }
 
-    /**
-     * Gives a task whose project and priority are already known, as a draft's buttons do in the end (ADR 0012). Replies go
-     * to the requester's private chat under {@code originRef}; the project's group gets a one-line announcement.
-     *
-     * @param originRef the message in the requester's private chat that gave the task
-     */
-    public CreateResult create(Tx tx, Requester who, String projectKey, String text, Priority priority, String originRef) {
-        Instant now = clock.instant();
-        String chatRef = who.ref();
-        if (Tasks.existsWithOrigin(tx, originRef)) {
-            tx.afterCommit(() -> Log.info("task.duplicate_ignored", "origin", originRef));
-            return CreateResult.DUPLICATE;
-        }
-        if (!groups.isMember(who.ref())) {
-            notAllowed(tx, who, originRef, chatRef, now);
-            return CreateResult.NOT_ALLOWED;
-        }
-        if (projectKey == null || projectKey.isBlank()) {
-            enqueue(tx, null, OutboxKind.TASK_USAGE, chatRef, originRef, Json.object(), now);
-            return CreateResult.EMPTY;
-        }
-        Set<String> mine = groups.projectsOfMember(who.ref());
-        Optional<Config.Project> found = memberProject(who, projectKey);
-        if (found.isEmpty()) {
-            ObjectNode payload = Json.object().put("given", projectKey);
-            ArrayNode known = payload.putArray("projects");
-            projects.all().stream().filter(project -> mine.contains(project.name()))
-                    .forEach(project -> known.addObject().put("name", project.name()).put("alias", project.alias()));
-            enqueue(tx, null, OutboxKind.UNKNOWN_PROJECT, chatRef, originRef, payload, now);
-            return CreateResult.UNKNOWN_PROJECT;
-        }
-        Config.Project project = found.get();
-        Optional<String> unavailable = projects.unavailableReason(project);
-        if (unavailable.isPresent()) {
-            enqueue(tx, null, OutboxKind.PROJECT_UNAVAILABLE, chatRef, originRef,
-                    Json.object().put("project", project.name()).put("reason", unavailable.get()), now);
-            return CreateResult.PROJECT_UNAVAILABLE;
-        }
-        if (text == null || text.isBlank()) {
-            enqueue(tx, null, OutboxKind.TASK_USAGE, chatRef, originRef, Json.object(), now);
-            return CreateResult.EMPTY;
-        }
-        commands.insertTask(tx, who, project, text.strip(), priority, originRef, now);
-        return CreateResult.CREATED;
-    }
-
-    /** What giving a task on the desktop came to: the new task's number, or why not ({@code reason}: an unavailable project's). */
-    public record Given(CreateResult result, long taskId, String reason) {
-    }
-
-    /**
-     * A task given on the desktop (D-2b), as the requester's own: {@link #create}'s checks, answered to the page and never
-     * to the chat, then the task with a {@link #DESK_ORIGIN} origin, and a line in the requester's private chat saying
-     * where it came from, so the chat stays in step.
-     */
-    public Given give(Tx tx, Requester who, String projectKey, String text, Priority priority) {
-        if (!groups.isMember(who.ref())) {
-            return new Given(CreateResult.NOT_ALLOWED, 0, null);
-        }
-        if (text == null || text.isBlank()) {
-            return new Given(CreateResult.EMPTY, 0, null);
-        }
-        Optional<Config.Project> project = memberProject(who, projectKey);
-        if (project.isEmpty()) {
-            return new Given(CreateResult.UNKNOWN_PROJECT, 0, null);
-        }
-        Optional<String> unavailable = projects.unavailableReason(project.get());
-        if (unavailable.isPresent()) {
-            return new Given(CreateResult.PROJECT_UNAVAILABLE, 0, unavailable.get());
-        }
-        Instant now = clock.instant();
-        long id = commands.insertTask(tx, who, project.get(), text.strip(), priority, DESK_ORIGIN + UUID.randomUUID(), now);
-        Task task = Tasks.find(tx, id).orElseThrow();
-        Outbox.enqueueForRequester(tx, task, OutboxKind.TASK_GIVEN_ON_DESK, Json.object().put("taskId", id)
-                .put("project", task.project()).put("priority", priority.name()).put("title", task.title()), now);
-        tx.afterCommit(wakeOutbox);
-        return new Given(CreateResult.CREATED, id, null);
-    }
-
-    /** The project {@code projectKey} names (its name or alias), if it is one of the requester's groups' projects. */
-    private Optional<Config.Project> memberProject(Requester who, String projectKey) {
-        Set<String> mine = groups.projectsOfMember(who.ref());
-        return projects.find(projectKey).filter(project -> mine.contains(project.name()));
-    }
-
     /** A draft can be answered only by its writer, and only while it is open. */
     private static Optional<DraftChoice> refusal(Optional<Draft> found, Requester who) {
         if (found.isEmpty()) {
@@ -504,107 +414,8 @@ public final class TaskService {
                 .toList();
     }
 
-    /**
-     * Approves the plan with run number {@code planSeq} and queues its execution (ADR 0006). Only the requester decides on
-     * their plan (ADR 0011). A plan with open questions cannot be approved: the answers come as a correction, typed as a
-     * reply or given under the question messages (G-1d).
-     */
-    public ApproveResult approve(Tx tx, Requester who, long taskId, int planSeq) {
-        Instant now = clock.instant();
-        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.APPROVE, planSeq);
-        if (refused.isPresent()) {
-            return switch (refused.get()) {
-                case NOT_MEMBER -> {
-                    tx.afterCommit(() -> Log.warn("task.approve_not_allowed", "task", taskId, "requester", who.ref()));
-                    yield ApproveResult.NOT_ALLOWED;
-                }
-                case NOT_FOUND -> ApproveResult.NOT_FOUND;
-                case NOT_REQUESTER -> {
-                    tx.afterCommit(() -> Log.info("task.approve_not_requester", "task", taskId, "requester", who.ref()));
-                    yield ApproveResult.NOT_REQUESTER;
-                }
-                case STALE_PLAN -> ApproveResult.STALE_PLAN;
-                case OPEN_QUESTIONS -> ApproveResult.OPEN_QUESTIONS;
-                default -> ApproveResult.WRONG_STATE;
-            };
-        }
-        Task task = verdict.task();
-        if (!Tasks.changePhase(tx, taskId, Phase.AWAITING_APPROVAL, Phase.EXECUTING, now)) {
-            return ApproveResult.WRONG_STATE;
-        }
-        // The run carries the plan it implements, so what was approved stays on record.
-        Runs.insert(tx, new Runs.NewRun(taskId, Runs.nextSeq(tx, taskId), RunKind.EXECUTE, RunCause.APPROVAL, task.planJson(), who), now);
-        Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.EXECUTING, "approved plan " + planSeq, now);
-        Outbox.enqueueForRequester(tx, task, OutboxKind.EXECUTION_QUEUED,
-                Json.object().put("taskId", taskId).put("by", who.name()), now);
-        tx.afterCommit(wakeOutbox);
-        tx.afterCommit(wakeScheduler);
-        logTransition(tx, taskId, Phase.AWAITING_APPROVAL, Phase.EXECUTING, who.ref());
-        return ApproveResult.APPROVED;
-    }
-
     public Optional<Task> taskOfTopic(Tx tx, String requesterRef, String topicRef) {
         return Tasks.findByTopic(tx, requesterRef, topicRef);
-    }
-
-    /** The requester rejects the plan with run number {@code planSeq}; a button on an older plan is refused as stale. */
-    public RejectResult reject(Tx tx, Requester who, long taskId, int planSeq) {
-        Instant now = clock.instant();
-        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.REJECT, planSeq);
-        if (refused.isPresent()) {
-            return switch (refused.get()) {
-                case NOT_MEMBER -> {
-                    tx.afterCommit(() -> Log.warn("task.reject_not_allowed", "task", taskId, "requester", who.ref()));
-                    yield RejectResult.NOT_ALLOWED;
-                }
-                case NOT_FOUND -> RejectResult.NOT_FOUND;
-                case NOT_REQUESTER -> {
-                    tx.afterCommit(() -> Log.info("task.reject_not_requester", "task", taskId, "requester", who.ref()));
-                    yield RejectResult.NOT_REQUESTER;
-                }
-                case STALE_PLAN -> RejectResult.STALE_PLAN;
-                default -> RejectResult.WRONG_STATE;
-            };
-        }
-        Task task = verdict.task();
-        if (!Tasks.changePhase(tx, taskId, Phase.AWAITING_APPROVAL, Phase.REJECTED, now)) {
-            return RejectResult.WRONG_STATE;
-        }
-        Events.record(tx, taskId, null, who.ref(), Phase.AWAITING_APPROVAL, Phase.REJECTED, "rejected", now);
-        enqueue(tx, taskId, OutboxKind.TASK_REJECTED, task.chatRef(), task.groupOriginRef(),
-                Json.object().put("taskId", taskId).put("by", who.name()), now);
-        GroupAcks.react(tx, task, GroupReaction.ENDED, now);
-        logTransition(tx, taskId, Phase.AWAITING_APPROVAL, Phase.REJECTED, who.ref());
-        return RejectResult.REJECTED;
-    }
-
-    /** The requester moves their unfinished task up or down the queue; a running agent is not affected (ADR 0012). */
-    public PriorityResult changePriority(Tx tx, Requester who, long taskId, Priority priority) {
-        Instant now = clock.instant();
-        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
-        Optional<Refusal> refused = verdict.refusal(TaskAccess.Action.PRIORITY);
-        if (refused.isPresent()) {
-            return switch (refused.get()) {
-                case NOT_MEMBER -> PriorityResult.NOT_ALLOWED;
-                case NOT_FOUND -> PriorityResult.NOT_FOUND;
-                case NOT_REQUESTER -> PriorityResult.NOT_REQUESTER;
-                default -> PriorityResult.FINISHED;
-            };
-        }
-        Task task = verdict.task();
-        if (task.priority() == priority) {
-            return PriorityResult.UNCHANGED;
-        }
-        if (!Tasks.changePriority(tx, taskId, priority, now)) {
-            return PriorityResult.FINISHED;
-        }
-        String change = "priority " + task.priority() + " -> " + priority;
-        Events.record(tx, taskId, null, who.ref(), task.phase(), task.phase(), change, now);
-        tx.afterCommit(() -> Log.info("task.priority_changed", "task", taskId, "from", task.priority(), "to", priority,
-                "actor", who.ref()));
-        return PriorityResult.CHANGED;
     }
 
     /** Null when the task is not among the active ones this viewer may see, e.g. a run of another group's project. */
@@ -954,10 +765,6 @@ public final class TaskService {
     private void enqueue(Tx tx, Long taskId, OutboxKind kind, String chatRef, String replyToRef, ObjectNode payload, Instant now) {
         Outbox.enqueue(tx, taskId, kind, chatRef, replyToRef, payload, now);
         tx.afterCommit(wakeOutbox);
-    }
-
-    private static void logTransition(Tx tx, long taskId, Phase from, Phase to, String actor) {
-        tx.afterCommit(() -> Log.info("task.transition", "task", taskId, "from", from, "to", to, "actor", actor));
     }
 
     /** First non-blank line; long lines are cut rather than summarized. */

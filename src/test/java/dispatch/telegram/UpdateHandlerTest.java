@@ -2,6 +2,7 @@ package dispatch.telegram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -14,11 +15,14 @@ import dispatch.config.Config;
 import dispatch.config.ConfigLoader;
 import dispatch.config.GroupWriter;
 import dispatch.core.ActiveRuns;
+import dispatch.core.CommandResult;
 import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
 import dispatch.core.Membership;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
@@ -393,10 +397,7 @@ class UpdateHandlerTest {
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
         UpdateHandler adminHandler = new UpdateHandler(db, adminTasks, new Membership(adminGroups, UpdateHandlerTest::noJoins, clock, () -> { }),
                 adminGroups, projects, api, renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME, clock, () -> { });
-        String origin = "telegram:100/" + System.nanoTime();
-        db.transaction(tx -> adminTasks.create(tx, new dispatch.domain.Requester("telegram:100", "Bold"), "alm", "Fix it",
-                dispatch.domain.Priority.NORMAL, origin));
-        long id = Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        long id = give(adminTasks, BOLD, "alm", "Fix it", "telegram:100/" + System.nanoTime());
 
         adminHandler.handle(message(700, 70, 999, "Root", 999L, "private", "/cancel " + id, null));
 
@@ -1112,12 +1113,14 @@ class UpdateHandlerTest {
     @Test
     void buttonOfAnOlderPlanIsAnsweredAsStale() throws Exception {
         long taskId = taskAwaitingApproval();
+        String outboxBefore = row("SELECT count(*) AS n FROM outbox").get("n");
 
         handler.handle(callback(511, 100, "Bold", "reject:" + taskId + ":9"));
 
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
-        assertEquals(renderer.text("callback.stale"),
+        assertEquals(Text.of("refused.stalePlan", taskId).render(Language.MN),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals(outboxBefore, row("SELECT count(*) AS n FROM outbox").get("n"), "the notice is the whole answer");
     }
 
     @Test
@@ -1139,7 +1142,7 @@ class UpdateHandlerTest {
         handler.handle(callback(514, 200, "Ali", "approve:" + taskId + ":1"));
 
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
-        assertEquals(renderer.text("callback.notRequester"),
+        assertEquals(Text.of("refused.notRequester", taskId, "Bold").render(Language.MN),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
@@ -1150,7 +1153,7 @@ class UpdateHandlerTest {
         handler.handle(callback(513, 100, "Bold", "approve:" + taskId + ":1"));
 
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
-        assertEquals(renderer.text("callback.openQuestions"),
+        assertEquals(Text.of("refused.openQuestions", taskId).render(Language.MN),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
@@ -1339,13 +1342,24 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void priorityButtonForThePriorityItHasChangesNothingAndLeavesTheStatusAsItIs() throws Exception {
+        long taskId = task("Fix the login timeout");
+
+        handler.handle(privateCallback(584, 100, "Bold", "prio:" + taskId + ":NORMAL"));
+
+        assertEquals(renderer.text("callback.priorityUnchanged"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertFalse(telegram.calls().contains("editMessageText"), "the status already shows it: " + telegram.calls());
+    }
+
+    @Test
     void priorityButtonOfSomeoneElsesTaskIsRefused() throws Exception {
-        task("Fix the login timeout");
+        long taskId = task("Fix the login timeout");
 
-        handler.handle(privateCallback(583, 200, "Ali", "prio:1:LOW"));
+        handler.handle(privateCallback(583, 200, "Ali", "prio:" + taskId + ":LOW"));
 
-        assertEquals("NORMAL", row("SELECT priority FROM task WHERE id = 1").get("priority"));
-        assertEquals(renderer.text("callback.notRequester"),
+        assertEquals("NORMAL", row("SELECT priority FROM task WHERE id = ?", taskId).get("priority"));
+        assertEquals(Text.of("refused.notRequester", taskId, "Bold").render(Language.MN),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
@@ -1730,7 +1744,7 @@ class UpdateHandlerTest {
 
         assertTrue(personalGroups.isGroupChat("telegram:-4883391545"), "the running groups, not only the file");
         assertEquals("GROUP_LINKED", row("SELECT kind FROM outbox WHERE chat_ref = 'telegram:-4883391545'").get("kind"));
-        db.transaction(tx -> personalTasks.create(tx, BOLD, "life", "Fix it", Priority.NORMAL, "telegram:100/77"));
+        give(personalTasks, BOLD, "life", "Fix it", "telegram:100/77");
         assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_QUEUED' AND chat_ref = 'telegram:-4883391545'").get("n"));
     }
 
@@ -1888,8 +1902,8 @@ class UpdateHandlerTest {
         assertTrue(personalGroups.isGroupChat("telegram:" + NEW_GROUP), "the first chat stays linked");
         Thread.sleep(100);
         assertTrue(telegram.drain("leaveChat").isEmpty(), "the bot stays in both");
-        db.transaction(tx -> personalTasks.create(tx, BOLD, "life", "From the second", Priority.NORMAL, "telegram:" + otherGroup + "/9"));
-        db.transaction(tx -> personalTasks.create(tx, BOLD, "life", "Given privately", Priority.NORMAL, "telegram:100/77"));
+        give(personalTasks, BOLD, "life", "From the second", "telegram:" + otherGroup + "/9");
+        give(personalTasks, BOLD, "life", "Given privately", "telegram:100/77");
         assertEquals("telegram:" + otherGroup, row("SELECT chat_ref FROM task WHERE title = 'From the second'").get("chat_ref"));
         assertEquals("telegram:" + NEW_GROUP, row("SELECT chat_ref FROM task WHERE title = 'Given privately'").get("chat_ref"));
     }
@@ -2336,10 +2350,13 @@ class UpdateHandlerTest {
 
     /** A task Bold gave for autoland-management, as the draft buttons would have created it. */
     private long task(String text) {
-        String origin = "telegram:100/" + System.nanoTime();
-        db.transaction(tx -> tasks.create(tx, new dispatch.domain.Requester("telegram:100", "Bold"), "alm", text,
-                dispatch.domain.Priority.NORMAL, origin));
-        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        return give(tasks, BOLD, "alm", text, "telegram:100/" + System.nanoTime());
+    }
+
+    /** Gives a task from the message {@code origin}, as the draft buttons do in the end. */
+    private long give(TaskService service, dispatch.domain.Requester who, String project, String text, String origin) {
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> service.commands().run(tx, who,
+                new TaskCommand.Give(project, text, Priority.NORMAL, new Origin(origin))))).taskId();
     }
 
     private long taskAwaitingApproval(List<String> questions) {
@@ -2361,7 +2378,7 @@ class UpdateHandlerTest {
     /** A task Bold gave, carried out and delivered; its result's line reached the group as message 1100. */
     private long completedTask() {
         long taskId = taskAwaitingApproval(List.of());
-        db.transaction(tx -> tasks.approve(tx, BOLD, taskId, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(taskId, 1)));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         db.transaction(tx -> Runs.recordAgentStarted(tx, run.taskId(), run.seq(), clock.instant(), 1L, clock.instant()));
         transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", null, 3, List.of(),

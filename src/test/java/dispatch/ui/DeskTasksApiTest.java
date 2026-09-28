@@ -9,8 +9,10 @@ import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Groups;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
@@ -112,8 +114,8 @@ class DeskTasksApiTest {
     }
 
     private ClaimedRun started(String project) {
-        String origin = BOLD.ref() + "/" + System.nanoTime();
-        db.transaction(tx -> tasks.create(tx, BOLD, project, "Fix the login timeout", Priority.NORMAL, origin));
+        Origin origin = new Origin(BOLD.ref() + "/" + System.nanoTime());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Give(project, "Fix the login timeout", Priority.NORMAL, origin)));
         return db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
     }
 

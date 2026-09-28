@@ -73,8 +73,8 @@ public final class AssistantActions {
         }
         return switch (type) {
             case "answer" -> answer(tx, who, taskId, verdict, action, payload);
-            case "approve" -> decision(verdict, TaskAccess.Action.APPROVE, payload);
-            case "reject" -> decision(verdict, TaskAccess.Action.REJECT, payload);
+            case "approve" -> offered(tx, who, new TaskCommand.Approve(taskId, verdict.planSeq()), payload.put("planSeq", verdict.planSeq()));
+            case "reject" -> offered(tx, who, new TaskCommand.Reject(taskId, verdict.planSeq()), payload.put("planSeq", verdict.planSeq()));
             case "cancel" -> offered(tx, who, new TaskCommand.Cancel(taskId), payload);
             case "retry" -> offered(tx, who, new TaskCommand.Retry(taskId), payload);
             case "followUp" -> followUp(tx, who, taskId, action, payload);
@@ -115,16 +115,8 @@ public final class AssistantActions {
                         : new TaskCommand.Choice.Written(action.path("answer").asText());
                 yield tapped(commands.run(tx, who, new TaskCommand.Answer(taskId, planSeq, action.path("question").asInt(), choice)));
             }
-            case "approve" -> new Tapped(switch (tasks.approve(tx, who, taskId, planSeq)) {
-                case APPROVED -> Outcome.DONE;
-                case STALE_PLAN, WRONG_STATE, OPEN_QUESTIONS -> Outcome.STALE;
-                case NOT_ALLOWED, NOT_FOUND, NOT_REQUESTER -> Outcome.NOT_ALLOWED;
-            }, Optional.empty());
-            case "reject" -> new Tapped(switch (tasks.reject(tx, who, taskId, planSeq)) {
-                case REJECTED -> Outcome.DONE;
-                case STALE_PLAN, WRONG_STATE -> Outcome.STALE;
-                case NOT_ALLOWED, NOT_FOUND, NOT_REQUESTER -> Outcome.NOT_ALLOWED;
-            }, Optional.empty());
+            case "approve" -> tapped(commands.run(tx, who, new TaskCommand.Approve(taskId, planSeq)));
+            case "reject" -> tapped(commands.run(tx, who, new TaskCommand.Reject(taskId, planSeq)));
             case "cancel" -> tapped(commands.run(tx, who, new TaskCommand.Cancel(taskId)));
             case "retry" -> tapped(commands.run(tx, who, new TaskCommand.Retry(taskId)));
             // Unique per action, as a draft's is: a merged task's follow-up becomes a task with this as its origin.
@@ -211,15 +203,6 @@ public final class AssistantActions {
         return text.codePointCount(0, text.length()) <= SHOWN_TEXT;
     }
 
-    /** Approval needs a plan without questions: answering them makes the agent plan again, and that plan is approved. */
-    private static Checked decision(TaskAccess.Verdict verdict, TaskAccess.Action action, ObjectNode payload) {
-        Optional<Refusal> refused = verdict.refusal(action);
-        if (refused.isPresent()) {
-            return note(payload, reason(refused.get()));
-        }
-        return new Checked(true, payload.put("planSeq", verdict.planSeq()));
-    }
-
     /**
      * More work on a finished task, refused as the command would refuse it. The check reads a follow-up's origin only to
      * find a repeat, and a page's never repeats; the tap gives the proposal's own.
@@ -237,21 +220,6 @@ public final class AssistantActions {
         return commands.check(tx, who, command)
                 .map(refused -> new Checked(false, payload.put("words", refused.words().render(Language.MN))))
                 .orElseGet(() -> new Checked(true, payload));
-    }
-
-    /** The note (assistant.note.*) the reply shows for a proposal task access refuses. */
-    private static String reason(Refusal refusal) {
-        return switch (refusal) {
-            case NOT_MEMBER, NOT_FOUND -> "notFound";
-            case NOT_REQUESTER -> "notYours";
-            case OPEN_QUESTIONS -> "openQuestions";
-            case OUT_OF_ORDER -> "order";
-            case ALREADY_ANSWERED -> "answered";
-            case WRONG_PHASE, STALE_PLAN, NOT_FAILED, NOT_EXECUTED, MERGED -> "phase";
-            // Given by a task command, never by task access, so never a proposal's own refusal (ADR 0031).
-            case EMPTY, UNKNOWN_PROJECT, PROJECT_UNAVAILABLE ->
-                    throw new IllegalStateException("task access never refuses a proposal as " + refusal);
-        };
     }
 
     private static Checked note(ObjectNode payload, String reason) {

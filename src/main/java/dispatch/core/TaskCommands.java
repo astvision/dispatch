@@ -86,6 +86,9 @@ public final class TaskCommands {
         return switch (command) {
             case TaskCommand.Cancel cancel -> refusal(tx, who, command, cancel.taskId(), TaskAccess.Action.CANCEL);
             case TaskCommand.Retry retry -> refusal(tx, who, command, retry.taskId(), TaskAccess.Action.RETRY);
+            case TaskCommand.Approve approve -> planRefusal(tx, who, command, approve.taskId(), approve.planSeq(), TaskAccess.Action.APPROVE);
+            case TaskCommand.Reject reject -> planRefusal(tx, who, command, reject.taskId(), reject.planSeq(), TaskAccess.Action.REJECT);
+            case TaskCommand.Reprioritize reprioritize -> refusal(tx, who, command, reprioritize.taskId(), TaskAccess.Action.PRIORITY);
             case TaskCommand.Correct correct -> {
                 TaskAccess.Verdict verdict = access.of(tx, who.ref(), correct.taskId());
                 int planSeq = correct.planSeq().orElse(verdict.planSeq());
@@ -123,6 +126,9 @@ public final class TaskCommands {
         return switch (command) {
             case TaskCommand.Cancel cancel -> cancel(tx, who, task(tx, cancel.taskId()));
             case TaskCommand.Retry retry -> retry(tx, who, task(tx, retry.taskId()));
+            case TaskCommand.Approve approve -> approve(tx, who, task(tx, approve.taskId()), approve.planSeq());
+            case TaskCommand.Reject reject -> reject(tx, who, task(tx, reject.taskId()), reject.planSeq());
+            case TaskCommand.Reprioritize reprioritize -> reprioritize(tx, who, task(tx, reprioritize.taskId()), reprioritize.priority());
             case TaskCommand.Correct correct -> {
                 Task task = task(tx, correct.taskId());
                 yield correct(tx, who, task, correct.planSeq().orElseGet(() -> access.of(tx, who.ref(), task).planSeq()),
@@ -131,7 +137,9 @@ public final class TaskCommands {
             case TaskCommand.FollowUp followUp -> followUp(tx, who, task(tx, followUp.taskId()), followUp);
             case TaskCommand.Answer answer -> {
                 Task task = task(tx, answer.taskId());
-                yield answer(tx, who, task, answer, answerText(task, answer).orElseThrow());
+                String text = answerText(task, answer).orElseThrow(() -> new IllegalStateException("task #" + task.id()
+                        + " was allowed an answer to question " + answer.question() + ", yet " + answer.choice() + " says nothing"));
+                yield answer(tx, who, task, answer, text);
             }
             case TaskCommand.Give give -> give(tx, who, give, true);
         };
@@ -140,6 +148,13 @@ public final class TaskCommands {
     private Optional<CommandResult.Refused> refusal(Tx tx, Requester who, TaskCommand command, long taskId, TaskAccess.Action action) {
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
         return verdict.refusal(action).map(refusal -> refused(command, refusal, verdict.task()));
+    }
+
+    /** For a decision that names the plan it was shown: a plan a newer one replaced is stale (ADR 0027). */
+    private Optional<CommandResult.Refused> planRefusal(Tx tx, Requester who, TaskCommand command, long taskId, int planSeq,
+                                                        TaskAccess.Action action) {
+        TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
+        return verdict.refusal(action, planSeq).map(refusal -> refused(command, refusal, verdict.task()));
     }
 
     /**
@@ -193,6 +208,50 @@ public final class TaskCommands {
         tx.afterCommit(wakeOutbox);
         tx.afterCommit(wakeScheduler);
         logTransition(tx, task.id(), Phase.FAILED, to, who.ref());
+        return new CommandResult.Done(task.id(), isRequester(who, task));
+    }
+
+    /** Queues the approved plan's execution; the requester hears it is queued. */
+    private CommandResult approve(Tx tx, Requester who, Task task, int planSeq) {
+        Instant now = clock.instant();
+        changePhase(tx, task, Phase.AWAITING_APPROVAL, Phase.EXECUTING, now);
+        // The run carries the plan it implements, so what was approved stays on record.
+        Runs.insert(tx, new Runs.NewRun(task.id(), Runs.nextSeq(tx, task.id()), RunKind.EXECUTE, RunCause.APPROVAL, task.planJson(),
+                who), now);
+        Events.record(tx, task.id(), null, who.ref(), Phase.AWAITING_APPROVAL, Phase.EXECUTING, "approved plan " + planSeq, now);
+        Outbox.enqueueForRequester(tx, task, OutboxKind.EXECUTION_QUEUED,
+                Json.object().put("taskId", task.id()).put("by", who.name()), now);
+        tx.afterCommit(wakeOutbox);
+        tx.afterCommit(wakeScheduler);
+        logTransition(tx, task.id(), Phase.AWAITING_APPROVAL, Phase.EXECUTING, who.ref());
+        return new CommandResult.Done(task.id(), isRequester(who, task));
+    }
+
+    /** Ends the task: its chat hears who rejected it, and a group message that gave it shows it ended (G-1e). */
+    private CommandResult reject(Tx tx, Requester who, Task task, int planSeq) {
+        Instant now = clock.instant();
+        changePhase(tx, task, Phase.AWAITING_APPROVAL, Phase.REJECTED, now);
+        Events.record(tx, task.id(), null, who.ref(), Phase.AWAITING_APPROVAL, Phase.REJECTED, "rejected plan " + planSeq, now);
+        Outbox.enqueue(tx, task.id(), OutboxKind.TASK_REJECTED, task.chatRef(), task.groupOriginRef(),
+                Json.object().put("taskId", task.id()).put("by", who.name()), now);
+        GroupAcks.react(tx, task, GroupReaction.ENDED, now);
+        tx.afterCommit(wakeOutbox);
+        logTransition(tx, task.id(), Phase.AWAITING_APPROVAL, Phase.REJECTED, who.ref());
+        return new CommandResult.Done(task.id(), isRequester(who, task));
+    }
+
+    /** The priority it already has is no change and writes nothing (ADR 0012). */
+    private CommandResult reprioritize(Tx tx, Requester who, Task task, Priority priority) {
+        if (task.priority() == priority) {
+            return new CommandResult.Unchanged(task.id());
+        }
+        Instant now = clock.instant();
+        if (!Tasks.changePriority(tx, task.id(), priority, now)) {
+            throw new IllegalStateException("task #" + task.id() + " was allowed a new priority, yet it finished");
+        }
+        Events.record(tx, task.id(), null, who.ref(), task.phase(), task.phase(), "priority " + task.priority() + " -> " + priority, now);
+        tx.afterCommit(() -> Log.info("task.priority_changed", "task", task.id(), "from", task.priority(), "to", priority,
+                "actor", who.ref()));
         return new CommandResult.Done(task.id(), isRequester(who, task));
     }
 
@@ -327,7 +386,7 @@ public final class TaskCommands {
             return Optional.empty();
         }
         if (!groups.isMember(who.ref())) {
-            return Optional.of(new CommandResult.Refused(Refusal.NOT_MEMBER, Text.of("refused.notMember")));
+            return Optional.of(refused(give, Refusal.NOT_MEMBER, null));
         }
         Optional<Config.Project> project = memberProject(who, give.project());
         if (project.isEmpty()) {
@@ -339,9 +398,7 @@ public final class TaskCommands {
             return Optional.of(new CommandResult.Refused(Refusal.PROJECT_UNAVAILABLE,
                     Text.of("refused.projectUnavailable", project.get().name(), unavailable.get())));
         }
-        return isBlank(give.text())
-                ? Optional.of(new CommandResult.Refused(Refusal.EMPTY, Text.of("refused.emptyTask")))
-                : Optional.empty();
+        return isBlank(give.text()) ? Optional.of(refused(give, Refusal.EMPTY, null)) : Optional.empty();
     }
 
     /**
@@ -355,10 +412,12 @@ public final class TaskCommands {
             return new CommandResult.Created(replayed.get().id());
         }
         Instant now = clock.instant();
-        Config.Project project = memberProject(who, give.project()).orElseThrow();
+        // The groups live outside the store's lock: another thread may have replaced them since the check.
+        Config.Project project = memberProject(who, give.project()).orElseThrow(() -> new IllegalStateException(
+                who.ref() + " was allowed a task on " + give.project() + ", yet it is none of their groups' projects now"));
         long id = insertTask(tx, who, project, give.text().strip(), give.priority(), give.origin().ref(), now);
         if (fromPageSaysSo && give.origin().ref().startsWith(Origin.PAGE)) {
-            Task task = Tasks.find(tx, id).orElseThrow();
+            Task task = task(tx, id);
             Outbox.enqueueForRequester(tx, task, OutboxKind.TASK_GIVEN_ON_DESK, Json.object().put("taskId", id)
                     .put("project", task.project()).put("priority", give.priority().name()).put("title", task.title()), now);
             tx.afterCommit(wakeOutbox);
@@ -366,12 +425,9 @@ public final class TaskCommands {
         return new CommandResult.Created(id);
     }
 
-    /**
-     * The task with its first plan run queued, announced in its project's group. Package-private while {@link TaskService}
-     * still gives drafts' and the desk's tasks through it.
-     */
-    long insertTask(Tx tx, Requester who, Config.Project project, String description, Priority priority, String originRef,
-                    Instant now) {
+    /** The task with its first plan run queued, announced in its project's group. */
+    private long insertTask(Tx tx, Requester who, Config.Project project, String description, Priority priority, String originRef,
+                            Instant now) {
         Optional<String> groupChat = groups.chatOfTask(project.name(), originRef);
         // Without a group chat the task belongs to the requester's private chat, where nothing needs announcing (ADR 0014).
         long id = Tasks.insert(tx, new Tasks.NewTask(project.name(), TaskService.title(description), description, who, originRef,
@@ -393,7 +449,7 @@ public final class TaskCommands {
             Outbox.enqueue(tx, id, OutboxKind.WORKER_WAITING, who.ref(), null, Json.object().put("taskId", id), now);
             tx.afterCommit(wakeOutbox);
         }
-        GroupAcks.react(tx, Tasks.find(tx, id).orElseThrow(), GroupReaction.TASK_CREATED, now);
+        GroupAcks.react(tx, task(tx, id), GroupReaction.TASK_CREATED, now);
         tx.afterCommit(wakeScheduler);
         tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "priority", priority,
                 "requester", who.ref()));
@@ -430,7 +486,10 @@ public final class TaskCommands {
                 case TaskCommand.Correct correct -> Text.of("refused.emptyCorrection");
                 case TaskCommand.FollowUp followUp -> Text.of("refused.emptyFollowUp");
                 case TaskCommand.Answer answer -> Text.of("refused.emptyAnswer");
-                default -> Text.of("refused.emptyTask");
+                case TaskCommand.Give give -> Text.of("refused.emptyTask");
+                // No words of their own to be blank.
+                case TaskCommand.Cancel _, TaskCommand.Retry _, TaskCommand.Approve _, TaskCommand.Reject _, TaskCommand.Reprioritize _ ->
+                        throw new IllegalStateException(command + " is never refused as " + refusal);
             };
             // Merges' own refusal, and giving's, which words its project where it is refused.
             case MERGED, UNKNOWN_PROJECT, PROJECT_UNAVAILABLE ->
@@ -454,6 +513,9 @@ public final class TaskCommands {
         return switch (command) {
             case TaskCommand.Cancel cancel -> cancel.taskId();
             case TaskCommand.Retry retry -> retry.taskId();
+            case TaskCommand.Approve approve -> approve.taskId();
+            case TaskCommand.Reject reject -> reject.taskId();
+            case TaskCommand.Reprioritize reprioritize -> reprioritize.taskId();
             case TaskCommand.Correct correct -> correct.taskId();
             case TaskCommand.FollowUp followUp -> followUp.taskId();
             case TaskCommand.Answer answer -> answer.taskId();

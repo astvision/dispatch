@@ -571,7 +571,7 @@ class GroupAdditionsTest {
 
     /** The approved plan's execution (run 2) has started, its agent running. */
     private void executing(long taskId) {
-        db.transaction(tx -> tasks.approve(tx, new Requester("telegram:" + ALI, "Ali"), taskId, 1));
+        db.transaction(tx -> tasks.commands().run(tx, new Requester("telegram:" + ALI, "Ali"), new TaskCommand.Approve(taskId, 1)));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         assertEquals(2, run.seq());
         transitions.agentStarted(taskId, 2, null, null);

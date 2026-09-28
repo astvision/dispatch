@@ -21,7 +21,6 @@ import dispatch.core.JoinRequestResult;
 import dispatch.core.Membership;
 import dispatch.core.Merges;
 import dispatch.core.Origin;
-import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
 import dispatch.core.Refusal;
 import dispatch.core.TaskAccess;
@@ -847,25 +846,8 @@ public final class UpdateHandler {
             return;
         }
         int seq = planSeq.get().intValue();
-        String answer = parts[0].equals("approve")
-                ? switch (tasks.approve(tx, who, taskId.get(), seq)) {
-                    case APPROVED -> "callback.approved";
-                    case NOT_ALLOWED -> "callback.notAllowed";
-                    case NOT_FOUND -> "callback.notFound";
-                    case NOT_REQUESTER -> "callback.notRequester";
-                    case WRONG_STATE -> "callback.wrongState";
-                    case STALE_PLAN -> "callback.stale";
-                    case OPEN_QUESTIONS -> "callback.openQuestions";
-                }
-                : switch (tasks.reject(tx, who, taskId.get(), seq)) {
-                    case REJECTED -> "callback.rejected";
-                    case NOT_ALLOWED -> "callback.notAllowed";
-                    case NOT_FOUND -> "callback.notFound";
-                    case NOT_REQUESTER -> "callback.notRequester";
-                    case WRONG_STATE -> "callback.wrongState";
-                    case STALE_PLAN -> "callback.stale";
-                };
-        answer(tx, callbackId, answer);
+        TaskCommand decision = parts[0].equals("approve") ? new TaskCommand.Approve(taskId.get(), seq) : new TaskCommand.Reject(taskId.get(), seq);
+        notice(tx, callbackId, commands.run(tx, who, decision), parts[0].equals("approve") ? "callback.approved" : "callback.rejected");
     }
 
     /**
@@ -1052,16 +1034,9 @@ public final class UpdateHandler {
             answer(tx, callbackId, "callback.unknown");
             return;
         }
-        PriorityResult result = tasks.changePriority(tx, who, taskId, priority);
-        answer(tx, callbackId, switch (result) {
-            case CHANGED -> "callback.priorityChanged";
-            case UNCHANGED -> "callback.priorityUnchanged";
-            case NOT_ALLOWED -> "callback.notAllowed";
-            case NOT_FOUND -> "callback.notFound";
-            case NOT_REQUESTER -> "callback.notRequester";
-            case FINISHED -> "callback.wrongState";
-        });
-        if (result != PriorityResult.CHANGED) {
+        CommandResult result = commands.run(tx, who, new TaskCommand.Reprioritize(taskId, priority));
+        notice(tx, callbackId, result, result instanceof CommandResult.Unchanged ? "callback.priorityUnchanged" : "callback.priorityChanged");
+        if (!(result instanceof CommandResult.Done)) {
             return;
         }
         JsonNode message = callback.path("message");

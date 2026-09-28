@@ -12,6 +12,17 @@ public sealed interface TaskCommand {
     record Retry(long taskId) implements TaskCommand {
     }
 
+    /** Approves plan {@code planSeq} and queues its execution (ADR 0006). */
+    record Approve(long taskId, int planSeq) implements TaskCommand {
+    }
+
+    record Reject(long taskId, int planSeq) implements TaskCommand {
+    }
+
+    /** Moves an unfinished task up or down the queue; a running agent is not affected (ADR 0012). */
+    record Reprioritize(long taskId, Priority priority) implements TaskCommand {
+    }
+
     /** A correction of plan {@code planSeq}, or of whichever plan waits now when it names none (a topic message, an addition). */
     record Correct(long taskId, OptionalInt planSeq, String text) implements TaskCommand {
     }

@@ -10,8 +10,10 @@ import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Groups;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
@@ -191,8 +193,8 @@ class DeskServerTest {
 
     /** A task of {@code who} whose first plan is ready, asking nothing, and which cost 0.1. */
     private long planned(Requester who) {
-        String origin = who.ref() + "/" + System.nanoTime();
-        db.transaction(tx -> tasks.create(tx, who, "alm", "Fix the login timeout", Priority.NORMAL, origin));
+        Origin origin = new Origin(who.ref() + "/" + System.nanoTime());
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Give("alm", "Fix the login timeout", Priority.NORMAL, origin)));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), List.of());
         transitions.planSucceeded(run.taskId(), run.seq(), plan,

@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Text;
+import dispatch.core.CommandResult;
+import dispatch.core.Origin;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
@@ -83,23 +86,18 @@ final class DeskTasksApi {
     }
 
     /**
-     * {"project", "text", "priority"} → {"taskId"}: a task of the acting admin's own. A refusal is answered here only
-     * ({@link TaskService#give} writes nothing for one), so the chat hears of the tasks the desk gave, not of its typos.
+     * {"project", "text", "priority"} → {"taskId"}: {@link TaskCommand.Give} from a page, a task of the acting admin's own. A
+     * refusal is answered here only (a refused command writes nothing), so the chat hears of the tasks the desk gave, not of
+     * its typos.
      */
     ObjectNode give(Caller caller, JsonNode body) {
-        String project = body.path("project").asText("");
         Priority priority = priority(body.path("priority").asText("NORMAL"));
-        TaskService.Given given = db.transactionReturning(tx ->
-                tasks.give(tx, new Requester(caller.ref(), caller.name()), project, body.path("text").asText(""), priority));
-        return switch (given.result()) {
-            case CREATED -> Json.object().put("taskId", given.taskId());
-            case EMPTY -> throw new ApiException(400, "empty", Text.of("refusal.taskEmpty"));
-            case UNKNOWN_PROJECT -> throw new ApiException(404, "unknown_project", Text.of("refusal.projectNotYours", project));
-            case PROJECT_UNAVAILABLE -> throw new ApiException(409, "project_unavailable",
-                    Text.of("refusal.projectUnavailable", project, given.reason()));
-            case NOT_ALLOWED -> throw new ApiException(403, "not_a_member", Text.of("refusal.notMember"));
-            case DUPLICATE -> throw new IllegalStateException("a desk origin is new every time, yet the task came back a duplicate");
-        };
+        TaskCommand.Give give = new TaskCommand.Give(body.path("project").asText(""), body.path("text").asText(""), priority, Origin.page());
+        CommandResult result = db.transactionReturning(tx -> tasks.commands().run(tx, new Requester(caller.ref(), caller.name()), give));
+        if (result instanceof CommandResult.Refused refused) {
+            throw TasksApi.refused(refused);
+        }
+        return Json.object().put("taskId", ((CommandResult.Created) result).taskId()); // a Give is only ever Created or Refused
     }
 
     private static Priority priority(String given) {

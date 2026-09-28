@@ -2,6 +2,7 @@ package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -140,7 +141,7 @@ class AssistantActionsTest {
     void aTapThatFoundTheTaskMovedOnIsRecordedAsSuch() {
         long taskId = planned(ALI, noQuestions());
         long id = propose(ALI, check(ALI, Json.object().put("type", "approve").put("task", taskId)));
-        db.transaction(tx -> tasks.reject(tx, ALI, taskId, 1));
+        db.transaction(tx -> tasks.commands().run(tx, ALI, new TaskCommand.Reject(taskId, 1)));
 
         run(ALI, id);
 
@@ -151,19 +152,18 @@ class AssistantActionsTest {
     void aPlanWithOpenQuestionsIsNotProposedForApproval() {
         long taskId = planned(ALI, twoQuestions());
 
-        AssistantActions.Checked checked = check(ALI, Json.object().put("type", "approve").put("task", taskId));
-
-        assertFalse(checked.valid());
-        assertEquals("openQuestions", checked.payload().path("reason").asText(), "answering makes the agent plan again first");
+        assertEquals(Text.of("refused.openQuestions", taskId).render(Language.MN),
+                words(check(ALI, Json.object().put("type", "approve").put("task", taskId))), "answering makes the agent plan again first");
     }
 
     @Test
-    void anApprovalProposedBeforeThePlanWasRejectedIsStaleWhenTapped() {
+    void anApprovalProposedBeforeThePlanWasRejectedIsStaleWhenTappedAndSaysWhy() {
         long taskId = planned(ALI, noQuestions());
         long id = propose(ALI, check(ALI, Json.object().put("type", "approve").put("task", taskId)));
-        db.transaction(tx -> tasks.reject(tx, ALI, taskId, 1));
+        db.transaction(tx -> tasks.commands().run(tx, ALI, new TaskCommand.Reject(taskId, 1)));
 
-        assertEquals(AssistantActions.Outcome.STALE, run(ALI, id).outcome());
+        assertEquals(new AssistantActions.Tapped(AssistantActions.Outcome.STALE,
+                Optional.of(Text.of("refused.wrongPhase", taskId, Text.of("phase.rejected")))), run(ALI, id));
         assertEquals("REJECTED", phase(taskId));
     }
 
@@ -320,7 +320,7 @@ class AssistantActionsTest {
     /** A task of {@code who}'s, planned, carried out, delivered and merged from its result's button. */
     private long merged(Requester who) {
         long id = planned(who, noQuestions());
-        db.transaction(tx -> tasks.approve(tx, who, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Approve(id, 1)));
         db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         transitions.agentStarted(id, 2, null, null);
         transitions.completed(id, 2, new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", new BigDecimal("0.1"), 3, List.of(), null,
@@ -330,8 +330,8 @@ class AssistantActionsTest {
     }
 
     private long create(Requester who, String project, String title) {
-        String origin = who.ref() + "/" + Math.abs(title.hashCode());
-        db.transaction(tx -> tasks.create(tx, who, project, title, Priority.NORMAL, origin));
-        return Long.parseLong(SqlRows.single(dbFile, "SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        Origin origin = new Origin(who.ref() + "/" + Math.abs(title.hashCode()));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, who,
+                new TaskCommand.Give(project, title, Priority.NORMAL, origin)))).taskId();
     }
 }

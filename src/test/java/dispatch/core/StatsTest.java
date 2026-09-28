@@ -1,6 +1,7 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -175,8 +176,8 @@ class StatsTest {
 
     private long give(Requester who, String project) {
         String origin = who.ref() + "/" + ++messages;
-        db.transaction(tx -> tasks.create(tx, who, project, "Task " + messages, Priority.NORMAL, origin));
-        return Long.parseLong(SqlRows.single(dbFile, "SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, who,
+                new TaskCommand.Give(project, "Task " + messages, Priority.NORMAL, new Origin(origin))))).taskId();
     }
 
     private void planned(long id, int seq, String cost) {
@@ -195,7 +196,7 @@ class StatsTest {
             planned(id, ++seq, "0.05");
         }
         int planSeq = seq;
-        db.transaction(tx -> tasks.approve(tx, who, id, planSeq));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Approve(id, planSeq)));
         claim();
         clock.advance(took.minus(Duration.between(start, clock.instant())));
         transitions.completed(id, seq + 1, result(executionCost), List.of("README.md"), "https://github.com/acme/" + project + "/pull/" + id);
@@ -204,13 +205,13 @@ class StatsTest {
     private void rejected(Requester who, String project, String planCost) {
         long id = give(who, project);
         planned(id, 1, planCost);
-        db.transaction(tx -> tasks.reject(tx, who, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Reject(id, 1)));
     }
 
     private void failedExecution(Requester who, String project, String planCost, String executionCost) {
         long id = give(who, project);
         planned(id, 1, planCost);
-        db.transaction(tx -> tasks.approve(tx, who, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Approve(id, 1)));
         claim();
         transitions.failed(id, 2, FailureReason.AGENT, "boom", result(executionCost));
     }

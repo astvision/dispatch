@@ -5,11 +5,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
-import dispatch.core.ApproveResult;
 import dispatch.core.CommandResult;
 import dispatch.core.Groups;
 import dispatch.core.Origin;
-import dispatch.core.RejectResult;
 import dispatch.core.TaskAccess;
 import dispatch.core.TaskCommand;
 import dispatch.core.TaskCommands;
@@ -175,35 +173,18 @@ public final class TasksApi {
         return db.transactionReturning(tx -> ownTask(tx, caller, taskId)).put("result", "ANSWERED");
     }
 
-    /** {@link TaskService#approve}, exactly as the chat's button: refused while the plan still has open questions. */
+    /** {@link TaskCommand.Approve}, exactly as the chat's button: refused while the plan still has open questions. */
     ObjectNode approve(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         int planSeq = number(body, "planSeq");
-        ApproveResult result = db.transactionReturning(tx -> tasks.approve(tx, requester(caller), taskId, planSeq));
-        return switch (result) {
-            case APPROVED -> Json.object().put("result", result.name());
-            case OPEN_QUESTIONS -> throw new ApiException(409, "open_questions", Text.of("refusal.openQuestions"));
-            case STALE_PLAN -> throw stale();
-            case WRONG_STATE -> throw new ApiException(409, "wrong_state", Text.of("refusal.notWaiting"));
-            case NOT_ALLOWED -> throw notMember();
-            case NOT_FOUND -> throw notFound(taskId);
-            case NOT_REQUESTER -> throw new ApiException(403, "not_yours", NOT_YOURS);
-        };
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller), new TaskCommand.Approve(taskId, planSeq))), "APPROVED");
     }
 
-    /** {@link TaskService#reject}, exactly as the chat's button. */
+    /** {@link TaskCommand.Reject}, exactly as the chat's button. */
     ObjectNode reject(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         int planSeq = number(body, "planSeq");
-        RejectResult result = db.transactionReturning(tx -> tasks.reject(tx, requester(caller), taskId, planSeq));
-        return switch (result) {
-            case REJECTED -> Json.object().put("result", result.name());
-            case STALE_PLAN -> throw stale();
-            case WRONG_STATE -> throw new ApiException(409, "wrong_state", Text.of("refusal.notWaiting"));
-            case NOT_ALLOWED -> throw notMember();
-            case NOT_FOUND -> throw notFound(taskId);
-            case NOT_REQUESTER -> throw new ApiException(403, "not_yours", NOT_YOURS);
-        };
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller), new TaskCommand.Reject(taskId, planSeq))), "REJECTED");
     }
 
     /** {@link TaskCommand.Correct}: the requester's reply to a plan, written on the desktop (D-2) as in the chat. */
@@ -242,16 +223,8 @@ public final class TasksApi {
         return task;
     }
 
-    private static ApiException stale() {
-        return new ApiException(409, "stale", Text.of("refusal.stalePlan"));
-    }
-
     private static ApiException notFound(long taskId) {
         return new ApiException(404, "not_found", Text.of("refusal.noTask", taskId));
-    }
-
-    private static ApiException notMember() {
-        return new ApiException(403, "not_a_member", Text.of("refusal.notMember"));
     }
 
     private static int number(JsonNode body, String field) {

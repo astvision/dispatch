@@ -3,6 +3,7 @@ package dispatch.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.Language;
@@ -77,9 +78,15 @@ class TaskCommandsTest {
             new Case(BOLD, on -> new TaskCommand.Cancel(404), Refusal.NOT_FOUND),
             new Case(ALI, on -> new TaskCommand.Cancel(on.open()), Refusal.NOT_REQUESTER),
             new Case(ALI, on -> new TaskCommand.Retry(on.failed()), Refusal.NOT_REQUESTER),
+            new Case(ALI, on -> new TaskCommand.Reprioritize(on.open(), Priority.URGENT), Refusal.NOT_REQUESTER),
             new Case(BOLD, on -> new TaskCommand.FollowUp(on.open(), "Also log it", Origin.page()), Refusal.WRONG_PHASE),
+            new Case(BOLD, on -> new TaskCommand.Reprioritize(on.completed(), Priority.URGENT), Refusal.WRONG_PHASE),
             new Case(BOLD, on -> new TaskCommand.Retry(on.open()), Refusal.NOT_FAILED),
             new Case(BOLD, on -> new TaskCommand.Correct(on.awaiting(), OptionalInt.of(9), "Keep the default"), Refusal.STALE_PLAN),
+            new Case(BOLD, on -> new TaskCommand.Reject(on.awaiting(), 9), Refusal.STALE_PLAN),
+            new Case(BOLD, on -> new TaskCommand.Approve(on.awaiting(), 9), Refusal.STALE_PLAN),
+            new Case(BOLD, on -> new TaskCommand.Answer(on.awaiting(), 1, 3, new TaskCommand.Choice.Option(0)), Refusal.STALE_PLAN),
+            new Case(BOLD, on -> new TaskCommand.Approve(on.awaiting(), 1), Refusal.OPEN_QUESTIONS),
             new Case(BOLD, on -> new TaskCommand.Answer(on.awaiting(), 1, 2, new TaskCommand.Choice.Option(0)), Refusal.OUT_OF_ORDER),
             new Case(BOLD, on -> new TaskCommand.Answer(on.answered(), 1, 1, new TaskCommand.Choice.Option(1)), Refusal.ALREADY_ANSWERED),
             new Case(BOLD, on -> new TaskCommand.FollowUp(on.planFailed(), "Also log it", Origin.page()), Refusal.NOT_EXECUTED),
@@ -171,6 +178,31 @@ class TaskCommandsTest {
     }
 
     @Test
+    void anApprovalQueuesTheExecutionAndTellsTheRequester() {
+        long id = awaitingApproval("5", PLAN);
+        assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.Approve(id, 1)));
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals(List.of(BOLD.ref()), chatsOf("EXECUTION_QUEUED"));
+    }
+
+    @Test
+    void aRejectionEndsTheTaskInItsChat() {
+        long id = awaitingApproval("5", PLAN);
+        assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.Reject(id, 1)));
+        assertEquals(List.of(CHAT), chatsOf("TASK_REJECTED"));
+    }
+
+    @Test
+    void theSamePriorityAgainChangesNothing() {
+        long id = given(BOLD, "5");
+        Map<String, String> before = counts();
+        assertEquals(new CommandResult.Unchanged(id), run(BOLD, new TaskCommand.Reprioritize(id, Priority.NORMAL)));
+        assertEquals(before, counts(), "unchanged writes nothing");
+        assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.Reprioritize(id, Priority.URGENT)));
+        assertEquals("URGENT", row("SELECT priority FROM task WHERE id = ?", id).get("priority"));
+    }
+
+    @Test
     void aCorrectionPlansAgainAndTellsTheRequester() {
         long id = awaitingApproval("5", PLAN);
 
@@ -211,6 +243,16 @@ class TaskCommandsTest {
         assertEquals(created, run(BOLD, new TaskCommand.FollowUp(id, "Also log it", new Origin("telegram:100/9"))),
                 "the same origin gives the same task, and writes nothing more");
         assertEquals(List.of(BOLD.ref()), chatsOf("FOLLOW_UP_NEW_TASK"));
+    }
+
+    @Test
+    void aMergedTasksFollowUpFromAPageSaysWhereItWentAndNotThatAPageGaveIt() {
+        long id = merged("5");
+
+        assertInstanceOf(CommandResult.Created.class, run(BOLD, new TaskCommand.FollowUp(id, "Also log it", Origin.page())));
+
+        assertEquals(List.of(BOLD.ref()), chatsOf("FOLLOW_UP_NEW_TASK"));
+        assertEquals(List.of(), chatsOf("TASK_GIVEN_ON_DESK"), "one line in the old task's topic says it all");
     }
 
     @Test
@@ -284,11 +326,53 @@ class TaskCommandsTest {
         assertEquals(Refusal.NOT_MEMBER, refusalOf(run(STRANGER, new TaskCommand.Give("alm", "Fix it", Priority.NORMAL, Origin.page()))));
         assertEquals(Refusal.UNKNOWN_PROJECT, refusalOf(run(BOLD, new TaskCommand.Give("nope", "Fix it", Priority.NORMAL, Origin.page()))));
         assertEquals(Refusal.EMPTY, refusalOf(run(BOLD, new TaskCommand.Give("alm", " ", Priority.NORMAL, Origin.page()))));
+        // Who comes before the project, and the project before the words.
+        assertEquals(Refusal.NOT_MEMBER, refusalOf(run(STRANGER, new TaskCommand.Give("nope", " ", Priority.NORMAL, Origin.page()))));
+        assertEquals(Refusal.UNKNOWN_PROJECT, refusalOf(run(BOLD, new TaskCommand.Give("nope", " ", Priority.NORMAL, Origin.page()))));
+        assertEquals(Refusal.PROJECT_UNAVAILABLE, refusalOf(run(BOLD, new TaskCommand.Give("crm", " ", Priority.NORMAL, Origin.page()))));
         Origin origin = Origin.page();
         CommandResult.Created created = assertInstanceOf(CommandResult.Created.class,
                 run(BOLD, new TaskCommand.Give("alm", "Fix it", Priority.URGENT, origin)));
+        Map<String, String> once = counts();
         assertEquals(created, run(BOLD, new TaskCommand.Give("alm", "Fix it", Priority.URGENT, origin)));
+        assertEquals(once, counts(), "the same origin gives the same task, and writes nothing more");
         assertEquals(List.of(BOLD.ref()), chatsOf("TASK_GIVEN_ON_DESK"), "a task from a page tells the chat it was given there");
+    }
+
+    /** A page has no message in the chat that gave the task: the requester's chat hears where it came from (D-2b). */
+    @Test
+    void aTaskGivenOnAPageComesFromThePageAndSaysSoInTheRequestersChat() {
+        Origin page = Origin.page();
+
+        long id = assertInstanceOf(CommandResult.Created.class,
+                run(BOLD, new TaskCommand.Give("alm", "  Fix the login timeout  ", Priority.URGENT, page))).taskId();
+
+        assertEquals(Map.of("origin_ref", page.ref(), "description", "Fix the login timeout", "priority", "URGENT"),
+                row("SELECT origin_ref, description, priority FROM task WHERE id = ?", id));
+        assertEquals("PLAN", row("SELECT kind FROM run WHERE task_id = ?", id).get("kind"));
+        Map<String, String> line = row("SELECT chat_ref, reply_to_ref, payload FROM outbox WHERE kind = 'TASK_GIVEN_ON_DESK'");
+        assertEquals(BOLD.ref(), line.get("chat_ref"));
+        assertNull(line.get("reply_to_ref"), "no message of the requester's gave it");
+        assertTrue(line.get("payload").contains("\"title\":\"Fix the login timeout\""), line.toString());
+    }
+
+    /** Another group's project is no more the giver's than one that does not exist; one that cannot take tasks says why. */
+    @Test
+    void aTaskIsGivenOnlyOnTheGiversOwnProjectsAndOnlyWhenTheyCanTakeIt() {
+        unavailable.set("repos/alm is being cloned");
+        CommandResult.Refused cloning = assertInstanceOf(CommandResult.Refused.class,
+                run(BOLD, new TaskCommand.Give("alm", "Fix it", Priority.NORMAL, Origin.page())));
+        assertEquals(Refusal.PROJECT_UNAVAILABLE, cloning.reason());
+        assertTrue(cloning.words().render(Language.EN).contains("repos/alm is being cloned"), cloning.words().render(Language.EN));
+        unavailable.set(null);
+        // Bold is still a member, but alm is only the group's he left.
+        groups.replace(new Config.Telegram(List.of(400L), List.of(
+                new Config.Group("backend", -100L, List.of(new Config.Member(200, "Ali")), List.of("autoland-management", "crm")),
+                new Config.Group("mobile", -300L, List.of(new Config.Member(100, "Bold")), List.of()))));
+
+        assertEquals(Refusal.UNKNOWN_PROJECT, refusalOf(run(BOLD, new TaskCommand.Give("alm", "Fix it", Priority.NORMAL, Origin.page()))));
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"), "a refusal is the page's to show, never a line in the chat");
     }
 
     @Test
@@ -320,8 +404,8 @@ class TaskCommandsTest {
     @Test
     void everyRefusalHasACaseInTheTable() {
         // REFUSALS names each refusal a command gives; one missing here is one no test words. MERGED is Merges' refusal and
-        // no command's; OPEN_QUESTIONS is Approve's, which joins the commands in Task 5.
-        assertEquals(EnumSet.complementOf(EnumSet.of(Refusal.MERGED, Refusal.OPEN_QUESTIONS)), refusalsCovered());
+        // no command's.
+        assertEquals(EnumSet.complementOf(EnumSet.of(Refusal.MERGED)), refusalsCovered());
     }
 
     @Test
@@ -363,10 +447,8 @@ class TaskCommandsTest {
     }
 
     private long given(Requester who, String messageId) {
-        String origin = who.ref() + "/" + messageId;
-        assertEquals(CreateResult.CREATED,
-                db.transactionReturning(tx -> tasks.create(tx, who, "alm", "Fix login timeout", Priority.NORMAL, origin)));
-        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        return assertInstanceOf(CommandResult.Created.class, run(who,
+                new TaskCommand.Give("alm", "Fix login timeout", Priority.NORMAL, new Origin(who.ref() + "/" + messageId)))).taskId();
     }
 
     /** A task of BOLD's whose plan (run 1) waits for approval. */
@@ -379,7 +461,7 @@ class TaskCommandsTest {
     /** A task of BOLD's whose approved plan's execution runs, its agent started. */
     private ClaimedRun executing(String messageId) {
         long id = awaitingApproval(messageId, PLAN);
-        assertEquals(ApproveResult.APPROVED, db.transactionReturning(tx -> tasks.approve(tx, BOLD, id, 1)));
+        assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.Approve(id, 1)));
         ClaimedRun execution = claimFor(id);
         transitions.agentStarted(id, execution.seq(), null, null);
         return execution;
