@@ -38,6 +38,19 @@ describe("the launch data on every request", () => {
     await expect(getOverview()).rejects.toThrow("dispatch ui ажиллахгүй байна; дахин эхлүүлээд хэвлэсэн холбоосыг нь нээнэ үү");
   });
 
+  it("names the desktop's chosen admin to the desk once there is one", async () => {
+    vi.doMock("./telegram", () => ({ inTelegram: false, initData: null }));
+    const { chooseMember } = await import("./desktop/member");
+    const { getLive } = await import("./api");
+    chooseMember("telegram:300");
+
+    await getLive();
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({ "X-Dispatch-Member": "telegram:300" });
+    chooseMember(null);
+  });
+
   it("asks for the page's language, so the server writes its messages in it", async () => {
     vi.doMock("./telegram", () => ({ inTelegram: false, initData: null }));
     vi.doMock("./i18n/i18n", () => ({ currentLanguage: () => "mn" }));

@@ -1,11 +1,12 @@
 import { MenuOutlined } from "@ant-design/icons";
 import { Button, Dropdown, Menu, Spin } from "antd";
 import { Suspense, useContext, useEffect, type ReactNode } from "react";
-import type { Overview } from "../api";
+import type { Live, Overview } from "../api";
 import { useLanguage, useT, type Key } from "../i18n/i18n";
 import { RestartContext } from "../restart";
 import { RestartStatus } from "../RestartNotice";
 import { useRestart } from "../useRestart";
+import MemberChoice from "./MemberChoice";
 import { useDesktopStatus } from "./status";
 
 export interface ShellPage {
@@ -15,6 +16,7 @@ export interface ShellPage {
 
 export const DESKTOP_PAGES: ShellPage[] = [
   { key: "/", label: "nav.overview" },
+  { key: "/tasks", label: "nav.tasks" },
   { key: "/projects", label: "nav.projects" },
   { key: "/people", label: "nav.people" },
   { key: "/settings", label: "nav.settings" },
@@ -47,6 +49,20 @@ function ChecksLamp({ overview }: { overview: Overview }) {
     return <Lamp colour="amber">{t(warnings === 1 ? "strip.checksWarn.one" : "strip.checksWarn.other", { count: warnings })}</Lamp>;
   }
   return <Lamp colour="green">{t("strip.checksOk")}</Lamp>;
+}
+
+/** What the running bot is doing (D-2): what runs, what waits on you, today's spend, and a bot older or newer than this page. */
+function TaskLamps({ live, version }: { live: Live; version: string | null }) {
+  const t = useT();
+  const waiting = live.waitingOnYou.length;
+  return (
+    <>
+      <Lamp colour={live.running > 0 ? "green" : "quiet"}>{t("strip.running", { count: live.running })}</Lamp>
+      <Lamp colour={waiting > 0 ? "amber" : "quiet"}>{t("strip.waitingOnYou", { count: waiting })}</Lamp>
+      <Lamp colour="quiet">{t("strip.today", { usd: live.todayUsd })}</Lamp>
+      {version && live.version !== version && <Lamp colour="quiet">{t("strip.newVersion", { version })}</Lamp>}
+    </>
+  );
 }
 
 /**
@@ -105,22 +121,24 @@ export default function Shell({ pages, selected, onSelect, children }: {
   children: ReactNode;
 }) {
   const t = useT();
-  const { overview, error } = useDesktopStatus();
+  const { overview, error, live, needsMember, reloadLive } = useDesktopStatus();
   const restart = useContext(RestartContext);
   const items = pages.map(({ key, label }) => ({ key, label: t(label) }));
   const go = ({ key }: { key: string }) => onSelect(key);
 
   return (
     <div className="board">
+      <MemberChoice open={needsMember} onChosen={reloadLive} />
       <header className="board-strip">
         <span className="board-menu">
           <Dropdown menu={{ items, selectable: true, selectedKeys: [selected], onClick: go }} trigger={["click"]}>
             <Button type="text" icon={<MenuOutlined />} aria-label={t("strip.menu")} />
           </Dropdown>
         </span>
-        <span className="board-name">Dispatch</span>
+        <span className="board-name">{overview?.name ?? "Dispatch"}</span>
         {overview && <ServiceLamp overview={overview} />}
         {overview?.configured && <ChecksLamp overview={overview} />}
+        {live && <TaskLamps live={live} version={overview?.version ?? null} />}
         {!overview && error && <Lamp colour="red" title={error.message}>{t("strip.statusUnknown")}</Lamp>}
         {restart.installed !== null && <RestartLamp installed={restart.installed} />}
         <LanguageSwitch />

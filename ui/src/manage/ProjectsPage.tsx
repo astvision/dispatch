@@ -1,26 +1,13 @@
 import { Button, Drawer, Flex, Popconfirm, Space, Table, Tag, Typography } from "antd";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { addProject, editProject, removeProject, type AgentType, type ManagedProject } from "../api";
 import { useT } from "../i18n/i18n";
 import { agentLabel } from "../options";
+import { useNarrow } from "../useNarrow";
 import AddProject from "./AddProject";
 import ManagedPage from "./ManagedPage";
 import ProjectForm, { fieldsOf } from "./ProjectForm";
 import { useManagedConfig } from "./useManagedConfig";
-
-const NARROW = "(max-width: 640px)";
-
-/** Below 640 px the side panel takes the whole width. */
-function useNarrow() {
-  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW).matches);
-  useEffect(() => {
-    const list = window.matchMedia(NARROW);
-    const change = () => setNarrow(list.matches);
-    list.addEventListener("change", change);
-    return () => list.removeEventListener("change", change);
-  }, []);
-  return narrow;
-}
 
 type Panel = { kind: "edit"; name: string } | { kind: "add" } | null;
 

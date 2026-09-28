@@ -8,6 +8,7 @@ import dispatch.Json;
 import dispatch.core.AnswerResult;
 import dispatch.core.ApproveResult;
 import dispatch.core.CancelResult;
+import dispatch.core.CorrectResult;
 import dispatch.core.Groups;
 import dispatch.core.RejectResult;
 import dispatch.core.RetryResult;
@@ -40,14 +41,31 @@ public final class TasksApi {
     /** What the chat's "you decide" button answers, so the agent reads the same words from either place. */
     private static final String YOU_DECIDE = Renderer.mongolian().getString("plan.youDecide");
 
+    /** A month of an instance's finished tasks, for the desktop's list (D-2); the Mini App keeps its own ten. */
+    private static final int OWNER_HISTORY = 200;
+
     private final Database db;
     private final TaskService tasks;
     private final TaskAccess access;
+    private final boolean owner;
 
     public TasksApi(Database db, TaskService tasks, Groups groups) {
+        this(db, tasks, groups, false);
+    }
+
+    /**
+     * @param owner the desk port's view (D-2): every task of the instance in full, acted on as the caller's own member, so
+     *              ADR 0020 decides what they may do exactly as in the chat
+     */
+    public TasksApi(Database db, TaskService tasks, Groups groups, boolean owner) {
         this.db = db;
         this.tasks = tasks;
         this.access = new TaskAccess(groups);
+        this.owner = owner;
+    }
+
+    private TaskAccess.Viewer viewer(Caller caller) {
+        return owner ? access.owner(caller.ref()) : access.member(caller.ref());
     }
 
     public Map<String, BiFunction<Caller, JsonNode, Object>> routes() {
@@ -59,7 +77,8 @@ public final class TasksApi {
                 "/api/tasks/detail", this::detail,
                 "/api/tasks/answer", this::answer,
                 "/api/tasks/approve", this::approve,
-                "/api/tasks/reject", this::reject);
+                "/api/tasks/reject", this::reject,
+                "/api/tasks/correct", this::correct);
     }
 
     /**
@@ -71,10 +90,10 @@ public final class TasksApi {
         if (wholeGroup && !caller.admin()) {
             throw new ApiException(403, "not_admin", NOT_ADMIN);
         }
-        TaskAccess.Viewer viewer = access.member(caller.ref());
+        TaskAccess.Viewer viewer = viewer(caller);
         return db.transactionReturning(tx -> {
             ObjectNode active = tasks.statusPayload(tx, viewer);
-            ObjectNode finished = tasks.historyPayload(tx, viewer);
+            ObjectNode finished = owner ? tasks.historyPayload(tx, viewer, OWNER_HISTORY) : tasks.historyPayload(tx, viewer);
             ObjectNode answer = Json.object();
             ArrayNode listed = answer.putArray("tasks");
             for (ObjectNode task : merge(active, finished)) {
@@ -88,7 +107,7 @@ public final class TasksApi {
 
     ObjectNode timeline(Caller caller, JsonNode body) {
         long taskId = taskId(body);
-        return db.transactionReturning(tx -> tasks.timelinePayload(tx, access.member(caller.ref()), taskId))
+        return db.transactionReturning(tx -> tasks.timelinePayload(tx, viewer(caller), taskId))
                 .orElseThrow(() -> new ApiException(404, "not_found", Text.of("refusal.noTask", taskId)));
     }
 
@@ -230,16 +249,55 @@ public final class TasksApi {
         };
     }
 
+    /**
+     * The requester's reply to a plan, written on the desktop (D-2): {@link TaskService#correct}, as the chat's reply to a
+     * plan. Refused here and only here, as {@link #cancel} is, so no refusal lands in the chat.
+     */
+    ObjectNode correct(Caller caller, JsonNode body) {
+        long taskId = taskId(body);
+        int planSeq = number(body, "planSeq");
+        String text = body.path("text").asText("");
+        CorrectResult result = db.transactionReturning(tx -> {
+            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.CORRECT, planSeq);
+            if (refused.isPresent()) {
+                throw correctRefused(refused.get(), taskId);
+            }
+            if (text.isBlank()) {
+                throw new ApiException(400, "invalid", Text.of("refusal.correctionEmpty"));
+            }
+            CorrectResult corrected = tasks.correct(tx, requester(caller), taskId, planSeq, text, null, caller.ref());
+            if (corrected != CorrectResult.CORRECTED) {
+                throw new IllegalStateException("task #" + taskId + " was allowed a correction but came back " + corrected);
+            }
+            return corrected;
+        });
+        return Json.object().put("result", result.name());
+    }
+
+    private static ApiException correctRefused(TaskAccess.Refusal refusal, long taskId) {
+        return switch (refusal) {
+            case NOT_MEMBER -> notMember();
+            case NOT_FOUND -> notFound(taskId);
+            case NOT_REQUESTER -> new ApiException(403, "not_yours", NOT_YOURS);
+            case STALE_PLAN -> stale();
+            case WRONG_PHASE -> new ApiException(409, "wrong_state", Text.of("refusal.notWaiting"));
+            default -> throw new IllegalStateException("task access never refuses a correction as " + refusal);
+        };
+    }
+
     /** The caller's own task with its plan, what they may do with it, and the question to answer now (ADR 0027). */
     private ObjectNode ownTask(Tx tx, Caller caller, long taskId) {
         TaskAccess.Verdict verdict = access.of(tx, caller.ref(), taskId);
-        if (verdict.sight() == TaskAccess.Sight.NONE) {
+        // How much of it the caller sees is the viewer's question (the owner on the desktop sees it all, D-2); what they
+        // may do with it stays the verdict's, as a member's in the chat.
+        TaskAccess.Sight sight = verdict.task() == null ? TaskAccess.Sight.NONE : viewer(caller).sees(verdict.task());
+        if (sight == TaskAccess.Sight.NONE) {
             throw notFound(taskId);
         }
-        if (verdict.sight() == TaskAccess.Sight.HEADLINE) {
+        if (sight == TaskAccess.Sight.HEADLINE) {
             throw new ApiException(403, "not_yours", NOT_YOURS);
         }
-        ObjectNode task = tasks.timelinePayload(tx, access.member(caller.ref()), taskId).orElseThrow(() -> notFound(taskId));
+        ObjectNode task = tasks.timelinePayload(tx, viewer(caller), taskId).orElseThrow(() -> notFound(taskId));
         task.remove("runs");
         tasks.currentPlan(tx, taskId).ifPresent(plan -> task.set("plan",
                 plan.put("current", verdict.allows(TaskAccess.Action.ANSWER) ? verdict.currentQuestion() : 0)));

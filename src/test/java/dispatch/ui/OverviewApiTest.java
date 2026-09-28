@@ -3,6 +3,7 @@ package dispatch.ui;
 import dispatch.Text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.Json;
@@ -61,6 +62,7 @@ class OverviewApiTest {
 
         assertTrue(overview.configured());
         assertEquals("0.1.0-test", overview.version());
+        assertEquals("bold", overview.name(), "the config's team names the instance on the strip (D-2)");
         assertEquals(config.toString(), overview.configFile());
         assertEquals(dir.resolve("state").toString(), overview.stateDir(), "the config's state directory");
         assertEquals(new OverviewApi.ServiceView("stub service", true, true, Text.raw("active (running)"), List.of(Text.raw("a note"))), overview.service());
@@ -92,6 +94,7 @@ class OverviewApiTest {
         OverviewApi.Overview overview = api(new StubService(false, false, "not installed"), Map.of()).get();
 
         assertFalse(overview.configured());
+        assertNull(overview.name(), "nothing is named before setup");
         assertEquals(dir.resolve("state/dispatch").toString(), overview.stateDir(), "the default state directory");
         assertEquals(Checks.Level.FAIL, overview.findings().getFirst().level());
         assertFalse(overview.service().installed());

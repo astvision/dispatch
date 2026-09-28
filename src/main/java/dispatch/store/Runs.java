@@ -183,6 +183,12 @@ public final class Runs {
     public record Cost(long taskId, RunKind kind, BigDecimal costUsd) {
     }
 
+    /** What the runs started at or after {@code since} reported costing; a run with no cost (Codex, Gemini CLI) adds nothing. */
+    public static BigDecimal spentSince(Tx tx, Instant since) {
+        return tx.list("SELECT cost_usd FROM run WHERE cost_usd IS NOT NULL AND started_at >= ?", row -> row.decimal("cost_usd"), since)
+                .stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
     public static List<Cost> costsOf(Tx tx, List<Long> taskIds) {
         if (taskIds.isEmpty()) {
             return List.of();

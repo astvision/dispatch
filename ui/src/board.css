@@ -204,3 +204,73 @@ code, .mono {
   white-space: nowrap;
   border: 0;
 }
+
+/* Даалгавар (D-2): a task per row, grouped by what it needs. */
+.task-group-title {
+  margin: 14px 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7d948f;
+}
+
+.task-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 100px 90px 170px 64px;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.task-row:hover { background: rgba(240, 180, 76, 0.06); }
+.task-id, .task-project, .task-person, .task-age { opacity: 0.7; font-size: 12.5px; }
+.task-project, .task-person { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-title { overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .task-row { grid-template-columns: 44px minmax(0, 1fr); }
+  .task-row .task-project, .task-row .task-person, .task-row .task-age { display: none; }
+  .task-row .lamp { grid-column: 2; }
+}
+
+.task-steps { margin: 4px 0 8px; padding-left: 20px; }
+.task-label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+.task-question { border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 6px; padding: 10px 12px; }
+
+/* A task's own page (D-2): the task beside its facts, timeline and log; one column on a narrow screen. */
+.task-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .task-page { grid-template-columns: minmax(0, 1fr); }
+}
+.panel-box {
+  background: #172427;
+  border: 1px solid #24363a;
+  border-radius: 6px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.task-facts { display: grid; gap: 4px; margin: 0 0 8px; }
+.task-facts > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; }
+.task-facts dt { opacity: 0.65; }
+.task-facts dd { margin: 0; overflow-wrap: anywhere; }
+/* On a task's own page every log row is that task's: the fields stack under the event, and the number goes. */
+.task-page .log-row { grid-template-columns: 64px 10px minmax(0, 1fr); }
+.task-page .log-fields { grid-column: 1 / -1; }
+.task-page .log-task { display: none; }
+.task-run { display: grid; grid-template-columns: 48px minmax(0, 1fr) 80px 56px 64px; gap: 8px; padding: 4px 0; font-size: 12.5px; }
+@media (max-width: 640px) {
+  .task-run { grid-template-columns: 44px minmax(0, 1fr) auto auto auto; }
+}

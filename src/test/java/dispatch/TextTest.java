@@ -92,6 +92,20 @@ class TextTest {
     }
 
     /**
+     * The owner reads the pages in Mongolian (D-1's rule: no English word but code values, names and other programs'
+     * words), and "desktop" is the word the code calls them by, so it is the likeliest to slip into a message.
+     */
+    @Test
+    void noMongolianMessageCallsThePagesTheDesktop() throws IOException {
+        Properties mn = bundle("texts_mn.properties");
+        Pattern desk = Pattern.compile("(?i)\\bdesk(top)?\\b(?!\\.json)");
+        List<String> english = mn.stringPropertyNames().stream()
+                .filter(key -> desk.matcher(mn.getProperty(key)).find()).sorted().toList();
+
+        assertEquals(List.of(), english);
+    }
+
+    /**
      * MessageFormat does not reject a lone apostrophe: it quotes to the end of the message, and the page silently loses
      * every word after it ("members' computers" would lose " computers"). A written apostrophe is doubled.
      */

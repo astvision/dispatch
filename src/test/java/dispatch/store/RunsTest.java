@@ -59,6 +59,21 @@ class RunsTest {
         assertEquals(OptionalInt.of(1), db.transactionReturning(tx -> Runs.latestSucceededPlanSeq(tx, taskId)));
     }
 
+    @Test
+    void spentSinceCountsRunsStartedFromThatMomentAndNothingForOnesWithoutACost() {
+        long taskId = task();
+        db.transaction(tx -> {
+            for (int seq = 1; seq <= 3; seq++) {
+                Runs.insert(tx, new Runs.NewRun(taskId, seq, RunKind.PLAN, RunCause.TASK, "t", new Requester("telegram:1", "Bold")), T0);
+            }
+            tx.update("UPDATE run SET started_at = ?, cost_usd = '0.25' WHERE task_id = ? AND seq = 1", T0.minusSeconds(3600), taskId);
+            tx.update("UPDATE run SET started_at = ?, cost_usd = '0.40' WHERE task_id = ? AND seq = 2", T0, taskId);
+            tx.update("UPDATE run SET started_at = ? WHERE task_id = ? AND seq = 3", T0.plusSeconds(60), taskId);
+        });
+
+        assertEquals(new java.math.BigDecimal("0.40"), db.transactionReturning(tx -> Runs.spentSince(tx, T0)));
+    }
+
     private long task() {
         return db.transactionReturning(tx -> Tasks.insert(tx,
                 new Tasks.NewTask("alm", "t", "t", new Requester("telegram:1", "Bold"), "telegram:-1/" + UUID.randomUUID(),

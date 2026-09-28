@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * What a member may see of a task and do with it, and why not (ADR 0027): the rules of ADR 0012, 0020 and 0024 in one
@@ -87,17 +88,27 @@ public final class TaskAccess {
      * @param ref      the member; null for a group chat
      * @param projects the projects whose tasks this viewer sees at least as a headline
      */
-    public record Viewer(String ref, Set<String> projects) {
+    public record Viewer(String ref, Set<String> projects, boolean owner) {
 
         public Viewer {
             projects = Set.copyOf(projects);
+        }
+
+        /** A member or a group chat: their own tasks in full, their projects' others as headlines. */
+        public Viewer(String ref, Set<String> projects) {
+            this(ref, projects, false);
         }
 
         public Sight sees(Task task) {
             if (ref != null && task.requester().ref().equals(ref)) {
                 return Sight.FULL;
             }
-            return projects.contains(task.project()) ? Sight.HEADLINE : Sight.NONE;
+            if (!projects.contains(task.project())) {
+                return Sight.NONE;
+            }
+            // The machine's owner on the desktop (D-2): every task of the instance in full. ADR 0020 hides a teammate's
+            // task from members, not from whoever runs the machine and could read its database.
+            return owner ? Sight.FULL : Sight.HEADLINE;
         }
     }
 
@@ -177,6 +188,12 @@ public final class TaskAccess {
      */
     public Viewer member(String memberRef) {
         return new Viewer(groups.isMember(memberRef) ? memberRef : null, groups.projectsOfMember(memberRef));
+    }
+
+    /** The owner on the desktop (D-2): every task of the instance's projects in full, acting as {@code memberRef}. */
+    public Viewer owner(String memberRef) {
+        Set<String> all = groups.all().stream().flatMap(group -> group.projects().stream()).collect(Collectors.toSet());
+        return new Viewer(groups.isMember(memberRef) ? memberRef : null, all, true);
     }
 
     /** A group chat looking at tasks: its own projects', as headlines. */

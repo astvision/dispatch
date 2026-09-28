@@ -11,12 +11,14 @@ import { DesktopProviders } from "./status";
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   getOverview: vi.fn(),
+  // Pending unless a test answers it: the strip's task lamps stay dark.
+  getLive: vi.fn(() => new Promise(() => {})),
 }));
 
 afterEach(() => vi.resetAllMocks());
 
 const running: Overview = {
-  configured: true, version: "0.2.0", configFile: "/home/ann/.config/dispatch/dispatch.yaml", stateDir: "/home/ann/.local/state",
+  configured: true, version: "0.2.0", name: null, configFile: "/home/ann/.config/dispatch/dispatch.yaml", stateDir: "/home/ann/.local/state",
   service: { name: "systemd user service dispatch.service", installed: true, running: true, detail: "active", notes: [] },
   findings: [
     { level: "OK", area: "config", message: "config /home/ann/.config/dispatch/dispatch.yaml" },
@@ -106,4 +108,39 @@ test("before setup the strip says so and the rail offers setup only", async () =
   expect(await screen.findByText("Not set up yet")).toBeInTheDocument();
   expect(screen.getByText("Setup")).toBeInTheDocument();
   expect(screen.queryByText("Projects")).not.toBeInTheDocument();
+});
+
+const live: api.Live = { version: "0.2.0", name: "acme", running: 1, queued: 0,
+  waitingOnYou: [{ taskId: 14, title: "Fix the login timeout" }], waitingOnOthers: 0, todayUsd: "3.40", monthUsd: "41.20" };
+
+test("the strip counts what runs, what waits on you and today's spend, beside the instance's name", async () => {
+  vi.mocked(api.getOverview).mockResolvedValue({ ...running, name: "acme" });
+  vi.mocked(api.getLive).mockResolvedValue(live);
+
+  renderShell();
+
+  expect(await screen.findByText("1 running")).toBeInTheDocument();
+  expect(screen.getByText("1 waiting on you")).toBeInTheDocument();
+  expect(screen.getByText("Today $3.40")).toBeInTheDocument();
+  expect(screen.getByText("acme")).toBeInTheDocument();
+});
+
+test("without the bot the task lamps are gone and nothing piles up", async () => {
+  vi.mocked(api.getOverview).mockResolvedValue(running);
+  vi.mocked(api.getLive).mockRejectedValue(new api.ApiError("bot_not_running", "The bot is not running"));
+
+  renderShell();
+
+  await screen.findByText("Service running");
+  expect(screen.queryByText(/waiting on you/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test("a bot of another version says a restart runs the new one", async () => {
+  vi.mocked(api.getOverview).mockResolvedValue(running);
+  vi.mocked(api.getLive).mockResolvedValue({ ...live, version: "0.1.9" });
+
+  renderShell();
+
+  expect(await screen.findByText("Restart the service to run 0.2.0")).toBeInTheDocument();
 });
