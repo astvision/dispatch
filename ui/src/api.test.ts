@@ -26,6 +26,18 @@ describe("the launch data on every request", () => {
     expect(init.headers).toMatchObject({ Authorization: "tma user=%7B%22id%22%3A1%7D&hash=abc" });
   });
 
+  it("asks for the page's language, so the server writes its messages in it", async () => {
+    vi.doMock("./telegram", () => ({ inTelegram: false, initData: null }));
+    vi.doMock("./i18n/i18n", () => ({ currentLanguage: () => "mn" }));
+    const { getOverview } = await import("./api");
+
+    await getOverview();
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers).toMatchObject({ "Accept-Language": "mn" });
+    vi.doUnmock("./i18n/i18n");
+  });
+
   it("sends no such header through dispatch ui, which has a cookie instead", async () => {
     vi.doMock("./telegram", () => ({ inTelegram: false, initData: null }));
     const { getOverview } = await import("./api");

@@ -1,5 +1,6 @@
 // Typed calls to the dispatch ui server. Every page goes through here, so errors look the same everywhere.
 
+import { currentLanguage } from "./i18n/i18n";
 import { inTelegram, initData } from "./telegram";
 
 export type Level = "OK" | "WARN" | "FAIL";
@@ -41,7 +42,12 @@ async function send<T>(path: string, init: RequestInit): Promise<T> {
   let response: Response;
   try {
     // Inside Telegram every request proves itself with the signed launch data: there is no cookie and no session.
-    const headers = initData ? { ...init.headers, Authorization: `tma ${initData}` } : init.headers;
+    // Every request asks for the page's language, so the server writes its messages in it.
+    const headers = {
+      ...init.headers,
+      "Accept-Language": currentLanguage(),
+      ...(initData ? { Authorization: `tma ${initData}` } : {}),
+    };
     response = await fetch(path, { credentials: "same-origin", ...init, headers });
   } catch {
     if (init.signal?.aborted) throw new ApiError("aborted", "the request was stopped");

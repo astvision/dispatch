@@ -1,0 +1,22 @@
+// Every phrase a desktop page writes, in English; mn.ts must have each key (TypeScript checks it).
+// {name} is filled from t()'s params. An English plural is two keys, `.one` and `.other`; the caller picks by the count.
+export const en = {
+  "nav.overview": "Overview",
+  "nav.projects": "Projects",
+  "nav.people": "People",
+  "nav.settings": "Settings",
+  "nav.logs": "Logs",
+  "nav.setup": "Setup",
+  "strip.service.running": "Service running",
+  "strip.service.stopped": "Service stopped",
+  "strip.service.none": "No background service",
+  "strip.service.notSetUp": "Not set up yet",
+  "strip.checksOk": "Checks OK",
+  "strip.checksWarn.one": "{count} warning",
+  "strip.checksWarn.other": "{count} warnings",
+  "strip.checksFail.one": "{count} problem",
+  "strip.checksFail.other": "{count} problems",
+  "strip.restart": "Restart to apply",
+  "strip.restartNow": "Restart now",
+  "strip.language": "Language",
+} as const;

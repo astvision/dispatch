@@ -2,6 +2,7 @@ import { LeftOutlined } from "@ant-design/icons";
 import { Button, Layout, Menu, Result, Spin, theme, Typography } from "antd";
 import { lazy, Suspense, useContext, useEffect, useState } from "react";
 import { ApiError, getMe, type Me } from "./api";
+import { LanguageProvider } from "./i18n/i18n";
 import { post, useTelegramBackButton } from "./mini/backButton";
 import { RestartContext, useRestartNeeded } from "./mini/data";
 import HomePage from "./mini/HomePage";
@@ -207,6 +208,9 @@ function WebUi() {
   );
 }
 
+/** The desktop speaks the browser's language or the one chosen; the Mini App speaks the bot's, Mongolian. */
 export default function App() {
-  return inTelegram ? <MiniApp /> : <WebUi />;
+  return inTelegram
+    ? <LanguageProvider fixed="mn"><MiniApp /></LanguageProvider>
+    : <LanguageProvider><WebUi /></LanguageProvider>;
 }
