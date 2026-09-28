@@ -1,6 +1,6 @@
 # Windows and macOS (X-1 … X-4)
 
-Status: approved design, 2026-09-28. Next: implementation plan (X-1 first).
+Status: approved design, 2026-09-28; amended the same day by X-1's first run (paths outside the ANSI code page).
 
 ## Goal
 
@@ -143,7 +143,7 @@ its reason: POSIX file modes (`OwnerOnlyTest` checks Windows ACLs), the systemd 
 elevation), and timing that depends on SIGTERM.
 
 **CI** (`.github/workflows/ci.yml`, X-1):
-- Windows runs the tests with `TMP` and `TEMP` set to `%RUNNER_TEMP%\dispatch тест`, so every temporary path has a space
+- Windows runs the tests with `TMP` and `TEMP` set to `%TEMP%\dispatch тест`, so every temporary path has a space
   and Cyrillic, as under `C:\Users\Батбаяр`.
 - No test depends on the number of cores or on timing. Work that must overlap gets its own threads, not the common pool.
   The flood test's fifth admitted request is investigated as a possible limiter bug before the test is touched. vitest's
@@ -160,6 +160,36 @@ elevation), and timing that depends on SIGTERM.
 - `ConfigFileTest`, `WorkerConfigLoaderTest` and `WorkerProtocolTest` as in row 8.
 - Whatever else the first full run since 2026-09-25 shows: a test bug or a small product bug is fixed in X-1; a test
   that needs a shell fake is skipped with the fake's reason until X-2 runs it (`ChecksTest`'s Codex stand-in is one).
+
+## Paths outside the ANSI code page (found by X-1's first run, 2026-09-28)
+
+X-1's first Windows run with temporary files under `dispatch тест` (run 36385991295) found two JDK limits that Dispatch
+inherits. Windows hands a path to native code in its ANSI code page (Java's `native.encoding`), and letters outside it
+arrive as `?`: Cyrillic on English Windows, and Ө and Ү even on Mongolian Windows, whose code page is 1251. A path can
+still be given by its 8.3 short name (`C:\Users\5C0E~1`), whose letters every code page has; Windows keeps short names on
+its system drive, where user folders are.
+
+1. **Loading a native library.** The SQLite driver unpacks its DLL into the temporary folder and loads it from there. Under
+   such a folder the load fails ("Can't find dependent libraries") and no database opens, so Dispatch cannot start at all.
+   A short name does not help here: the JDK spells a library's path out in full before loading it, expanding 8.3 names
+   again (run 36395743054 loaded `C:\Users\runneradmin\…\dispatch ????` from `C:\Users\RUNNER~1\…`). **X-1:** on
+   Windows, when the temporary folder's full name does not fit the code page, `Database.open` has the driver unpack into
+   `%ProgramData%\dispatch-<hash of the user's name>`: created with one ACL entry, the user's, and otherwise accepted only as
+   a plain folder (not a link) the user owns, so no one else can see into it or change what is unpacked there. The
+   driver's files a day old are removed there at each start, since a forced stop leaves them behind. When that fails too, Dispatch stops with an error that says to set `TMP`
+   to a folder named in plain letters.
+2. **java.exe's own arguments.** java.exe reads its command line in the code page, so a jar or class path with such
+   letters is not found ("Unable to access jarfile …????…"). Java is started by `dispatch.cmd` (`install.ps1`), the Windows
+   task (X-3), the assistant's `dispatch` script (X-2) and the test fakes (X-2). **X-2 and X-3:** each passes the paths it
+   gives java.exe by their 8.3 short names, which java.exe opens as given (`AnsiPaths`, first written in X-1 as 936ac25
+   and brought back with its first use). What a person types after `dispatch` keeps the limit, documented in X-4. The fake and
+   `CommandLineTest`'s child read their arguments from their own command line as Windows keeps it, in UTF-16
+   (`ProcessHandle.current().info().commandLine()`), split by Windows' `CommandLineToArgvW`, and never from `main`'s
+   arguments.
+
+CI keeps Maven's own temporary files on an ASCII path (`MAVEN_OPTS=-Djava.io.tmpdir=…`), because surefire starts the
+tests' JVM with a jar from there; the tests' JVM takes the Cyrillic `TMP`, created on the system drive (`%TEMP%`) as a member's
+user folder is.
 
 ## Services (X-3)
 
@@ -211,9 +241,9 @@ Decisions).
 
 | Milestone | Contents | Done when |
 |---|---|---|
-| X-1 CI tells the truth | vitest timeout; Windows temp path with a space and Cyrillic; test bugs; failed-clone cleanup; worker worktrees as text; whatever else the first full run shows | CI passes on the three OSes, Windows still skipping the tests that need a shell fake; macOS is proven for `main` |
-| X-2 The task loop on Windows | `FakeCli`; un-skipping; `CommandLine`; PR body and commit message on stdin; the assistant's PATH | CI passes on the three OSes with only the stated skips; merged in one go so that `main` never goes red |
-| X-3 Services | `StopExisting` restart; status that ignores the Windows language; the crash-restart check; the service smoke in CI | The smoke passes on macOS and Windows, or is dropped with its reason recorded |
+| X-1 CI tells the truth | vitest timeout; Windows temp path with a space and Cyrillic; SQLite under such a temp folder (`AnsiPaths`); test bugs; failed-clone cleanup; worker worktrees as text; whatever else the first full run shows | CI passes on the three OSes, Windows still skipping the tests that need a shell fake; macOS is proven for `main` |
+| X-2 The task loop on Windows | `FakeCli` (reading its own command line); un-skipping; `CommandLine`; PR body and commit message on stdin; the assistant's PATH and short paths in its script | CI passes on the three OSes with only the stated skips; merged in one go so that `main` never goes red |
+| X-3 Services | `StopExisting` restart; status that ignores the Windows language; short paths to java.exe in the task and `dispatch.cmd`; the crash-restart check; the service smoke in CI | The smoke passes on macOS and Windows, or is dropped with its reason recorded |
 | X-4 Proven live, documented | `live.yml`; the Claude Code live case; README, ADR 0028, ARCHITECTURE, SECURITY | The live job passes on the three OSes with Claude Code |
 
 Each milestone gets its own branch and a local merge, and every push is watched to the end.

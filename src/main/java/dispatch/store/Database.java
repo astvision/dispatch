@@ -2,17 +2,28 @@ package dispatch.store;
 
 import dispatch.OwnerOnly;
 import dispatch.Log;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.UserPrincipal;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -45,6 +56,7 @@ public final class Database implements AutoCloseable {
      */
     public static Database open(Path file) {
         try {
+            prepareSqlite();
             if (!Files.exists(file)) {
                 OwnerOnly.createFile(file);
             }
@@ -58,6 +70,108 @@ public final class Database implements AutoCloseable {
             return new Database(connection);
         } catch (SQLException | IOException e) {
             throw new DatabaseException("cannot open database " + file, e);
+        }
+    }
+
+    /**
+     * The SQLite driver unpacks its native library into a folder and loads it from there. Windows loads a library through
+     * its ANSI code page, after the JDK spells the path out in full (an 8.3 short name is expanded again), so a temporary
+     * folder with letters outside the code page, as under C:\Users\Өлзий, opened no database (run 36395743054). Such a
+     * machine unpacks it into a folder of this user's own under ProgramData instead, whose full name the code page spells.
+     * {@link #open} calls this; code that reaches SQLite through plain JDBC (the tests' SqlRows) calls it first.
+     */
+    public static void prepareSqlite() {
+        if (!System.getProperty("os.name").startsWith("Windows") || System.getProperty("org.sqlite.tmpdir") != null) {
+            return;
+        }
+        String temp = System.getProperty("java.io.tmpdir");
+        if (loadable(temp)) {
+            return;
+        }
+        String programData = System.getenv("ProgramData");
+        if (programData == null) {
+            throw refusal(temp, "ProgramData is not set", null);
+        }
+        Path folder = Path.of(programData, "dispatch-" + userKey());
+        if (!loadable(folder.toString())) {
+            throw refusal(temp, folder + " does not fit the code page either", null);
+        }
+        try {
+            ownFolder(folder);
+        } catch (IOException e) {
+            throw refusal(temp, e.getMessage(), e);
+        }
+        removeLeftovers(folder);
+        System.setProperty("org.sqlite.tmpdir", folder.toString());
+    }
+
+    private static DatabaseException refusal(String temp, String why, Exception cause) {
+        return new DatabaseException("SQLite cannot be loaded from " + temp + ", whose name has letters Windows cannot load a"
+                + " library from, and its own folder is not usable (" + why + "); set TMP for Dispatch to a folder named in plain"
+                + " letters", cause);
+    }
+
+    /** Whether Windows can load a library from {@code path}: its full spelling fits the ANSI code page. */
+    private static boolean loadable(String path) {
+        try {
+            String full = new File(path).getCanonicalPath();
+            return Charset.forName(System.getProperty("native.encoding")).newEncoder().canEncode(full);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Makes {@code folder} this user's alone, or checks that the one already there is: a plain folder (not a link someone
+     * could later point elsewhere, between the driver's check and its load) owned by the user Dispatch runs as. A folder
+     * it creates has one ACL entry, the user's, so nobody else can see into it or add to it.
+     */
+    static void ownFolder(Path folder) throws IOException {
+        OwnerOnly.createDirectories(folder);
+        BasicFileAttributes attributes = Files.readAttributes(folder, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.isDirectory() || attributes.isOther()) {
+            throw new IOException(folder + " is a link, not a folder");
+        }
+        Path probe = Files.createTempFile("dispatch-owner", null);
+        try {
+            UserPrincipal owner = Files.getOwner(folder, LinkOption.NOFOLLOW_LINKS);
+            if (!owner.equals(Files.getOwner(probe))) {
+                throw new IOException(folder + " belongs to " + owner.getName());
+            }
+        } finally {
+            Files.deleteIfExists(probe);
+        }
+    }
+
+    /**
+     * The driver removes a library it unpacked only at its next start, and only once that library's .lck file is gone,
+     * which a forced stop (the Windows service's Stop and Restart) leaves behind; nobody cleans ProgramData for us. The
+     * driver's files a day old go; one a running Dispatch has loaded is locked and stays until a later start.
+     */
+    static void removeLeftovers(Path folder) {
+        Instant dayAgo = Instant.now().minus(Duration.ofDays(1));
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(folder, "sqlite-*")) {
+            for (Path file : files) {
+                try {
+                    if (Files.getLastModifiedTime(file, LinkOption.NOFOLLOW_LINKS).toInstant().isBefore(dayAgo)) {
+                        Files.deleteIfExists(file);
+                    }
+                } catch (IOException inUse) {
+                    // A library a running Dispatch has loaded: it goes at a later start.
+                }
+            }
+        } catch (IOException e) {
+            Log.warn("sqlite.leftovers_failed", "folder", folder, "error", e.getMessage());
+        }
+    }
+
+    /** The user's own folder name under ProgramData, in plain letters whatever the user's name is spelled in. */
+    private static String userKey() {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(System.getProperty("user.name").getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, 8);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is always available", e);
         }
     }
 

@@ -1,7 +1,6 @@
 package dispatch.store;
 
 import java.math.BigDecimal;
-import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -101,7 +100,6 @@ public final class Tx {
             case Enum<?> constant -> statement.setString(index, constant.name());
             case UUID uuid -> statement.setString(index, uuid.toString());
             case BigDecimal decimal -> statement.setString(index, decimal.toPlainString());
-            case Path path -> statement.setString(index, path.toString());
             default -> throw new IllegalArgumentException("unsupported SQL parameter type " + value.getClass().getName());
         }
     }

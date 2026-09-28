@@ -115,6 +115,24 @@ class CoordinatorTest {
     }
 
     @Test
+    void aWorkersWorktreeIsHandedBackExactlyAsItReportedIt() {
+        // Each computer spells its worktree its own way; the team machine keeps the text. Read as a path here, a Windows
+        // server would hand /home/ann/… back as \home\ann\…, and this one tidies the "//".
+        long id = queue("Fix the login timeout");
+        String reported = "/home/ann//work/alm-7";
+        Worker planner = (job, events, control) -> {
+            events.worktreeCreated(reported, "abc123");
+            return JobResult.succeeded(agentResult(PLAN_JSON));
+        };
+        coordinator(projects(List.of(ALM)), planner).execute(claim());
+        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+
+        coordinator(projects(List.of(ALM)), remember(JobResult.failed(FailureReason.SETUP, "stops here", null))).execute(claim());
+
+        assertEquals(reported, given.get().worktree());
+    }
+
+    @Test
     void aRemoteWorkersAgentIsRecordedAsStartedWithoutAProcess() {
         long id = queue("Fix the login timeout");
         Worker worker = (job, events, control) -> {

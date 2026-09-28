@@ -202,6 +202,7 @@ class DatabaseTest {
     /** A state file as an older Dispatch left it: the first {@code version} migrations applied, then {@code inserts}. */
     private Path databaseAtVersion(int version, String... inserts) throws Exception {
         Path file = dir.resolve("v" + version + ".db");
+        Database.prepareSqlite();
         try (java.sql.Connection connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + file);
              java.sql.Statement statement = connection.createStatement()) {
             String[] scripts = {"/db/001-init.sql", "/db/002-execution.sql", "/db/003-private-messages.sql", "/db/004-priority.sql",

@@ -521,6 +521,22 @@ class RunExecutorTest {
     }
 
     @Test
+    void sweepLeavesAWorktreeRecordedInAnotherSpellingAlone() throws Exception {
+        // Only the text this machine itself wrote for a task is this machine's worktree to sweep; a member's computer
+        // reports its own in its own spelling (ADR 0021). Here the same folder, spelled with a trailing separator.
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        db.transaction(tx -> tx.update("UPDATE task SET worktree = ? WHERE id = ?", worktree + "/", id));
+
+        assertEquals(0, sweeper.sweep());
+
+        assertTrue(Files.isDirectory(worktree));
+    }
+
+    @Test
     void sweepNeverTouchesATaskThatIsActiveAgain() throws Exception {
         long id = queue("Fix the login timeout");
         runNext();

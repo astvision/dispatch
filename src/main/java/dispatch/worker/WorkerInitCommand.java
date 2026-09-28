@@ -15,19 +15,23 @@ import dispatch.config.ConfigText;
 import dispatch.workspace.Git;
 import dispatch.workspace.WorkspaceException;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * `dispatch worker init`: sets this computer up to run its owner's own tasks (ADR 0021). It pairs with the team, asks
@@ -375,22 +379,60 @@ public final class WorkerInitCommand {
             // A partly-populated target left by the failed clone would otherwise fail every retry ("already exists
             // and is not an empty directory") until the member deletes it by hand.
             if (!existedBefore) {
-                deleteRecursively(target);
+                List<Path> left = deleteRecursively(target);
+                if (!left.isEmpty()) {
+                    terminal.warn("cannot remove " + left.size() + " files of the failed clone, such as " + left.getFirst()
+                            + "; delete " + target + " before trying again");
+                }
             }
             return Optional.empty();
         }
         return Optional.of(target);
     }
 
-    /** Best-effort recursive delete of what this run's own failed clone created; never touches a pre-existing path. */
-    private static void deleteRecursively(Path root) {
-        if (!Files.exists(root)) {
-            return;
+    /** Removes what this run's own failed clone created; never touches a pre-existing path. Returns what is left. */
+    static List<Path> deleteRecursively(Path root) {
+        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
+            return List.of();
         }
-        try (var paths = Files.walk(root)) {
-            paths.sorted(Comparator.reverseOrder()).forEach(WorkerInitCommand::deleteQuietly);
-        } catch (IOException ignored) {
-            // best effort: a stray leftover here is better than turning a warned clone failure into a crash
+        List<Path> paths;
+        try (Stream<Path> walk = Files.walk(root)) {
+            paths = walk.sorted(Comparator.reverseOrder()).toList();
+        } catch (IOException | UncheckedIOException e) {
+            return List.of(root);
+        }
+        List<Path> left = new ArrayList<>();
+        for (Path path : paths) {
+            if (!delete(path, root)) {
+                left.add(path);
+            }
+        }
+        return left;
+    }
+
+    /**
+     * A refused delete is tried once more after making the file and its folder writable: Windows refuses a read-only
+     * file, which git makes of its objects, and POSIX a file in a folder without write permission. Only what the clone
+     * holds is loosened: never a link's target (setWritable follows links), nor the folder the clone sits in.
+     */
+    private static boolean delete(Path path, Path root) {
+        try {
+            Files.deleteIfExists(path);
+            return true;
+        } catch (IOException refused) {
+            if (!Files.isSymbolicLink(path)) {
+                path.toFile().setWritable(true);
+            }
+            Path folder = path.getParent();
+            if (folder != null && !path.equals(root)) {
+                folder.toFile().setWritable(true);
+            }
+            try {
+                Files.deleteIfExists(path);
+                return true;
+            } catch (IOException stillRefused) {
+                return false;
+            }
         }
     }
 

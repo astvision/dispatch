@@ -19,7 +19,6 @@ import dispatch.store.Outbox;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
-import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -56,7 +55,7 @@ public final class RunTransitions {
         db.transaction(tx -> Tasks.recordBuildSession(tx, taskId, buildSessionId, clock.instant()));
     }
 
-    public void recordWorktree(long taskId, Path worktree, String baseSha) {
+    public void recordWorktree(long taskId, String worktree, String baseSha) {
         db.transaction(tx -> Tasks.recordWorktree(tx, taskId, worktree, baseSha, clock.instant()));
     }
 

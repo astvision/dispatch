@@ -5,7 +5,6 @@ import dispatch.domain.Phase;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Task;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -199,7 +198,7 @@ public final class Tasks {
         tx.update("UPDATE task SET build_session_id = ?, updated_at = ? WHERE id = ?", buildSessionId, now, id);
     }
 
-    public static void recordWorktree(Tx tx, long id, Path worktree, String baseSha, Instant now) {
+    public static void recordWorktree(Tx tx, long id, String worktree, String baseSha, Instant now) {
         tx.update("UPDATE task SET worktree = ?, base_sha = ?, updated_at = ? WHERE id = ?", worktree, baseSha, now, id);
     }
 
@@ -248,7 +247,7 @@ public final class Tasks {
                 row.uuid("build_session_id"),
                 row.string("base_branch"),
                 row.string("base_sha"),
-                row.path("worktree"),
+                row.string("worktree"),
                 row.string("plan_json"),
                 row.string("pr_url"),
                 row.string("topic_ref"),

@@ -53,6 +53,19 @@ jobs:
         with:
           name: ui-dist
           path: ui/dist
+      - name: Temporary files under a space and Cyrillic (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # As under C:\Users\Батбаяр: every temporary path from here on has a space and Cyrillic in it, on the system
+          # drive as a member's user folder is. SQLite then unpacks under ProgramData (Database.prepareSqlite).
+          $dir = Join-Path $env:TEMP 'dispatch тест'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          "TMP=$dir" >> $env:GITHUB_ENV
+          "TEMP=$dir" >> $env:GITHUB_ENV
+          # Except Maven's own: java.exe reads its arguments in the ANSI code page, which has no Cyrillic here, so
+          # surefire's booter jar must sit on an ASCII path ("Unable to access jarfile D:\a\_temp\dispatch ????\...").
+          "MAVEN_OPTS=-Djava.io.tmpdir=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - name: Build and test
         shell: bash
         run: ./mvnw --batch-mode -Pui verify

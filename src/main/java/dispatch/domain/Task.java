@@ -1,6 +1,5 @@
 package dispatch.domain;
 
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -14,6 +13,7 @@ import java.util.UUID;
  * @param chatRef   channel reference of the chat the task belongs to: its project's group chat, or the requester's private
  *                  chat when that group has none (ADR 0014)
  * @param topicRef  the task's own topic in the requester's private chat, once the channel created one
+ * @param worktree  as the computer that made it spells it; only that computer reads it as a path
  * @param mergedAt  when its pull request was found merged, through the Merge button
  */
 public record Task(
@@ -30,7 +30,7 @@ public record Task(
         UUID buildSessionId,
         String baseBranch,
         String baseSha,
-        Path worktree,
+        String worktree,
         String planJson,
         String prUrl,
         String topicRef,

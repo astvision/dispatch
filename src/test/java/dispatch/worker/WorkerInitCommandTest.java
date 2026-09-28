@@ -11,11 +11,16 @@ import dispatch.cli.SecretsFile;
 import dispatch.config.Config;
 import dispatch.testing.GitFixture;
 import dispatch.testing.ScriptedTerminal;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 
 /** dispatch worker init, against a real WorkerApi: the member's own computer, set up in one command. */
 class WorkerInitCommandTest extends WorkerApiFixture {
@@ -192,6 +197,54 @@ class WorkerInitCommandTest extends WorkerApiFixture {
         assertEquals(0, secondStatus, secondAttempt.output());
         assertTrue(Files.isDirectory(target.resolve(".git")), "the retried clone must succeed: " + secondAttempt.output());
         assertEquals(target.toString(), WorkerConfigLoader.load(workerFile).projects().get("alm").path());
+    }
+
+    @Test
+    void aFailedClonesReadOnlyFilesAreRemovedToo() throws Exception {
+        // Git makes its object files read-only, and Windows will not delete a read-only file; a folder without write
+        // permission refuses the same way on macOS and Linux (Windows has no such folder).
+        Path root = dir.resolve("partial");
+        Path pack = Files.createDirectories(root.resolve(".git/objects/pack"));
+        Path object = Files.writeString(pack.resolve("pack-1.pack"), "PACK");
+        assertTrue(object.toFile().setWritable(false));
+        if (!OS.WINDOWS.isCurrentOs()) {
+            assertTrue(pack.toFile().setWritable(false));
+        }
+
+        assertEquals(List.of(), WorkerInitCommand.deleteRecursively(root));
+        assertFalse(Files.exists(root));
+    }
+
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "symlinks need elevated privileges on Windows")
+    void aFailedClonesCleanupNeverLoosensWhatIsOutsideIt() throws Exception {
+        // A link in the clone to a read-only file elsewhere, in a folder that refuses the link's removal at first.
+        Path outside = Files.writeString(dir.resolve("outside.txt"), "not the clone's");
+        assertTrue(outside.toFile().setWritable(false));
+        Path root = dir.resolve("partial");
+        Path locked = Files.createDirectories(root.resolve("locked"));
+        Files.createSymbolicLink(locked.resolve("link"), outside);
+        assertTrue(locked.toFile().setWritable(false));
+        assertTrue(dir.toFile().setWritable(false));
+        try {
+            assertEquals(List.of(root), WorkerInitCommand.deleteRecursively(root), "the clone's contents go; the clone's own "
+                    + "folder stays, since the folder it sits in is not writable and is not the clone's to change");
+        } finally {
+            dir.toFile().setWritable(true);
+        }
+
+        assertFalse(Files.isWritable(outside), "the link's target is left as it was");
+        assertTrue(Files.exists(outside));
+    }
+
+    @Test
+    @EnabledOnOs(value = OS.WINDOWS, disabledReason = "only Windows refuses to delete a file that is open")
+    void whatAFailedCloneCannotRemoveIsNamed() throws Exception {
+        Path root = Files.createDirectories(dir.resolve("partial"));
+        Path held = Files.writeString(root.resolve("held.txt"), "open");
+        try (InputStream open = new FileInputStream(held.toFile())) {
+            assertEquals(List.of(held, root), WorkerInitCommand.deleteRecursively(root));
+        }
     }
 
     @Test
