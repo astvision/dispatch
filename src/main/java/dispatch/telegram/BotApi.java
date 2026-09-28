@@ -363,6 +363,8 @@ public final class BotApi {
                 ObjectNode entry = row.addObject().put("text", button.text());
                 if (button.webAppUrl() != null) {
                     entry.putObject("web_app").put("url", button.webAppUrl());
+                } else if (button.url() != null) {
+                    entry.put("url", button.url());
                 } else {
                     entry.put("callback_data", button.data());
                 }

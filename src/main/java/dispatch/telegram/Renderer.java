@@ -41,17 +41,21 @@ public final class Renderer {
     private static final int ASSISTANT_ITEM_LIMIT = 500;
 
     /**
-     * An inline button: either one that calls back with {@code data}, or one that opens the Mini App at
-     * {@code webAppUrl} (ADR 0019). Exactly one of the two is set.
+     * An inline button: one that calls back with {@code data}, one that opens the Mini App at {@code webAppUrl} (ADR 0019),
+     * or a link to {@code url}. Exactly one of the three is set.
      */
-    public record Button(String text, String data, String webAppUrl) {
+    public record Button(String text, String data, String webAppUrl, String url) {
 
         public Button(String text, String data) {
-            this(text, data, null);
+            this(text, data, null, null);
         }
 
         public static Button webApp(String text, String url) {
-            return new Button(text, null, url);
+            return new Button(text, null, url, null);
+        }
+
+        public static Button link(String text, String url) {
+            return new Button(text, null, null, url);
         }
     }
 
@@ -180,13 +184,13 @@ public final class Renderer {
                     projectList(payload.path("projects"))));
             case PROJECT_UNAVAILABLE -> plain(format("project.unavailable", escape(payload.path("project").asText()),
                     escape(payload.path("reason").asText())));
-            case TASK_USAGE -> plain(text("task.usage"));
+            case TASK_USAGE -> plain(payload.hasNonNull("command") ? text("usage." + payload.get("command").asText()) : text("task.usage"));
             case PRIVATE_ONLY -> plain(format("privateOnly", escape(payload.path("bot").asText())));
             case NO_PROJECTS -> plain(payload.hasNonNull("names")
                     ? format("group.noProjects", escape(payload.get("names").asText()))
                     : text("noProjects"));
-            case HELP -> plain(format(payload.path("privateChat").asBoolean() ? "help.private" : "help",
-                    projectList(payload.path("projects")), escape(payload.path("bot").asText())));
+            case HELP -> help(payload);
+            case TASK_PROMPT -> new Rendered(text("help.writePrompt"), List.of(), null, text("help.writePlaceholder"));
             case PROJECTS -> projects(payload.path("projects"));
             case WORKER_PAIRING -> workerPairing(payload);
             case WORKER_REVOKED -> plain(payload.path("found").asBoolean()
@@ -381,7 +385,83 @@ public final class Renderer {
         return name.length() <= 128 ? name : name.substring(0, 127) + "…";
     }
 
-    /** The member's one-time code, the exact command to run with it, and the computers they already paired. */
+    /**
+     * /help. In a group: a card with nothing personal on it and a link to the private chat. In a member's private chat: the
+     * home screen, or one of its pages, which a button edits that same message into. Buttons carry "help:" and a page name.
+     */
+    private Rendered help(JsonNode payload) {
+        String bot = escape(payload.path("bot").asText());
+        if (!payload.path("privateChat").asBoolean()) {
+            return new Rendered(format("help", projectList(payload.path("projects")), bot),
+                    List.of(List.of(Button.link(text("help.button.openPrivate"), "https://t.me/" + payload.path("bot").asText() + "?start=help"))),
+                    null);
+        }
+        List<List<Button>> back = List.of(List.of(new Button(text("help.button.back"), "help:home")));
+        return switch (payload.path("page").asText()) {
+            case "task" -> new Rendered(text("help.task"),
+                    List.of(List.of(new Button(text("help.button.write"), "help:write")), back.getFirst()), null);
+            // The reused messages' own buttons are left off: a priority button would redraw this as a plain status.
+            case "status" -> new Rendered(status(payload.path("status")).html(), back, null);
+            case "history" -> new Rendered(history(payload.path("history").path("tasks")).html(), back, null);
+            case "projects" -> new Rendered(projects(payload.path("projects")).html(), back, null);
+            case "computer" -> new Rendered(computer(payload.path("workers")), back, null);
+            case "how" -> new Rendered(text("help.how") + "\n\n" + text("help.commands"), back, null);
+            default -> helpHome(payload);
+        };
+    }
+
+    /** Who they are here, what of theirs is going on now, their projects, and a button per page, two to a row. */
+    private Rendered helpHome(JsonNode payload) {
+        List<String> who = new ArrayList<>();
+        if (payload.hasNonNull("team")) {
+            who.add(escape(payload.get("team").asText()));
+        }
+        boolean personal = payload.path("personal").asBoolean();
+        who.add(text(personal ? "help.mode.personal" : "help.mode.team"));
+        if (!personal) {
+            who.add(text(payload.path("admin").asBoolean() ? "help.role.admin" : "help.role.member"));
+        }
+        List<String> live = new ArrayList<>();
+        for (String count : List.of("running", "waiting", "queued")) {
+            if (payload.path(count).asInt() > 0) {
+                live.add(format("help.live." + count, payload.path(count).asInt()));
+            }
+        }
+        JsonNode projects = payload.path("projects");
+        String html = format("help.greeting", escape(payload.path("firstName").asText())) + "\n" + String.join(" · ", who)
+                + "\n\n" + (live.isEmpty() ? text("help.live.idle") : String.join(" · ", live))
+                + "\n" + (projects.isEmpty() ? text("noProjects") : format("help.projects", projectList(projects)));
+        List<Button> buttons = new ArrayList<>(List.of(new Button(text("help.button.task"), "help:task"),
+                new Button(text("help.button.status"), "help:status"), new Button(text("help.button.history"), "help:history"),
+                new Button(text("help.button.projects"), "help:projects")));
+        if (payload.path("computer").asBoolean()) {
+            buttons.add(new Button(text("help.button.computer"), "help:computer"));
+        }
+        if (payload.hasNonNull("miniApp")) {
+            buttons.add(Button.webApp(text("help.button.manage"), payload.get("miniApp").asText()));
+        }
+        buttons.add(new Button(text("help.button.how"), "help:how"));
+        buttons.add(new Button(text("help.button.refresh"), "help:home"));
+        List<List<Button>> keyboard = new ArrayList<>();
+        for (int i = 0; i < buttons.size(); i += 2) {
+            keyboard.add(buttons.subList(i, Math.min(i + 2, buttons.size())));
+        }
+        return new Rendered(html, keyboard, null);
+    }
+
+    /** A team member's computers and whether each is connected now, or how to pair one. */
+    private String computer(JsonNode workers) {
+        if (workers.isEmpty()) {
+            return text("help.computer.header") + "\n" + text("help.computer.none");
+        }
+        StringBuilder html = new StringBuilder(text("help.computer.header"));
+        for (JsonNode worker : workers) {
+            html.append('\n').append(format(worker.path("live").asBoolean() ? "help.computer.live" : "help.computer.offline",
+                    escapeWithin(worker.path("name").asText(), TITLE_LIMIT)));
+        }
+        return html.toString();
+    }
+
     /** /manage: the button that opens the Mini App, or why there is none (ADR 0019). */
     private Rendered manage(JsonNode payload) {
         if (!payload.hasNonNull("url")) {
@@ -391,6 +471,7 @@ public final class Renderer {
                 List.of(List.of(Button.webApp(text("manage.button"), payload.get("url").asText()))), null);
     }
 
+    /** The member's one-time code, the exact command to run with it, and the computers they already paired. */
     private Rendered workerPairing(JsonNode payload) {
         if (payload.path("personal").asBoolean()) {
             return plain(text("worker.personal"));
