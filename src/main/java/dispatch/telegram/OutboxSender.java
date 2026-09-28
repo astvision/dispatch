@@ -121,8 +121,10 @@ public final class OutboxSender implements Runnable {
             return;
         }
         long chatId = Refs.chatId(message.chatRef());
-        Long replyTo = message.replyToRef() == null ? null : Refs.messageId(message.replyToRef());
-        Long thread = message.replyToRef() == null ? null : Refs.threadId(message.replyToRef());
+        // A reply target outside Telegram (a task given on the desktop, D-2b) is no message to answer: sent plainly.
+        String replyRef = Refs.isTelegram(message.replyToRef()) ? message.replyToRef() : null;
+        Long replyTo = replyRef == null ? null : Refs.messageId(replyRef);
+        Long thread = replyRef == null ? null : Refs.threadId(replyRef);
         boolean inTaskTopic = task.isPresent() && task.get().topicRef() != null && message.chatRef().equals(task.get().requester().ref());
         if (inTaskTopic) {
             // The task's own topic; the message that gave the task is outside it, in General.

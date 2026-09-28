@@ -49,6 +49,11 @@ final class Refs {
         return at < 0 ? null : Long.parseLong(body.substring(at + 1));
     }
 
+    /** Whether {@code ref} is Telegram's at all: a task given on the desktop has a "desk:" origin (D-2b), nothing to reply to. */
+    static boolean isTelegram(String ref) {
+        return ref != null && ref.startsWith(PREFIX);
+    }
+
     /** The reference without its prefix and without a part number. */
     private static String body(String ref) {
         if (ref == null || !ref.startsWith(PREFIX)) {
