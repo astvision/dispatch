@@ -189,7 +189,7 @@ describe("the Mini App", () => {
       execute: null,
     }));
     await waitFor(() => expect(window.location.pathname).toBe("/p/crm"));
-    expect(await screen.findByText("Saved. Restart to apply")).toBeInTheDocument();
+    expect(await screen.findByText("Хадгалсан. Дахин эхлүүлбэл хэрэгжинэ")).toBeInTheDocument();
   });
 
   it("saves a choice as soon as it is tapped, keeping the phase's other choice", async () => {

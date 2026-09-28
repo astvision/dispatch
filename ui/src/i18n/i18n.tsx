@@ -88,5 +88,6 @@ export const useLanguage = () => useContext(LanguageContext);
 /** t(key, params): the phrase in the page's language; English outside any provider, as the tests render. */
 export function useT(): Translate {
   const { language } = useLanguage();
-  return (key, params) => format(language, key, params);
+  // One function per language, so a hook that lists t among its dependencies does not change on every render.
+  return useMemo<Translate>(() => (key, params) => format(language, key, params), [language]);
 }

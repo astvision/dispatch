@@ -3,7 +3,7 @@ import { Button, Result, Spin, theme } from "antd";
 import { lazy, Suspense, useContext, useEffect, useState } from "react";
 import { ApiError, getMe, type Me } from "./api";
 import Shell, { DESKTOP_PAGES, type ShellPage } from "./desktop/Shell";
-import { DesktopProviders, useDesktopStatus } from "./desktop/status";
+import { DesktopProviders, StatusProvider, useDesktopStatus } from "./desktop/status";
 import { LanguageProvider, useT } from "./i18n/i18n";
 import { post, useTelegramBackButton } from "./mini/backButton";
 import HomePage from "./mini/HomePage";
@@ -51,7 +51,7 @@ function Page({ path, heading = true }: { path: string; heading?: boolean }) {
     case "/logs":
       return <LogsPage />;
     default:
-      return <OverviewPage />;
+      return <OverviewPage installAndStop />;
   }
 }
 
@@ -72,7 +72,9 @@ function MiniPage({ path }: { path: PagePath }) {
   if (path === "/groups") return <GroupsPage />;
   if (path === "/prefs") return <PrefsPage />;
   if (path === "/guide") return <GuidePage />;
-  return <div style={{ paddingTop: 12 }}><Page path={path === "/overview" ? "/" : path} /></div>;
+  // The overview reads its status only here, when it is opened: the Mini App's home never asks for it.
+  if (path === "/overview") return <div style={{ paddingTop: 12 }}><StatusProvider><OverviewPage /></StatusProvider></div>;
+  return <div style={{ paddingTop: 12 }}><Page path={path} /></div>;
 }
 
 function MiniScreen({ me, screen, navigate }: { me: Me; screen: Screen; navigate: (path: string) => void }) {

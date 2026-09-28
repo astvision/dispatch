@@ -21,10 +21,10 @@ export const DESKTOP_PAGES: ShellPage[] = [
   { key: "/logs", label: "nav.logs" },
 ];
 
-type Colour = "green" | "amber" | "red" | "quiet";
+export type Colour = "green" | "amber" | "red" | "quiet";
 
 /** A lamp is never colour alone: its words say the same. */
-function Lamp({ colour, title, children }: { colour: Colour; title?: string; children: ReactNode }) {
+export function Lamp({ colour, title, children }: { colour: Colour; title?: string; children: ReactNode }) {
   return <span className={`lamp ${colour}`} title={title}><i aria-hidden="true" /><span>{children}</span></span>;
 }
 
@@ -67,7 +67,7 @@ function RestartLamp({ installed }: { installed: boolean }) {
   }, [phase, mark, reload]);
 
   if (phase === "done") return null;
-  if (phase === "restarting") return <Lamp colour="amber">{t("strip.restarting")}</Lamp>;
+  if (phase === "restarting") return <Lamp colour="amber">{t("restart.restarting")}</Lamp>;
   return (
     <>
       <span className="board-restart">

@@ -41,7 +41,6 @@ body:has(.board) {
   align-items: center;
   gap: 7px;
   font-size: 12px;
-  color: #e4ece8;
 }
 
 .lamp > i {

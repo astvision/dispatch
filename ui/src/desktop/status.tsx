@@ -13,16 +13,21 @@ export interface DesktopStatus {
 const StatusContext = createContext<DesktopStatus>({ overview: null, error: null, loading: false, reload: async () => {} });
 
 /**
- * The overview, read once when the desktop opens and again when something asks (Дахин шалгах, a restart, the end of
- * setup): the strip's lamps and the Overview page show the same result. Nothing polls.
+ * The overview, read once when it opens and again when something asks (Дахин шалгах, a restart, the end of setup): on
+ * the desktop the strip's lamps and the Overview page show the same result. Nothing polls.
  */
-export function DesktopProviders({ children }: { children: ReactNode }) {
+export function StatusProvider({ children }: { children: ReactNode }) {
   const status = useOverview();
+  return <StatusContext.Provider value={status}>{children}</StatusContext.Provider>;
+}
+
+/** What the desktop's shell and pages share: the status, and whether a save waits for a restart. */
+export function DesktopProviders({ children }: { children: ReactNode }) {
   const restart = useRestartNeeded();
   return (
-    <StatusContext.Provider value={status}>
+    <StatusProvider>
       <RestartContext.Provider value={restart}>{children}</RestartContext.Provider>
-    </StatusContext.Provider>
+    </StatusProvider>
   );
 }
 
