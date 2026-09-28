@@ -1,6 +1,7 @@
 # The desktop UI in Mongolian, as a dispatcher's board (D-1, D-2)
 
-Status: D-1 approved design, 2026-09-28. D-2 is outlined here and designed after D-1 lands.
+Status: D-1 approved design, 2026-09-28, built and merged. D-2 is designed in
+[tasks on the desktop, and a live overview](2026-09-28-desktop-tasks-design.md).
 
 ## Goal
 
@@ -150,6 +151,8 @@ English).
   with the owner's OK, as always.
 
 ## D-2, outlined
+
+Designed since in [tasks on the desktop, and a live overview](2026-09-28-desktop-tasks-design.md), with the desk port.
 
 The desktop's Даалгавар page (the list, a task's plan, timeline and cost, and its actions), the Overview as a live
 dashboard, and the strip's running, waiting-on-you and spend lamps.
