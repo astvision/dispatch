@@ -347,4 +347,8 @@ export const mn: Record<Key, string> = {
   "overview.live.botNotRunning": "Бот ажиллахгүй байна: юу хийж байгааг харахын тулд сервисийг эхлүүлнэ үү.",
   "overview.details": "Дэлгэрэнгүй",
   "overview.see": "Харах",
+  "notify.switch": "Мэдэгдэл",
+  "notify.waiting": "#{id} таныг хүлээж байна: {title}",
+  "notify.blocked": "Энэ хөтөч энэ хуудсаас мэдэгдэл хаасан байна; сайтын тохиргооноос зөвшөөрнө үү.",
+  "notify.unsupported": "Энэ хөтөч мэдэгдэл харуулж чадахгүй.",
 };

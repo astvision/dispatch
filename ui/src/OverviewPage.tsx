@@ -1,5 +1,5 @@
 import { CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled } from "@ant-design/icons";
-import { Alert, Button, Card, Descriptions, Drawer, Empty, Flex, List, Result, Space, Spin, theme, Typography } from "antd";
+import { Alert, Button, Card, Descriptions, Drawer, Empty, Flex, List, Result, Space, Spin, Switch, theme, Typography } from "antd";
 import { useContext, useEffect, useState } from "react";
 import { installService, stopService, type Finding, type Overview, type ServiceView } from "./api";
 import LiveBoard from "./desktop/overview/LiveBoard";
@@ -127,6 +127,24 @@ function ChecksCard({ overview, loading, reload }: { overview: Overview; loading
   );
 }
 
+/** Мэдэгдэл (D-2b): asks the browser once, and says why when it cannot. */
+function NotificationSwitch() {
+  const t = useT();
+  const { notifications, setNotifications } = useDesktopStatus();
+  const [why, setWhy] = useState<string | null>(null);
+  const change = async (on: boolean) => {
+    const now = await setNotifications(on);
+    setWhy(now === "blocked" ? t("notify.blocked") : now === "unsupported" ? t("notify.unsupported") : null);
+  };
+  return (
+    <Flex align="center" gap={8} wrap>
+      <Typography.Text type="secondary">{t("notify.switch")}</Typography.Text>
+      <Switch aria-label={t("notify.switch")} checked={notifications} onChange={(on) => void change(on)} />
+      {why && <Typography.Text type="warning">{why}</Typography.Text>}
+    </Flex>
+  );
+}
+
 /** The desktop's Тойм (D-2b): the live board, then the service and the checks one line each, opening D-1's panels. */
 function LiveOverview({ overview, loading, reload, navigate }: {
   overview: Overview;
@@ -142,6 +160,7 @@ function LiveOverview({ overview, loading, reload, navigate }: {
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Flex justify="space-between" align="center" wrap gap={8}>
         <Typography.Title level={4} style={{ margin: 0 }}>{t("overview.title")}</Typography.Title>
+        <NotificationSwitch />
       </Flex>
       {botRunning === false
         ? (

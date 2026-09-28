@@ -346,4 +346,8 @@ export const en = {
   "overview.live.botNotRunning": "The bot is not running: start the service to see what it does.",
   "overview.details": "Details",
   "overview.see": "See",
+  "notify.switch": "Notifications",
+  "notify.waiting": "#{id} is waiting on you: {title}",
+  "notify.blocked": "This browser blocks notifications from this page; allow them in its site settings.",
+  "notify.unsupported": "This browser cannot show notifications.",
 } as const;
