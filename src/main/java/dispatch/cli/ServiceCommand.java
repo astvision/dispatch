@@ -14,17 +14,29 @@ public final class ServiceCommand {
     private final Terminal terminal;
     private final Service service;
     private final Path jar;
+    private final String instance;
 
     /** @param jar the dispatch.jar the service runs; the one this process runs from */
     public ServiceCommand(Terminal terminal, Service service, Path jar) {
+        this(terminal, service, jar, null);
+    }
+
+    /** @param instance null for the default instance, else the name a second instance runs under */
+    public ServiceCommand(Terminal terminal, Service service, Path jar, String instance) {
         this.terminal = terminal;
         this.service = service;
         this.jar = jar;
+        this.instance = instance;
     }
 
     /** The service for this OS and user, run with this process's Java and jar. */
     public static ServiceCommand forThisMachine(Terminal terminal) {
         return new ServiceCommand(terminal, Service.forThisMachine(), runningJar());
+    }
+
+    /** @param instance null for the default instance, else the name a second instance runs under */
+    public static ServiceCommand forThisMachine(Terminal terminal, String instance) {
+        return new ServiceCommand(terminal, Service.forThisMachine(Service.Kind.DISPATCH, instance), runningJar(), instance);
     }
 
     public int run(Cli.Service options, Map<String, String> processEnvironment) {
@@ -70,14 +82,14 @@ public final class ServiceCommand {
         });
         terminal.ok(service.kind().label() + " runs in the background as " + service.describe());
         terminal.say("  Logs:   " + spec.logFile());
-        terminal.say("  Manage: " + service.kind().manageCommand() + " status | stop | start | uninstall");
+        terminal.say("  Manage: " + service.kind().manageCommand(instance) + " status | stop | start | uninstall");
         service.status().notes().forEach(terminal::warn);
     }
 
     private void status() {
         Service.Status status = service.status();
         if (!status.installed()) {
-            terminal.warn("not installed; install it with: " + service.kind().manageCommand() + " install");
+            terminal.warn("not installed; install it with: " + service.kind().manageCommand(instance) + " install");
             return;
         }
         if (status.running()) {
@@ -106,6 +118,12 @@ public final class ServiceCommand {
             throw new CliException(e.getMessage());
         }
         return specFor(jar, configFile, prepared.config().stateDir(), Service.Kind.DISPATCH.logName(), processEnvironment);
+    }
+
+    /** @param instance null for the default instance, else the name a second instance runs under */
+    public static Service.Spec specFor(Path jar, Path configFile, String instance, Map<String, String> processEnvironment) {
+        Service.Spec spec = specFor(jar, configFile, processEnvironment);
+        return new Service.Spec(spec.java(), spec.jar(), spec.configFile(), spec.logFile(), spec.path(), spec.stateDir(), instance);
     }
 
     /**

@@ -17,11 +17,13 @@ final class WindowsTaskService implements Service {
     private final Commands commands;
     private final String user;
     private final Kind kind;
+    private final String instance;
 
-    WindowsTaskService(Commands commands, String user, Kind kind) {
+    WindowsTaskService(Commands commands, String user, Kind kind, String instance) {
         this.commands = commands;
         this.user = user;
         this.kind = kind;
+        this.instance = instance;
     }
 
     @Override
@@ -31,14 +33,14 @@ final class WindowsTaskService implements Service {
 
     @Override
     public String describe() {
-        return "Task Scheduler task " + kind.windowsTask();
+        return "Task Scheduler task " + kind.windowsTask(instance);
     }
 
     @Override
     public void install(Spec spec) {
         Path javaw = spec.java().resolveSibling("javaw.exe");
-        String arguments = "-jar " + quoted(spec.jar()) + " " + String.join(" ", kind.command())
-                + " --config " + quoted(spec.configFile()) + " --log-file " + quoted(spec.logFile());
+        String line = Service.argumentsLine(spec, kind, WindowsTaskService::quoted);
+        String arguments = "-jar " + quoted(spec.jar()) + " " + line;
         String task = """
                 <?xml version="1.0" encoding="UTF-16"?>
                 <!-- Written by dispatch service install (ADR 0016). -->
@@ -73,7 +75,7 @@ final class WindowsTaskService implements Service {
                   </Actions>
                 </Task>
                 """.formatted(xml(user), xml(user), xml(javaw), xml(arguments));
-        Path file = spec.stateDir().resolve(kind.windowsTask().toLowerCase(Locale.ROOT) + "-task.xml");
+        Path file = spec.stateDir().resolve(kind.windowsTask(instance).toLowerCase(Locale.ROOT) + "-task.xml");
         try {
             Files.createDirectories(file.getParent());
             // schtasks reads task XML as UTF-16LE, marked by its byte order mark.
@@ -86,31 +88,31 @@ final class WindowsTaskService implements Service {
         } catch (IOException e) {
             throw new CliException("cannot write " + file + ": " + e.getMessage());
         }
-        Service.required(commands, List.of("schtasks", "/Create", "/TN", kind.windowsTask(), "/XML", file.toString(), "/F"));
-        Service.required(commands, List.of("schtasks", "/Run", "/TN", kind.windowsTask()));
+        Service.required(commands, List.of("schtasks", "/Create", "/TN", kind.windowsTask(instance), "/XML", file.toString(), "/F"));
+        Service.required(commands, List.of("schtasks", "/Run", "/TN", kind.windowsTask(instance)));
     }
 
     @Override
     public void start() {
-        Service.required(commands, List.of("schtasks", "/Run", "/TN", kind.windowsTask()));
+        Service.required(commands, List.of("schtasks", "/Run", "/TN", kind.windowsTask(instance)));
     }
 
     @Override
     public void stop() {
-        Service.required(commands, List.of("schtasks", "/End", "/TN", kind.windowsTask()));
+        Service.required(commands, List.of("schtasks", "/End", "/TN", kind.windowsTask(instance)));
     }
 
     /** The default restart's stop() fails (and stops there) when the task is not currently running; restart must still
      * reach /Run in that case, so its own stop step ignores /End's failure. */
     @Override
     public void restart() {
-        commands.run(List.of("schtasks", "/End", "/TN", kind.windowsTask()));
+        commands.run(List.of("schtasks", "/End", "/TN", kind.windowsTask(instance)));
         start();
     }
 
     @Override
     public Status status() {
-        Git.Result query = commands.run(List.of("schtasks", "/Query", "/TN", kind.windowsTask(), "/FO", "LIST"));
+        Git.Result query = commands.run(List.of("schtasks", "/Query", "/TN", kind.windowsTask(instance), "/FO", "LIST"));
         if (query.exitCode() != 0) {
             return new Status(false, false, "not installed", List.of());
         }
@@ -121,11 +123,11 @@ final class WindowsTaskService implements Service {
 
     @Override
     public void uninstall() {
-        commands.run(List.of("schtasks", "/End", "/TN", kind.windowsTask()));
-        Service.required(commands, List.of("schtasks", "/Delete", "/TN", kind.windowsTask(), "/F"));
+        commands.run(List.of("schtasks", "/End", "/TN", kind.windowsTask(instance)));
+        Service.required(commands, List.of("schtasks", "/Delete", "/TN", kind.windowsTask(instance), "/F"));
     }
 
-    private static String quoted(Path path) {
+    private static String quoted(Object path) {
         return "\"" + path + "\"";
     }
 
