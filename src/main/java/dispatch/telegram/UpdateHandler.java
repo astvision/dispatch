@@ -93,6 +93,7 @@ public final class UpdateHandler {
     private final AssistantActions assistantActions;
     private final GroupAdditions additions;
     private final Merges merges;
+    private final String team;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
@@ -123,6 +124,15 @@ public final class UpdateHandler {
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
                          WorkerKeys workers, String workerUrl, String miniAppUrl, GroupLinks groupLinks, Assistant assistant,
                          AssistantActions assistantActions, Merges merges) {
+        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, workers, workerUrl,
+                miniAppUrl, groupLinks, assistant, assistantActions, merges, null);
+    }
+
+    /** @param team the instance's team name, which /help's home screen shows; null to leave it off */
+    public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
+                         Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
+                         WorkerKeys workers, String workerUrl, String miniAppUrl, GroupLinks groupLinks, Assistant assistant,
+                         AssistantActions assistantActions, Merges merges, String team) {
         if (workers != null) {
             Objects.requireNonNull(workerUrl, "workerUrl is required when workers is configured");
         }
@@ -146,6 +156,7 @@ public final class UpdateHandler {
         this.assistantActions = assistantActions;
         this.additions = new GroupAdditions(tasks, clock, wakeOutbox, renderer.text("group.requestedBy"));
         this.merges = merges;
+        this.team = team;
     }
 
     public void handle(JsonNode update) {
@@ -354,7 +365,7 @@ public final class UpdateHandler {
                 }
                 taskId(command.args()).ifPresentOrElse(
                         id -> tasks.cancel(tx, who, id, origin, chatRef),
-                        () -> help(tx, visible, origin, chatRef, true));
+                        () -> help(tx, who, message, visible, origin, chatRef, true));
             }
             case "retry" -> {
                 if (!privateChat) {
@@ -363,7 +374,7 @@ public final class UpdateHandler {
                 }
                 taskId(command.args()).ifPresentOrElse(
                         id -> tasks.retry(tx, who, id, origin, chatRef),
-                        () -> help(tx, visible, origin, chatRef, true));
+                        () -> help(tx, who, message, visible, origin, chatRef, true));
             }
             case "worker" -> {
                 if (!privateChat) {
@@ -382,7 +393,8 @@ public final class UpdateHandler {
             case "stats" -> tasks.stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
             case "projects" -> projectList(tx, who, privateChat, visible, origin, chatRef);
-            case "help", "start" -> help(tx, visible, origin, chatRef, privateChat);
+            // "/start help" too: the group card's link to the private chat lands here.
+            case "help", "start" -> help(tx, who, message, visible, origin, chatRef, privateChat);
             default -> {
                 // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
                 // it replies to a plan, otherwise a task when written privately.
@@ -758,6 +770,10 @@ public final class UpdateHandler {
             return;
         }
         String[] parts = data.split(":");
+        if (from.has("id") && parts.length == 2 && parts[0].equals("help")) {
+            onHelpButton(tx, callback, parts[1]);
+            return;
+        }
         if (servedChat && from.has("id") && parts.length == 3 && parts[0].equals("join") && taskId(parts[1]).isPresent()) {
             onJoinButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
             return;
@@ -1248,12 +1264,90 @@ public final class UpdateHandler {
         tx.afterCommit(() -> bestEffort("answerCallbackQuery", () -> api.answerCallbackQuery(callbackId, text)));
     }
 
-    private void help(Tx tx, Set<String> visible, String origin, String chatRef, boolean privateChat) {
-        ObjectNode payload = Json.object().put("bot", botUsername).put("privateChat", privateChat);
-        ArrayNode listed = payload.putArray("projects");
-        projects.all().stream().filter(project -> visible.contains(project.name()))
-                .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
+    /** /help: the home screen in a private chat; in a group, a card with nothing personal and a link to the private chat. */
+    private void help(Tx tx, Requester who, JsonNode message, Set<String> visible, String origin, String chatRef, boolean privateChat) {
+        ObjectNode payload = privateChat
+                ? helpHome(tx, who, firstName(message, who))
+                : Json.object().put("bot", botUsername).put("privateChat", false);
+        if (!privateChat) {
+            ArrayNode listed = payload.putArray("projects");
+            projects.all().stream().filter(project -> visible.contains(project.name()))
+                    .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
+        }
         enqueue(tx, OutboxKind.HELP, chatRef, origin, payload);
+    }
+
+    /** The home screen's content: who they are here and how many of their own tasks run, wait on them, or wait their turn. */
+    private ObjectNode helpHome(Tx tx, Requester who, String firstName) {
+        TaskAccess.Viewer viewer = access.member(who.ref());
+        ObjectNode status = tasks.statusPayload(tx, viewer);
+        ObjectNode payload = Json.object().put("privateChat", true).put("page", "home").put("bot", botUsername)
+                .put("firstName", firstName).put("team", team).put("personal", groups.isPersonal()).put("admin", groups.isAdmin(who.ref()))
+                .put("running", mine(status.path("running"))).put("waiting", mine(status.path("awaitingApproval")))
+                .put("queued", mine(status.path("queued")))
+                // Only a team has members' computers to show (ADR 0021); a personal bot runs its tasks here.
+                .put("computer", workers != null).put("miniApp", miniAppUrl);
+        ArrayNode listed = payload.putArray("projects");
+        projects.all().stream().filter(project -> viewer.projects().contains(project.name()))
+                .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
+        return payload;
+    }
+
+    /** How many of a status list's tasks the viewer gave: the home screen counts only their own. */
+    private static int mine(JsonNode items) {
+        int count = 0;
+        for (JsonNode item : items) {
+            count += item.path("mine").asBoolean() ? 1 : 0;
+        }
+        return count;
+    }
+
+    /**
+     * A button on the home screen or one of its pages: the message is redrawn as the page, read now. Only in the member's own
+     * private chat; any page it does not know (an old message, a computer page where there are none) is the home screen.
+     */
+    private void onHelpButton(Tx tx, JsonNode callback, String page) {
+        String callbackId = callback.path("id").asText();
+        JsonNode message = callback.path("message");
+        JsonNode from = callback.path("from");
+        Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
+        if (!isPrivateChatOf(message.path("chat"), from) || !groups.isMember(who.ref())) {
+            answer(tx, callbackId, "callback.notAllowed");
+            return;
+        }
+        long chatId = message.path("chat").path("id").asLong();
+        answer(tx, callbackId, "callback.done");
+        if (page.equals("write")) {
+            // Not a new intake: the reply to this prompt replies to none of the tracked messages, so it is drafted (or put to
+            // the assistant) like any plain message.
+            String prompt = renderer.text("help.writePrompt");
+            String placeholder = renderer.text("help.writePlaceholder");
+            tx.afterCommit(() -> bestEffort("sendMessage", () -> api.sendForceReply(chatId, null, prompt, null, placeholder)));
+            return;
+        }
+        TaskAccess.Viewer viewer = access.member(who.ref());
+        ObjectNode payload = Json.object().put("privateChat", true).put("page", page);
+        switch (page) {
+            case "task", "how" -> { }
+            case "status" -> payload.set("status", tasks.statusPayload(tx, viewer));
+            case "history" -> payload.set("history", tasks.historyPayload(tx, viewer));
+            case "projects" -> payload.set("projects", projectsPayload(who, true, viewer.projects()).get("projects"));
+            case "computer" -> {
+                if (workers == null) {
+                    payload = helpHome(tx, who, firstName(callback, who));
+                } else {
+                    Instant since = clock.instant().minus(Workers.SEEN_WITHIN);
+                    ArrayNode list = payload.putArray("workers");
+                    for (Workers.Paired paired : workers.of(tx, who.ref())) {
+                        list.addObject().put("name", paired.name()).put("live", paired.lastSeenAt() != null && paired.lastSeenAt().isAfter(since));
+                    }
+                }
+            }
+            default -> payload = helpHome(tx, who, firstName(callback, who));
+        }
+        long messageId = message.path("message_id").asLong();
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.HELP, Json.read(redactor.redact(payload.toString())));
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard())));
     }
 
     /**
@@ -1261,6 +1355,10 @@ public final class UpdateHandler {
      * may link groups also gets each project's add link, privately: in a group it would invite anyone to try it.
      */
     private void projectList(Tx tx, Requester who, boolean privateChat, Set<String> visible, String origin, String chatRef) {
+        enqueue(tx, OutboxKind.PROJECTS, chatRef, origin, projectsPayload(who, privateChat, visible));
+    }
+
+    private ObjectNode projectsPayload(Requester who, boolean privateChat, Set<String> visible) {
         boolean withAddLinks = privateChat && groupLinks != null && groups.mayManage(who.ref());
         ObjectNode payload = Json.object();
         ArrayNode listed = payload.putArray("projects");
@@ -1271,7 +1369,7 @@ public final class UpdateHandler {
                 addLink(botUsername, project).ifPresent(link -> line.put("addToGroup", link));
             }
         });
-        enqueue(tx, OutboxKind.PROJECTS, chatRef, origin, payload);
+        return payload;
     }
 
     /** /manage answers a member with a button that opens the Mini App, and everyone else as other commands do. */

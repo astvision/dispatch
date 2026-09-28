@@ -1356,7 +1356,129 @@ class UpdateHandlerTest {
         JsonNode payload = Json.read(reply.get("payload"));
         assertEquals("alm", payload.get("projects").get(0).get("alias").asText());
         assertEquals(FakeTelegram.BOT_USERNAME, payload.get("bot").asText());
-        assertTrue(renderer.render(dispatch.domain.OutboxKind.HELP, payload).html().contains("@" + FakeTelegram.BOT_USERNAME));
+        assertFalse(payload.get("privateChat").asBoolean());
+        assertFalse(payload.has("firstName"), "a group's card carries nothing personal: " + payload);
+        Renderer.Rendered card = renderer.render(dispatch.domain.OutboxKind.HELP, payload);
+        assertTrue(card.html().contains("@" + FakeTelegram.BOT_USERNAME));
+        assertEquals("https://t.me/" + BOT + "?start=help", card.keyboard().getFirst().getFirst().url());
+    }
+
+    @Test
+    void privateHelpIsTheHomeScreenWithTheMembersNameCountsAndProjects() {
+        taskAwaitingApproval();
+        task("Rename the report");
+
+        handler.handle(message(580, 80, 100, "Bold", 100L, "private", "/help", null));
+        handler.handle(message(581, 81, 100, "Bold", 100L, "private", "/start help", null));
+
+        JsonNode home = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/80'").get("payload"));
+        assertEquals("home", home.get("page").asText());
+        assertEquals("Bold", home.get("firstName").asText());
+        assertFalse(home.get("personal").asBoolean());
+        assertFalse(home.get("admin").asBoolean());
+        assertEquals(1, home.get("waiting").asInt(), home.toString());
+        assertEquals(1, home.get("queued").asInt(), home.toString());
+        assertEquals(0, home.get("running").asInt(), home.toString());
+        assertEquals(2, home.get("projects").size());
+        assertFalse(home.get("computer").asBoolean(), "no workers here to show");
+        JsonNode deepLinked = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/81'").get("payload"));
+        assertEquals("home", deepLinked.get("page").asText(), "the group card's link lands on the home screen");
+    }
+
+    @Test
+    void aHomeButtonEditsTheMessageIntoItsPageAndBackReturnsHome() throws Exception {
+        taskAwaitingApproval();
+
+        handler.handle(privateCallback(582, 100, "Bold", "help:status"));
+
+        assertEquals("", telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().path("text").asText());
+        JsonNode status = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(88, status.get("message_id").asLong());
+        assertTrue(status.get("text").asText().contains("Fix the login timeout"), status.toString());
+        assertTrue(status.get("reply_markup").toString().contains("help:home"), status.toString());
+
+        handler.handle(privateCallback(583, 100, "Bold", "help:home"));
+
+        JsonNode home = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(home.get("text").asText().contains("Bold"), home.toString());
+        assertTrue(home.get("reply_markup").toString().contains("help:status"), home.toString());
+        assertTrue(telegram.drain("sendMessage").isEmpty(), "pages edit the one message");
+    }
+
+    @Test
+    void theHistoryAndProjectsPagesAreReadWhenPressed() throws Exception {
+        handler.handle(privateCallback(584, 100, "Bold", "help:projects"));
+        JsonNode projectsPage = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(projectsPage.get("text").asText().contains("autoland-management") && projectsPage.get("text").asText().contains("life"),
+                projectsPage.toString());
+
+        handler.handle(privateCallback(585, 100, "Bold", "help:history"));
+        JsonNode history = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(renderer.text("history.empty"), history.get("text").asText());
+    }
+
+    @Test
+    void aStaleOrUnknownPageRedrawsTheHomeInPlace() throws Exception {
+        handler.handle(privateCallback(586, 100, "Bold", "help:gone"));
+        handler.handle(privateCallback(587, 100, "Bold", "help:computer"));
+
+        for (int i = 0; i < 2; i++) {
+            JsonNode redrawn = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+            assertTrue(redrawn.get("reply_markup").toString().contains("help:status"), redrawn.toString());
+        }
+        assertTrue(telegram.drain("sendMessage").isEmpty());
+    }
+
+    @Test
+    void aHomeButtonIsRefusedToAnyoneButTheMemberWhoseChatItIs() throws Exception {
+        JsonNode foreign = Json.read("""
+                {"update_id":588,"callback_query":{"id":"cb-588","from":{"id":200,"is_bot":false,"first_name":"Ali"},
+                 "message":{"message_id":88,"chat":{"id":100,"type":"private"},"date":1789640000,"text":"home"},
+                 "chat_instance":"1","data":"help:status"}}""");
+
+        handler.handle(foreign);
+        handler.handle(privateCallback(589, 999, "Eve", "help:status"));
+
+        for (int i = 0; i < 2; i++) {
+            assertEquals(renderer.text("callback.notAllowed"),
+                    telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        }
+        assertTrue(telegram.drain("editMessageText").isEmpty());
+    }
+
+    @Test
+    void writeAsksForTheTaskAsAForcedReplyAndTheReplyIsDraftedLikeAnyMessage() throws Exception {
+        handler.handle(privateCallback(590, 100, "Bold", "help:write"));
+
+        JsonNode prompt = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json();
+        assertEquals(100, prompt.get("chat_id").asLong());
+        assertEquals(renderer.text("help.writePrompt"), prompt.get("text").asText());
+        assertTrue(prompt.get("reply_markup").get("force_reply").asBoolean(), prompt.toString());
+        assertTrue(telegram.drain("editMessageText").isEmpty(), "the home screen stays as it is");
+
+        String reply = """
+                {"message_id":1000,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":100,"type":"private"},
+                 "date":1789640000,"text":"%s"}""".formatted(renderer.text("help.writePrompt"));
+        handler.handle(message(591, 91, 100, "Bold", 100L, "private", "Fix the login timeout", reply));
+
+        assertEquals("Fix the login timeout", row("SELECT description FROM draft").get("description"));
+    }
+
+    @Test
+    void theComputerPageShowsATeamMembersComputersAndWhetherTheyAreConnected() throws Exception {
+        dispatch.worker.WorkerKeys keys = new dispatch.worker.WorkerKeys(db, clock);
+        long live = keys.pair(keys.newCode(BOLD), "ann-laptop").orElseThrow().workerId();
+        keys.pair(keys.newCode(BOLD), "ann-desktop").orElseThrow();
+        db.transaction(tx -> dispatch.store.Workers.touch(tx, live, clock.instant()));
+        UpdateHandler team = handlerWithWorkers(keys);
+
+        team.handle(privateCommand(592, 100, "Bold", "/help"));
+        team.handle(privateCallback(593, 100, "Bold", "help:computer"));
+
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'HELP'").get("payload")).get("computer").asBoolean());
+        String page = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json().get("text").asText();
+        assertTrue(page.contains(new java.text.MessageFormat(renderer.text("help.computer.live")).format(new Object[] {"ann-laptop"})), page);
+        assertTrue(page.contains(new java.text.MessageFormat(renderer.text("help.computer.offline")).format(new Object[] {"ann-desktop"})), page);
     }
 
     @Test

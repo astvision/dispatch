@@ -194,7 +194,8 @@ public final class App {
                 api, renderer, redactor, botUsername, clock, outboxSignal::wake, workerKeys,
                 config.workers() == null ? null : config.workers().publicUrl(),
                 config.miniApp() == null ? null : config.miniApp().publicUrl(), groupLinks, assistant,
-                assistant == null ? null : assistantActions, mergeFromTelegram ? merges(db, groups, gh, stateDir, clock, outboxSignal) : null);
+                assistant == null ? null : assistantActions, mergeFromTelegram ? merges(db, groups, gh, stateDir, clock, outboxSignal) : null,
+                config.team());
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         UiServer miniApp = null;
