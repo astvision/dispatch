@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Text;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.OwnerOnly;
 import dispatch.config.Config;
@@ -94,7 +95,7 @@ public final class Setup {
     /** Dispatch or another program already reads this bot's updates; Telegram gives them to one reader at a time. */
     public static final class ConflictException extends CliException {
 
-        ConflictException(String message) {
+        ConflictException(Text message) {
             super(message);
         }
     }
@@ -102,14 +103,14 @@ public final class Setup {
     /** @throws CliException saying what is wrong with the token, never containing it */
     public static Bot bot(String token, Function<String, BotApi> bots) {
         if (!BotApi.isBotToken(token)) {
-            throw new CliException("that is not a bot token: @BotFather gives digits, a colon, then letters and digits");
+            throw new CliException(Text.of("setupStep.thatIs"));
         }
         BotApi api = bots.apply(token);
         try {
             JsonNode me = api.getMe();
             return new Bot(api, token, me.path("username").asText(), me.path("has_topics_enabled").asBoolean(false));
         } catch (TelegramException e) {
-            throw new CliException("Telegram refused that token or could not be reached (" + e.getMessage() + ")");
+            throw new CliException(Text.of("setupStep.telegramRefused", e.getMessage()));
         }
     }
 
@@ -150,8 +151,7 @@ public final class Setup {
                 try {
                     fetched = api.getUpdates(offset, (int) Math.min(seconds, 25));
                 } catch (TelegramException e) {
-                    String message = "cannot read the bot's messages (" + e.getMessage() + "); if Dispatch is already running "
-                            + "with this bot, stop it first";
+                    Text message = Text.of("setupStep.cannotReadBot", e.getMessage());
                     throw e.errorCode() == 409 ? new ConflictException(message) : new CliException(message);
                 }
                 for (JsonNode update : fetched) {
@@ -318,7 +318,7 @@ public final class Setup {
                 ConfigLoader.load(draft, ProjectAddCommand.validationEnvironment(Map.of()));
             } catch (ConfigException e) {
                 Files.deleteIfExists(draft);
-                throw new CliException("this setup does not make a valid config: " + e.getMessage().replace(draft.toString(), configFile.toString()));
+                throw new CliException(Text.of("setupStep.thisSetup", e.getMessage().replace(draft.toString(), configFile.toString())));
             }
             SecretsFile.write(SecretsFile.beside(configFile), Map.of("TELEGRAM_BOT_TOKEN", token));
             Files.move(draft, configFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -326,7 +326,7 @@ public final class Setup {
             if (draft != null) {
                 deleteQuietly(draft);
             }
-            throw new CliException("cannot write " + configFile + ": " + e.getMessage());
+            throw new CliException(Text.of("setupStep.cannotWrite", configFile, e.getMessage()));
         }
     }
 

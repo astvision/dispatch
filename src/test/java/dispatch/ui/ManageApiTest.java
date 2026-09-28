@@ -187,6 +187,17 @@ class ManageApiTest {
     }
 
     @Test
+    void anInvalidSavesReasonIsWrittenInThePagesLanguage() throws Exception {
+        String body = settings(version(), "2", "gh").replace("\"maxConcurrentRuns\":2", "\"maxConcurrentRuns\":0");
+
+        CliException refused = assertThrows(CliException.class, () -> call("/api/manage/settings", body));
+
+        String mongolian = refused.text().render(dispatch.Language.MN);
+        assertTrue(mongolian.contains("scheduler.maxConcurrentRuns: заавал, хамгийн багадаа 1"), mongolian);
+        assertTrue(mongolian.contains(config.toString()), "still names the config: " + mongolian);
+    }
+
+    @Test
     void aProjectIsAddedFromAClone() throws Exception {
         GitFixture repos = GitFixture.create(dir, "life");
 

@@ -1,5 +1,6 @@
 package dispatch.config;
 
+import dispatch.Text;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -54,7 +55,7 @@ public final class ConfigText {
             return new StringBuilder(text).insert(closingBracket, members.getValue().isEmpty() ? entry : ", " + entry).toString();
         }
         if (members.getValue().isEmpty()) {
-            throw new ConfigException("group '" + group + "' has no members to add to; add the member by hand");
+            throw new ConfigException(Text.of("yaml.groupNoMembers", group));
         }
         String prefix = lines.prefix(members.getValue().getFirst().getStartMark());
         String entry = prefix + "id: " + id + lines.newline + " ".repeat(prefix.length()) + "name: " + quoted(name) + lines.newline;
@@ -96,7 +97,7 @@ public final class ConfigText {
                 && groups.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !groups.getValue().isEmpty()) {
             return groups;
         }
-        throw new ConfigException("the config's telegram.groups is not a list of blocks; add the group by hand");
+        throw new ConfigException(Text.of("yaml.groupsNotBlocks"));
     }
 
     /** Characters that YAML reads as an indicator when they lead a plain scalar, e.g. '-' as a sequence entry. */
@@ -124,7 +125,7 @@ public final class ConfigText {
      */
     static void requirePlainText(String value) {
         if (value.codePoints().anyMatch(cp -> Character.isISOControl(cp) || cp == '\u0085' || cp == ' ' || cp == ' ')) {
-            throw new ConfigException("a value must be plain text on one line");
+            throw new ConfigException(Text.of("yaml.plainValue"));
         }
     }
 
@@ -134,9 +135,9 @@ public final class ConfigText {
                 return top;
             }
         } catch (YAMLException e) {
-            throw new ConfigException("the config is not valid YAML: " + e.getMessage());
+            throw new ConfigException(Text.of("yaml.notYaml", e.getMessage()));
         }
-        throw new ConfigException("the config is not a YAML mapping");
+        throw new ConfigException(Text.of("yaml.notMapping"));
     }
 
     private static SequenceNode groupProjects(MappingNode top, String group) {
@@ -151,11 +152,11 @@ public final class ConfigText {
                     if (value(candidate, list) instanceof SequenceNode items) {
                         return items;
                     }
-                    throw new ConfigException("group '" + group + "' has no " + list + " list to add to; add it by hand");
+                    throw new ConfigException(Text.of("yaml.groupNoList", group, list));
                 }
             }
         }
-        throw new ConfigException("no group named '" + group + "' in the config");
+        throw new ConfigException(Text.of("yaml.noGroup", group));
     }
 
     private static Insert intoGroup(Lines lines, SequenceNode projects, String name) {
@@ -170,7 +171,7 @@ public final class ConfigText {
     private static Insert intoProjects(Lines lines, MappingNode top, List<String> projectLines) {
         if (!(value(top, "projects") instanceof SequenceNode projects) || projects.getFlowStyle() == DumperOptions.FlowStyle.FLOW
                 || projects.getValue().isEmpty()) {
-            throw new ConfigException("the config's projects are not a list of blocks; add the project by hand");
+            throw new ConfigException(Text.of("yaml.projectsNotBlocks"));
         }
         String prefix = lines.prefix(projects.getValue().getFirst().getStartMark());
         StringBuilder block = new StringBuilder();
@@ -234,7 +235,7 @@ public final class ConfigText {
 
         Lines(String text) {
             if (text.indexOf('\u0085') >= 0 || text.indexOf(' ') >= 0 || text.indexOf(' ') >= 0) {
-                throw new ConfigException("the config contains a Unicode line separator; remove it and try again");
+                throw new ConfigException(Text.of("yaml.lineSeparator"));
             }
             this.text = text;
             this.newline = text.contains("\r\n") ? "\r\n" : "\n";
@@ -243,7 +244,7 @@ public final class ConfigText {
                 // SnakeYAML counts a lone \r as a line break of its own; this class counts only '\n', so a lone \r
                 // would make every later edit's line count disagree with what SnakeYAML's marks meant.
                 if (c == '\r' && (i + 1 == text.length() || text.charAt(i + 1) != '\n')) {
-                    throw new ConfigException("the config contains a carriage return without a line feed; remove it and try again");
+                    throw new ConfigException(Text.of("yaml.bareCarriageReturn"));
                 }
                 if (c == '\n' && i + 1 < text.length()) {
                     starts.add(i + 1);
@@ -280,7 +281,7 @@ public final class ConfigText {
         /** The end of the text; a last line without a newline would run into the inserted one, so this is not supported. */
         private int endWithNewline() {
             if (!text.isEmpty() && !text.endsWith("\n")) {
-                throw new ConfigException("the config's last line has no line break; add one and try again");
+                throw new ConfigException(Text.of("yaml.noFinalLineBreak"));
             }
             return text.length();
         }

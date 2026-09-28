@@ -1,5 +1,6 @@
 package dispatch.config;
 
+import dispatch.Text;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -118,10 +119,10 @@ public final class ConfigEdit {
             return insertMissing(text, lines, walk, at, scalar, false);
         }
         if (!(walk.last() instanceof ScalarNode target)) {
-            throw new ConfigException(at + " holds a list or a mapping, not a single value; edit it by hand");
+            throw new ConfigException(Text.of("edit.holdsA", at));
         }
         if (isBlockScalar(target)) {
-            throw new ConfigException(at + " is a multi-line value; edit it by hand");
+            throw new ConfigException(Text.of("edit.isA", at));
         }
         Node key = walk.keys.getLast();
         int start = lines.index(target.getStartMark());
@@ -129,7 +130,7 @@ public final class ConfigEdit {
         // An alias (*name) composes to the anchor's own node, whose marks sit where "&name" was written, earlier in the
         // text than the key that points to it here; editing that range would silently rewrite the anchor's definition.
         if (end < start || (key != null && start < lines.index(key.getStartMark()))) {
-            throw new ConfigException(at + " uses a YAML alias; edit it by hand");
+            throw new ConfigException(Text.of("edit.usesA", at));
         }
         // An empty value ("model:") starts right after its colon.
         String replacement = start == end ? " " + scalar : scalar;
@@ -144,28 +145,28 @@ public final class ConfigEdit {
         ConfigText.Lines lines = new ConfigText.Lines(text);
         Walk walk = walk(ConfigText.root(text), at);
         if (!walk.complete(at)) {
-            throw new ConfigException("no " + at + " in the config");
+            throw new ConfigException(Text.of("edit.noIn", at));
         }
         Node parent = walk.nodes.get(at.steps().size() - 1);
         refuseFlow(parent, at.describe(at.steps().size() - 1));
         Node target = walk.last();
         if (endsInBlockScalar(target)) {
-            throw new ConfigException(at + " is a multi-line value; edit it by hand");
+            throw new ConfigException(Text.of("edit.isAMulti", at));
         }
         Node first = at.steps().getLast() instanceof Key ? walk.keys.getLast() : target;
         // As in set(), an alias's node carries the anchor definition's marks; here that means it can point earlier in
         // the text than the key that names it, or make the removal range empty or run backwards.
         if (lines.index(target.getStartMark()) < lines.index(first.getStartMark())) {
-            throw new ConfigException(at + " uses a YAML alias; edit it by hand");
+            throw new ConfigException(Text.of("edit.usesAYaml", at));
         }
         String before = lines.prefix(first.getStartMark()).strip();
         if (at.steps().getLast() instanceof Key ? !before.isEmpty() : !before.endsWith("-")) {
-            throw new ConfigException("cannot remove " + at + ": it shares its line with other entries; edit it by hand");
+            throw new ConfigException(Text.of("edit.cannotRemove", at));
         }
         int from = lines.startOfLine(first.getStartMark().getLine());
         int to = lines.startOfLineAfter(ConfigText.lastLine(target));
         if (to <= from) {
-            throw new ConfigException(at + " uses a YAML alias; edit it by hand");
+            throw new ConfigException(Text.of("edit.usesAYamlAlias", at));
         }
         return text.substring(0, from) + text.substring(to);
     }
@@ -184,7 +185,7 @@ public final class ConfigEdit {
         Node target = walk.last();
         if (target instanceof SequenceNode list && list.getFlowStyle() != DumperOptions.FlowStyle.FLOW && !list.getValue().isEmpty()) {
             if (endsInBlockScalar(list)) {
-                throw new ConfigException(at + " is a multi-line value; edit it by hand");
+                throw new ConfigException(Text.of("edit.isAMultiLine", at));
             }
             String prefix = lines.prefix(list.getValue().getFirst().getStartMark());
             int insertAt = lines.startOfLineAfter(ConfigText.lastLine(list));
@@ -196,7 +197,7 @@ public final class ConfigEdit {
             return new StringBuilder(text).insert(lines.startOfLineAfter(key.getStartMark().getLine()), item).toString();
         }
         refuseFlow(target, at.toString());
-        throw new ConfigException(at + " is not a list; edit it by hand");
+        throw new ConfigException(Text.of("edit.isNot", at));
     }
 
     /** The value as YAML: plain when that reads the same, single-quoted otherwise; refused when it is not plain
@@ -211,16 +212,16 @@ public final class ConfigEdit {
         List<String> names = new ArrayList<>();
         for (int i = found; i < at.steps().size(); i++) {
             if (!(at.steps().get(i) instanceof Key key)) {
-                throw new ConfigException("no " + at.describe(i + 1) + " in the config");
+                throw new ConfigException(Text.of("edit.noInThe", at.describe(i + 1)));
             }
             if (!key.name().matches("[A-Za-z0-9_-]+")) {
-                throw new ConfigException("a config key must be letters, digits, '_' or '-'");
+                throw new ConfigException(Text.of("edit.aConfig"));
             }
             names.add(key.name());
         }
         Node parent = walk.last();
         if (endsInBlockScalar(parent)) {
-            throw new ConfigException(at.describe(found) + " is a multi-line value; edit it by hand");
+            throw new ConfigException(Text.of("edit.isAMultiLineValue", at.describe(found)));
         }
         int indent;
         int insertAt;
@@ -233,7 +234,7 @@ public final class ConfigEdit {
             insertAt = lines.startOfLineAfter(key.getStartMark().getLine());
         } else {
             refuseFlow(parent, at.describe(found));
-            throw new ConfigException(at.describe(found) + " is not a mapping; edit it by hand");
+            throw new ConfigException(Text.of("edit.isNotA", at.describe(found)));
         }
         StringBuilder block = new StringBuilder();
         for (int i = 0; i < names.size(); i++) {
@@ -253,8 +254,7 @@ public final class ConfigEdit {
 
     private static void refuseFlow(Node node, String where) {
         if (node instanceof CollectionNode<?> collection && collection.getFlowStyle() == DumperOptions.FlowStyle.FLOW) {
-            throw new ConfigException((where.isEmpty() ? "the config" : where) + " is written in flow style ({...} or [...]); "
-                    + "rewrite it as a block, one entry per line, to change it here");
+            throw new ConfigException(Text.of("edit.flowStyle", where.isEmpty() ? Text.of("edit.theConfig") : Text.raw(where)));
         }
     }
 

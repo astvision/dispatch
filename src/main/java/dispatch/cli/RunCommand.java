@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import dispatch.Text;
 import dispatch.config.Config;
 import dispatch.config.ConfigLoader;
 import java.nio.file.Files;
@@ -19,7 +20,7 @@ public final class RunCommand {
     /** Throws {@link CliException} or {@link dispatch.config.ConfigException} with what to fix. */
     public static Prepared prepare(Path configFile, Map<String, String> processEnvironment) {
         if (!Files.exists(configFile)) {
-            throw new CliException("no config at " + configFile + "; create one with: dispatch init");
+            throw new CliException(Text.of("run.noConfig", configFile));
         }
         Map<String, String> environment = SecretsFile.environment(configFile, processEnvironment);
         return new Prepared(ConfigLoader.load(configFile, environment), environment);
