@@ -284,7 +284,9 @@ export const removeMember = (version: string, group: string, id: number) =>
   post<Saved>("/api/manage/people/remove", { version, group, id });
 export const setAdmin = (version: string, id: number, admin: boolean) => post<Saved>("/api/manage/people/admin", { version, id, admin });
 export const unlinkGroup = (version: string, name: string) => post<Saved>("/api/manage/groups/unlink", { version, name });
-export const getLogs = (filter: { lines?: number; level?: LogLevel | null; event?: string | null }, signal?: AbortSignal) =>
+/** The log's last lines that match: a level, an event containing {@code event}, a task, and any text (any case). */
+export const getLogs = (filter: { lines?: number; level?: LogLevel | null; event?: string | null; task?: number | null; text?: string | null },
+                        signal?: AbortSignal) =>
   post<Logs>("/api/manage/logs", filter, signal);
 export const restartService = () => post<ServiceView>("/api/service/restart");
 
