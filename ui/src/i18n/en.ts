@@ -249,4 +249,9 @@ export const en = {
   "api.notRunning": "dispatch ui is not running; start it again and open the link it prints",
   "api.answered": "the server answered {status}",
   "api.noResult": "the server answered without a result",
+  "nav.tasks": "Tasks",
+  "strip.running": "{count} running",
+  "strip.waitingOnYou": "{count} waiting on you",
+  "strip.today": "Today ${usd}",
+  "strip.newVersion": "Restart the service to run {version}",
 } as const;

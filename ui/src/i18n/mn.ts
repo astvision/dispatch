@@ -250,4 +250,9 @@ export const mn: Record<Key, string> = {
   "api.notRunning": "dispatch ui ажиллахгүй байна; дахин эхлүүлээд хэвлэсэн холбоосыг нь нээнэ үү",
   "api.answered": "сервер {status} гэж хариуллаа",
   "api.noResult": "сервер үр дүнгүй хариуллаа",
+  "nav.tasks": "Даалгавар",
+  "strip.running": "Явж байна {count}",
+  "strip.waitingOnYou": "Таныг хүлээж {count}",
+  "strip.today": "Өнөөдөр ${usd}",
+  "strip.newVersion": "Сервисийг дахин эхлүүлбэл {version} ажиллана",
 };

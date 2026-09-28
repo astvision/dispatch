@@ -1,5 +1,6 @@
 // Typed calls to the dispatch ui server. Every page goes through here, so errors look the same everywhere.
 
+import { chosenMember } from "./desktop/member";
 import { currentLanguage, translate } from "./i18n/i18n";
 import { inTelegram, initData } from "./telegram";
 
@@ -45,9 +46,12 @@ async function send<T>(path: string, init: RequestInit): Promise<T> {
   try {
     // Inside Telegram every request proves itself with the signed launch data: there is no cookie and no session.
     // Every request asks for the page's language, so the server writes its messages in it.
+    // The desktop's chosen admin, on a team with several (D-2); the desk port asks for it when it cannot tell.
+    const member = chosenMember();
     const headers = {
       ...init.headers,
       "Accept-Language": currentLanguage(),
+      ...(member ? { "X-Dispatch-Member": member } : {}),
       ...(initData ? { Authorization: `tma ${initData}` } : {}),
     };
     response = await fetch(path, { credentials: "same-origin", ...init, headers });
@@ -431,3 +435,21 @@ export const answerQuestion = (taskId: number, planSeq: number, index: number, a
   post<TaskDetail & { result: string }>("/api/tasks/answer", { taskId, planSeq, index, ...answer });
 export const approvePlan = (taskId: number, planSeq: number) => post<{ result: string }>("/api/tasks/approve", { taskId, planSeq });
 export const rejectPlan = (taskId: number, planSeq: number) => post<{ result: string }>("/api/tasks/reject", { taskId, planSeq });
+
+// The desktop's tasks (D-2), which `dispatch ui` passes on to the running bot's desk port.
+
+/** What the strip's lamps and the Overview count, from the running bot's desk port. */
+export interface Live {
+  version: string;
+  name: string;
+  running: number;
+  queued: number;
+  waitingOnYou: { taskId: number; title: string }[];
+  waitingOnOthers: number;
+  todayUsd: string;
+  monthUsd: string;
+}
+
+export const getLive = (signal?: AbortSignal) => get<Live>("/api/live", signal);
+export const correctPlan = (taskId: number, planSeq: number, text: string) =>
+  post<{ result: string }>("/api/tasks/correct", { taskId, planSeq, text });

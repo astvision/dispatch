@@ -25,7 +25,9 @@ const remembered = { getItem: () => null, setItem: () => {} };
 function serve(routes: Record<string, { status?: number; body: unknown }>) {
   const fetch = vi.fn(async (url: RequestInfo | URL) => {
     const answer = routes[new URL(String(url), "http://page").pathname];
-    return new Response(JSON.stringify(answer?.body ?? {}), { status: answer?.status ?? 200 });
+    // As a real server: a path it does not serve (the strip's /api/live, here) is not found.
+    if (!answer) return new Response(JSON.stringify({ error: "not_found", message: "no such route" }), { status: 404 });
+    return new Response(JSON.stringify(answer.body), { status: answer.status ?? 200 });
   });
   vi.stubGlobal("fetch", fetch);
   return (path: string) => fetch.mock.calls.filter(([url]) => String(url) === path).length;
