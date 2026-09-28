@@ -57,8 +57,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # As under C:\Users\Батбаяр: every temporary path from here on has a space and Cyrillic in it.
-          $dir = Join-Path $env:RUNNER_TEMP 'dispatch тест'
+          # As under C:\Users\Батбаяр: every temporary path from here on has a space and Cyrillic in it. On the system
+          # drive, as a member's user folder is: Windows keeps 8.3 short names there, which Dispatch relies on (AnsiPaths).
+          $dir = Join-Path $env:TEMP 'dispatch тест'
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           "TMP=$dir" >> $env:GITHUB_ENV
           "TEMP=$dir" >> $env:GITHUB_ENV
