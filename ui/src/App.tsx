@@ -200,6 +200,7 @@ function WebUi() {
         : taskPage ? <DesktopTaskPage key={taskPage[1]} taskId={Number(taskPage[1])} navigate={navigate} />
         : page === "/tasks" ? <DesktopTasksPage navigate={navigate} />
         : page === "/logs" ? <LogsPage navigate={navigate} />
+        : page === "/" ? <OverviewPage installAndStop live navigate={navigate} />
         : <Page path={page} />}
     </Shell>
   );

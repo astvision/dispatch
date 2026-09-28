@@ -282,3 +282,25 @@ code, .mono {
 .spend-bar > span { display: block; }
 .spend-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; opacity: 0.85; }
 .spend-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+
+/* The live Тойм (D-2b): four counters, then what waits and runs beside the spend; one column on a narrow screen. */
+.counters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.counter { background: #172427; border: 1px solid #24363a; border-radius: 6px; padding: 10px 12px; }
+.counter-label { font-size: 12px; opacity: 0.8; }
+.counter-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.overview-cols { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.overview-col { display: grid; gap: 12px; }
+.overview-item { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 0;
+                 border-top: 1px solid rgba(128, 128, 128, 0.15); }
+.overview-item:first-of-type { border-top: 0; }
+.overview-title { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+                  overflow-wrap: anywhere; }
+.overview-refusal { grid-column: 1 / -1; }
+.overview-queued { margin-top: 10px; }
+.overview-foot { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; }
+@media (max-width: 900px) {
+  .overview-cols { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .counters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

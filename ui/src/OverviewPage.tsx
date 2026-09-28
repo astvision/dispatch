@@ -1,13 +1,15 @@
 import { CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled } from "@ant-design/icons";
-import { Alert, Button, Card, Descriptions, Empty, List, Result, Space, Spin, theme, Typography } from "antd";
-import { useContext, useEffect } from "react";
-import { installService, stopService, type Finding, type ServiceView } from "./api";
-import { Lamp } from "./desktop/Shell";
+import { Alert, Button, Card, Descriptions, Drawer, Empty, Flex, List, Result, Space, Spin, theme, Typography } from "antd";
+import { useContext, useEffect, useState } from "react";
+import { installService, stopService, type Finding, type Overview, type ServiceView } from "./api";
+import LiveBoard from "./desktop/overview/LiveBoard";
+import { ChecksLamp, Lamp, ServiceLamp } from "./desktop/Shell";
 import { useDesktopStatus } from "./desktop/status";
 import { useT, type Key, type Translate } from "./i18n/i18n";
 import { RestartContext } from "./restart";
 import { RestartStatus } from "./RestartNotice";
 import { useAction } from "./useAction";
+import { useNarrow } from "./useNarrow";
 import { useRestart } from "./useRestart";
 
 const LEVELS = {
@@ -45,14 +47,30 @@ function ServiceState({ service }: { service: ServiceView }) {
     : <Lamp colour="red">{t("overview.stopped")}</Lamp>;
 }
 
-/**
- * The version and paths, the background service and the checks. The status is the one the strip shows (desktop/status):
- * Check again, and every service action, read it again for both. {@code installAndStop}: only `dispatch ui`'s server
- * installs or stops the service; the Mini App's, inside the service, restarts it and nothing more.
- */
-export default function OverviewPage({ installAndStop = false }: { installAndStop?: boolean }) {
+/** Dispatch's version and files. */
+function DispatchCard({ overview }: { overview: Overview }) {
   const t = useT();
-  const { overview, error, loading, reload } = useDesktopStatus();
+  return (
+    <Card title="Dispatch">
+      <Descriptions column={1} size="small">
+        <Descriptions.Item label={t("overview.version")}>{overview.version}</Descriptions.Item>
+        <Descriptions.Item label={t("overview.config")}><Typography.Text code>{overview.configFile}</Typography.Text></Descriptions.Item>
+        <Descriptions.Item label={t("overview.state")}><Typography.Text code>{overview.stateDir}</Typography.Text></Descriptions.Item>
+      </Descriptions>
+    </Card>
+  );
+}
+
+/**
+ * The background service and what can be done with it. {@code installAndStop}: only `dispatch ui`'s server installs or
+ * stops the service; the Mini App's, inside the service, restarts it and nothing more.
+ */
+function ServiceCard({ overview, installAndStop, reload }: {
+  overview: Overview;
+  installAndStop: boolean;
+  reload: () => Promise<void>;
+}) {
+  const t = useT();
   const { mark } = useContext(RestartContext);
   const restarting = useRestart();
   const installing = useAction();
@@ -63,59 +81,124 @@ export default function OverviewPage({ installAndStop = false }: { installAndSto
     if (restarting.phase === "done") mark(null);
   }, [restarting.phase, mark]);
 
+  const { service } = overview;
+  const act = (action: ReturnType<typeof useAction>, call: () => Promise<ServiceView>) => void action.run(call).then(() => reload());
+  const refused = installing.error ?? stopping.error;
+  return (
+    <Card title={t("overview.service")} extra={<ServiceState service={service} />}>
+      <Space direction="vertical" style={{ width: "100%" }}>
+        <Typography.Text>{service.name}: {service.detail}</Typography.Text>
+        {service.notes.map((note) => <Alert key={note} type="warning" showIcon message={note} />)}
+        {!service.installed && overview.configured && <Typography.Text type="secondary">{t("restart.byHand")}</Typography.Text>}
+        <Space wrap>
+          {service.installed && (
+            <Button loading={restarting.phase === "restarting"} onClick={() => void restarting.restart().then(() => reload())}>
+              {t("overview.restart")}
+            </Button>
+          )}
+          {installAndStop && service.installed && service.running && (
+            <Button loading={stopping.busy} onClick={() => act(stopping, stopService)}>{t("overview.stop")}</Button>
+          )}
+          {installAndStop && !service.installed && overview.configured && (
+            <Button type="primary" loading={installing.busy} onClick={() => act(installing, installService)}>{t("overview.install")}</Button>
+          )}
+        </Space>
+        {refused && <Alert type="error" showIcon message={refused.message} />}
+        <RestartStatus phase={restarting.phase} error={restarting.error} lines={restarting.lines} />
+      </Space>
+    </Card>
+  );
+}
+
+/** What `dispatch check` finds, and Check again. */
+function ChecksCard({ overview, loading, reload }: { overview: Overview; loading: boolean; reload: () => Promise<void> }) {
+  const t = useT();
+  return (
+    <Card title={t("overview.checks")}
+          extra={<Button loading={loading} onClick={() => void reload()}>{t("overview.checkAgain")}</Button>}>
+      <List locale={{ emptyText: t("overview.noChecks") }} dataSource={overview.findings}
+            renderItem={(finding) => (
+              <List.Item>
+                <List.Item.Meta avatar={<LevelIcon level={finding.level} />} title={areaLabel(t, finding.area)}
+                                description={finding.message} />
+              </List.Item>
+            )} />
+    </Card>
+  );
+}
+
+/** The desktop's Тойм (D-2b): the live board, then the service and the checks one line each, opening D-1's panels. */
+function LiveOverview({ overview, loading, reload, navigate }: {
+  overview: Overview;
+  loading: boolean;
+  reload: () => Promise<void>;
+  navigate: (path: string) => void;
+}) {
+  const t = useT();
+  const narrow = useNarrow();
+  const { botRunning } = useDesktopStatus();
+  const [panel, setPanel] = useState<"service" | "checks" | null>(null);
+  return (
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Flex justify="space-between" align="center" wrap gap={8}>
+        <Typography.Title level={4} style={{ margin: 0 }}>{t("overview.title")}</Typography.Title>
+      </Flex>
+      {botRunning === false
+        ? (
+          <>
+            <Alert type="info" showIcon message={t("overview.live.botNotRunning")} />
+            <ServiceCard overview={overview} installAndStop reload={reload} />
+          </>
+        )
+        : <LiveBoard navigate={navigate} />}
+      <div className="panel-box overview-foot">
+        <span><ServiceLamp overview={overview} />{" "}
+          <Button type="link" size="small" onClick={() => setPanel("service")}>{t("overview.details")}</Button></span>
+        <span><ChecksLamp overview={overview} />{" "}
+          <Button type="link" size="small" onClick={() => setPanel("checks")}>{t("overview.see")}</Button></span>
+      </div>
+      <Drawer open={panel !== null} onClose={() => setPanel(null)} placement="right" size={narrow ? "100%" : 520} destroyOnHidden
+              title={panel === "checks" ? t("overview.checks") : t("overview.service")}>
+        {panel === "service" && (
+          <Space direction="vertical" size="large" style={{ width: "100%" }}>
+            <DispatchCard overview={overview} />
+            <ServiceCard overview={overview} installAndStop reload={reload} />
+          </Space>
+        )}
+        {panel === "checks" && <ChecksCard overview={overview} loading={loading} reload={reload} />}
+      </Drawer>
+    </Space>
+  );
+}
+
+/**
+ * The version and paths, the background service and the checks. The status is the one the strip shows (desktop/status):
+ * Check again, and every service action, read it again for both. On the desktop ({@code live}, D-2b) it is Тойм, the
+ * live board with the service and checks one line each; the Mini App keeps these three panels.
+ */
+export default function OverviewPage({ installAndStop = false, live = false, navigate }: {
+  installAndStop?: boolean;
+  live?: boolean;
+  navigate?: (path: string) => void;
+}) {
+  const t = useT();
+  const { overview, error, loading, reload } = useDesktopStatus();
+
   if (loading && !overview) return <Spin size="large" tip={t("overview.checking")}><div style={{ height: 200 }} /></Spin>;
   if (error) {
     return <Result status="warning" title={t("overview.cannotShow")} subTitle={error.message}
                    extra={<Button onClick={() => void reload()}>{t("common.tryAgain")}</Button>} />;
   }
   if (!overview) return <Empty />;
+  if (live && navigate) return <LiveOverview overview={overview} loading={loading} reload={reload} navigate={navigate} />;
 
-  const { service } = overview;
-  const act = (action: ReturnType<typeof useAction>, call: () => Promise<ServiceView>) => void action.run(call).then(() => reload());
-  const refused = installing.error ?? stopping.error;
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Typography.Title level={4} style={{ margin: 0 }}>{t("overview.title")}</Typography.Title>
       {!overview.configured && <Alert type="info" showIcon message={t("overview.notSetUp")} description={t("overview.notSetUpHint")} />}
-      <Card title="Dispatch">
-        <Descriptions column={1} size="small">
-          <Descriptions.Item label={t("overview.version")}>{overview.version}</Descriptions.Item>
-          <Descriptions.Item label={t("overview.config")}><Typography.Text code>{overview.configFile}</Typography.Text></Descriptions.Item>
-          <Descriptions.Item label={t("overview.state")}><Typography.Text code>{overview.stateDir}</Typography.Text></Descriptions.Item>
-        </Descriptions>
-      </Card>
-      <Card title={t("overview.service")} extra={<ServiceState service={service} />}>
-        <Space direction="vertical" style={{ width: "100%" }}>
-          <Typography.Text>{service.name}: {service.detail}</Typography.Text>
-          {service.notes.map((note) => <Alert key={note} type="warning" showIcon message={note} />)}
-          {!service.installed && overview.configured && <Typography.Text type="secondary">{t("restart.byHand")}</Typography.Text>}
-          <Space wrap>
-            {service.installed && (
-              <Button loading={restarting.phase === "restarting"} onClick={() => void restarting.restart().then(() => reload())}>
-                {t("overview.restart")}
-              </Button>
-            )}
-            {installAndStop && service.installed && service.running && (
-              <Button loading={stopping.busy} onClick={() => act(stopping, stopService)}>{t("overview.stop")}</Button>
-            )}
-            {installAndStop && !service.installed && overview.configured && (
-              <Button type="primary" loading={installing.busy} onClick={() => act(installing, installService)}>{t("overview.install")}</Button>
-            )}
-          </Space>
-          {refused && <Alert type="error" showIcon message={refused.message} />}
-          <RestartStatus phase={restarting.phase} error={restarting.error} lines={restarting.lines} />
-        </Space>
-      </Card>
-      <Card title={t("overview.checks")}
-            extra={<Button loading={loading} onClick={() => void reload()}>{t("overview.checkAgain")}</Button>}>
-        <List locale={{ emptyText: t("overview.noChecks") }} dataSource={overview.findings}
-              renderItem={(finding) => (
-                <List.Item>
-                  <List.Item.Meta avatar={<LevelIcon level={finding.level} />} title={areaLabel(t, finding.area)}
-                                  description={finding.message} />
-                </List.Item>
-              )} />
-      </Card>
+      <DispatchCard overview={overview} />
+      <ServiceCard overview={overview} installAndStop={installAndStop} reload={reload} />
+      <ChecksCard overview={overview} loading={loading} reload={reload} />
     </Space>
   );
 }

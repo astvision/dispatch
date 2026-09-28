@@ -7,7 +7,7 @@ import { useDesktopStatus } from "../status";
 import { usePolling } from "../usePolling";
 import GiveTask from "./GiveTask";
 import { age, grouped, type Filter, type TaskGroup } from "./groups";
-import TaskView from "./TaskView";
+import TaskDrawer from "./TaskDrawer";
 
 const FINISHED: Record<string, Key> = {
   COMPLETED: "tasks.state.completed", FAILED: "tasks.state.failed", REJECTED: "tasks.state.rejected", CANCELLED: "tasks.state.cancelled",
@@ -98,12 +98,7 @@ export default function TasksPage({ navigate }: { navigate: (path: string) => vo
           {list.map((row) => <Row key={row.taskId} row={row} group={group} now={now} onOpen={() => setOpen(row.taskId)} />)}
         </section>
       ))}
-      <Drawer open={open !== null} onClose={() => setOpen(null)} placement="right" size={narrow ? "100%" : 520} destroyOnHidden
-              title={open === null ? null : `#${open}`}>
-        {open !== null && (
-          <TaskView key={open} taskId={open} layout="panel" onChanged={reload} onDetails={() => navigate(`/tasks/${open}`)} />
-        )}
-      </Drawer>
+      <TaskDrawer taskId={open} onClose={() => setOpen(null)} onChanged={reload} navigate={navigate} />
       <Drawer open={giving} onClose={() => setGiving(false)} placement="right" size={narrow ? "100%" : 520} destroyOnHidden
               title={t("give.title")}>
         {giving && <GiveTask projects={live?.projects ?? []} onGiven={(taskId) => {
