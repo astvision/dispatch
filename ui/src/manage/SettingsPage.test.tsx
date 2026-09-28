@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import * as api from "../api";
 import { saved, savedNoRestart, teamConfig } from "./fixtures";
 import { renderOnBoard } from "../desktop/testing";
+import { LanguageProvider } from "../i18n/i18n";
 import SettingsPage from "./SettingsPage";
 
 // The real module, with the calls this file answers itself; ApiError stays the real class.
@@ -65,4 +66,23 @@ test("a config changed on disk is explained and can be reloaded", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Reload" }));
   await vi.waitFor(() => expect(screen.queryByText(/changed on disk/)).not.toBeInTheDocument());
   expect(api.getConfig).toHaveBeenCalledTimes(2);
+});
+
+test("the settings come in three groups, with a line of help under each field", async () => {
+  vi.mocked(api.getConfig).mockResolvedValue(teamConfig);
+
+  render(<SettingsPage />);
+
+  for (const group of ["Limits per run", "Commits", "Commands"]) expect(await screen.findByText(group)).toBeInTheDocument();
+  expect(screen.getByText("The name on the commits Dispatch makes")).toBeInTheDocument();
+  expect(screen.getByText(/the rest wait in the queue/)).toBeInTheDocument();
+});
+
+test("in Mongolian the groups are Mongolian", async () => {
+  vi.mocked(api.getConfig).mockResolvedValue(teamConfig);
+
+  render(<LanguageProvider storage={{ getItem: () => null, setItem: () => {} }} languages={["mn"]}><SettingsPage /></LanguageProvider>);
+
+  for (const group of ["Нэг удаагийн хязгаар", "Коммит", "Командууд"]) expect(await screen.findByText(group)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Хадгалах" })).toBeInTheDocument();
 });
