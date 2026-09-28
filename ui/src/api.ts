@@ -459,11 +459,12 @@ export interface Live {
   waitingOnOthers: number;
   todayUsd: string;
   monthUsd: string;
+  // The three below are D-2b's: a bot of an older version, still running after an upgrade, answers without them.
   /** How many runs the bot runs at once (its scheduler.maxConcurrentRuns). */
-  maxConcurrent: number;
+  maxConcurrent?: number;
   /** The projects the desktop's admin may give a task in. */
-  projects: string[];
-  tasks: { running: LiveTask[]; queued: LiveTask[]; awaitingApproval: LiveTask[] };
+  projects?: string[];
+  tasks?: { running: LiveTask[]; queued: LiveTask[]; awaitingApproval: LiveTask[] };
 }
 
 export interface Spend {

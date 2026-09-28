@@ -80,3 +80,12 @@ test("a row opens its task in the side panel", async () => {
 
   expect(within(await screen.findByRole("dialog")).getByText("#13")).toBeInTheDocument();
 });
+
+test("a bot of the version before D-2b answers without the lists: the board says a restart runs this one, and the page stays", async () => {
+  const { maxConcurrent: _limit, projects: _projects, tasks: _lists, ...older } = live;
+  vi.mocked(api.getLive).mockResolvedValue(older as api.Live);
+  renderBoard();
+
+  expect(await screen.findByText("Restart the service to run 0.2.0")).toBeInTheDocument();
+});
+

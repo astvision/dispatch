@@ -74,9 +74,13 @@ function RunningRow({ row, now, onOpen }: { row: LiveTask; now: Date; onOpen: (t
  */
 export default function LiveBoard({ navigate }: { navigate: (path: string) => void }) {
   const t = useT();
-  const { live, liveError, reloadLive } = useDesktopStatus();
+  const { live, liveError, reloadLive, overview } = useDesktopStatus();
   const [open, setOpen] = useState<number | null>(null);
   if (!live) return liveError ? <Typography.Text type="danger">{liveError.message}</Typography.Text> : <Spin />;
+  if (!live.tasks || live.maxConcurrent === undefined) {
+    // A bot of the version before this page, still running after an upgrade: the strip says the same.
+    return <Alert type="info" showIcon message={t("strip.newVersion", { version: overview?.version ?? "" })} />;
+  }
   const now = new Date();
   const waiting = live.tasks.awaitingApproval.filter((row) => row.mine);
   const { running, queued } = live.tasks;
