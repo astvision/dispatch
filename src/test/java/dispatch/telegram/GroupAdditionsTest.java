@@ -1,6 +1,7 @@
 package dispatch.telegram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -337,6 +338,108 @@ class GroupAdditionsTest {
         JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'ADDITION_OFFERED'").get("payload"));
         assertEquals("Like this one", payload.get("text").asText());
         assertTrue(payload.path("files").asBoolean(), "text only is carried; the photo is named: " + payload);
+    }
+
+    @Test
+    void whenTheRequestersPrivateChatRefusesTheGroupIsAskedToHaveThemStartTheBot() throws Exception {
+        taskFromTheManagersMention(90);
+        deliverAll();
+        telegram.refuseChat(ALI, 403, "{\"ok\":false,\"error_code\":403,\"description\":\"Forbidden: bot can't initiate conversation with a user\"}");
+        telegram.drain("sendMessage");
+
+        handler.handle(UpdateHandlerTest.message(611, 91, MANAGER, "Nomin", GROUP, "supergroup", "Also show the full position in a tooltip",
+                humanMessage(90, MANAGER, "Nomin")));
+        deliverAll();
+
+        List<String> toGroup = sent("sendMessage").stream().filter(message -> message.get("chat_id").asLong() == GROUP)
+                .map(message -> message.get("text").asText()).toList();
+        assertEquals(List.of(renderer.render(dispatch.domain.OutboxKind.DRAFT_PROMPT, Json.object().put("requester", "Ali"), true).html()),
+                toGroup, "the same hint a task given in the group gets, never an empty task number");
+    }
+
+    @Test
+    void anAdditionToADraftThatWasSplitIsOfferedAgainForEachPart() throws Exception {
+        handler.handle(UpdateHandlerTest.people(760, 90, MANAGER, "Nomin", "@ali_dev fix the list and the export", null, "@ali_dev"));
+        long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
+        String additionId = offered(90, 91, "Both before Friday");
+        Requester ali = new Requester("telegram:" + ALI, "Ali");
+        db.transaction(tx -> {
+            tasks.split(tx, ali, draftId, "telegram:" + ALI + "/5");
+            tasks.splitProposed(tx, draftId, List.of("Fix the list", "Fix the export"));
+            tasks.acceptSplit(tx, ali, draftId);
+        });
+
+        handler.handle(UpdateHandlerTest.privateCallback(761, ALI, "Ali", "ad:" + additionId));
+
+        assertEquals(renderer.text("callback.additionSplit"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals("[telegram:" + GROUP + "/90#1, telegram:" + GROUP + "/90#2]",
+                SqlRows.query(dbFile, "SELECT origin_ref FROM addition WHERE used_at IS NULL ORDER BY origin_ref").stream()
+                        .map(found -> found.get("origin_ref")).toList().toString(), "each part is offered it, to tap the right one");
+    }
+
+    @Test
+    void theRequestersOwnReplyIsNotOfferedBackToThem() {
+        taskFromTheManagersMention(90);
+
+        handler.handle(UpdateHandlerTest.message(770, 91, ALI, "Ali", GROUP, "supergroup", "ok, on it", humanMessage(90, MANAGER, "Nomin")));
+
+        assertEquals("0", count("SELECT count(*) AS n FROM addition"), "they can say more to their own plan or result privately");
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind = 'ADDITION_OFFERED'"));
+    }
+
+    @Test
+    void aClosedTasksMessageTakesNoAdditions() {
+        long taskId = taskFromTheManagersMention(90);
+        db.transaction(tx -> tasks.cancel(tx, new Requester("telegram:" + ALI, "Ali"), taskId, "telegram:" + ALI + "/5", "telegram:" + ALI));
+
+        handler.handle(UpdateHandlerTest.message(780, 91, MANAGER, "Nomin", GROUP, "supergroup", "Also a tooltip", humanMessage(90, MANAGER, "Nomin")));
+
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind = 'ADDITION_OFFERED'"));
+    }
+
+    @Test
+    void aPhotoWithNoTextIsNamedButHasNothingToApply() {
+        taskFromTheManagersMention(90);
+        JsonNode reply = UpdateHandlerTest.message(790, 91, MANAGER, "Nomin", GROUP, "supergroup", "", humanMessage(90, MANAGER, "Nomin"));
+        ObjectNode message = (ObjectNode) reply.get("message");
+        message.remove("text");
+        message.putArray("photo").add(Json.read("{\"file_id\":\"p\",\"width\":90,\"height\":60}"));
+
+        handler.handle(reply);
+
+        JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'ADDITION_OFFERED'").get("payload"));
+        assertTrue(payload.path("files").asBoolean(), payload.toString());
+        assertFalse(payload.has("additionId"), "no text, so no button: " + payload);
+    }
+
+    @Test
+    void anotherMembersTapOnSomeonesAdditionChangesNothing() throws Exception {
+        long taskId = taskFromTheManagersMention(90);
+        planReady(taskId);
+        String additionId = offered(90, 91, "Also show the full position in a tooltip");
+
+        handler.handle(UpdateHandlerTest.privateCallback(800, 100, "Bold", "ad:" + additionId));
+
+        assertEquals(renderer.text("callback.additionUsed"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals("1", count("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId), "only the requester applies it");
+        assertEquals(null, row("SELECT used_at FROM addition WHERE id = ?", additionId).get("used_at"));
+    }
+
+    @Test
+    void aRequesterWhoChoseSilenceGetsTheOfferWithNoReactionInTheGroup() {
+        taskFromTheManagersMention(90);
+        deliverAll();
+        telegram.drain("setMessageReaction");
+        telegram.drain("sendMessage");
+        db.transaction(tx -> dispatch.store.MemberPrefs.setGroupAck(tx, ALI, dispatch.domain.GroupAck.SILENT, clock.instant()));
+
+        handler.handle(UpdateHandlerTest.message(810, 91, MANAGER, "Nomin", GROUP, "supergroup", "Also a tooltip", humanMessage(90, MANAGER, "Nomin")));
+        deliverAll();
+
+        assertEquals(1, sent("sendMessage").stream().filter(message -> message.get("chat_id").asLong() == ALI).count());
+        assertTrue(sent("setMessageReaction").isEmpty(), "their choice of silence holds for additions too");
     }
 
     /** The approved plan's execution (run 2) has started, its agent running. */

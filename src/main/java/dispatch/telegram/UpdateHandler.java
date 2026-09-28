@@ -56,7 +56,8 @@ import java.util.Set;
  * group sees only its own projects, a member those of all their groups. Besides commands and buttons, a reply to a plan
  * message is a correction, one to a plan's question message answers it (G-1d) and one to a task's result is a follow-up.
  * A member who mentions the bot in their linked group gives a task, drafted in their private chat all the same (G-1b);
- * one who mentions a fellow member there gives it to them, drafted in theirs (G-1c).
+ * one who mentions a fellow member there gives it to them, drafted in theirs (G-1c). A reply there to the message a task
+ * came from, mentioning no one, is an addition offered to that task's requester privately.
  */
 public final class UpdateHandler {
 
@@ -446,9 +447,6 @@ public final class UpdateHandler {
      */
     private void mentionTasks(Tx tx, Requester author, JsonNode message, String origin, String chatRef) {
         List<Mention> mentions = mentions(message);
-        if (mentions.isEmpty()) {
-            return;
-        }
         Set<String> owned = groups.projectsOfChat(chatRef);
         // Outsiders tag each other all day: answering their unknown names would be noise.
         boolean answersUnknown = inProjectGroup(author.ref(), owned);
@@ -506,7 +504,8 @@ public final class UpdateHandler {
     private void addition(Tx tx, Requester author, JsonNode message, String origin, String chatRef) {
         JsonNode repliedTo = humanReplied(message);
         String text = text(message).strip();
-        if (!repliedTo.has("message_id") || text.isEmpty()) {
+        boolean withFiles = !attachments(message).isEmpty();
+        if (!repliedTo.has("message_id") || (text.isEmpty() && !withFiles)) {
             return;
         }
         boolean asker = repliedTo.path("from").path("id").asLong(-1) == message.path("from").path("id").asLong(-2);
@@ -514,9 +513,9 @@ public final class UpdateHandler {
             return;
         }
         String repliedRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
-        boolean offered = additions.offer(tx, repliedRef, origin, chatRef, firstName(message, author), text,
-                !attachments(message).isEmpty());
-        tx.afterCommit(() -> Log.info("group.addition", "replied_to", repliedRef, "author", author.ref(), "offered", offered));
+        if (additions.offer(tx, repliedRef, origin, chatRef, author.ref(), firstName(message, author), text, withFiles)) {
+            tx.afterCommit(() -> Log.info("group.addition", "replied_to", repliedRef, "author", author.ref()));
+        }
     }
 
     /**
@@ -631,8 +630,12 @@ public final class UpdateHandler {
             tasks.followUp(tx, who, sent.get().taskId(), text(message), origin, chatRef);
             return true;
         }
-        if (sent.isEmpty() || sent.get().kind() != OutboxKind.PLAN_READY) {
-            String kind = sent.map(found -> found.kind().name()).orElse("unknown");
+        if (sent.isEmpty()) {
+            // Not one of the bot's messages: another reply, such as an addition to a task given in a group, may still apply.
+            return false;
+        }
+        if (sent.get().kind() != OutboxKind.PLAN_READY) {
+            String kind = sent.get().kind().name();
             tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind));
             return false;
         }
@@ -896,10 +899,11 @@ public final class UpdateHandler {
             case BUSY -> "callback.additionBusy";
             case REFUSED -> "callback.additionRefused";
             case NOT_YET -> "callback.additionDraft";
+            case SPLIT -> "callback.additionSplit";
             case CLOSED -> "callback.additionClosed";
             case USED -> "callback.additionUsed";
         });
-        if (outcome == GroupAdditions.Outcome.DONE || outcome == GroupAdditions.Outcome.CLOSED) {
+        if (outcome == GroupAdditions.Outcome.DONE || outcome == GroupAdditions.Outcome.SPLIT || outcome == GroupAdditions.Outcome.CLOSED) {
             tx.afterCommit(() -> bestEffort("editMessageReplyMarkup", () -> api.editMessageReplyMarkup(chatId, messageId, List.of())));
         }
     }

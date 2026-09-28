@@ -72,11 +72,12 @@ public final class Tasks {
 
     /**
      * The tasks message {@code messageRef} gave: its own origin, in a topic ("@thread"), and each developer's or part's
-     * ("#…") of the same message.
+     * ("#…") of the same message. GLOB rather than LIKE, so the origin_ref index serves the prefixes; a reference holds no
+     * GLOB wildcard (*, ?, [).
      */
     public static List<Task> fromMessage(Tx tx, String messageRef) {
-        return tx.list("SELECT " + COLUMNS + " FROM task WHERE origin_ref = ? OR origin_ref LIKE ? OR origin_ref LIKE ? ORDER BY id",
-                Tasks::map, messageRef, messageRef + "@%", messageRef + "#%");
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE origin_ref = ? OR origin_ref GLOB ? OR origin_ref GLOB ? ORDER BY id",
+                Tasks::map, messageRef, messageRef + "@*", messageRef + "#*");
     }
 
     public static List<Task> active(Tx tx) {

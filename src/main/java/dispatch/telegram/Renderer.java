@@ -108,8 +108,8 @@ public final class Renderer {
      *                 instead (ADR 0020), never {@code kind}'s actual rendering
      */
     public Rendered render(OutboxKind kind, JsonNode payload, boolean fellBack) {
-        if (fellBack && kind == OutboxKind.DRAFT_PROMPT) {
-            // A task given in the group (G-1b): its giver has to open the private chat first.
+        if (fellBack && (kind == OutboxKind.DRAFT_PROMPT || kind == OutboxKind.ADDITION_OFFERED)) {
+            // A task, or an addition to one, given in the group (G-1b): its developer has to open the private chat first.
             return plain(format("group.taskStartFirst", escape(payload.path("requester").asText()), escape(botUsername)));
         }
         if (fellBack) {
@@ -219,8 +219,10 @@ public final class Renderer {
     private Rendered additionOffered(JsonNode payload) {
         String by = escape(payload.path("by").asText());
         String head = payload.hasNonNull("taskId") ? format("addition.offered", taskId(payload), by) : format("addition.offeredDraft", by);
-        StringBuilder html = new StringBuilder(head).append('\n').append(escapeWithin(payload.path("title").asText(), TITLE_LIMIT))
-                .append("\n\n«").append(escape(payload.path("text").asText())).append('»');
+        StringBuilder html = new StringBuilder(head).append('\n').append(escapeWithin(payload.path("title").asText(), TITLE_LIMIT));
+        if (!payload.path("text").asText().isEmpty()) {
+            html.append("\n\n«").append(escape(payload.path("text").asText())).append('»');
+        }
         if (payload.path("files").asBoolean(false)) {
             html.append('\n').append(text("addition.files"));
         }

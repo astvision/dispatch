@@ -3,7 +3,9 @@ package dispatch.core;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.domain.Draft;
+import dispatch.domain.DraftStatus;
 import dispatch.domain.OutboxKind;
+import dispatch.domain.Phase;
 import dispatch.domain.Requester;
 import dispatch.domain.Task;
 import dispatch.store.Additions;
@@ -41,6 +43,8 @@ public final class GroupAdditions {
         REFUSED,
         /** It is still a draft, not given as a task yet: nothing changed, and the button works once it is one. */
         NOT_YET,
+        /** Its draft was split into parts: each part was offered it again, to tap the right one; this one is used up. */
+        SPLIT,
         /** Its task was rejected or cancelled, or its draft discarded or expired, and will never take it: used up. */
         CLOSED,
         /** Applied before, or not this member's to apply. */
@@ -62,23 +66,44 @@ public final class GroupAdditions {
 
     /**
      * Offers {@code text}, which {@code author} wrote in the group {@code chatRef} as {@code replyRef}, a reply to
-     * {@code repliedRef}, to the requester of each task and open draft that message gave. The group sees 👀 on the reply
-     * once an offer reached its requester, as it does for a task given there. Text only: files stay in the group. A text
-     * longer than {@link #SHOWN_TEXT} is shown cut and without a button, so nothing is applied that was not read whole.
+     * {@code repliedRef}, to the requester of each task still open and each open draft that message gave, except the
+     * author's own: they say more to their own plan or result privately. The group sees 👀 on the reply once an offer
+     * reached its requester, as it does for a task given there. Text only: files stay in the group. A text longer than
+     * {@link #SHOWN_TEXT}, or none at all, comes without a button, so nothing is applied that was not read whole.
      *
+     * @param authorRef who wrote it
      * @param author    the writer's first name, as the group calls them
      * @param withFiles the reply carried a photo or a document, which the offer names
-     * @return false when that message gave nothing
+     * @return false when there was no one to offer it to
      */
-    public boolean offer(Tx tx, String repliedRef, String replyRef, String chatRef, String author, String text, boolean withFiles) {
+    public boolean offer(Tx tx, String repliedRef, String replyRef, String chatRef, String authorRef, String author, String text,
+                         boolean withFiles) {
+        List<Offer> offers = offersFrom(tx, repliedRef).stream().filter(offer -> !offer.requester().ref().equals(authorRef)).toList();
+        send(tx, offers, author, text, withFiles, chatRef, replyRef);
+        return !offers.isEmpty();
+    }
+
+    /** Each task still open and each open draft that message {@code messageRef} gave. */
+    private static List<Offer> offersFrom(Tx tx, String messageRef) {
         List<Offer> offers = new ArrayList<>();
-        for (Task task : Tasks.fromMessage(tx, repliedRef)) {
-            offers.add(new Offer(task.originRef(), task.requester(), task.id(), task.title()));
+        for (Task task : Tasks.fromMessage(tx, messageRef)) {
+            if (task.phase() != Phase.REJECTED && task.phase() != Phase.CANCELLED) {
+                offers.add(new Offer(task.originRef(), task.requester(), task.id(), task.title()));
+            }
         }
-        for (Draft draft : Drafts.openFromMessage(tx, repliedRef)) {
+        for (Draft draft : Drafts.openFromMessage(tx, messageRef)) {
             offers.add(new Offer(draft.originRef(), new Requester(draft.requesterRef(), draft.requesterName()), null,
                     TaskService.title(draft.description())));
         }
+        return offers;
+    }
+
+    /**
+     * Sends each requester their offer, privately; one the private chat refuses goes to {@code fallbackChatRef} under
+     * {@code fallbackReplyToRef} instead, which also gets the 👀 once it arrived. Both null for no fallback and no 👀.
+     */
+    private void send(Tx tx, List<Offer> offers, String author, String text, boolean withFiles, String fallbackChatRef,
+                      String fallbackReplyToRef) {
         Instant now = clock.instant();
         boolean tooLong = text.length() > SHOWN_TEXT;
         for (Offer offer : offers) {
@@ -86,7 +111,7 @@ public final class GroupAdditions {
                     .put("requester", GroupAcks.firstName(offer.requester().name()));
             if (tooLong) {
                 payload.put("tooLong", true);
-            } else {
+            } else if (!text.isEmpty()) {
                 payload.put("additionId", Additions.insert(tx, offer.originRef(), offer.requester().ref(), author, text, now));
             }
             if (withFiles) {
@@ -96,13 +121,12 @@ public final class GroupAdditions {
                 payload.put("taskId", offer.taskId());
             }
             // The private chat's id is its user's: the requester's own ref names it.
-            Outbox.enqueueWithFallback(tx, offer.taskId(), OutboxKind.ADDITION_OFFERED, offer.requester().ref(), null, chatRef,
-                    replyRef, payload, now);
+            Outbox.enqueueWithFallback(tx, offer.taskId(), OutboxKind.ADDITION_OFFERED, offer.requester().ref(), null, fallbackChatRef,
+                    fallbackReplyToRef, payload, now);
         }
         if (!offers.isEmpty()) {
             tx.afterCommit(wakeOutbox);
         }
-        return !offers.isEmpty();
     }
 
     /**
@@ -117,8 +141,18 @@ public final class GroupAdditions {
         Additions.Addition addition = unused.get();
         Optional<Task> given = Tasks.findByOrigin(tx, addition.originRef());
         if (given.isEmpty()) {
-            // Still its draft, which the button follows once it is given as a task; a draft discarded or expired never will be.
-            return Drafts.openWithOrigin(tx, addition.originRef()) ? Outcome.NOT_YET : closed(tx, additionId);
+            // Still its draft, which the button follows once it is given as a task, or split into parts, each offered it
+            // again; a draft discarded or expired never will be a task.
+            Optional<DraftStatus> draft = Drafts.statusByOrigin(tx, addition.originRef());
+            if (draft.equals(Optional.of(DraftStatus.OPEN))) {
+                return Outcome.NOT_YET;
+            }
+            if (draft.equals(Optional.of(DraftStatus.SPLIT))) {
+                send(tx, offersFrom(tx, addition.originRef()), addition.author(), addition.text(), false, null, null);
+                Additions.markUsed(tx, additionId, clock.instant());
+                return Outcome.SPLIT;
+            }
+            return closed(tx, additionId);
         }
         Task task = given.get();
         String instruction = addition.text() + "\n\n" + requestedBy + " " + addition.author();
