@@ -5,7 +5,7 @@ import ManagedPage from "./ManagedPage";
 import { useManagedConfig } from "./useManagedConfig";
 
 export default function PeoplePage() {
-  const { config, loadError, reload, save, saving, saveError, saved } = useManagedConfig();
+  const { config, loadError, reload, save, saving, saveError } = useManagedConfig();
   const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
 
   const rename = async () => {
@@ -14,7 +14,7 @@ export default function PeoplePage() {
   };
 
   return (
-    <ManagedPage title="the people" config={config} loadError={loadError} saveError={saveError} saved={saved} reload={reload}>
+    <ManagedPage title="the people" config={config} loadError={loadError} saveError={saveError} reload={reload}>
       {(current) => (
         <>
           <Alert type="info" showIcon

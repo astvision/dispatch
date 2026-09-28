@@ -9,12 +9,12 @@ import { useManagedConfig } from "./useManagedConfig";
 const phaseText = (phase: PhaseChoice | null) => (phase ? [phase.model, phase.effort].filter(Boolean).join(", ") : "");
 
 export default function ProjectsPage() {
-  const { config, loadError, reload, save, saving, saveError, saved } = useManagedConfig();
+  const { config, loadError, reload, save, saving, saveError } = useManagedConfig();
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   return (
-    <ManagedPage title="the projects" config={config} loadError={loadError} saveError={saveError} saved={saved} reload={reload}>
+    <ManagedPage title="the projects" config={config} loadError={loadError} saveError={saveError} reload={reload}>
       {(current) => {
         const edited = current.projects.find((project) => project.name === editing);
         return (

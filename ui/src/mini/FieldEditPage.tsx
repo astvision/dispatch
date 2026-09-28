@@ -2,8 +2,9 @@ import { Button, Input, Result, Typography } from "antd";
 import { useState } from "react";
 import { editProject, type ManagedProject, type PhaseChoice, type ProjectFields } from "../api";
 import { fieldsOf } from "../manage/ProjectForm";
+import { useManagedConfig } from "../manage/useManagedConfig";
 import { AGENTS, agentLabel, effortsFor, MODELS, PHASE_EFFORTS, PHASE_MODELS, withCurrent } from "../options";
-import { MiniManaged, useMiniConfig } from "./data";
+import { MiniManaged } from "./data";
 import { Row, Section } from "./List";
 import type { Field } from "./paths";
 
@@ -118,7 +119,7 @@ function Editor({ project, field, busy, save, back }: {
 
 /** One of a project's settings on a screen of its own, as BotFather edits a bot's name or description. */
 export default function FieldEditPage({ name, field, back }: { name: string; field: Field; back: () => void }) {
-  const { config, loadError, reload, save, saving, saveError } = useMiniConfig();
+  const { config, loadError, reload, save, saving, saveError } = useManagedConfig();
   return (
     <MiniManaged config={config} loadError={loadError} saveError={saveError} reload={reload}>
       {(current) => {

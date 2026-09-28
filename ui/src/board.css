@@ -1,0 +1,146 @@
+/* The desktop's board (board.ts holds the palette and antd's theme). Dark only: the lamps are drawn for slate. */
+body:has(.board) {
+  margin: 0;
+  background: #10191b;
+  color: #e4ece8;
+}
+
+.board {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #10191b;
+  color: #e4ece8;
+  font-family: "Onest Variable", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Sticky, so "restart to apply" stays in sight after a save at the foot of a long page. */
+.board-strip {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 10px 18px;
+  background: #0c1416;
+  border-bottom: 1px solid #24363a;
+}
+
+.board-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+/* A lamp is never colour alone: its words say the same. */
+.lamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #e4ece8;
+}
+
+.lamp > i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: #7d948f;
+}
+
+.lamp.green > i { background: #58c28d; }
+.lamp.amber > i { background: #f0b44c; }
+.lamp.red > i { background: #ef6a5a; }
+.lamp .hint { color: #7d948f; }
+
+/* A restart's failure and its log lines take the strip's full width, below the lamps. */
+.board-strip-line {
+  flex-basis: 100%;
+}
+
+.board-lang {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: #7d948f;
+}
+
+.board-lang button {
+  font: inherit;
+  color: #7d948f;
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.board-lang button[aria-pressed="true"] {
+  color: #e4ece8;
+  font-weight: 600;
+}
+
+.board-menu {
+  display: none;
+}
+
+.board-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.board-rail {
+  width: 142px;
+  flex: none;
+  padding: 12px 0;
+  border-right: 1px solid #24363a;
+}
+
+/* The rail stays in reach on a long page, just below a one-line strip. */
+.board-rail > .ant-menu {
+  position: sticky;
+  top: 53px;
+}
+
+.board-page {
+  flex: 1;
+  min-width: 0;
+  max-width: 1200px;
+  padding: 20px 24px;
+}
+
+/* Below 640 px the rail becomes a menu button in the strip. */
+@media (max-width: 639px) {
+  .board-rail { display: none; }
+  .board-menu { display: inline-flex; }
+  .board-page { padding: 16px; }
+}
+
+:focus-visible {
+  outline: 2px solid #f0b44c;
+  outline-offset: 2px;
+}
+
+code, .mono {
+  font-family: "JetBrains Mono Variable", ui-monospace, monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+.board-restart {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}

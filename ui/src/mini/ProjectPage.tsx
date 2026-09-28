@@ -1,9 +1,10 @@
 import { Result, theme } from "antd";
 import { useState } from "react";
 import { removeProject, type ManagedProject, type Me, type PhaseChoice, type ProjectSummary } from "../api";
+import { useManagedConfig } from "../manage/useManagedConfig";
 import { agentDefault, agentLabel, EFFORTS, effortsFor, MODELS } from "../options";
 import { openTelegramLink } from "./backButton";
-import { MiniManaged, useMiniConfig, useProjects } from "./data";
+import { MiniManaged, useProjects } from "./data";
 import { Header, Row, Section } from "./List";
 import { fieldPath, PROJECTS_PATH, type Field } from "./paths";
 import TasksPage from "./TasksPage";
@@ -108,7 +109,7 @@ function AddToGroup({ project, bot }: { project: ManagedProject; bot: string }) 
 
 /** An admin also changes the project here, a row per setting, and may remove it. */
 function AdminProject({ name, bot, navigate }: { name: string; bot: string; navigate: (path: string) => void }) {
-  const { config, loadError, reload, save, saving, saveError } = useMiniConfig();
+  const { config, loadError, reload, save, saving, saveError } = useManagedConfig();
   return (
     <MiniManaged config={config} loadError={loadError} saveError={saveError} reload={reload}>
       {(current) => {

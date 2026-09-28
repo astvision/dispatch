@@ -19,5 +19,11 @@ export const mn: Record<Key, string> = {
   "strip.checksFail.other": "{count} асуудал",
   "strip.restart": "Дахин эхлүүлбэл хэрэгжинэ",
   "strip.restartNow": "Одоо дахин эхлүүлэх",
+  "strip.restartByHand": "Dispatch-ийг зогсоогоод ажилладаг газарт нь дахин асаана уу",
+  "strip.restarting": "Дахин эхлүүлж байна…",
+  "strip.statusUnknown": "Төлөв тодорхойгүй",
+  "strip.menu": "Хуудсууд",
   "strip.language": "Хэл",
+  "app.unreachable": "Dispatch-тай холбогдож чадсангүй",
+  "app.loading": "Уншиж байна…",
 };

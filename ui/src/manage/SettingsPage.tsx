@@ -6,10 +6,10 @@ import { useManagedConfig } from "./useManagedConfig";
 const required = [{ required: true, message: "Needed." }];
 
 export default function SettingsPage() {
-  const { config, loadError, reload, save, saving, saveError, saved } = useManagedConfig();
+  const { config, loadError, reload, save, saving, saveError } = useManagedConfig();
 
   return (
-    <ManagedPage title="the settings" config={config} loadError={loadError} saveError={saveError} saved={saved} reload={reload}>
+    <ManagedPage title="the settings" config={config} loadError={loadError} saveError={saveError} reload={reload}>
       {(current) => (
         <Card title="Settings">
           <Form<Settings> key={current.version} layout="vertical" initialValues={current.settings}

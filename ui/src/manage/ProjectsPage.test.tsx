@@ -2,12 +2,15 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import * as api from "../api";
 import { saved, teamConfig } from "./fixtures";
+import { renderOnBoard } from "../desktop/testing";
 import ProjectsPage from "./ProjectsPage";
 
 // The real module, with the calls this file answers itself; ApiError stays the real class.
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   getConfig: vi.fn(),
+  // The strip reads the overview; these tests leave it unanswered.
+  getOverview: vi.fn(() => new Promise(() => {})),
   editProject: vi.fn(),
   removeProject: vi.fn(),
   addProject: vi.fn(),
@@ -21,7 +24,7 @@ test("editing a project sends all its fields, the changed ones included", async 
   vi.mocked(api.getConfig).mockResolvedValue(teamConfig);
   const edit = vi.mocked(api.editProject).mockResolvedValue(saved);
 
-  render(<ProjectsPage />);
+  renderOnBoard(<ProjectsPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Edit crm" }));
   fireEvent.change(screen.getByLabelText("Branch tasks start from"), { target: { value: "develop" } });
   fireEvent.change(screen.getByLabelText("Alias"), { target: { value: "" } });
@@ -30,7 +33,7 @@ test("editing a project sends all its fields, the changed ones included", async 
   await vi.waitFor(() => expect(edit).toHaveBeenCalledWith("v1", {
     name: "crm", baseBranch: "develop", alias: null, model: "opus", effort: null, plan: { model: "fable", effort: null }, execute: null,
   }));
-  expect(await screen.findByText("Saved. Restart to apply")).toBeInTheDocument();
+  expect(await screen.findByText("Restart to apply")).toBeInTheDocument();
 });
 
 test("removing a project asks first", async () => {

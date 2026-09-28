@@ -1,16 +1,18 @@
 import { LeftOutlined } from "@ant-design/icons";
-import { Button, Layout, Menu, Result, Spin, theme, Typography } from "antd";
+import { Button, Result, Spin, theme } from "antd";
 import { lazy, Suspense, useContext, useEffect, useState } from "react";
 import { ApiError, getMe, type Me } from "./api";
-import { LanguageProvider } from "./i18n/i18n";
+import Shell, { DESKTOP_PAGES, type ShellPage } from "./desktop/Shell";
+import { DesktopProviders, useDesktopStatus } from "./desktop/status";
+import { LanguageProvider, useT } from "./i18n/i18n";
 import { post, useTelegramBackButton } from "./mini/backButton";
-import { RestartContext, useRestartNeeded } from "./mini/data";
 import HomePage from "./mini/HomePage";
 import { ListStyles, Section } from "./mini/List";
 import { ADMIN_PAGES, parentOf, projectPath, screenOf, type PagePath, type Screen } from "./mini/paths";
 import "./mini/world.css";
 import { paletteFor, worldStyle } from "./mini/world";
 import RestartNotice from "./RestartNotice";
+import { RestartContext, useRestartNeeded } from "./restart";
 import { inTelegram, prefersDark } from "./telegram";
 import { usePath } from "./usePath";
 import { useSetupState } from "./useSetupState";
@@ -32,13 +34,7 @@ const TasksPage = lazy(() => import("./mini/TasksPage"));
 const OverviewPage = lazy(() => import("./OverviewPage"));
 const SetupPage = lazy(() => import("./setup/SetupPage"));
 
-const MANAGE_PAGES = [
-  { key: "/", label: "Overview" },
-  { key: "/projects", label: "Projects" },
-  { key: "/people", label: "People" },
-  { key: "/settings", label: "Settings" },
-  { key: "/logs", label: "Logs" },
-];
+const SETUP_PAGES: ShellPage[] = [{ key: "setup", label: "nav.setup" }];
 
 function Page({ path, heading = true }: { path: string; heading?: boolean }) {
   switch (path) {
@@ -57,23 +53,6 @@ function Page({ path, heading = true }: { path: string; heading?: boolean }) {
     default:
       return <OverviewPage />;
   }
-}
-
-function Shell({ pages, selected, onSelect, children }: {
-  pages: { key: string; label: string }[];
-  selected: string;
-  onSelect: (key: string) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <Layout style={{ minHeight: "100vh" }}>
-      <Layout.Sider breakpoint="md" collapsedWidth={0} theme="light">
-        <Typography.Title level={4} style={{ padding: "16px 24px", margin: 0 }}>Dispatch</Typography.Title>
-        <Menu mode="inline" selectedKeys={[selected]} items={pages} onClick={({ key }) => onSelect(key)} />
-      </Layout.Sider>
-      <Layout.Content style={{ padding: 24, maxWidth: 1200 }}><Suspense fallback={<Spin />}>{children}</Suspense></Layout.Content>
-    </Layout>
-  );
 }
 
 const TASK_TITLES: Record<string, string> = { "/tasks": "Миний даалгаврууд", "/group-tasks": "Бүх даалгавар" };
@@ -192,18 +171,26 @@ function titleFor(error: ApiError) {
 
 /** Through `dispatch ui`: setup when there is no config yet, the management pages once there is. */
 function WebUi() {
+  const t = useT();
   const { state, error, refresh } = useSetupState();
+  const status = useDesktopStatus();
   const [path, navigate] = usePath();
 
-  if (error) return <Result status="warning" title="Cannot reach Dispatch" subTitle={error.message} />;
-  if (!state) return <Spin size="large" tip="Loading…"><div style={{ height: 200 }} /></Spin>;
+  if (error) return <Result status="warning" title={t("app.unreachable")} subTitle={error.message} />;
+  if (!state) return <Spin size="large" tip={t("app.loading")}><div style={{ height: 200 }} /></Spin>;
 
-  const page = MANAGE_PAGES.some((candidate) => candidate.key === path) ? path : "/";
+  const page = DESKTOP_PAGES.some((candidate) => candidate.key === path) ? path : "/";
+  const setUp = () => {
+    navigate("/");
+    void refresh();
+    // The strip read the overview before there was a config.
+    void status.reload();
+  };
   return (
-    <Shell pages={state.configExists ? MANAGE_PAGES : [{ key: "setup", label: "Setup" }]}
+    <Shell pages={state.configExists ? DESKTOP_PAGES : SETUP_PAGES}
            selected={state.configExists ? page : "setup"}
            onSelect={(key) => state.configExists && navigate(key)}>
-      {state.configExists ? <Page path={page} /> : <SetupPage onDone={() => { navigate("/"); void refresh(); }} />}
+      {state.configExists ? <Page path={page} /> : <SetupPage onDone={setUp} />}
     </Shell>
   );
 }
@@ -212,5 +199,5 @@ function WebUi() {
 export default function App() {
   return inTelegram
     ? <LanguageProvider fixed="mn"><MiniApp /></LanguageProvider>
-    : <LanguageProvider><WebUi /></LanguageProvider>;
+    : <LanguageProvider><DesktopProviders><WebUi /></DesktopProviders></LanguageProvider>;
 }

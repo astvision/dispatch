@@ -18,5 +18,11 @@ export const en = {
   "strip.checksFail.other": "{count} problems",
   "strip.restart": "Restart to apply",
   "strip.restartNow": "Restart now",
+  "strip.restartByHand": "stop Dispatch and start it again where it runs",
+  "strip.restarting": "Restarting…",
+  "strip.statusUnknown": "Status unknown",
+  "strip.menu": "Pages",
   "strip.language": "Language",
+  "app.unreachable": "Cannot reach Dispatch",
+  "app.loading": "Loading…",
 } as const;

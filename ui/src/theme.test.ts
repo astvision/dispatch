@@ -1,16 +1,22 @@
 import { theme as antdTheme } from "antd";
 import { describe, expect, it } from "vitest";
+import { BOARD } from "./board";
 import { DARK, LIGHT } from "./mini/world";
-import { telegramTheme } from "./theme";
+import { appTheme } from "./theme";
 
-describe("the Mini App's theme", () => {
-  it("leaves antd's own look alone outside Telegram", () => {
-    expect(telegramTheme(false, false)).toBeUndefined();
+describe("the theme", () => {
+  it("is the desktop's board outside Telegram, dark whatever the computer prefers", () => {
+    const board = appTheme(false, false);
+
+    expect(board.algorithm).toBe(antdTheme.darkAlgorithm);
+    expect(board.token?.colorBgLayout).toBe(BOARD.ground);
+    expect(board.token?.colorPrimary).toBe(BOARD.amber);
+    expect(board.token?.colorTextLightSolid).toBe(BOARD.amberInk);
   });
 
   it("uses the world's palette in the scheme Telegram is in", () => {
-    const dark = telegramTheme(true, true);
-    const light = telegramTheme(true, false);
+    const dark = appTheme(true, true);
+    const light = appTheme(true, false);
 
     expect(dark?.algorithm).toBe(antdTheme.darkAlgorithm);
     expect(dark?.token?.colorPrimary).toBe(DARK.button);
@@ -21,6 +27,6 @@ describe("the Mini App's theme", () => {
 
   /** antd writes colorTextLightSolid on its primary fill; white on amber would be unreadable. */
   it("labels the amber primary in the dark ink", () => {
-    expect(telegramTheme(true, true)?.token?.colorTextLightSolid).toBe(DARK.buttonInk);
+    expect(appTheme(true, true)?.token?.colorTextLightSolid).toBe(DARK.buttonInk);
   });
 });
