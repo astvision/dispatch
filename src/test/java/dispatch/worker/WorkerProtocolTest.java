@@ -309,10 +309,10 @@ class WorkerProtocolTest extends WorkerApiFixture {
 
         int cap = WorkerApi.MAX_IN_FLIGHT_PER_WORKER;
         int attempts = cap + 2;
-        // Exactly `cap` requests can ever be admitted at once; this latch proves that many reached the (blocked)
-        // download, at which point every other concurrent request must already have been refused by the limiter —
-        // deterministic, no sleep needed.
+        // Exactly `cap` requests can ever be admitted at once. This latch proves that many reached the (blocked) download,
+        // and the downloads stay blocked until every other request was refused, however late it arrived.
         CountDownLatch insideDownload = new CountDownLatch(cap);
+        CountDownLatch refusals = new CountDownLatch(attempts - cap);
         CountDownLatch releaseDownloads = new CountDownLatch(1);
         AttachmentSource slow = (fileRef, target) -> {
             insideDownload.countDown();
@@ -341,6 +341,9 @@ class WorkerProtocolTest extends WorkerApiFixture {
                                         .build(),
                                 HttpResponse.BodyHandlers.ofString());
                         statuses[index] = answer.statusCode();
+                        if (answer.statusCode() == 429) {
+                            refusals.countDown();
+                        }
                     } catch (Exception e) {
                         failures[index] = e;
                     }
@@ -348,6 +351,10 @@ class WorkerProtocolTest extends WorkerApiFixture {
             }
             assertTrue(insideDownload.await(10, TimeUnit.SECONDS), "expected exactly " + cap + " requests to reach the"
                     + " download; statuses so far: " + Arrays.toString(statuses) + ", failures: " + Arrays.toString(failures));
+            // Released earlier, a request that merely arrived late would be admitted once one of those finished, correctly,
+            // and the count would say nothing about the limit (runs 36110020571 and 36385499713).
+            assertTrue(refusals.await(10, TimeUnit.SECONDS), "expected " + (attempts - cap) + " refusals while " + cap
+                    + " requests ran; statuses so far: " + Arrays.toString(statuses) + ", failures: " + Arrays.toString(failures));
             releaseDownloads.countDown();
             for (Thread caller : callers) {
                 assertTrue(caller.join(Duration.ofSeconds(10)));
