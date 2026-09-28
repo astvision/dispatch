@@ -69,6 +69,38 @@ class ChecksTest {
         assertFalse(findings.toString().contains(TOKEN));
     }
 
+    /** M: several instances on one computer. */
+    @Test
+    void anotherInstanceWithTheSameBotOrPortOrBranchesInTheSameCloneIsReported() throws IOException {
+        Locations defaults = Locations.of("Linux", Map.of(), dir);
+        TestConfigs.write(defaults.configFile(), TOKEN, "alm");
+        TestConfigs.write(defaults.forInstance("team").configFile(), TOKEN, "alm"); // same bot, same clone, no prefix
+        for (Path yaml : List.of(defaults.configFile(), defaults.forInstance("team").configFile())) {
+            Files.writeString(yaml, Files.readString(yaml) + "\nminiApp:\n  publicUrl: 'http://127.0.0.1:7879'\n  port: 7879\n");
+        }
+
+        List<Checks.Finding> findings = checks(defaults).run(defaults.forInstance("team").configFile(), Map.of(), finding -> { });
+
+        assertTrue(findings.stream().anyMatch(f -> f.level() == Checks.Level.FAIL && f.message().contains("same bot as instance default")),
+                findings.toString());
+        assertTrue(findings.stream().anyMatch(f -> f.level() == Checks.Level.FAIL && f.message().contains("dispatch/<task> branches")),
+                findings.toString());
+        assertTrue(findings.stream().anyMatch(f -> f.level() == Checks.Level.WARN && f.message().contains("port 7879 is also instance")),
+                findings.toString());
+    }
+
+    /** M: several instances on one computer. */
+    @Test
+    void aFileThatDoesNotLoadDoesNotFailAnotherInstancesCheck() throws IOException {
+        Locations defaults = Locations.of("Linux", Map.of(), dir);
+        TestConfigs.write(defaults.configFile(), TOKEN, "alm");
+        Files.writeString(defaults.configDir().resolve("broken.yaml"), "team: [");
+
+        List<Checks.Finding> findings = checks(defaults).run(defaults.configFile(), Map.of(), finding -> { });
+
+        assertTrue(findings.stream().noneMatch(f -> f.area().equals("instances") && f.level() == Checks.Level.FAIL), findings.toString());
+    }
+
     @Test
     void aRepoUrlsCredentialsNeverAppearInTheNotClonedYetFinding() throws IOException {
         writeConfig();
@@ -345,7 +377,12 @@ class ChecksTest {
     }
 
     private Checks checks() {
-        return new Checks(token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)));
+        // An isolated Locations, so the instances check never sees this machine's real config directory.
+        return checks(Locations.of("Linux", Map.of(), dir));
+    }
+
+    private Checks checks(Locations defaults) {
+        return new Checks(token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)), defaults);
     }
 
     private void writeConfig() throws IOException {

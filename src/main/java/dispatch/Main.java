@@ -61,7 +61,8 @@ public final class Main {
                 JLineTerminal terminal = JLineTerminal.system();
                 System.exit(ServiceCommand.forThisMachine(terminal, service.instance()).run(service, System.getenv()));
             }
-            case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create).run(check.configFile(), System.getenv()));
+            case Cli.Check check -> System.exit(new CheckCommand(JLineTerminal.system(), BotApi::create, defaults)
+                    .run(check.configFile(), System.getenv()));
             case Cli.ProjectAdd add -> System.exit(new ProjectAddCommand(JLineTerminal.system()).run(add, System.getenv()));
             case Cli.Ui ui -> ui(ui, defaults);
             case Cli.WorkerInit init -> {

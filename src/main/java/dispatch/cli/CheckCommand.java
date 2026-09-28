@@ -18,10 +18,13 @@ public final class CheckCommand {
     private final Terminal terminal;
     private final Checks checks;
 
-    /** @param bots the Telegram client for a bot token */
-    public CheckCommand(Terminal terminal, Function<String, BotApi> bots) {
+    /**
+     * @param bots     the Telegram client for a bot token
+     * @param defaults where to look for other instances on this computer (M: several instances on one computer)
+     */
+    public CheckCommand(Terminal terminal, Function<String, BotApi> bots, Locations defaults) {
         this.terminal = terminal;
-        this.checks = new Checks(bots);
+        this.checks = new Checks(bots, defaults);
     }
 
     /**

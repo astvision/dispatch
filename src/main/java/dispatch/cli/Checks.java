@@ -19,11 +19,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Whether an instance can work, before it starts: the config and secrets, the bot token, the agent CLI, each project's clone
@@ -52,11 +55,21 @@ public final class Checks {
     }
 
     private final Function<String, BotApi> bots;
+    private final Locations defaults;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(PROBE_TIMEOUT).build();
 
     /** @param bots the Telegram client for a bot token */
     public Checks(Function<String, BotApi> bots) {
+        this(bots, Locations.current());
+    }
+
+    /**
+     * @param bots     the Telegram client for a bot token
+     * @param defaults where to look for other instances on this computer (M: several instances on one computer)
+     */
+    public Checks(Function<String, BotApi> bots, Locations defaults) {
         this.bots = bots;
+        this.defaults = defaults;
     }
 
     /** @param onEach sees each finding as soon as it is known, so a slow check does not hold back the ones before it */
@@ -88,11 +101,53 @@ public final class Checks {
             checkGh(run, config.delivery().ghCommand(), config.secrets().ghToken() != null, configFile);
         }
         checkMiniApp(run, config.miniApp());
+        checkOtherInstances(run, configFile, config, processEnvironment);
         return run.findings;
     }
 
     public static boolean failed(List<Finding> findings) {
         return findings.stream().anyMatch(finding -> finding.level() == Level.FAIL);
+    }
+
+    /** Two instances on one computer must not share a bot, a port, or branch names in one clone (M). */
+    private void checkOtherInstances(Run run, Path configFile, Config config, Map<String, String> env) {
+        Path self = configFile.toAbsolutePath().normalize();
+        String myBot = Instances.botId(config.secrets().telegramBotToken());
+        for (Instances.Found other : Instances.discover(defaults, env)) {
+            if (other.config() == null || other.configFile().toAbsolutePath().normalize().equals(self)) {
+                continue;
+            }
+            String name = other.name() == null ? "default" : other.name();
+            if (myBot != null && myBot.equals(Instances.botId(other.config().secrets().telegramBotToken()))) {
+                run.add(Level.FAIL, "instances", "instances: the same bot as instance " + name
+                        + "; Telegram gives a bot's messages to one of them only: create another bot with @BotFather");
+            }
+            ports(config).forEach(port -> {
+                if (ports(other.config()).contains(port)) {
+                    run.add(Level.WARN, "instances", "instances: port " + port + " is also instance " + name
+                            + "'s; only one of them can listen on it");
+                }
+            });
+            if (config.branch(0).equals(other.config().branch(0))) {
+                Set<Path> mine = clones(config);
+                clones(other.config()).stream().filter(mine::contains).forEach(clone -> run.add(Level.FAIL, "instances",
+                        "instances: " + clone + " is also instance " + name + "'s, and both name their "
+                                + config.branch(0).replace("/0", "/<task>") + " branches the same; set branchPrefix in one of them"));
+            }
+        }
+    }
+
+    private static Set<Integer> ports(Config config) {
+        Set<Integer> ports = new HashSet<>();
+        if (config.miniApp() != null) ports.add(config.miniApp().port());
+        if (config.workers() != null) ports.add(config.workers().port());
+        return ports;
+    }
+
+    /** Only clones given by path can be shared; one under a state directory belongs to that instance alone. */
+    private static Set<Path> clones(Config config) {
+        return config.projects().stream().filter(project -> project.path() != null)
+                .map(project -> Path.of(project.path()).toAbsolutePath().normalize()).collect(Collectors.toSet());
     }
 
     private void checkBot(Run run, String token) {

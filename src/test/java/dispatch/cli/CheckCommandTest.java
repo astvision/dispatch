@@ -151,7 +151,9 @@ class CheckCommandTest {
     }
 
     private int check() {
-        return new CheckCommand(terminal, token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)))
+        // An isolated Locations, so the instances check never sees this machine's real config directory.
+        Locations defaults = Locations.of("Linux", Map.of(), dir);
+        return new CheckCommand(terminal, token -> new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5)), defaults)
                 .run(config, Map.of());
     }
 
