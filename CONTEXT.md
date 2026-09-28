@@ -56,6 +56,10 @@ _Avoid_: Feedback, comment
 A member's reply to a finished task's result with further instructions. It changes code right away, without a new plan.
 _Avoid_: Revision, amendment
 
+**Addition**:
+More instructions someone writes in a linked group by replying to the message a task came from: whoever wrote that message, or a member of the chat's project groups. The task's requester gets it privately, and one tap turns it into a correction of the waiting plan or a follow-up of the finished task; nothing changes until they tap.
+_Avoid_: Amendment, comment, note
+
 **Delivery**:
 Handing an execution run's changes to the team: committing them to the task's branch, pushing, and opening or updating the task's draft pull request.
 _Avoid_: Publish, deploy, release

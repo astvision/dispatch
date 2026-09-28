@@ -146,6 +146,13 @@ public final class BotApi {
         call("editMessageText", body, requestTimeout);
     }
 
+    /** Replaces a sent message's buttons and keeps its text; no buttons removes them, e.g. once an addition was applied. */
+    public void editMessageReplyMarkup(long chatId, long messageId, List<List<Renderer.Button>> buttons) {
+        ObjectNode body = Json.object().put("chat_id", chatId).put("message_id", messageId);
+        body.set("reply_markup", keyboard(buttons));
+        call("editMessageReplyMarkup", body, requestTimeout);
+    }
+
     /** Opens a topic in a forum or in a private chat with topics on; returns its thread id. */
     public long createForumTopic(long chatId, String name, int iconColor) {
         ObjectNode body = Json.object().put("chat_id", chatId).put("name", name).put("icon_color", iconColor);

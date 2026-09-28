@@ -48,6 +48,19 @@ public final class Drafts {
         return tx.one("SELECT 1 AS found FROM draft WHERE origin_ref = ?", row -> true, originRef).isPresent();
     }
 
+    public static boolean openWithOrigin(Tx tx, String originRef) {
+        return tx.one("SELECT 1 AS found FROM draft WHERE origin_ref = ? AND status = ?", row -> true, originRef, DraftStatus.OPEN)
+                .isPresent();
+    }
+
+    /** The open drafts message {@code messageRef} gave, matched as {@link Tasks#fromMessage} matches tasks. */
+    public static List<Draft> openFromMessage(Tx tx, String messageRef) {
+        return tx.list("""
+                        SELECT %s FROM draft WHERE status = ? AND (origin_ref = ? OR origin_ref LIKE ? OR origin_ref LIKE ?)
+                        ORDER BY id""".formatted(COLUMNS), Drafts::map,
+                DraftStatus.OPEN, messageRef, messageRef + "@%", messageRef + "#%");
+    }
+
     public static boolean chooseProject(Tx tx, long id, String project, Instant now) {
         return tx.update("UPDATE draft SET project = ?, updated_at = ? WHERE id = ? AND status = ?",
                 project, now, id, DraftStatus.OPEN) == 1;

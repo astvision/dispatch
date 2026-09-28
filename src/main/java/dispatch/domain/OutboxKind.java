@@ -93,5 +93,11 @@ public enum OutboxKind {
      * The assistant's answer in a member's private chat (A-1): its reply, a confirm button per proposed action, and a note per
      * proposal it could not offer; or, with {@code failed}, one line saying it could not answer, before the message's draft.
      */
-    ASSISTANT_REPLY
+    ASSISTANT_REPLY,
+    /**
+     * To a requester, privately: someone replied in the group to the message their task (or draft) came from. Payload:
+     * {@code additionId} for its button, {@code taskId} (absent for a draft), {@code title}, {@code by}, {@code text}, and
+     * {@code requester}, the ✉️ line's name if the group's 👀 reaction is refused.
+     */
+    ADDITION_OFFERED
 }

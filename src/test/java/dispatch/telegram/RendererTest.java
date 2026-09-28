@@ -617,6 +617,34 @@ class RendererTest {
     }
 
     @Test
+    void anAdditionOfferNamesItsTaskAndWhoWroteItWithOneButton() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.ADDITION_OFFERED, Json.object().put("additionId", 3).put("taskId", 8)
+                .put("title", "Ажилтны жагсаалт").put("by", "Nomin").put("text", "Tooltip for <long> positions"));
+
+        assertTrue(rendered.html().contains("#8") && rendered.html().contains("Nomin"), rendered.html());
+        assertTrue(rendered.html().contains("Tooltip for &lt;long&gt; positions"), "the addition itself, escaped: " + rendered.html());
+        assertEquals(List.of(List.of(new Renderer.Button("➕ Нэмэх", "ad:3"))), rendered.keyboard());
+    }
+
+    @Test
+    void anAdditionToADraftHasNoNumberAndSaysItsFilesStayedInTheGroup() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.ADDITION_OFFERED, Json.object().put("additionId", 4).put("title", "Fix it")
+                .put("by", "Nomin").put("text", "See the screenshot").put("files", true));
+
+        assertFalse(rendered.html().contains("#"), "a draft has no number yet: " + rendered.html());
+        assertTrue(rendered.html().contains(renderer.text("addition.files")), rendered.html());
+    }
+
+    @Test
+    void aTooLongAdditionComesWithoutAButton() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.ADDITION_OFFERED, Json.object().put("taskId", 8).put("title", "Fix it")
+                .put("by", "Nomin").put("text", "x".repeat(3000) + "…").put("tooLong", true));
+
+        assertTrue(rendered.keyboard().isEmpty(), "nothing is applied without having been read whole");
+        assertTrue(rendered.html().contains(renderer.text("addition.tooLong")), rendered.html());
+    }
+
+    @Test
     void theAssistantsReplySpellsOutEachProposalWithANumberedButtonAndItsNotes() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.ASSISTANT_REPLY, assistantPayload());
 
@@ -890,6 +918,8 @@ class RendererTest {
             case UNKNOWN_USERNAME -> Json.object().put("username", "ali_dev");
             case GROUP_READD -> Json.object().put("group", "bold");
             case ASSISTANT_REPLY -> assistantPayload();
+            case ADDITION_OFFERED -> Json.object().put("additionId", 3).put("taskId", 8).put("title", "Fix the list").put("by", "Nomin")
+                    .put("text", "Also a <tooltip>").put("requester", "Ali");
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

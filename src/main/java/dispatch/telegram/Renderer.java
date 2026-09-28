@@ -208,7 +208,29 @@ public final class Renderer {
             case UNKNOWN_USERNAME -> plain(format("group.unknownUsername", escape(payload.path("username").asText())));
             case GROUP_READD -> plain(format("group.readdAfterMigration", escape(payload.path("group").asText())));
             case ASSISTANT_REPLY -> assistantReply(payload);
+            case ADDITION_OFFERED -> additionOffered(payload);
         };
+    }
+
+    /**
+     * A reply in the group, offered to the requester: who wrote what, about which task, and the one button that applies it,
+     * unless it was too long to show whole.
+     */
+    private Rendered additionOffered(JsonNode payload) {
+        String by = escape(payload.path("by").asText());
+        String head = payload.hasNonNull("taskId") ? format("addition.offered", taskId(payload), by) : format("addition.offeredDraft", by);
+        StringBuilder html = new StringBuilder(head).append('\n').append(escapeWithin(payload.path("title").asText(), TITLE_LIMIT))
+                .append("\n\n«").append(escape(payload.path("text").asText())).append('»');
+        if (payload.path("files").asBoolean(false)) {
+            html.append('\n').append(text("addition.files"));
+        }
+        if (payload.path("tooLong").asBoolean(false)) {
+            html.append("\n\n").append(text("addition.tooLong"));
+        }
+        List<List<Button>> keyboard = payload.hasNonNull("additionId")
+                ? List.of(List.of(new Button(text("button.addition"), "ad:" + payload.path("additionId").asLong())))
+                : List.of();
+        return new Rendered(html.toString(), keyboard, null);
     }
 
     /**

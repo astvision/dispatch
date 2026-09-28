@@ -138,9 +138,10 @@ public final class OutboxSender implements Runnable {
                             rendered.document().markdown().getBytes(StandardCharsets.UTF_8), rendered.html(), replyTo, rendered.keyboard());
             db.transaction(tx -> {
                 Outbox.markSent(tx, message.id(), attempts, Refs.message(chatId, sentId, null), clock.instant());
-                if (message.kind() == OutboxKind.DRAFT_PROMPT && message.fallbackChatRef() != null) {
-                    // A task given in a group (G-1b): only now that its prompt arrived does the group hear so, by the
-                    // developer's own choice of reaction, reaction + line, or silence (G-1e).
+                if ((message.kind() == OutboxKind.DRAFT_PROMPT || message.kind() == OutboxKind.ADDITION_OFFERED)
+                        && message.fallbackChatRef() != null) {
+                    // A task, or an addition to one, given in a group (G-1b): only now that it arrived privately does the
+                    // group hear so, by the developer's own choice of reaction, reaction + line, or silence (G-1e).
                     String requester = Json.read(message.payload()).path("requester").asText();
                     GroupAck pref = MemberPrefs.groupAck(tx, Refs.chatId(message.chatRef()));
                     if (pref != GroupAck.SILENT) {
