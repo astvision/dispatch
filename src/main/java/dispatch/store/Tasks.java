@@ -19,7 +19,7 @@ public final class Tasks {
     private static final String COLUMNS = """
             id, project, title, description, phase, priority, requester_ref, requester_name, origin_ref, chat_ref, session_id,
             build_session_id, base_branch, base_sha, worktree, plan_json, pr_url, topic_ref, failure_reason, failure_detail,
-            created_at, started_at, completed_at, updated_at""";
+            created_at, started_at, completed_at, updated_at, merged_at""";
 
     private Tasks() {
     }
@@ -183,6 +183,11 @@ public final class Tasks {
                 Phase.COMPLETED, prUrl, now, now, id, Phase.EXECUTING) == 1;
     }
 
+    /** Its pull request was merged; false when that was recorded already. */
+    public static boolean merged(Tx tx, long id, Instant now) {
+        return tx.update("UPDATE task SET merged_at = ?, updated_at = ? WHERE id = ? AND merged_at IS NULL", now, now, id) == 1;
+    }
+
     public static boolean failed(Tx tx, long id, FailureReason reason, String detail, Instant now) {
         return tx.update("""
                         UPDATE task SET phase = ?, failure_reason = ?, failure_detail = ?, completed_at = ?, updated_at = ?
@@ -252,6 +257,7 @@ public final class Tasks {
                 row.instant("created_at"),
                 row.instant("started_at"),
                 row.instant("completed_at"),
-                row.instant("updated_at"));
+                row.instant("updated_at"),
+                row.instant("merged_at"));
     }
 }

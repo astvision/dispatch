@@ -286,6 +286,7 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 | answer a ❓ question twice, or one of an outdated plan | Dispatch says the question is already answered, or that the plan is outdated; nothing changes |
 | **Reject** on the plan | Closes the task |
 | reply to the result, or write in a finished task's topic | A follow-up: the agent continues in the same session, and one more commit goes to the same pull request |
+| **🔀 Merge** under the result | Squash-merges its pull request and deletes the branch (personal bot). GitHub's refusal, such as a pending check, is shown and the button stays. After the merge, a reply to the result becomes a new task |
 | `/retry N` | Repeats task N's failed step: a failed plan is planned again, a failed execution continues, a failed delivery is only delivered again |
 | `/status` | What is running (with the agent's latest action on your own tasks), queued and awaiting approval in your groups, with buttons to change your tasks' priority |
 | `/history`, `/history N` | The last 10 finished tasks with who gave them and when; task N's timeline |

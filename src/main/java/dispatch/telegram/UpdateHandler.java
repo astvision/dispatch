@@ -18,6 +18,7 @@ import dispatch.core.Groups;
 import dispatch.core.JoinDecision;
 import dispatch.core.JoinRequestResult;
 import dispatch.core.Membership;
+import dispatch.core.Merges;
 import dispatch.core.PriorityResult;
 import dispatch.core.Projects;
 import dispatch.core.TaskAccess;
@@ -91,6 +92,7 @@ public final class UpdateHandler {
     private final Assistant assistant;
     private final AssistantActions assistantActions;
     private final GroupAdditions additions;
+    private final Merges merges;
 
     /** @param redactor masks messages this handler edits directly, as the outbox sender does for everything it sends */
     public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
@@ -112,6 +114,15 @@ public final class UpdateHandler {
                          Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
                          WorkerKeys workers, String workerUrl, String miniAppUrl, GroupLinks groupLinks, Assistant assistant,
                          AssistantActions assistantActions) {
+        this(db, tasks, membership, groups, projects, api, renderer, redactor, botUsername, clock, wakeOutbox, workers, workerUrl,
+                miniAppUrl, groupLinks, assistant, assistantActions, null);
+    }
+
+    /** @param merges merges a delivered task's pull request from its result's button; null where this bot cannot (team mode) */
+    public UpdateHandler(Database db, TaskService tasks, Membership membership, Groups groups, Projects projects, BotApi api,
+                         Renderer renderer, Redactor redactor, String botUsername, Clock clock, Runnable wakeOutbox,
+                         WorkerKeys workers, String workerUrl, String miniAppUrl, GroupLinks groupLinks, Assistant assistant,
+                         AssistantActions assistantActions, Merges merges) {
         if (workers != null) {
             Objects.requireNonNull(workerUrl, "workerUrl is required when workers is configured");
         }
@@ -134,6 +145,7 @@ public final class UpdateHandler {
         this.assistant = assistant;
         this.assistantActions = assistantActions;
         this.additions = new GroupAdditions(tasks, clock, wakeOutbox, renderer.text("group.requestedBy"));
+        this.merges = merges;
     }
 
     public void handle(JsonNode update) {
@@ -745,6 +757,10 @@ public final class UpdateHandler {
             onLinkButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
             return;
         }
+        if (merges != null && isPrivateChatOf(chat, from) && parts.length == 2 && parts[0].equals("merge") && taskId(parts[1]).isPresent()) {
+            onMergeButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get());
+            return;
+        }
         if (isPrivateChatOf(chat, from) && parts.length == 2 && parts[0].equals("ad") && taskId(parts[1]).isPresent()) {
             onAdditionButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get());
             return;
@@ -882,6 +898,21 @@ public final class UpdateHandler {
         payload.withArray("actions").forEach(action -> ((ObjectNode) action).put("outcome", taken.get(action.path("id").asLong())));
         Renderer.Rendered redrawn = renderer.render(OutboxKind.ASSISTANT_REPLY, Json.read(redactor.redact(payload.toString())));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard())));
+    }
+
+    /** Merge under a delivered task's result (ADR 0007, amended): GitHub is asked in the background; its answer comes under it. */
+    private void onMergeButton(Tx tx, JsonNode callback, Requester who, long taskId) {
+        JsonNode message = callback.path("message");
+        String messageRef = Refs.message(message.path("chat").path("id").asLong(), message.path("message_id").asLong(), null);
+        Merges.Outcome outcome = merges.request(tx, who, taskId, messageRef);
+        tx.afterCommit(() -> Log.info("merge.tapped", "task", taskId, "member", who.ref(), "outcome", outcome));
+        answer(tx, callback.path("id").asText(), switch (outcome) {
+            case STARTED -> "callback.mergeStarted";
+            case RUNNING -> "callback.mergeRunning";
+            case MERGED -> "callback.mergeAlready";
+            case NOT_ALLOWED -> "callback.notAllowed";
+            case WRONG_STATE -> "callback.wrongState";
+        });
     }
 
     /**

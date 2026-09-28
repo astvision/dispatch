@@ -90,7 +90,9 @@ public final class Sweeper implements Runnable {
         }
         Workspaces.WorktreeState state = workspaces.state(task.worktree(), task.id(), task.baseSha());
         boolean abandoned = task.phase() == Phase.REJECTED || task.phase() == Phase.CANCELLED;
-        if (!abandoned && !state.disposable()) {
+        // Merged: its work is on the base branch now, while its own branch may be gone from origin, deleted by the merge.
+        boolean merged = task.mergedAt() != null;
+        if (!abandoned && !merged && !state.disposable()) {
             Log.warn("sweeper.kept", "task", task.id(), "phase", task.phase(), "uncommitted", state.uncommitted().size(),
                     "pushed", state.pushed(), "worktree", task.worktree());
             return false;

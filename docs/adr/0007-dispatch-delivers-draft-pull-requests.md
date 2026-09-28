@@ -19,3 +19,15 @@ Draft status marks the PR as unreviewed agent work; nothing merges without a hum
 - Each instance needs a GitHub identity with push and pull-request rights on its team's repositories.
 - The agent is denied `git commit`, `git push` and `gh` so that delivery goes through Dispatch. This is a guardrail, not a security boundary (see ADR 0009).
 - Delivery is GitHub-specific; another forge needs its own delivery step.
+
+## Amended 2026-09-28: merging from Telegram
+
+A personal bot's result message offers its requester a Merge button. A tap marks the draft ready and squash-merges it with
+`gh`, deleting its branch; `gh` runs outside any clone, so no checkout changes. When GitHub refuses (a check still running,
+a review required), its reason is shown under the result and the button stays. A human still decides every merge: nothing
+merges without that tap. A team bot offers no button, since its members' own computers hold the credentials that
+delivered each pull request.
+
+Once merged, a task takes no more commits: a reply to its result, or an addition to it, becomes a new task, planned from
+the new base with a pull request of its own. A pull request merged on GitHub instead is noticed when a follow-up is
+delivered, which then fails with that reason rather than pushing onto a branch nobody will merge.

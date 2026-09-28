@@ -617,6 +617,20 @@ class RendererTest {
     }
 
     @Test
+    void aDeliveredTaskOffersMergeWhereItsBotCanMergeAndSaysSoOnceMerged() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 1, List.of()).put("merge", true);
+
+        assertEquals(List.of(List.of(new Renderer.Button("🔀 Нэгтгэх", "merge:42"))),
+                renderer.render(OutboxKind.TASK_COMPLETED, payload).keyboard());
+        assertTrue(renderer.render(OutboxKind.TASK_COMPLETED, completedPayload("https://github.com/acme/alm/pull/7", 1, List.of()))
+                .keyboard().isEmpty(), "a bot that cannot merge offers nothing to tap");
+
+        Renderer.Rendered merged = renderer.render(OutboxKind.TASK_COMPLETED, payload.put("merged", true));
+        assertTrue(merged.keyboard().isEmpty(), "nothing left to merge: " + merged.keyboard());
+        assertTrue(merged.html().contains(renderer.text("task.mergedMark")), merged.html());
+    }
+
+    @Test
     void anAdditionOfferNamesItsTaskAndWhoWroteItWithOneButton() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.ADDITION_OFFERED, Json.object().put("additionId", 3).put("taskId", 8)
                 .put("title", "Ажилтны жагсаалт").put("by", "Nomin").put("text", "Tooltip for <long> positions"));
@@ -920,6 +934,8 @@ class RendererTest {
             case ASSISTANT_REPLY -> assistantPayload();
             case ADDITION_OFFERED -> Json.object().put("additionId", 3).put("taskId", 8).put("title", "Fix the list").put("by", "Nomin")
                     .put("text", "Also a <tooltip>").put("requester", "Ali");
+            case TASK_MERGED -> Json.object().put("taskId", 8).put("base", "main").put("prUrl", "https://github.com/acme/alm/pull/30");
+            case MERGE_REFUSED -> Json.object().put("taskId", 8).put("error", "GraphQL: Required status check \"build\" is expected.");
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

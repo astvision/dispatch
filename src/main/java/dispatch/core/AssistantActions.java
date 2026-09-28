@@ -218,7 +218,7 @@ public final class AssistantActions {
             case OPEN_QUESTIONS -> "openQuestions";
             case OUT_OF_ORDER -> "order";
             case ALREADY_ANSWERED -> "answered";
-            case WRONG_PHASE, STALE_PLAN, NOT_FAILED, NOT_EXECUTED -> "phase";
+            case WRONG_PHASE, STALE_PLAN, NOT_FAILED, NOT_EXECUTED, MERGED -> "phase";
         };
     }
 

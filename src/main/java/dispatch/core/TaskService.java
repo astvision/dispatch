@@ -842,6 +842,13 @@ public final class TaskService {
             return FollowUpResult.EMPTY;
         }
         Task task = verdict.task();
+        if (task.mergedAt() != null) {
+            // Its branch is merged and gone: more work is a new task, planned from the base the merge moved, with a pull
+            // request of its own. The last line points back without words, so it never sways the plan's language.
+            CreateResult created = create(tx, who, task.project(), text.strip() + "\n\n↩️ #" + taskId + " " + task.prUrl(),
+                    task.priority(), originRef);
+            return created == CreateResult.CREATED ? FollowUpResult.NEW_TASK : FollowUpResult.REFUSED;
+        }
         if (!Tasks.changePhase(tx, taskId, task.phase(), Phase.EXECUTING, now)) {
             refuse(tx, OutboxKind.FOLLOW_UP_REFUSED, who, verdict, taskId, TaskAccess.Refusal.WRONG_PHASE, originRef, chatRef, now);
             return FollowUpResult.REFUSED;
@@ -873,7 +880,9 @@ public final class TaskService {
         }
         // ponytail: one verdict per listed task (a few indexed reads each); batch the run reads if a list ever holds hundreds.
         for (Task task : listed) {
-            actions.put(task.id(), access.of(tx, viewer.ref(), task).allowed());
+            List<TaskAccess.Action> allowed = access.of(tx, viewer.ref(), task).allowed();
+            // A team bot cannot merge: its members' own computers hold the credentials that delivered each pull request.
+            actions.put(task.id(), requiresWorker ? allowed.stream().filter(action -> action != TaskAccess.Action.MERGE).toList() : allowed);
         }
         return actions;
     }

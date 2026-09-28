@@ -42,6 +42,7 @@ public final class Delivery {
     /** @param existingPrUrl the task's pull request from an earlier delivery, null if none */
     public Result deliver(Path worktree, long taskId, String baseBranch, String startSha, Commit commit, String existingPrUrl) {
         String branch = "dispatch/" + taskId;
+        requireOpen(worktree, existingPrUrl);
         if (!head(worktree).equals(startSha)) {
             // The agent committed despite its rules. Without this, its work would be pushed as someone else's commits,
             // or reported as "no changes" because the working tree is clean.
@@ -73,6 +74,7 @@ public final class Delivery {
      */
     public Result redeliver(Path worktree, long taskId, String baseBranch, String baseSha, Commit commit, String existingPrUrl) {
         String branch = "dispatch/" + taskId;
+        requireOpen(worktree, existingPrUrl);
         String pushed = pushedHead(worktree, branch);
         String start = pushed != null ? pushed : baseSha;
         if (!head(worktree).equals(start)) {
@@ -94,6 +96,22 @@ public final class Delivery {
         List<String> files = git.run(worktree, "diff", "--name-only", baseSha, head).lines().filter(line -> !line.isBlank()).toList();
         Log.info("delivery.redone", "task", taskId, "commit", head, "files", files.size(), "pr", prUrl);
         return new Result(files, head, prUrl);
+    }
+
+    /**
+     * More commits reach a task's pull request only while it is open. Pushed onto one merged or closed on GitHub, a follow-up
+     * would be reported as delivered while it reaches nothing; the Merge button records its own merges, so this catches a
+     * merge done on GitHub. Nothing is committed or pushed then: the follow-up's changes stay in the worktree.
+     */
+    private void requireOpen(Path worktree, String prUrl) {
+        if (prUrl == null) {
+            return;
+        }
+        String state = gh.pullRequestState(worktree, prUrl);
+        if (!state.equals("OPEN")) {
+            throw new WorkspaceException("pull request " + prUrl + " is " + state.toLowerCase(java.util.Locale.ROOT)
+                    + ", so this follow-up was not delivered; give it as a new task");
+        }
     }
 
     /** The branch's commit on origin, null if it was never pushed. */

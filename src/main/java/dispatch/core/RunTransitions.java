@@ -38,11 +38,18 @@ public final class RunTransitions {
     private final Database db;
     private final Clock clock;
     private final Runnable wakeOutbox;
+    private final boolean offerMerge;
 
     public RunTransitions(Database db, Clock clock, Runnable wakeOutbox) {
+        this(db, clock, wakeOutbox, false);
+    }
+
+    /** @param offerMerge a delivered task's result offers its requester the Merge button: a personal bot, which can merge */
+    public RunTransitions(Database db, Clock clock, Runnable wakeOutbox, boolean offerMerge) {
         this.db = db;
         this.clock = clock;
         this.wakeOutbox = wakeOutbox;
+        this.offerMerge = offerMerge;
     }
 
     public void recordBuildSession(long taskId, UUID buildSessionId) {
@@ -112,6 +119,9 @@ public final class RunTransitions {
                     files.isEmpty() ? "no changes" : "delivered " + files.size() + " changed files", now);
             ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("prUrl", prUrl)
                     .put("filesChanged", files.size()).put("summary", summary);
+            if (offerMerge) {
+                payload.put("merge", true);
+            }
             ArrayNode denials = payload.putArray("denials");
             if (result != null) {
                 result.denials().forEach(denials::add);

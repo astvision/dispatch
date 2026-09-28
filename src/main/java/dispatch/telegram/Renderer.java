@@ -26,6 +26,8 @@ public final class Renderer {
     private static final int DENIAL_LIMIT = 200;
     private static final int DENIALS_SHOWN = 5;
     private static final int TITLE_LIMIT = 80;
+    /** GitHub's reason for refusing a merge: its first lines say why; a whole GraphQL error would drown the message. */
+    private static final int MERGE_ERROR_LIMIT = 500;
     private static final int ACTION_LIMIT = 120;
     private static final int INSTRUCTION_LIMIT = 150;
     /** A plan question's text: long enough for any real question, short enough for its message. */
@@ -209,6 +211,10 @@ public final class Renderer {
             case GROUP_READD -> plain(format("group.readdAfterMigration", escape(payload.path("group").asText())));
             case ASSISTANT_REPLY -> assistantReply(payload);
             case ADDITION_OFFERED -> additionOffered(payload);
+            case TASK_MERGED -> plain(format("task.merged", taskId(payload), escape(payload.path("base").asText())));
+            case MERGE_REFUSED -> plain(payload.path("closed").asBoolean(false)
+                    ? format("task.mergeClosed", taskId(payload))
+                    : format("task.mergeRefused", taskId(payload), escapeWithin(payload.path("error").asText(), MERGE_ERROR_LIMIT)));
         };
     }
 
@@ -625,7 +631,15 @@ public final class Renderer {
         html.append("\n\n<i>").append(modelPrefix(payload)).append(format("task.completedFooter", filesChanged, money(payload.path("costUsd")),
                 duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload));
         html.append("\n").append(text("task.followUpHint"));
-        return plain(html.toString());
+        if (payload.path("merged").asBoolean(false)) {
+            html.append("\n\n").append(text("task.mergedMark"));
+            return plain(html.toString());
+        }
+        // Only a bot that can merge offers it (a personal one), and only for a pull request there is.
+        boolean mergeable = payload.path("merge").asBoolean(false) && payload.hasNonNull("prUrl") && filesChanged > 0;
+        return new Rendered(html.toString(), mergeable
+                ? List.of(List.of(new Button(text("button.merge"), "merge:" + payload.path("taskId").asLong())))
+                : List.of(), null);
     }
 
     private Rendered status(JsonNode payload) {

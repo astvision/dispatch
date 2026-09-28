@@ -84,6 +84,21 @@ class DeliveryTest {
     }
 
     @Test
+    void aFollowUpOntoAPullRequestMergedOnGitHubFailsInsteadOfBeingStranded() throws IOException {
+        Files.writeString(worktree.resolve("README.md"), "v2\n");
+        delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        String delivered = origin("rev-parse", "refs/heads/dispatch/42");
+        Files.writeString(worktree.resolve("fake-gh.state"), "MERGED\n");
+        Files.writeString(worktree.resolve("README.md"), "v3\n");
+
+        WorkspaceException refused = assertThrows(WorkspaceException.class,
+                () -> delivery(null).deliver(worktree, 42, "main", delivered, COMMIT, FakeGh.PR_URL));
+
+        assertTrue(refused.getMessage().contains(FakeGh.PR_URL) && refused.getMessage().contains("merged"), refused.getMessage());
+        assertEquals(delivered, origin("rev-parse", "refs/heads/dispatch/42"), "nothing pushed onto the merged branch");
+    }
+
+    @Test
     void runWithoutChangesDeliversNothing() {
         Delivery.Result result = delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
 
@@ -114,7 +129,8 @@ class DeliveryTest {
 
         assertEquals("https://github.com/acme/alm/pull/3", result.prUrl());
         assertEquals(result.commitSha(), origin("rev-parse", "refs/heads/dispatch/42"));
-        assertFalse(Files.exists(worktree.resolve("fake-gh.args")));
+        assertEquals(List.of("pr", "view", "https://github.com/acme/alm/pull/3", "--json", "state", "--jq", ".state", "--"),
+                Files.readAllLines(worktree.resolve("fake-gh.calls")), "only asked whether it is still open; no second pull request");
     }
 
     @Test

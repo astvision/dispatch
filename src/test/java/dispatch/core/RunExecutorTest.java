@@ -449,7 +449,7 @@ class RunExecutorTest {
         String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
         assertTrue(prompt.contains("Bold replied") && prompt.contains("Also log the timeout value"), prompt);
         assertEquals("2", origin("rev-list", "--count", baseSha + "..refs/heads/dispatch/" + id), "one commit per run, on the same branch");
-        String ghCalls = Files.readString(worktree.resolve("fake-gh.args"));
+        String ghCalls = Files.readString(worktree.resolve("fake-gh.calls"));
         assertEquals(1, ghCalls.split("pr\ncreate", -1).length - 1, "the pull request is opened once: " + ghCalls);
     }
 
@@ -485,6 +485,23 @@ class RunExecutorTest {
         assertTrue(Files.isDirectory(worktree));
         String baseSha = row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha");
         assertEquals("2", origin("rev-list", "--count", baseSha + "..refs/heads/dispatch/" + id));
+    }
+
+    @Test
+    void sweepRemovesAMergedTasksWorktreeThoughItsBranchIsGoneFromOrigin() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        // What gh pr merge --delete-branch leaves behind.
+        GitFixture.sh(dir, "git", "--git-dir=" + repos.origin, "branch", "-D", "dispatch/" + id);
+
+        assertEquals(0, sweeper.sweep(), "its commit is nowhere on origin, so it looks unpushed");
+        db.transaction(tx -> dispatch.store.Tasks.merged(tx, id, Instant.parse("2026-09-17T12:00:00Z")));
+        assertEquals(1, sweeper.sweep(), "merged: its work is on the base branch now");
+
+        assertFalse(Files.exists(worktree));
     }
 
     @Test

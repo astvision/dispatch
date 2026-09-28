@@ -99,5 +99,9 @@ public enum OutboxKind {
      * {@code additionId} for its button, {@code taskId} (absent for a draft), {@code title}, {@code by}, {@code text}, and
      * {@code requester}, the ✉️ line's name if the group's 👀 reaction is refused.
      */
-    ADDITION_OFFERED
+    ADDITION_OFFERED,
+    /** To the requester, under the result they tapped Merge on: the pull request is merged. Payload: taskId, base, prUrl. */
+    TASK_MERGED,
+    /** To the requester, under that result: GitHub refused the merge. Payload: taskId, and error (GitHub's words) or closed. */
+    MERGE_REFUSED
 }
