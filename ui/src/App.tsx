@@ -32,6 +32,7 @@ const ProjectPage = lazy(() => import("./mini/ProjectPage"));
 const MiniProjectsPage = lazy(() => import("./mini/ProjectsPage"));
 const TasksPage = lazy(() => import("./mini/TasksPage"));
 const OverviewPage = lazy(() => import("./OverviewPage"));
+const DesktopTasksPage = lazy(() => import("./desktop/tasks/TasksPage"));
 const SetupPage = lazy(() => import("./setup/SetupPage"));
 
 const SETUP_PAGES: ShellPage[] = [{ key: "setup", label: "nav.setup" }];
@@ -192,7 +193,9 @@ function WebUi() {
     <Shell pages={state.configExists ? DESKTOP_PAGES : SETUP_PAGES}
            selected={state.configExists ? page : "setup"}
            onSelect={(key) => state.configExists && navigate(key)}>
-      {state.configExists ? <Page path={page} /> : <SetupPage onDone={setUp} />}
+      {!state.configExists ? <SetupPage onDone={setUp} />
+        : page === "/tasks" ? <DesktopTasksPage navigate={navigate} />
+        : <Page path={page} />}
     </Shell>
   );
 }

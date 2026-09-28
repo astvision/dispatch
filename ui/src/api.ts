@@ -372,6 +372,8 @@ export interface Timeline {
   phase: string;
   priority: string;
   prUrl: string | null;
+  branch?: string;
+  baseBranch?: string;
   failureReason: string | null;
   createdAt: string | null;
   completedAt: string | null;
@@ -400,11 +402,15 @@ export interface PlanView {
   questions: PlanQuestionView[];
 }
 
-/** The requester's own task with its latest plan, as the Mini App's task sheet shows it. */
+/** The requester's own task with its latest plan, as the Mini App's task sheet shows it; the desk shows any task so (D-2). */
 export interface TaskDetail {
   taskId: number;
   project: string;
   title: string;
+  requester?: string;
+  priority?: string;
+  branch?: string;
+  baseBranch?: string;
   phase: string;
   prUrl: string | null;
   failureReason: string | null;
