@@ -51,7 +51,7 @@ public final class UiCommand {
             Map<String, BiFunction<UiServer.Caller, JsonNode, Object>> postRoutes =
                     new HashMap<>(UiRoutes.anyCaller(setup.routes(), false));
             postRoutes.putAll(management.post(false));
-            server = UiServer.start(options.port(), resourceRoot, management.get(false), postRoutes);
+            server = startOn(options, postRoutes, management);
         } catch (BindException e) {
             throw new CliException("port " + options.port() + " is in use; choose another with --port");
         } catch (IOException e) {
@@ -66,6 +66,21 @@ public final class UiCommand {
             openBrowser(server.loginUri());
         }
         return server;
+    }
+
+    /** An explicit --port is kept or refused; the default one gives way to the next free port (another instance's UI may hold it). */
+    private UiServer startOn(Cli.Ui options, Map<String, BiFunction<UiServer.Caller, JsonNode, Object>> post, UiRoutes management)
+            throws IOException {
+        int last = options.portGiven() ? options.port() : Math.min(65535, options.port() + 20);
+        for (int port = options.port(); ; port++) {
+            try {
+                return UiServer.start(port, resourceRoot, management.get(false), post);
+            } catch (BindException e) {
+                if (port >= last) {
+                    throw e;
+                }
+            }
+        }
     }
 
     private void openBrowser(URI link) {

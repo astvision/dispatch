@@ -1,6 +1,7 @@
 package dispatch.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,7 +10,9 @@ import dispatch.cli.CliException;
 import dispatch.cli.Locations;
 import dispatch.cli.Service;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -85,6 +88,20 @@ class UiCommandTest {
                     () -> command("/ui-test").start(new Cli.Ui(dir.resolve("dispatch.yaml"), taken.getLocalPort(), false), Map.of()));
 
             assertTrue(e.getMessage().contains("--port"), e.getMessage());
+        }
+    }
+
+    @Test
+    void withoutPortItMovesOnFromABusyOne() throws IOException {
+        try (ServerSocket busy = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))) {
+            UiServer server = command("/ui-test").start(new Cli.Ui(dir.resolve("dispatch.yaml"), busy.getLocalPort(), false, null, false), Map.of());
+            try {
+                assertNotEquals(busy.getLocalPort(), server.port());
+            } finally {
+                server.close();
+            }
+            assertThrows(CliException.class,
+                    () -> command("/ui-test").start(new Cli.Ui(dir.resolve("dispatch.yaml"), busy.getLocalPort(), false, null, true), Map.of()));
         }
     }
 
