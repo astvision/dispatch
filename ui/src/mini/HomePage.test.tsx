@@ -14,6 +14,7 @@ vi.mock("../api", async (importOriginal) => ({
   answerQuestion: vi.fn(),
   approvePlan: vi.fn(),
   rejectPlan: vi.fn(),
+  correctPlan: vi.fn(),
 }));
 
 const ME: api.Me = { ref: "telegram:100", name: "Bold", admin: false, bot: "dispatch_task_bot" };
@@ -169,6 +170,37 @@ describe("the home screen", () => {
     fireEvent.click(within(sheet).getByRole("button", { name: "Тийм, татгалзах" }));
 
     await waitFor(() => expect(api.rejectPlan).toHaveBeenCalledWith(11, 2));
+  });
+
+  it("sends added context so the agent plans again", async () => {
+    vi.mocked(api.getTaskDetail).mockResolvedValue(
+      detailOf(waitingOnApproval, { ...planWithQuestions, planSeq: 2, current: 0, questions: [] }));
+    vi.mocked(api.correctPlan).mockResolvedValue({ result: "CORRECTED" });
+    renderHome([waitingOnApproval]);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Add the CSV export/ }));
+    const sheet = await dialog();
+    fireEvent.click(await within(sheet).findByRole("button", { name: "✍️ Нэмэлт мэдээлэл өгөх" }));
+    fireEvent.change(within(sheet).getByLabelText("Нэмэлт мэдээлэл"), { target: { value: " also export XLSX " } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Илгээх" }));
+
+    await waitFor(() => expect(api.correctPlan).toHaveBeenCalledWith(11, 2, "also export XLSX"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("closes a waiting plan with the close button, deciding nothing", async () => {
+    vi.mocked(api.getTaskDetail).mockResolvedValue(
+      detailOf(waitingOnApproval, { ...planWithQuestions, planSeq: 2, current: 0, questions: [] }));
+    renderHome([waitingOnApproval]);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Add the CSV export/ }));
+    const sheet = await dialog();
+    await within(sheet).findByRole("button", { name: "Зөвшөөрөх" });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Хаах" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(api.approvePlan).not.toHaveBeenCalled();
+    expect(api.rejectPlan).not.toHaveBeenCalled();
   });
 
   it("says why an action was refused and keeps the sheet open", async () => {

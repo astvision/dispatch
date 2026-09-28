@@ -1,13 +1,13 @@
 import { Input } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  answerQuestion, ApiError, approvePlan, getTaskDetail, rejectPlan, type Answer, type PlanQuestionView, type TaskDetail,
+  answerQuestion, ApiError, approvePlan, correctPlan, getTaskDetail, rejectPlan, type Answer, type PlanQuestionView, type TaskDetail,
   type TaskRow,
 } from "../api";
 import { haptic, useTelegramBackButton } from "./backButton";
 import { clock, clockStart, stateOf } from "./tickets";
 
-export type Decision = "answered" | "approved" | "rejected";
+export type Decision = "answered" | "approved" | "rejected" | "corrected";
 
 /** The printed header: number, project, and the state word with how long it has been in it. */
 export function Head({ task, time }: { task: TaskRow; time: string }) {
@@ -31,7 +31,7 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
   task: TaskRow;
   now: number;
   onClose: () => void;
-  /** A decision that takes the ticket off the pass: the last answer, an approval or a rejection. */
+  /** A decision that takes the ticket off the pass: the last answer, an approval, a rejection or added context. */
   onDecided: (taskId: number, decision: Decision) => void;
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
@@ -77,6 +77,7 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
   const plan = detail?.plan;
   // What the sheet offers is the server's (ADR 0027): a decision while the plan waits for one, and the question to answer.
   const decides = detail?.actions.includes("reject") ?? false;
+  const mayCorrect = detail?.actions.includes("correct") ?? false;
   const mayApprove = detail?.actions.includes("approve") ?? false;
   const current = plan?.current ?? 0;
 
@@ -97,6 +98,7 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
       <div className="sheet-backdrop" onClick={onClose} aria-hidden="true" />
       <section className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" data-tone={state.tone}>
         <span className="band" aria-hidden="true" />
+        <button type="button" className="sheet-close" aria-label="Хаах" onClick={onClose}>✕</button>
         <Head task={task} time={clock(clockStart(task), now)} />
         <h2 id="sheet-title" ref={heading} tabIndex={-1}>{task.title}</h2>
 
@@ -135,7 +137,8 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
 
         <div className="sheet-actions">
           {decides && plan
-            ? <Decide busy={busy} mayApprove={mayApprove}
+            ? <Decide busy={busy} mayApprove={mayApprove} mayCorrect={mayCorrect}
+                      onCorrect={(text) => void act(() => correctPlan(task.taskId, plan.planSeq, text), () => onDecided(task.taskId, "corrected"))}
                       onApprove={() => void act(() => approvePlan(task.taskId, plan.planSeq), () => onDecided(task.taskId, "approved"))}
                       onReject={() => void act(() => rejectPlan(task.taskId, plan.planSeq), () => onDecided(task.taskId, "rejected"))} />
             : <button type="button" className="sheet-reject" style={{ color: "var(--link)" }} onClick={onClose}>Хаах</button>}
@@ -203,15 +206,36 @@ function Question({ question, total, current, later, busy, onAnswer }: {
   );
 }
 
-/** Approve, or reject after one more tap: rejecting ends the task, and Telegram's webview shows no confirm() dialog. */
-function Decide({ busy, mayApprove, onApprove, onReject }: {
+/**
+ * Approve, add context for the agent to plan again with, or reject after one more tap: rejecting ends the task, and
+ * Telegram's webview shows no confirm() dialog.
+ */
+function Decide({ busy, mayApprove, mayCorrect, onApprove, onCorrect, onReject }: {
   busy: boolean;
   /** False while the plan asks questions: their answers make the agent plan again, and that plan is approved. */
   mayApprove: boolean;
+  mayCorrect: boolean;
   onApprove: () => void;
+  onCorrect: (text: string) => void;
   onReject: () => void;
 }) {
   const [asking, setAsking] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [text, setText] = useState("");
+  if (writing) {
+    return (
+      <>
+        <p className="note">Агент энэ мэдээллийг авч төлөвлөгөөгөө дахин гаргана.</p>
+        <Input.TextArea aria-label="Нэмэлт мэдээлэл" placeholder="Жишээ нь: зөвхөн backend-ийг өөрчил, тестээ бич…"
+                        autoSize={{ minRows: 3, maxRows: 8 }} value={text} autoFocus onChange={(event) => setText(event.target.value)} />
+        <button type="button" className="ticket-go" style={{ marginTop: 0 }} disabled={busy || text.trim() === ""}
+                onClick={() => onCorrect(text.trim())}>
+          Илгээх
+        </button>
+        <button type="button" className="sheet-reject" style={{ color: "var(--link)" }} onClick={() => setWriting(false)}>Болих</button>
+      </>
+    );
+  }
   if (asking) {
     return (
       <>
@@ -230,6 +254,12 @@ function Decide({ busy, mayApprove, onApprove, onReject }: {
       <button type="button" className="ticket-go" style={{ marginTop: 0 }} disabled={busy || !mayApprove} onClick={onApprove}>
         Зөвшөөрөх
       </button>
+      {mayCorrect && (
+        <button type="button" className="choice" style={{ textAlign: "center", color: "var(--link)" }} disabled={busy}
+                onClick={() => setWriting(true)}>
+          ✍️ Нэмэлт мэдээлэл өгөх
+        </button>
+      )}
       <button type="button" className="sheet-reject" disabled={busy} onClick={() => setAsking(true)}>Татгалзах</button>
     </>
   );

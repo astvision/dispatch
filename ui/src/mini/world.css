@@ -64,6 +64,12 @@
   background: radial-gradient(circle at 5px 0, color-mix(in srgb, var(--ground) 55%, #000) 3.2px, transparent 3.7px) 0 0 / 10px 7px repeat-x;
 }
 .sheet .band { top: 7px; border-radius: 0; }
+.sheet-close {
+  position: absolute; top: 14px; right: 10px; width: 44px; height: 44px; border: 0; border-radius: 50%;
+  background: none; color: var(--hint-ink); font-size: 18px; line-height: 1; cursor: pointer;
+}
+.sheet-close:active { background: var(--rule); }
+.sheet > .ticket-head { padding-right: 40px; }
 .sheet h2 { margin: 8px 0 0; font-size: 20px; line-height: 1.3; font-weight: 700; overflow-wrap: anywhere; text-wrap: balance; }
 .sheet h3 { margin: 22px 0 6px; font-size: 15px; font-weight: 600; }
 .sheet p, .sheet li { font-size: 15px; line-height: 1.5; max-width: 68ch; overflow-wrap: anywhere; }
