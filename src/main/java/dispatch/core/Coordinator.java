@@ -17,7 +17,6 @@ import dispatch.store.Database;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import java.math.BigDecimal;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -73,7 +72,7 @@ public final class Coordinator {
 
             @Override
             public void worktreeCreated(String worktree, String baseSha) {
-                transitions.recordWorktree(claimed.taskId(), Path.of(worktree), baseSha);
+                transitions.recordWorktree(claimed.taskId(), worktree, baseSha);
             }
 
             @Override
@@ -131,7 +130,7 @@ public final class Coordinator {
         Job.Project on = new Job.Project(project.name(), project.repo(), project.path(), project.baseBranch(), project.agent(),
                 project.copyFiles());
         return new Job(task.id(), run.seq(), run.kind(), on, task.baseBranch(), task.baseSha(),
-                task.worktree() == null ? null : task.worktree().toString(), task.prUrl(), sessionId, resume, prompt, model,
+                task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
                 trailers(task, run.kind()), deliverySummary);
     }

@@ -1,7 +1,6 @@
 package dispatch.store;
 
 import java.math.BigDecimal;
-import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -64,10 +63,5 @@ public final class Row {
     public BigDecimal decimal(String column) throws SQLException {
         String value = resultSet.getString(column);
         return value == null ? null : new BigDecimal(value);
-    }
-
-    public Path path(String column) throws SQLException {
-        String value = resultSet.getString(column);
-        return value == null ? null : Path.of(value);
     }
 }

@@ -9,6 +9,7 @@ import dispatch.store.Tasks;
 import dispatch.workspace.WorkspaceException;
 import dispatch.workspace.Workspaces;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
@@ -68,11 +69,12 @@ public final class Sweeper implements Runnable {
         List<Task> candidates = db.transactionReturning(tx -> Tasks.finishedIdleWithWorktree(tx, clock.instant().minus(idle)));
         int removed = 0;
         for (Task task : candidates) {
-            if (!Files.isDirectory(task.worktree()) || stopped) {
+            Path worktree = Path.of(task.worktree());
+            if (!Files.isDirectory(worktree) || stopped) {
                 continue;
             }
             try {
-                removed += sweep(task) ? 1 : 0;
+                removed += sweep(task, worktree) ? 1 : 0;
             } catch (WorkspaceException e) {
                 Log.warn("sweeper.failed", "task", task.id(), "error", e.getMessage());
             }
@@ -83,13 +85,13 @@ public final class Sweeper implements Runnable {
         return removed;
     }
 
-    private boolean sweep(Task task) {
+    private boolean sweep(Task task, Path worktree) {
         Optional<Config.Project> project = projects.byName(task.project());
         if (project.isEmpty()) {
             Log.warn("sweeper.project_gone", "task", task.id(), "project", task.project(), "worktree", task.worktree());
             return false;
         }
-        Workspaces.WorktreeState state = workspaces.state(task.worktree(), task.id(), task.baseSha());
+        Workspaces.WorktreeState state = workspaces.state(worktree, task.id(), task.baseSha());
         boolean abandoned = task.phase() == Phase.REJECTED || task.phase() == Phase.CANCELLED;
         // Merged: its delivered work is on the base branch, while its own branch may be gone from origin, deleted by the
         // merge. That excuses "not pushed" only; changes never delivered (a follow-up refused at delivery) are kept.
