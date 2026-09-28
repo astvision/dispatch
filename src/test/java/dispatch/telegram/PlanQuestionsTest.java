@@ -6,14 +6,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
+import dispatch.Language;
+import dispatch.Text;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Groups;
 import dispatch.core.Membership;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
@@ -117,11 +121,11 @@ class PlanQuestionsTest {
         assertEquals("prod", answer.get("answer"));
         assertEquals("telegram:100", answer.get("answered_by"));
         assertEquals("telegram:100/" + question1, answer.get("message_ref"));
-        Map<String, String> edit = row("SELECT * FROM outbox WHERE edit_ref IS NOT NULL");
+        Map<String, String> edit = row("SELECT * FROM outbox WHERE edit_of IS NOT NULL");
         assertEquals("PLAN_QUESTION", edit.get("kind"));
-        assertEquals("telegram:100/" + question1, edit.get("edit_ref"));
+        assertEquals(questionRow(question1), edit.get("edit_of"), "redraws the question's own row (ADR 0031)");
         assertEquals("prod", Json.read(edit.get("payload")).get("answer").asText());
-        Map<String, String> next = row("SELECT * FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_ref IS NULL AND status = 'PENDING'");
+        Map<String, String> next = row("SELECT * FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_of IS NULL AND status = 'PENDING'");
         assertEquals(2, Json.read(next.get("payload")).get("index").asInt());
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
     }
@@ -180,20 +184,21 @@ class PlanQuestionsTest {
         Map<String, String> answer = row("SELECT * FROM plan_answer WHERE task_id = ?", taskId);
         assertEquals("Only staging, prod next week", answer.get("answer"));
         assertEquals("telegram:100/" + question1, answer.get("message_ref"), "the question, not the prompt, is redrawn");
-        assertEquals("telegram:100/" + question1, row("SELECT edit_ref FROM outbox WHERE edit_ref IS NOT NULL").get("edit_ref"));
+        assertEquals(questionRow(question1), row("SELECT edit_of FROM outbox WHERE edit_of IS NOT NULL").get("edit_of"));
     }
 
     @Test
-    void aSecondWriteTapWhileThePromptIsOpenPointsAtIt() throws Exception {
+    void theWriteYourAnswerButtonAsksOnceAndNotForAnotherPlansQuestion() throws Exception {
         long taskId = taskWithTwoQuestions();
         long question1 = deliveredQuestion(1);
 
         handler.handle(tap(626, BOLD, question1, "q:" + taskId + ":1:1:w"));
-        telegram.drain("answerCallbackQuery");
-        deliverAll();
+        assertEquals(renderer.text("callback.writeAnswer"), answerText());
         handler.handle(tap(627, BOLD, question1, "q:" + taskId + ":1:1:w"));
+        assertEquals(renderer.text("plan.answerPromptOpen"), answerText(), "its prompt is still open");
+        handler.handle(tap(628, BOLD, question1, "q:" + taskId + ":9:1:w"));
+        assertEquals(Text.of("refused.stalePlan", taskId).render(Language.MN), answerText());
 
-        assertEquals("Хариултаа доорх мессежид бичнэ үү.", answerText());
         assertEquals("1", count("SELECT count(*) AS n FROM outbox WHERE kind = 'PLAN_ANSWER_PROMPT'"));
     }
 
@@ -223,8 +228,43 @@ class PlanQuestionsTest {
 
         handler.handle(UpdateHandlerTest.callback(608, 200, "Ali", GROUP, deliveredQuestion(1), "q:" + taskId + ":1:1:0"));
 
-        assertEquals(renderer.text("callback.notRequester"), answerText());
+        assertEquals(Text.of("refused.notRequester", taskId, "Bold").render(Language.MN), answerText());
         assertEquals("0", count("SELECT count(*) AS n FROM plan_answer"));
+    }
+
+    /** Only a button's notice has Telegram's 200-character cap; a long name makes a refusal's words longer than that. */
+    @Test
+    void aRefusalLongerThanANoticeHoldsIsCutThereNeverInsideAnEmoji() throws Exception {
+        String longName = "Bold " + "x".repeat(300);
+        long plain = taskWithTwoQuestions(longName);
+
+        handler.handle(UpdateHandlerTest.callback(640, 200, "Ali", GROUP, 88, "q:" + plain + ":1:1:0"));
+
+        String notice = answerText();
+        assertEquals(Text.of("refused.notRequester", plain, longName).render(Language.MN).substring(0, 199) + "…", notice);
+        assertEquals(200, notice.length());
+        // One of the two lands the cut inside an emoji, whatever the words before the name come to.
+        for (String name : List.of("😀".repeat(150), "x" + "😀".repeat(150))) {
+            long taskId = taskWithTwoQuestions(name);
+            handler.handle(UpdateHandlerTest.callback(641 + taskId, 200, "Ali", GROUP, 88, "q:" + taskId + ":1:1:0"));
+
+            String cut = answerText();
+            assertTrue(cut.length() <= 200 && cut.endsWith("…"), cut);
+            // Half an emoji would reach Telegram as "?", which the words do not begin with.
+            assertTrue(Text.of("refused.notRequester", taskId, name).render(Language.MN).startsWith(cut.substring(0, cut.length() - 1)),
+                    "never half an emoji: " + cut);
+        }
+    }
+
+    /** A notice is masked as everything else the handler sends: a refusal's words may carry git's error, or here a name. */
+    @Test
+    void aRefusalsNoticeIsRedacted() throws Exception {
+        String token = "gh" + "p_" + "Q7w8E9r0T1".repeat(4);
+        long taskId = taskWithTwoQuestions("Bold " + token);
+
+        handler.handle(UpdateHandlerTest.callback(650, 200, "Ali", GROUP, 88, "q:" + taskId + ":1:1:0"));
+
+        assertEquals(Text.of("refused.notRequester", taskId, "Bold [redacted]").render(Language.MN), answerText());
     }
 
     @Test
@@ -233,16 +273,16 @@ class PlanQuestionsTest {
         long question1 = deliveredQuestion(1);
 
         handler.handle(tap(609, BOLD, question1, "q:" + taskId + ":9:1:0"));
-        assertEquals(renderer.text("callback.stale"), answerText());
+        assertEquals(Text.of("refused.stalePlan", taskId).render(Language.MN), answerText());
         assertEquals("0", count("SELECT count(*) AS n FROM plan_answer"));
 
         handler.handle(tap(610, BOLD, question1, "q:" + taskId + ":1:1:0"));
         telegram.drain("answerCallbackQuery");
         handler.handle(tap(611, BOLD, question1, "q:" + taskId + ":1:1:1"));
 
-        assertEquals("Энэ асуултад аль хэдийн хариулсан.", answerText(), "answered, while the plan is still current");
+        assertEquals(Text.of("refused.answered", taskId).render(Language.MN), answerText(), "answered, while the plan is still current");
         assertEquals("staging", row("SELECT answer FROM plan_answer WHERE task_id = ?", taskId).get("answer"));
-        assertEquals("2", count("SELECT count(*) AS n FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_ref IS NULL"),
+        assertEquals("2", count("SELECT count(*) AS n FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_of IS NULL"),
                 "the second question was sent once");
     }
 
@@ -257,7 +297,7 @@ class PlanQuestionsTest {
         handler.handle(UpdateHandlerTest.message(621, 73, BOLD, "Bold", BOLD, "private", "prod after all", botReply(question1)));
         deliverAll();
 
-        assertEquals("Энэ асуултад аль хэдийн хариулсан.", lastSentText());
+        assertEquals(Text.of("refused.answered", taskId).render(Language.MN), lastSentText());
         assertEquals("staging", row("SELECT answer FROM plan_answer WHERE task_id = ?", taskId).get("answer"));
 
         long planMessage = messageId(row("SELECT sent_ref FROM outbox WHERE kind = 'PLAN_READY'").get("sent_ref"));
@@ -265,7 +305,8 @@ class PlanQuestionsTest {
         handler.handle(UpdateHandlerTest.message(623, 75, BOLD, "Bold", BOLD, "private", "yes", botReply(question2)));
         deliverAll();
 
-        assertEquals("#" + taskId + ": энэ төлөвлөгөө хуучирсан байна. Хамгийн сүүлийн төлөвлөгөөнд хариу бичнэ үү.", lastSentText());
+        // The typed correction has the agent planning again: the old plan's questions wait for nothing now.
+        assertEquals(Text.of("refused.wrongPhase", taskId, Text.of("phase.planning")).render(Language.MN), lastSentText());
     }
 
     @Test
@@ -281,7 +322,9 @@ class PlanQuestionsTest {
         handler.handle(sticker);
         deliverAll();
 
-        assertEquals("Хариултаа текстээр бичнэ үү.", lastSentText());
+        assertEquals("REFUSED", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:100/76'").get("kind"),
+                "a blank answer is told, where a blank correction is left be (R6): the member meant to answer");
+        assertEquals(Text.of("refused.emptyAnswer").render(Language.MN), lastSentText());
         assertEquals("0", count("SELECT count(*) AS n FROM plan_answer WHERE task_id = " + taskId));
     }
 
@@ -303,7 +346,7 @@ class PlanQuestionsTest {
         refusing.handle(UpdateHandlerTest.message(625, 77, BOLD, "Bold", BOLD, "private", "prod", botReply(question1)));
         deliverAll();
 
-        assertEquals(renderer.text("callback.notAllowed"), lastSentText());
+        assertEquals(Text.of("refused.notMember").render(Language.MN), lastSentText());
         assertEquals("0", count("SELECT count(*) AS n FROM plan_answer"));
     }
 
@@ -319,7 +362,7 @@ class PlanQuestionsTest {
         handler.handle(tap(614, BOLD, question2, "q:" + taskId + ":1:2:0"));
 
         assertEquals("Forget it, only fix staging", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction"));
-        assertEquals(renderer.text("callback.stale"), answerText());
+        assertEquals(Text.of("refused.wrongPhase", taskId, Text.of("phase.planning")).render(Language.MN), answerText());
         assertEquals("1", count("SELECT count(*) AS n FROM plan_answer"));
         assertEquals("2", count("SELECT count(*) AS n FROM run WHERE task_id = " + taskId), "no second correction");
     }
@@ -345,9 +388,14 @@ class PlanQuestionsTest {
 
     /** A task for Bold whose first plan asks two questions, the first with two options. */
     private long taskWithTwoQuestions() {
-        String origin = "telegram:100/" + System.nanoTime();
-        db.transaction(tx -> tasks.create(tx, new Requester("telegram:100", "Bold"), "alm", "Fix the login timeout", Priority.NORMAL,
-                origin));
+        return taskWithTwoQuestions("Bold");
+    }
+
+    /** @param requesterName what the task calls Bold, its requester */
+    private long taskWithTwoQuestions(String requesterName) {
+        Origin origin = new Origin("telegram:100/" + System.nanoTime());
+        db.transaction(tx -> tasks.commands().run(tx, new Requester("telegram:100", requesterName),
+                new TaskCommand.Give("alm", "Fix the login timeout", Priority.NORMAL, origin)));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(),
                 List.of(new PlanQuestion("Which environments?", List.of("staging", "prod")),
@@ -364,6 +412,11 @@ class PlanQuestionsTest {
                         r -> new String[] {r.string("sent_ref"), r.string("payload")}))
                 .stream().filter(sent -> Json.read(sent[1]).get("index").asInt() == index)
                 .map(sent -> messageId(sent[0])).findFirst().orElseThrow();
+    }
+
+    /** The outbox row of the question Telegram got as message {@code messageId}. */
+    private String questionRow(long messageId) {
+        return row("SELECT id FROM outbox WHERE kind = 'PLAN_QUESTION' AND sent_ref = ?", "telegram:100/" + messageId).get("id");
     }
 
     private void deliverAll() {

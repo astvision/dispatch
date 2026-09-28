@@ -67,3 +67,15 @@ _Avoid_: Publish, deploy, release
 **Run**:
 One invocation of an agent on a task: either a planning run (read-only) or an execution run (implementing an approved plan or a follow-up). All runs of a task work on the same branch. Planning runs continue one agent conversation. Execution runs continue another, which starts from the approved plan instead of the investigation.
 _Avoid_: Attempt, execution, job
+
+**News**:
+What the bot tells a task's requester and group about the task, whoever acted and wherever they acted: that it was queued, planned, cancelled or finished. The requester's news arrives in the task's own topic.
+_Avoid_: Notification, announcement, event
+
+**Refusal**:
+The bot declining what someone asked of a task, with the reason: not their task, no such task, the plan moved on, a question still open, the wrong phase. Nothing about the task changes.
+_Avoid_: Error, denial, rejection (a requester rejects a plan)
+
+**Reply**:
+The bot's answer to whoever acted, in the place where they acted: under their message, as a button's brief notice, or on the page they used. A refusal and its reason is always a reply, never news.
+_Avoid_: Response, acknowledgement, toast

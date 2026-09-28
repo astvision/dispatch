@@ -3,18 +3,23 @@ package dispatch.ui;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
+import dispatch.Text;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
+import dispatch.core.CommandResult;
 import dispatch.core.Groups;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
@@ -23,15 +28,20 @@ import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Runs;
+import dispatch.store.Tasks;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import dispatch.ui.UiServer.Caller;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +67,8 @@ class TasksApiTest {
     private TasksApi api;
     private RunTransitions transitions;
     private Groups groups;
+    /** Why alm cannot take tasks now; null while it can. */
+    private final AtomicReference<String> unavailable = new AtomicReference<>();
 
     @BeforeEach
     void setUp() {
@@ -70,8 +82,8 @@ class TasksApiTest {
         // handed, so the admin has to be an admin here for the cancel rules to hold.
         groups = new Groups(new Config.Telegram(List.of(100L), List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))));
-        tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.empty()), new ActiveRuns(), clock,
-                () -> { }, () -> { });
+        tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.ofNullable(unavailable.get())), new ActiveRuns(),
+                clock, () -> { }, () -> { });
         api = new TasksApi(db, tasks, groups);
         transitions = new RunTransitions(db, clock, () -> { });
     }
@@ -149,55 +161,50 @@ class TasksApiTest {
     }
 
     /**
-     * Retrying for real needs a failed run, which {@code TaskLifecycleTest} already covers end to end. What is new
-     * here is the boundary: an admin may cancel anybody's task but never retry it.
+     * An admin may stop anybody's task (ADR 0020). The group and the requester hear of it as news; the admin acted on a
+     * page, and the page alone answers them (ADR 0031).
      */
     @Test
-    void anAdminMayCancelSomeoneElsesTaskButNeverRetryIt() {
+    void anAdminsCancelOfSomeoneElsesTaskIsNewsForTheGroupAndTheRequesterOnly() {
         long alis = create(ALI, "Add the export button");
 
-        ApiException refused = assertThrows(ApiException.class,
-                () -> api.retry(BOLD_CALLER, Json.object().put("taskId", alis)));
-
-        assertEquals(403, refused.status());
-        assertEquals("cannot_retry", refused.code());
-        assertTrue(refused.getMessage().contains("only the member who gave it"), refused.getMessage());
         assertEquals("CANCELLED", api.cancel(BOLD_CALLER, Json.object().put("taskId", alis)).path("result").asText());
+
+        assertEquals(List.of("telegram:-100", ALI.ref()), SqlRows.query(dbFile,
+                "SELECT chat_ref FROM outbox WHERE kind = 'TASK_CANCELLED' ORDER BY id").stream().map(row -> row.get("chat_ref")).toList());
     }
 
     /**
-     * The page that was tapped answers a refusal, with its reason. The chat's refusal messages belong to commands given
-     * in the chat, so none of these may also reach the member's private chat.
+     * The page that was tapped answers a refusal: the status its kind calls for, its code, and the command's own words,
+     * which the page shows in its language (ADR 0031). None of it may also reach the member's private chat.
      */
     @Test
-    void aRefusedCancelOrRetryIsAnsweredHereAndNeverInTheChat() {
+    void aRefusedCancelOrRetryIsAnsweredWithItsWordsAndNeverInTheChat() {
         long alis = create(ALI, "Add the export button");
         long boldsOwn = create(BOLD, "Fix the login timeout");
         long ended = create(ALI, "Rename the report");
         api.cancel(ALI_CALLER, Json.object().put("taskId", ended));
         String outboxBefore = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
 
-        List<String> answers = List.of(
-                refused(() -> api.cancel(STRANGER, Json.object().put("taskId", alis))),
-                refused(() -> api.cancel(ALI_CALLER, Json.object().put("taskId", 9999))),
-                refused(() -> api.cancel(ALI_CALLER, Json.object().put("taskId", boldsOwn))),
-                refused(() -> api.cancel(ALI_CALLER, Json.object().put("taskId", ended))),
-                refused(() -> api.retry(BOLD_CALLER, Json.object().put("taskId", alis))),
-                refused(() -> api.retry(ALI_CALLER, Json.object().put("taskId", alis))));
+        List<ApiException> refusals = List.of(
+                assertThrows(ApiException.class, () -> api.cancel(STRANGER, Json.object().put("taskId", alis))),
+                assertThrows(ApiException.class, () -> api.cancel(ALI_CALLER, Json.object().put("taskId", 9999))),
+                assertThrows(ApiException.class, () -> api.cancel(ALI_CALLER, Json.object().put("taskId", boldsOwn))),
+                assertThrows(ApiException.class, () -> api.cancel(ALI_CALLER, Json.object().put("taskId", ended))),
+                assertThrows(ApiException.class, () -> api.retry(BOLD_CALLER, Json.object().put("taskId", alis))),
+                assertThrows(ApiException.class, () -> api.retry(ALI_CALLER, Json.object().put("taskId", alis))));
         String outboxAfter = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
 
         assertAll(
                 () -> assertEquals(List.of("403 not_a_member", "404 not_found", "403 not_yours", "409 wrong_state",
-                        "403 cannot_retry", "409 wrong_state"), answers),
+                        "403 not_yours", "409 wrong_state"), refusals.stream().map(refused -> refused.status() + " " + refused.code())
+                        .toList()),
+                () -> assertEquals(List.of(Text.of("refused.notMember"), Text.of("refused.notFound", 9999L),
+                        Text.of("refused.cancelNotRequester", boldsOwn, "Bold"),
+                        Text.of("refused.wrongPhase", ended, Text.of("phase.cancelled")), Text.of("refused.notRequester", alis, "Ali"),
+                        Text.of("refused.notFailed", alis, Text.of("phase.planning"))), refusals.stream().map(ApiException::text).toList()),
+                () -> assertEquals("no task #9999 here", refusals.get(1).getMessage(), "the log and the terminal read English"),
                 () -> assertEquals(outboxBefore, outboxAfter, "a refusal the Mini App shows must not also be sent to the chat"));
-    }
-
-    @Test
-    void aRefusalCarriesItsWordsInBothLanguages() {
-        ApiException refused = assertThrows(ApiException.class, () -> api.cancel(ALI_CALLER, Json.object().put("taskId", 9999)));
-
-        assertEquals("no task #9999 here", refused.getMessage(), "the log and the terminal read English");
-        assertEquals("#9999 даалгавар энд алга", refused.text().render(dispatch.Language.MN));
     }
 
     /** A refusal as its status and code, e.g. "403 not_yours". */
@@ -250,6 +257,43 @@ class TasksApiTest {
         assertTrue(correction.contains("Keep the old default? → Та хамгийн боломжит"), "the chat's own 'you decide' words: " + correction);
     }
 
+    /** The Mini App can answer before the outbox has sent the question: it is then sent once, and redrawn (ADR 0031). */
+    @Test
+    void aWrittenAnswerBeforeTheQuestionIsSentSendsNoSecondQuestion() {
+        long taskId = planned(ALI, new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(),
+                List.of(new PlanQuestion("Which environments?", List.of("staging", "prod")))));
+        String question = SqlRows.single(dbFile, "SELECT id FROM outbox WHERE kind = 'PLAN_QUESTION' AND status = 'PENDING'").get("id");
+
+        api.answer(ALI_CALLER, Json.object().put("taskId", taskId).put("planSeq", 1).put("index", 1).put("text", "Only staging"));
+
+        assertEquals(List.of(question), SqlRows.query(dbFile, "SELECT id FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_of IS NULL")
+                .stream().map(row -> row.get("id")).toList(), "the question goes out once");
+        assertEquals(List.of(question),
+                SqlRows.query(dbFile, "SELECT edit_of FROM outbox WHERE kind = 'PLAN_QUESTION' AND edit_of IS NOT NULL").stream()
+                        .map(row -> row.get("edit_of")).toList(), "and is redrawn with its answer once it is");
+    }
+
+    /** A refused answer is logged as any command is (ADR 0031): the page's refusal must not take the log line with it. */
+    @Test
+    void aRefusedAnswerIsLoggedLikeAnyCommand() {
+        long taskId = planned(ALI, twoQuestions());
+        PrintStream out = System.out;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        ApiException refused;
+        try {
+            System.setOut(new PrintStream(logged, true, StandardCharsets.UTF_8));
+            refused = assertThrows(ApiException.class, () -> api.answer(ALI_CALLER,
+                    Json.object().put("taskId", taskId).put("planSeq", 1).put("index", 2).put("text", "yes")));
+        } finally {
+            System.setOut(out);
+        }
+
+        assertEquals("409 out_of_order", refused.status() + " " + refused.code());
+        String lines = logged.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("event=task.command command=Answer task=" + taskId
+                + " actor=telegram:200 result=\"REFUSED OUT_OF_ORDER\""), lines);
+    }
+
     @Test
     void questionsAreAnsweredInOrderAndAnOlderPlanIsStale() {
         long taskId = planned(ALI, twoQuestions());
@@ -265,19 +309,22 @@ class TasksApiTest {
         assertEquals("out_of_order", outOfOrder.code());
         assertEquals("stale", stale.code());
         assertEquals("stale", staleApproval.code());
-        assertTrue(staleApproval.getMessage().contains("newer one"), staleApproval.getMessage());
+        assertEquals(Text.of("refused.stalePlan", taskId), staleApproval.text(), "the words the chat shows too");
     }
 
     @Test
     void aPlanWithOpenQuestionsCannotBeApproved() {
         long taskId = planned(ALI, twoQuestions());
+        String outboxBefore = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
 
         ApiException refused = assertThrows(ApiException.class, () -> api.approve(ALI_CALLER,
                 Json.object().put("taskId", taskId).put("planSeq", 1)));
 
         assertEquals(409, refused.status());
         assertEquals("open_questions", refused.code());
+        assertEquals(Text.of("refused.openQuestions", taskId), refused.text());
         assertEquals("AWAITING_APPROVAL", phase(taskId));
+        assertEquals(outboxBefore, SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n"), "the page alone answers it");
     }
 
     @Test
@@ -387,9 +434,26 @@ class TasksApiTest {
         assertEquals("EXECUTING", phase(finished));
     }
 
+    /** A merged task's follow-up is a new task, refused exactly as giving one is (ADR 0031): on the page, never in the chat. */
+    @Test
+    void aMergedTasksFollowUpWhileItsProjectIsUnavailableIsRefusedOnThePage() {
+        long merged = finished(ALI);
+        db.transaction(tx -> Tasks.merged(tx, merged, clock.instant()));
+        unavailable.set("repos/alm is being cloned");
+        String outboxBefore = SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n");
+
+        ApiException refused = assertThrows(ApiException.class,
+                () -> api.followUp(ALI_CALLER, Json.object().put("taskId", merged).put("text", "add a test")));
+
+        assertEquals("409 project_unavailable", refused.status() + " " + refused.code());
+        assertEquals(Text.of("refused.projectUnavailable", "alm", "repos/alm is being cloned"), refused.text());
+        assertEquals(outboxBefore, SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n"),
+                "a refusal the Mini App shows must not also be sent to the chat");
+    }
+
     private long finished(Requester who) {
         long taskId = planned(who, noQuestions());
-        db.transaction(tx -> tasks.approve(tx, who, taskId, 1));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Approve(taskId, 1)));
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         transitions.agentStarted(run.taskId(), run.seq(), null, null);
         transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, null,
@@ -429,9 +493,9 @@ class TasksApiTest {
     }
 
     private long create(Requester who, String title) {
-        String origin = who.ref() + "/" + Math.abs(title.hashCode());
-        db.transaction(tx -> tasks.create(tx, who, "alm", title, Priority.NORMAL, origin));
-        return Long.parseLong(SqlRows.single(dbFile, "SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        Origin origin = new Origin(who.ref() + "/" + Math.abs(title.hashCode()));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, who,
+                new TaskCommand.Give("alm", title, Priority.NORMAL, origin)))).taskId();
     }
 
     private static List<Long> taskIds(JsonNode listed) {

@@ -28,6 +28,8 @@ public final class Renderer {
     private static final int TITLE_LIMIT = 80;
     /** GitHub's reason for refusing a merge: its first lines say why; a whole GraphQL error would drown the message. */
     private static final int MERGE_ERROR_LIMIT = 500;
+    /** A refusal's words: a line, unless they carry git's error for a project that cannot take tasks, whose first lines say why. */
+    private static final int REFUSAL_LIMIT = 500;
     private static final int ACTION_LIMIT = 120;
     private static final int INSTRUCTION_LIMIT = 150;
     /** A plan question's text: long enough for any real question, short enough for its message. */
@@ -142,16 +144,6 @@ public final class Renderer {
                     null, text("plan.answerPlaceholder"));
             case EXECUTION_QUEUED -> plain(format("task.executionQueued", taskId(payload), escape(payload.path("by").asText())));
             case CORRECTION_QUEUED -> plain(format("task.correctionQueued", taskId(payload)));
-            case CORRECTION_REFUSED -> plain(switch (payload.path("reason").asText()) {
-                case "stale" -> format("task.correctionStale", taskId(payload));
-                case "alreadyAnswered" -> text("plan.alreadyAnswered");
-                case "empty" -> text("plan.answerEmpty");
-                case "notAllowed" -> text("callback.notAllowed");
-                case "notFound" -> text("callback.notFound");
-                case "notRequester" -> text("callback.notRequester");
-                case "requester" -> format("task.correctionNotRequester", taskId(payload), escape(payload.path("requester").asText()));
-                default -> format("task.correctionRefused", taskId(payload), text("phase." + payload.path("phase").asText()));
-            });
             case TASK_COMPLETED -> completed(payload);
             case TASK_COMPLETED_SHORT -> plain(format("task.completed", taskId(payload), escape(payload.path("project").asText()))
                     + "\n" + (payload.path("filesChanged").asInt() == 0
@@ -167,25 +159,12 @@ public final class Renderer {
             case TASK_TIMELINE -> timeline(payload);
             case STATS -> stats(payload);
             case TASK_NOT_FOUND -> plain(format("task.notFound", taskId(payload)));
-            case CANCEL_REFUSED -> plain(payload.path("reason").asText().equals("requester")
-                    ? format("task.cancelNotRequester", taskId(payload), escape(payload.path("requester").asText()))
-                    : format("task.cancelRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
+            case REFUSED -> plain(escapeWithin(payload.path("text").asText(), REFUSAL_LIMIT)
+                    + (payload.hasNonNull("hint") ? "\n<code>" + escape(payload.path("hint").asText()) + "</code>" : ""));
             case RETRY_QUEUED -> plain(format("task.retryQueued", taskId(payload), escape(payload.path("by").asText()),
                     text("kind." + payload.path("kind").asText())));
-            case RETRY_REFUSED -> plain(payload.path("reason").asText().equals("requester")
-                    ? format("task.retryNotRequester", taskId(payload), escape(payload.path("requester").asText()))
-                    : format("task.retryRefused", taskId(payload), text("phase." + payload.path("phase").asText())));
             case FOLLOW_UP_QUEUED -> plain(format("task.followUpQueued", taskId(payload), escape(payload.path("by").asText())));
-            case FOLLOW_UP_REFUSED -> plain(switch (payload.path("reason").asText()) {
-                case "notExecuted" -> format("task.followUpNotExecuted", taskId(payload));
-                case "requester" -> format("task.followUpNotRequester", taskId(payload), escape(payload.path("requester").asText()));
-                default -> format("task.followUpRefused", taskId(payload), text("phase." + payload.path("phase").asText()));
-            });
             case NOT_ALLOWED -> plain(format("member.notAllowed", escape(payload.path("name").asText())));
-            case UNKNOWN_PROJECT -> plain(format("project.unknown", escape(payload.path("given").asText()),
-                    projectList(payload.path("projects"))));
-            case PROJECT_UNAVAILABLE -> plain(format("project.unavailable", escape(payload.path("project").asText()),
-                    escape(payload.path("reason").asText())));
             case TASK_USAGE -> plain(payload.hasNonNull("command") ? text("usage." + payload.get("command").asText()) : text("task.usage"));
             case PRIVATE_ONLY -> plain(format("privateOnly", escape(payload.path("bot").asText())));
             case NO_PROJECTS -> plain(payload.hasNonNull("names")
@@ -639,7 +618,10 @@ public final class Renderer {
             number++;
         }
         for (JsonNode note : payload.path("notes")) {
-            html.append("\n").append(format("assistant.note." + note.path("reason").asText(), taskId(note)));
+            // A refusal's words can hold what another program wrote, such as git's error: cut as a proposal's own text is.
+            html.append("\n").append(note.hasNonNull("words")
+                    ? "ℹ️ " + escapeWithin(note.path("words").asText(), ASSISTANT_ITEM_LIMIT)
+                    : format("assistant.note." + note.path("reason").asText(), taskId(note)));
         }
         return new Rendered(html.toString(), keyboard, null);
     }

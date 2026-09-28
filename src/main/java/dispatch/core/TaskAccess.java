@@ -56,31 +56,6 @@ public final class TaskAccess {
         }
     }
 
-    /** Why an action may not be taken now. */
-    public enum Refusal {
-        /** In no group; for cancelling, no admin either. */
-        NOT_MEMBER,
-        /** No such task, or one this member may not see, so its existence does not leak. */
-        NOT_FOUND,
-        /** Someone else's task, seen as its headline (ADR 0020). */
-        NOT_REQUESTER,
-        WRONG_PHASE,
-        /** A tap or reply on a plan a newer one replaced. */
-        STALE_PLAN,
-        /** A plan that asks questions is never approved: their answers make the next plan (G-1d). */
-        OPEN_QUESTIONS,
-        /** A later question while an earlier one is open. */
-        OUT_OF_ORDER,
-        /** The question has its answer already, or no question is open. */
-        ALREADY_ANSWERED,
-        /** Only a failed task's failed step is retried (ADR 0008). */
-        NOT_FAILED,
-        /** A follow-up continues an execution, and this task never started one (ADR 0006). */
-        NOT_EXECUTED,
-        /** Its pull request is merged already. */
-        MERGED
-    }
-
     /**
      * Who is looking at tasks, and which a list may hold for them: their groups' projects (ADR 0012), and their own tasks
      * wherever they are (ADR 0027). A group chat has no member and sees its own projects' tasks as headlines.

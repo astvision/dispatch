@@ -21,7 +21,6 @@ public enum OutboxKind {
     PLAN_ANSWER_PROMPT,
     EXECUTION_QUEUED,
     CORRECTION_QUEUED,
-    CORRECTION_REFUSED,
     TASK_COMPLETED,
     /** The group's one line about a completion whose details went to the requester (ADR 0011). */
     TASK_COMPLETED_SHORT,
@@ -34,16 +33,16 @@ public enum OutboxKind {
     TASK_TIMELINE,
     STATS,
     TASK_NOT_FOUND,
-    CANCEL_REFUSED,
+    /**
+     * A task command's refusal, under the message that asked for it (ADR 0031): its words, worded where it was refused, and
+     * the command to type instead when there is one.
+     */
+    REFUSED,
     /** /retry queued the failed step again. */
     RETRY_QUEUED,
-    RETRY_REFUSED,
     /** A reply to a finished task's result runs as a follow-up (ADR 0006). */
     FOLLOW_UP_QUEUED,
-    FOLLOW_UP_REFUSED,
     NOT_ALLOWED,
-    UNKNOWN_PROJECT,
-    PROJECT_UNAVAILABLE,
     TASK_USAGE,
     PRIVATE_ONLY,
     NO_PROJECTS,

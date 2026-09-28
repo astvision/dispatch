@@ -2,6 +2,7 @@ package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -141,7 +142,7 @@ class CoordinatorTest {
             return JobResult.succeeded(agentResult(PLAN_JSON));
         };
         coordinator(projects(List.of(ALM)), planner).execute(claim());
-        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
 
         coordinator(projects(List.of(ALM)), remember(JobResult.failed(FailureReason.SETUP, "stops here", null))).execute(claim());
 
@@ -211,7 +212,7 @@ class CoordinatorTest {
     void aCancelDuringTheJobReachesTheWorkersControlHandle() {
         long id = queue("Fix the login timeout");
         Worker worker = (job, events, control) -> {
-            db.transaction(tx -> tasks.cancel(tx, BOLD, id, "telegram:100/9", "telegram:100"));
+            db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(id)));
             return control.stopReason() == ActiveRuns.StopReason.CANCELLED
                     ? JobResult.cancelled(null)
                     : JobResult.succeeded(agentResult(PLAN_JSON));
@@ -229,7 +230,7 @@ class CoordinatorTest {
     void aFirstExecuteThatFailsInSetupStillKeepsTheGeneratedBuildSessionId() {
         long id = queue("Fix the login timeout");
         coordinator(projects(List.of(ALM)), remember(JobResult.succeeded(agentResult(PLAN_JSON)))).execute(claim());
-        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
 
         coordinator(projects(List.of(ALM)), remember(JobResult.failed(FailureReason.SETUP, "the task has no worktree", null)))
                 .execute(claim());
@@ -268,8 +269,8 @@ class CoordinatorTest {
     }
 
     private long queue(String description) {
-        db.transaction(tx -> tasks.create(tx, BOLD, "alm", description, Priority.NORMAL, BOLD.ref() + "/" + System.nanoTime()));
-        return Long.parseLong(row("SELECT max(id) AS id FROM task").get("id"));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Give("alm", description, Priority.NORMAL, new Origin(BOLD.ref() + "/" + System.nanoTime()))))).taskId();
     }
 
     private ClaimedRun claim() {

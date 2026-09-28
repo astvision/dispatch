@@ -16,10 +16,17 @@ import dispatch.store.Outbox;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
@@ -118,6 +125,68 @@ class OutboxSenderTest {
         sender.deliverDue();
 
         assertEquals("SENT", row(id).get("status"));
+    }
+
+    @Test
+    void aRedrawWaitsForTheMessageItRedrawsAndThenEditsIt() throws Exception {
+        // An answer given before its question reached the chat (ADR 0031), whose first send then fails.
+        telegram.respond("sendMessage", 500, SERVER_ERROR);
+        long question = enqueueQuestion();
+        long redraw = enqueueRedrawOf(question);
+
+        sender.deliverDue();
+        sender.deliverDue();
+
+        assertEquals("PENDING", row(redraw).get("status"), "waits for its question");
+        assertEquals("0", row(redraw).get("attempts"), "waiting is no attempt");
+        clock.advance(Duration.ofSeconds(5));
+        sender.deliverDue();
+        sender.deliverDue();
+
+        assertEquals(List.of("sendMessage", "sendMessage", "editMessageText"), telegram.calls(),
+                "the failed send, the question once, then its redraw: never a second question");
+        assertEquals(1000, telegram.awaitRequest("editMessageText", Duration.ofSeconds(1)).json().get("message_id").asLong(),
+                "the message the question was sent as");
+        assertEquals("SENT", row(question).get("status"));
+        assertEquals("SENT", row(redraw).get("status"));
+    }
+
+    @Test
+    void aRedrawOfAMessageThatWasNeverSentIsDropped() {
+        long question = enqueueQuestion();
+        long redraw = enqueueRedrawOf(question);
+        db.transaction(tx -> Outbox.markFailed(tx, question, 1, "Forbidden: bot was blocked by the user"));
+
+        String log = logged(() -> assertTrue(sender.deliverDue()));
+
+        assertEquals("FAILED", row(redraw).get("status"));
+        assertTrue(telegram.calls().isEmpty(), "nothing to redraw: " + telegram.calls());
+        assertTrue(log.contains("level=WARN event=outbox.redraw_dropped id=" + redraw + " kind=PLAN_QUESTION original=" + question
+                + " error=\"the message it redraws was never sent\""), log);
+    }
+
+    @Test
+    void aRedrawWhoseMessageIsGoneIsDroppedAndTheOutboxGoesOn() throws Exception {
+        long question = enqueueQuestion();
+        long redraw = enqueueRedrawOf(question);
+        long next = enqueue(OutboxKind.TASK_QUEUED, Json.object().put("taskId", 42).put("project", "alm"));
+        Database.prepareSqlite();
+        // Nothing in the store deletes a row another one redraws: only a connection without foreign keys can.
+        try (Connection raw = DriverManager.getConnection("jdbc:sqlite:" + dbFile); Statement statement = raw.createStatement()) {
+            statement.execute("PRAGMA foreign_keys = OFF");
+            statement.executeUpdate("DELETE FROM outbox WHERE id = " + question);
+        }
+
+        String log = logged(() -> assertTrue(sender.deliverDue()));
+        assertTrue(sender.deliverDue());
+
+        Map<String, String> dropped = row(redraw);
+        assertEquals("FAILED", dropped.get("status"));
+        assertEquals("the message it redraws is gone", dropped.get("last_error"));
+        assertEquals(List.of("sendMessage"), telegram.calls(), "the message after it still went out");
+        assertEquals("SENT", row(next).get("status"));
+        assertTrue(log.contains("level=WARN event=outbox.redraw_dropped id=" + redraw + " kind=PLAN_QUESTION original=" + question
+                + " error=\"the message it redraws is gone\""), log);
     }
 
     @Test
@@ -423,6 +492,23 @@ class OutboxSenderTest {
                 draftPayload, clock.instant()));
     }
 
+    private long enqueueQuestion() {
+        return db.transactionReturning(tx -> Outbox.enqueue(tx, null, OutboxKind.PLAN_QUESTION, "telegram:100", null, questionPayload(),
+                clock.instant()));
+    }
+
+    private long enqueueRedrawOf(long question) {
+        return db.transactionReturning(tx -> Outbox.enqueueEditOf(tx, null, OutboxKind.PLAN_QUESTION, "telegram:100", question,
+                questionPayload().put("answer", "prod"), clock.instant()));
+    }
+
+    private static ObjectNode questionPayload() {
+        ObjectNode payload = Json.object().put("taskId", 42).put("planSeq", 1).put("index", 1).put("total", 2)
+                .put("text", "Which environments?");
+        payload.putArray("options").add("staging").add("prod");
+        return payload;
+    }
+
     private long enqueuePrivate(OutboxKind kind, ObjectNode payload) {
         return db.transactionReturning(tx -> Outbox.enqueueWithFallback(tx, null, kind, "telegram:100", null, "telegram:-100",
                 "telegram:-100/55", payload, clock.instant()));
@@ -454,5 +540,18 @@ class OutboxSenderTest {
 
     private Map<String, String> row(long id) {
         return SqlRows.single(dbFile, "SELECT * FROM outbox WHERE id = ?", id);
+    }
+
+    /** The lines {@code work} logs: Log writes them to stdout. */
+    private static String logged(Runnable work) {
+        PrintStream out = System.out;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(logged, true, StandardCharsets.UTF_8));
+            work.run();
+        } finally {
+            System.setOut(out);
+        }
+        return logged.toString(StandardCharsets.UTF_8);
     }
 }

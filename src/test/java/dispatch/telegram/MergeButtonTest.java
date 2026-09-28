@@ -1,6 +1,7 @@
 package dispatch.telegram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -9,11 +10,14 @@ import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.ActiveRuns;
+import dispatch.core.CommandResult;
 import dispatch.core.Groups;
 import dispatch.core.Membership;
 import dispatch.core.Merges;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.Plan;
 import dispatch.domain.Priority;
@@ -288,7 +292,10 @@ class MergeButtonTest {
         assertEquals("2", count("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId), "no follow-up run on the merged branch");
         Map<String, String> told = row("SELECT chat_ref, reply_to_ref, payload FROM outbox WHERE kind = 'FOLLOW_UP_NEW_TASK'");
         assertEquals("telegram:" + BOLD, told.get("chat_ref"));
-        assertEquals("telegram:" + BOLD + "/961", told.get("reply_to_ref"), "said under the reply, at once, not when its plan comes");
+        assertEquals("telegram:" + BOLD + "/10", told.get("reply_to_ref"),
+                "the merged task's news, under the message that gave it, at once, not when its plan comes (ADR 0031)");
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = ?", "telegram:" + BOLD + "/961"),
+                "no reply under the follow-up");
         JsonNode payload = Json.read(told.get("payload"));
         assertEquals(taskId, payload.get("taskId").asLong());
         assertEquals(Long.parseLong(next.get("id")), payload.get("newTaskId").asLong());
@@ -302,12 +309,12 @@ class MergeButtonTest {
     /** The same, its result sent as message {@code resultMessageId}, the task given by message {@code origin}. */
     private long delivered(long resultMessageId, String origin) {
         Requester bold = new Requester("telegram:" + BOLD, "Bold");
-        db.transaction(tx -> tasks.create(tx, bold, "alm", "Fix the login timeout", Priority.NORMAL, origin));
-        long taskId = Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        long taskId = assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, bold,
+                new TaskCommand.Give("alm", "Fix the login timeout", Priority.NORMAL, new Origin(origin))))).taskId();
         db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), List.of());
         transitions.planSucceeded(taskId, 1, plan, result(plan.toJson()));
-        db.transaction(tx -> tasks.approve(tx, bold, taskId, 1));
+        db.transaction(tx -> tasks.commands().run(tx, bold, new TaskCommand.Approve(taskId, 1)));
         db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         transitions.agentStarted(taskId, 2, null, null);
         transitions.completed(taskId, 2, result(null), List.of("src/Auth.java"), PR);

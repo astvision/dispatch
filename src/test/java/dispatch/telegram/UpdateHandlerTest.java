@@ -2,21 +2,27 @@ package dispatch.telegram;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
+import dispatch.Language;
+import dispatch.Text;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.config.ConfigLoader;
 import dispatch.config.GroupWriter;
 import dispatch.core.ActiveRuns;
+import dispatch.core.CommandResult;
 import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
 import dispatch.core.Membership;
+import dispatch.core.Origin;
 import dispatch.core.Projects;
 import dispatch.core.RunTransitions;
+import dispatch.core.TaskCommand;
 import dispatch.core.TaskService;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
@@ -391,10 +397,7 @@ class UpdateHandlerTest {
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(5));
         UpdateHandler adminHandler = new UpdateHandler(db, adminTasks, new Membership(adminGroups, UpdateHandlerTest::noJoins, clock, () -> { }),
                 adminGroups, projects, api, renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME, clock, () -> { });
-        String origin = "telegram:100/" + System.nanoTime();
-        db.transaction(tx -> adminTasks.create(tx, new dispatch.domain.Requester("telegram:100", "Bold"), "alm", "Fix it",
-                dispatch.domain.Priority.NORMAL, origin));
-        long id = Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        long id = give(adminTasks, BOLD, "alm", "Fix it", "telegram:100/" + System.nanoTime());
 
         adminHandler.handle(message(700, 70, 999, "Root", 999L, "private", "/cancel " + id, null));
 
@@ -966,6 +969,18 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void historyOfATaskTheMemberSeesPostsItsTimeline() {
+        long taskId = task("Fix the login timeout");
+
+        handler.handle(message(563, 63, 100, "Bold", 100L, "private", "/history " + taskId, null));
+
+        Map<String, String> timeline = row("SELECT * FROM outbox WHERE reply_to_ref = 'telegram:100/63'");
+        assertEquals("TASK_TIMELINE", timeline.get("kind"));
+        assertEquals("telegram:100", timeline.get("chat_ref"));
+        assertEquals(taskId, Json.read(timeline.get("payload")).get("taskId").asLong());
+    }
+
+    @Test
     void manageAnswersAMemberWithAButtonAndSaysSoWhenTheMiniAppIsOff() {
         UpdateHandler withMiniApp = new UpdateHandler(db, tasks, membership, groups, projects, api, renderer, redactor, BOT, clock,
                 () -> { }, null, null, "https://dispatch.example.com", null, null, null);
@@ -1015,8 +1030,59 @@ class UpdateHandlerTest {
         handler.handle(message(567, 67, 100, "Bold", 100L, "private", "/retry " + id, null));
 
         assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/66").get("kind"));
-        assertEquals("RETRY_QUEUED", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:100/67'").get("kind"));
+        Map<String, String> retried = row("SELECT chat_ref, reply_to_ref FROM outbox WHERE kind = 'RETRY_QUEUED'");
+        assertEquals("telegram:100", retried.get("chat_ref"));
+        assertEquals(row("SELECT origin_ref FROM task WHERE id = ?", id).get("origin_ref"), retried.get("reply_to_ref"),
+                "the task's news, under the task's own message: no reply under the command (ADR 0031)");
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = 'telegram:100/67'").get("n"));
         assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+    }
+
+    @Test
+    void aRefusedCancelIsAnsweredUnderTheCommandInItsWords() {
+        long id = task("Fix it");
+        long last = Long.parseLong(row("SELECT max(id) AS id FROM outbox").get("id"));
+
+        handler.handle(privateCommand(596, 200, "Ali", "/cancel " + id));
+
+        List<Map<String, String>> written = SqlRows.query(dbFile, "SELECT * FROM outbox WHERE id > ?", last);
+        assertEquals(1, written.size(), "the channel's reply alone: a refused command writes nothing: " + written);
+        Map<String, String> refused = written.getFirst();
+        assertEquals("REFUSED", refused.get("kind"));
+        assertEquals("telegram:200", refused.get("chat_ref"));
+        assertEquals("telegram:200/596", refused.get("reply_to_ref"));
+        assertEquals(Text.of("refused.cancelNotRequester", id, "Bold").render(Language.MN),
+                Json.read(refused.get("payload")).get("text").asText());
+        assertEquals(List.of(), chatsOf("TASK_CANCELLED"));
+    }
+
+    @Test
+    void anAdminsCancelOfSomeoneElsesTaskGetsItsOwnLine() {
+        long id = task("Fix it");
+        Groups adminGroups = new Groups(new Config.Telegram(List.of(999L), groups.all()));
+        TaskService adminTasks = new TaskService(adminGroups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
+        UpdateHandler adminHandler = new UpdateHandler(db, adminTasks, new Membership(adminGroups, UpdateHandlerTest::noJoins, clock,
+                () -> { }), adminGroups, projects, api, renderer, redactor, BOT, clock, () -> { });
+
+        adminHandler.handle(privateCommand(597, 999, "Root", "/cancel " + id));
+
+        assertEquals(List.of("telegram:" + GROUP, "telegram:100", "telegram:999"), chatsOf("TASK_CANCELLED"),
+                "the group's line, the requester's, and the admin's own");
+        Map<String, String> adminsLine =
+                row("SELECT reply_to_ref, task_id FROM outbox WHERE kind = 'TASK_CANCELLED' AND chat_ref = 'telegram:999'");
+        assertEquals("telegram:999/597", adminsLine.get("reply_to_ref"), "the admin's line answers their command");
+        assertEquals(Long.toString(id), adminsLine.get("task_id"), "and names its task, so the sender's log does");
+    }
+
+    @Test
+    void theRequestersOwnCancelGetsNoSecondLine() {
+        long id = task("Fix it");
+
+        handler.handle(privateCommand(598, 100, "Bold", "/cancel " + id));
+
+        assertEquals(List.of("telegram:" + GROUP, "telegram:100"), chatsOf("TASK_CANCELLED"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = 'telegram:100/598'").get("n"),
+                "the news in their own chat already answers them");
     }
 
     @Test
@@ -1059,12 +1125,14 @@ class UpdateHandlerTest {
     @Test
     void buttonOfAnOlderPlanIsAnsweredAsStale() throws Exception {
         long taskId = taskAwaitingApproval();
+        String outboxBefore = row("SELECT count(*) AS n FROM outbox").get("n");
 
         handler.handle(callback(511, 100, "Bold", "reject:" + taskId + ":9"));
 
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
-        assertEquals(renderer.text("callback.stale"),
+        assertEquals(Text.of("refused.stalePlan", taskId).render(Language.MN),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals(outboxBefore, row("SELECT count(*) AS n FROM outbox").get("n"), "the notice is the whole answer");
     }
 
     @Test
@@ -1086,7 +1154,7 @@ class UpdateHandlerTest {
         handler.handle(callback(514, 200, "Ali", "approve:" + taskId + ":1"));
 
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
-        assertEquals(renderer.text("callback.notRequester"),
+        assertEquals(Text.of("refused.notRequester", taskId, "Bold").render(Language.MN),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
@@ -1097,7 +1165,7 @@ class UpdateHandlerTest {
         handler.handle(callback(513, 100, "Bold", "approve:" + taskId + ":1"));
 
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
-        assertEquals(renderer.text("callback.openQuestions"),
+        assertEquals(Text.of("refused.openQuestions", taskId).render(Language.MN),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
@@ -1112,19 +1180,12 @@ class UpdateHandlerTest {
         Map<String, String> run = row("SELECT * FROM run WHERE task_id = ? AND seq = 2", taskId);
         assertEquals("PLAN", run.get("kind"));
         assertEquals("Also cover the mobile login", run.get("instruction"));
-        assertEquals("telegram:" + GROUP + "/41", row("SELECT reply_to_ref FROM outbox WHERE kind = 'CORRECTION_QUEUED'").get("reply_to_ref"));
+        assertNewsOnly("CORRECTION_QUEUED", taskId, "telegram:" + GROUP + "/41");
     }
 
     @Test
     void replyToATasksResultIsAFollowUpAndInItsTopicToo() {
-        long taskId = taskAwaitingApproval(List.of());
-        db.transaction(tx -> tasks.approve(tx, new dispatch.domain.Requester("telegram:100", "Bold"), taskId, 1));
-        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
-        db.transaction(tx -> Runs.recordAgentStarted(tx, run.taskId(), run.seq(), clock.instant(), 1L, clock.instant()));
-        transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", null, 3, List.of(),
-                null, null, null), List.of("README.md"), "https://github.com/acme/alm/pull/1");
-        long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));
-        db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/1100", clock.instant()));
+        long taskId = completedTask();
 
         handler.handle(message(545, 45, 100, "Bold", GROUP, "supergroup", "Also log the value", botMessage(1100)));
 
@@ -1132,7 +1193,7 @@ class UpdateHandlerTest {
         Map<String, String> followUp = row("SELECT * FROM run WHERE task_id = ? AND seq = 3", taskId);
         assertEquals("FOLLOW_UP", followUp.get("cause"));
         assertEquals("Also log the value", followUp.get("instruction"));
-        assertEquals("telegram:" + GROUP + "/45", row("SELECT reply_to_ref FROM outbox WHERE kind = 'FOLLOW_UP_QUEUED'").get("reply_to_ref"));
+        assertNewsOnly("FOLLOW_UP_QUEUED", taskId, "telegram:" + GROUP + "/45");
 
         db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '55', phase = 'COMPLETED' WHERE id = ?", taskId));
         handler.handle(topicMessage(546, 105, 100, "Bold", 55, "and the tablet too"));
@@ -1142,23 +1203,55 @@ class UpdateHandlerTest {
 
     @Test
     void groupMemberReplyingToAnotherMembersOutcomeIsRefusedAsNotTheRequester() {
-        long taskId = taskAwaitingApproval(List.of());
-        db.transaction(tx -> tasks.approve(tx, new dispatch.domain.Requester("telegram:100", "Bold"), taskId, 1));
-        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
-        db.transaction(tx -> Runs.recordAgentStarted(tx, run.taskId(), run.seq(), clock.instant(), 1L, clock.instant()));
-        transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", null, 3, List.of(),
-                null, null, null), List.of("README.md"), "https://github.com/acme/alm/pull/1");
-        long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));
-        db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/1100", clock.instant()));
+        long taskId = completedTask();
         String runsBefore = row("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId).get("n");
 
         // Ali is in the same group as Bold, the requester, but did not give this task.
         handler.handle(message(550, 50, 200, "Ali", GROUP, "supergroup", "Nice work, also log the value", botMessage(1100)));
 
         Map<String, String> refused = row("SELECT * FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/50");
-        assertEquals("FOLLOW_UP_REFUSED", refused.get("kind"));
-        assertEquals("requester", Json.read(refused.get("payload")).get("reason").asText());
+        assertEquals("REFUSED", refused.get("kind"));
+        assertEquals(Text.of("refused.notRequester", taskId, "Bold").render(Language.MN),
+                Json.read(refused.get("payload")).get("text").asText());
         assertEquals(runsBefore, row("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId).get("n"), "no new run for a refused follow-up");
+    }
+
+    /** G-1b: in a group, someone in no group is only logged, a refusal included, so a busy group's chatter is never answered. */
+    @Test
+    void aReplyInAGroupFromSomeoneInNoGroupIsOnlyLogged() {
+        completedTask();
+        String outboxBefore = row("SELECT count(*) AS n FROM outbox").get("n");
+        java.io.PrintStream out = System.out;
+        java.io.ByteArrayOutputStream logged = new java.io.ByteArrayOutputStream();
+        try {
+            System.setOut(new java.io.PrintStream(logged, true, StandardCharsets.UTF_8));
+            handler.handle(message(556, 56, 999, "Stranger", GROUP, "supergroup", "Also log the value", botMessage(1100)));
+        } finally {
+            System.setOut(out);
+        }
+
+        assertEquals(outboxBefore, row("SELECT count(*) AS n FROM outbox").get("n"), "no refusal line in the group");
+        String lines = logged.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("event=member.not_allowed requester=telegram:999") && lines.contains("answered=false"), lines);
+    }
+
+    @Test
+    void aFollowUpToATaskThatNeverExecutedNamesTheRetryToType() {
+        long id = task("Fix it");
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.failed(run.taskId(), run.seq(), dispatch.domain.FailureReason.AGENT, "model overloaded", null);
+        long failed = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_FAILED'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, failed, 1, "telegram:100/2100", clock.instant()));
+
+        handler.handle(message(557, 57, 100, "Bold", 100L, "private", "Also log the error", """
+                {"message_id":2100,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":100,"type":"private"},
+                 "date":1789640000,"text":"failed"}"""));
+
+        Map<String, String> refused = row("SELECT kind, payload FROM outbox WHERE reply_to_ref = 'telegram:100/57'");
+        assertEquals("REFUSED", refused.get("kind"));
+        JsonNode payload = Json.read(refused.get("payload"));
+        assertEquals(Text.of("refused.notExecuted", id).render(Language.MN), payload.get("text").asText());
+        assertEquals("/retry " + id, payload.get("hint").asText(), "its planning failed: the step there is a retry");
     }
 
     @Test
@@ -1261,13 +1354,24 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void priorityButtonForThePriorityItHasChangesNothingAndLeavesTheStatusAsItIs() throws Exception {
+        long taskId = task("Fix the login timeout");
+
+        handler.handle(privateCallback(584, 100, "Bold", "prio:" + taskId + ":NORMAL"));
+
+        assertEquals(renderer.text("callback.priorityUnchanged"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertFalse(telegram.calls().contains("editMessageText"), "the status already shows it: " + telegram.calls());
+    }
+
+    @Test
     void priorityButtonOfSomeoneElsesTaskIsRefused() throws Exception {
-        task("Fix the login timeout");
+        long taskId = task("Fix the login timeout");
 
-        handler.handle(privateCallback(583, 200, "Ali", "prio:1:LOW"));
+        handler.handle(privateCallback(583, 200, "Ali", "prio:" + taskId + ":LOW"));
 
-        assertEquals("NORMAL", row("SELECT priority FROM task WHERE id = 1").get("priority"));
-        assertEquals(renderer.text("callback.notRequester"),
+        assertEquals("NORMAL", row("SELECT priority FROM task WHERE id = ?", taskId).get("priority"));
+        assertEquals(Text.of("refused.notRequester", taskId, "Bold").render(Language.MN),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
     }
 
@@ -1290,6 +1394,20 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void statsCommandPostsMyMonthPrivatelyAndTheGroupsMonthInAGroup() {
+        handler.handle(message(593, 93, 100, "Bold", 100L, "private", "/stats", null));
+        handler.handle(message(594, 94, 200, "Ali", GROUP, "supergroup", "/stats", null));
+
+        JsonNode mine = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/93'").get("payload"));
+        assertEquals("me", mine.get("view").asText());
+        assertEquals("month", mine.get("period").asText());
+        JsonNode group = Json.read(row("SELECT payload FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/94").get("payload"));
+        assertEquals("group:backend", group.get("view").asText());
+        assertEquals("month", group.get("period").asText());
+        assertFalse(group.get("canViewMe").asBoolean());
+    }
+
+    @Test
     void statsButtonForAGroupTheViewerIsNotInIsRefused() throws Exception {
         handler.handle(privateCallback(593, 300, "Sara", "stats:all:group:backend"));
 
@@ -1307,7 +1425,7 @@ class UpdateHandlerTest {
         handler.handle(topicMessage(600, 101, 100, "Bold", 55, "Also cover the mobile login"));
 
         assertEquals("Also cover the mobile login", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction"));
-        assertEquals("telegram:100/101@55", row("SELECT reply_to_ref FROM outbox WHERE kind = 'CORRECTION_QUEUED'").get("reply_to_ref"));
+        assertNewsOnly("CORRECTION_QUEUED", taskId, "telegram:100/101@55");
         assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"), "not a new task");
     }
 
@@ -1318,9 +1436,39 @@ class UpdateHandlerTest {
 
         handler.handle(topicMessage(601, 102, 100, "Bold", 55, "and the tablet too"));
 
-        Map<String, String> refused = row("SELECT * FROM outbox WHERE kind = 'CORRECTION_REFUSED'");
-        assertEquals("phase", Json.read(refused.get("payload")).get("reason").asText());
+        Map<String, String> refused = row("SELECT * FROM outbox WHERE reply_to_ref = 'telegram:100/102@55'");
+        assertEquals("REFUSED", refused.get("kind"));
+        assertEquals(Text.of("refused.wrongPhase", taskId, Text.of("phase.executing")).render(Language.MN),
+                Json.read(refused.get("payload")).get("text").asText());
         assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"));
+    }
+
+    /** A sticker or a bare photo is no correction or follow-up: the chat leaves it be, as it always has (R6). */
+    @Test
+    void aStickerInAFinishedTasksTopicIsLeftUnanswered() {
+        long taskId = completedTask();
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '55' WHERE id = ?", taskId));
+        String outboxBefore = row("SELECT count(*) AS n FROM outbox").get("n");
+        JsonNode sticker = topicMessage(604, 106, 100, "Bold", 55, "");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) sticker.get("message")).remove("text");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) sticker.get("message")).putObject("sticker").put("file_id", "s1");
+
+        handler.handle(sticker);
+
+        assertEquals(outboxBefore, row("SELECT count(*) AS n FROM outbox").get("n"), "no reply");
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"), "and no follow-up");
+    }
+
+    @Test
+    void aBlankReplyToAPlanIsLeftUnanswered() {
+        long taskId = taskAwaitingApproval(List.of());
+        planMessageSentAs(1000);
+        String outboxBefore = row("SELECT count(*) AS n FROM outbox").get("n");
+
+        handler.handle(message(558, 58, 100, "Bold", GROUP, "supergroup", " \n ", botMessage(1000)));
+
+        assertEquals(outboxBefore, row("SELECT count(*) AS n FROM outbox").get("n"), "no reply");
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"), "and no correction");
     }
 
     @Test
@@ -1622,7 +1770,7 @@ class UpdateHandlerTest {
 
         assertTrue(personalGroups.isGroupChat("telegram:-4883391545"), "the running groups, not only the file");
         assertEquals("GROUP_LINKED", row("SELECT kind FROM outbox WHERE chat_ref = 'telegram:-4883391545'").get("kind"));
-        db.transaction(tx -> personalTasks.create(tx, BOLD, "life", "Fix it", Priority.NORMAL, "telegram:100/77"));
+        give(personalTasks, BOLD, "life", "Fix it", "telegram:100/77");
         assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_QUEUED' AND chat_ref = 'telegram:-4883391545'").get("n"));
     }
 
@@ -1780,8 +1928,8 @@ class UpdateHandlerTest {
         assertTrue(personalGroups.isGroupChat("telegram:" + NEW_GROUP), "the first chat stays linked");
         Thread.sleep(100);
         assertTrue(telegram.drain("leaveChat").isEmpty(), "the bot stays in both");
-        db.transaction(tx -> personalTasks.create(tx, BOLD, "life", "From the second", Priority.NORMAL, "telegram:" + otherGroup + "/9"));
-        db.transaction(tx -> personalTasks.create(tx, BOLD, "life", "Given privately", Priority.NORMAL, "telegram:100/77"));
+        give(personalTasks, BOLD, "life", "From the second", "telegram:" + otherGroup + "/9");
+        give(personalTasks, BOLD, "life", "Given privately", "telegram:100/77");
         assertEquals("telegram:" + otherGroup, row("SELECT chat_ref FROM task WHERE title = 'From the second'").get("chat_ref"));
         assertEquals("telegram:" + NEW_GROUP, row("SELECT chat_ref FROM task WHERE title = 'Given privately'").get("chat_ref"));
     }
@@ -2117,7 +2265,7 @@ class UpdateHandlerTest {
                 }
             };
         };
-        dispatch.core.AssistantActions actions = new dispatch.core.AssistantActions(tasks, groups, projects, clock, "Чи шийд");
+        dispatch.core.AssistantActions actions = new dispatch.core.AssistantActions(tasks, groups, projects, clock);
         dispatch.core.AssistantHome home = new dispatch.core.AssistantHome(dir.resolve("assistant"), dbFile, "java", "cp", "/bin");
         home.install();
         dispatch.core.Assistant assistant = new dispatch.core.Assistant(db, tasks, actions, groups, projects, agent, home,
@@ -2168,6 +2316,25 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void aTapTheTaskRefusesIsAnsweredInTheRefusalsWordsAndWritesNothing() throws Exception {
+        long id = task("Fix it");
+        UpdateHandler withAssistant = assistantHandler(new java.util.concurrent.CopyOnWriteArrayList<>(),
+                Json.read("{\"reply\":\"Цуцлах уу?\",\"actions\":[{\"type\":\"cancel\",\"task\":" + id + "}]}"));
+        withAssistant.handle(message(730, 73, 100, "Bold", 100L, "private", "Цуцал", null));
+        lastAssistant.awaitIdleForTests();
+        long reply = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'ASSISTANT_REPLY'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, reply, 1, "telegram:100/88", clock.instant()));
+        handler.handle(privateCommand(731, 100, "Bold", "/cancel " + id));
+        String outbox = row("SELECT count(*) AS n FROM outbox").get("n");
+
+        withAssistant.handle(privateCallback(732, 100, "Bold", "as:" + row("SELECT id FROM assistant_action").get("id")));
+
+        assertEquals(Text.of("refused.wrongPhase", id, Text.of("phase.cancelled")).render(Language.MN),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals(outbox, row("SELECT count(*) AS n FROM outbox").get("n"), "the button's notice is the whole answer");
+    }
+
+    @Test
     void commandsFilesAndRepliesWithAMeaningStillGoWhereTheyWent() throws Exception {
         List<dispatch.agent.RunRequest> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
         UpdateHandler withAssistant = assistantHandler(asked, Json.read("{\"reply\":\"ок\",\"actions\":[]}"));
@@ -2209,10 +2376,13 @@ class UpdateHandlerTest {
 
     /** A task Bold gave for autoland-management, as the draft buttons would have created it. */
     private long task(String text) {
-        String origin = "telegram:100/" + System.nanoTime();
-        db.transaction(tx -> tasks.create(tx, new dispatch.domain.Requester("telegram:100", "Bold"), "alm", text,
-                dispatch.domain.Priority.NORMAL, origin));
-        return Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        return give(tasks, BOLD, "alm", text, "telegram:100/" + System.nanoTime());
+    }
+
+    /** Gives a task from the message {@code origin}, as the draft buttons do in the end. */
+    private long give(TaskService service, dispatch.domain.Requester who, String project, String text, String origin) {
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> service.commands().run(tx, who,
+                new TaskCommand.Give(project, text, Priority.NORMAL, new Origin(origin))))).taskId();
     }
 
     private long taskAwaitingApproval(List<String> questions) {
@@ -2229,6 +2399,31 @@ class UpdateHandlerTest {
     private void planMessageSentAs(long messageId) {
         long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'PLAN_READY'").get("id"));
         db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/" + messageId, clock.instant()));
+    }
+
+    /** A task Bold gave, carried out and delivered; its result's line reached the group as message 1100. */
+    private long completedTask() {
+        long taskId = taskAwaitingApproval(List.of());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(taskId, 1)));
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        db.transaction(tx -> Runs.recordAgentStarted(tx, run.taskId(), run.seq(), clock.instant(), 1L, clock.instant()));
+        transitions.completed(run.taskId(), run.seq(), new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", null, "Done", null, 3, List.of(),
+                null, null, null), List.of("README.md"), "https://github.com/acme/alm/pull/1");
+        long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/1100", clock.instant()));
+        return taskId;
+    }
+
+    /**
+     * A command's success as the chat sees it (ADR 0031): its news went to Bold, the requester, under the message that gave
+     * the task, and nothing answered {@code actorMessage}.
+     */
+    private void assertNewsOnly(String kind, long taskId, String actorMessage) {
+        Map<String, String> news = row("SELECT chat_ref, reply_to_ref FROM outbox WHERE kind = ?", kind);
+        assertEquals(BOLD.ref(), news.get("chat_ref"));
+        assertEquals(row("SELECT origin_ref FROM task WHERE id = ?", taskId).get("origin_ref"), news.get("reply_to_ref"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE reply_to_ref = ?", actorMessage).get("n"),
+                "no reply under " + actorMessage);
     }
 
     private static String botMessage(long messageId) {
@@ -2316,5 +2511,11 @@ class UpdateHandlerTest {
 
     private Map<String, String> row(String sql, Object... params) {
         return SqlRows.single(dbFile, sql, params);
+    }
+
+    /** Where the messages of {@code kind} go, in the order they were written. */
+    private List<String> chatsOf(String kind) {
+        return SqlRows.query(dbFile, "SELECT chat_ref FROM outbox WHERE kind = ? ORDER BY id", kind).stream()
+                .map(found -> found.get("chat_ref")).toList();
     }
 }

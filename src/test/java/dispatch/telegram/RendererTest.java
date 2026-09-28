@@ -345,31 +345,23 @@ class RendererTest {
     }
 
     @Test
-    void refusedCorrectionSaysWhy() {
-        String stale = renderer.render(OutboxKind.CORRECTION_REFUSED, Json.object().put("taskId", 42).put("reason", "stale")).html();
-        String busy = renderer.render(OutboxKind.CORRECTION_REFUSED,
-                Json.object().put("taskId", 42).put("reason", "phase").put("phase", "EXECUTING")).html();
-
-        String notRequester = renderer.render(OutboxKind.CORRECTION_REFUSED,
-                Json.object().put("taskId", 42).put("reason", "requester").put("requester", "Bold")).html();
-
-        assertEquals(new java.text.MessageFormat(messages.getString("task.correctionStale")).format(new Object[] {"42"}), stale);
-        assertTrue(busy.contains(messages.getString("phase.EXECUTING")), busy);
-        assertTrue(notRequester.contains("#42") && notRequester.contains("Bold"), notRequester);
+    void aRefusalIsItsWordsEscapedWithItsCommandHintAsCode() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.REFUSED,
+                Json.object().put("text", "#5 <b> is Bold's & Ali's").put("hint", "/retry 5"));
+        assertEquals("#5 &lt;b&gt; is Bold's &amp; Ali's\n<code>/retry 5</code>", rendered.html());
+        assertEquals("#5", renderer.render(OutboxKind.REFUSED, Json.object().put("text", "#5")).html());
     }
 
+    /** An unavailable project's refusal carries git's error, as long as git made it: the reply stays one message. */
     @Test
-    void cancelRetryAndFollowUpRefuseNonRequestersToo() {
-        String cancel = renderer.render(OutboxKind.CANCEL_REFUSED,
-                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
-        String retry = renderer.render(OutboxKind.RETRY_REFUSED,
-                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
-        String followUp = renderer.render(OutboxKind.FOLLOW_UP_REFUSED,
-                Json.object().put("taskId", 7).put("reason", "requester").put("requester", "Bold")).html();
+    void aRefusalsWordsAreCutBeforeItsHint() {
+        String words = "the project alm cannot take tasks now: cloning failed: " + "<fatal> ".repeat(1000);
 
-        assertTrue(cancel.contains("#7") && cancel.contains("Bold"), cancel);
-        assertTrue(retry.contains("#7") && retry.contains("Bold"), retry);
-        assertTrue(followUp.contains("#7") && followUp.contains("Bold"), followUp);
+        String html = renderer.render(OutboxKind.REFUSED, Json.object().put("text", words).put("hint", "/retry 5")).html();
+
+        assertTrue(html.startsWith("the project alm cannot take tasks now: cloning failed: &lt;fatal&gt; "), html);
+        assertTrue(html.endsWith("…\n<code>/retry 5</code>"), "the words are cut, the hint stays whole: " + html);
+        assertTrue(html.length() <= 4096, "message limit, got " + html.length());
     }
 
     @Test
@@ -839,18 +831,42 @@ class RendererTest {
     }
 
     @Test
+    void aNoteInARefusalsWordsShowsThoseWordsEscaped() {
+        ObjectNode payload = Json.object().put("reply", "Болно");
+        payload.putArray("notes").add(Json.object().put("type", "cancel").put("taskId", 7).put("words", "#7: <Bold> & Ali"));
+
+        assertEquals("Болно\nℹ️ #7: &lt;Bold&gt; &amp; Ali", renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html());
+    }
+
+    @Test
     void theLongestAssistantReplyStillFitsOneMessage() {
         String longest = "ы<".repeat(3000);
-        ObjectNode payload = Json.object().put("reply", longest);
-        for (int id = 1; id <= 3; id++) {
-            payload.withArray("actions").add(Json.object().put("id", id).put("type", "followUp").put("taskId", 123456).put("title", longest)
-                    .put("text", longest));
-        }
-        for (int note = 0; note < 3; note++) {
-            payload.withArray("notes").add(Json.object().put("type", "approve").put("taskId", 123456).put("reason", "openQuestions"));
-        }
+        // A turn has at most three proposals (Assistant.MAX_ACTIONS), each offered or noted. A note may carry a refusal's
+        // words, which can hold what another program wrote, such as git's error for an unavailable project.
+        for (int offered = 0; offered <= 3; offered++) {
+            ObjectNode payload = Json.object().put("reply", longest);
+            for (int id = 1; id <= offered; id++) {
+                payload.withArray("actions").add(Json.object().put("id", id).put("type", "followUp").put("taskId", 123456)
+                        .put("title", longest).put("text", longest));
+            }
+            for (int note = offered; note < 3; note++) {
+                payload.withArray("notes").add(Json.object().put("type", "followUp").put("taskId", 123456).put("words", longest));
+            }
 
-        assertTrue(renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html().length() <= 4096);
+            assertTrue(renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html().length() <= 4096, offered + " offered, the rest noted");
+        }
+    }
+
+    @Test
+    void aNotesLongWordsAreCutAsAProposalsTextIs() {
+        ObjectNode payload = Json.object().put("reply", "Болохгүй байна.");
+        payload.withArray("notes").add(Json.object().put("type", "followUp").put("taskId", 7).put("words", "fatal: " + "x".repeat(2000)));
+
+        String html = renderer.render(OutboxKind.ASSISTANT_REPLY, payload).html();
+
+        String note = html.substring(html.indexOf("ℹ️ ") + "ℹ️ ".length());
+        assertTrue(note.startsWith("fatal: xxx") && note.endsWith("…"), note);
+        assertEquals(500, note.length(), "as long as a proposal's own text may be");
     }
 
     @Test
@@ -1108,25 +1124,16 @@ class RendererTest {
             case PLAN_READY -> planPayload(List.of("Do it"), List.of());
             case TASK_FAILED -> Json.object().put("taskId", 1).put("reason", "AGENT").put("detail", "boom");
             case TASK_REJECTED, TASK_CANCELLED, EXECUTION_QUEUED, CORRECTION_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");
-            case CORRECTION_REFUSED -> Json.object().put("taskId", 1).put("reason", "phase").put("phase", "PLANNING");
             case TASK_COMPLETED -> completedPayload("https://github.com/acme/alm/pull/7", 1, List.of("Bash: gh pr list"));
             case STATUS -> statusPayload();
             case HISTORY -> historyPayload();
             case STATS -> statsPayload("me");
             case TASK_TIMELINE -> timelinePayload();
             case TASK_NOT_FOUND -> Json.object().put("taskId", 99);
-            case CANCEL_REFUSED -> Json.object().put("taskId", 1).put("phase", "REJECTED");
+            case REFUSED -> Json.object().put("text", "#5 can't be retried: it is completed").put("hint", "/retry 5");
             case RETRY_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali").put("kind", "DELIVER");
-            case RETRY_REFUSED -> Json.object().put("taskId", 1).put("phase", "COMPLETED");
             case FOLLOW_UP_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");
-            case FOLLOW_UP_REFUSED -> Json.object().put("taskId", 1).put("reason", "notExecuted").put("phase", "FAILED");
             case NOT_ALLOWED -> Json.object().put("name", "Sara");
-            case UNKNOWN_PROJECT -> {
-                ObjectNode payload = Json.object().put("given", "billing");
-                payload.putArray("projects").addObject().put("name", "autoland-management").put("alias", "alm");
-                yield payload;
-            }
-            case PROJECT_UNAVAILABLE -> Json.object().put("project", "crm").put("reason", "no clone");
             case TASK_USAGE -> Json.object();
             case TASK_PROMPT -> Json.object();
             case PROJECTS -> {
@@ -1151,7 +1158,7 @@ class RendererTest {
             case WORKER_WAITING -> Json.object().put("taskId", 7);
             case WORKER_BLOCKED -> Json.object().put("taskId", 1).put("code", "claude").put("detail", "gone");
             case PLAN_QUESTION -> questionPayload("Which environments?", List.of("staging", "prod"));
-            case PLAN_ANSWER_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1).put("index", 2).put("questionRef", "telegram:100/5");
+            case PLAN_ANSWER_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1).put("index", 2);
         };
     }
 }

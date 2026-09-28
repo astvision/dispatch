@@ -5,27 +5,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
-import dispatch.core.AnswerResult;
-import dispatch.core.ApproveResult;
-import dispatch.core.CancelResult;
-import dispatch.core.CorrectResult;
-import dispatch.core.FollowUpResult;
+import dispatch.core.CommandResult;
 import dispatch.core.Groups;
-import dispatch.core.RejectResult;
-import dispatch.core.RetryResult;
+import dispatch.core.Origin;
 import dispatch.core.TaskAccess;
+import dispatch.core.TaskCommand;
+import dispatch.core.TaskCommands;
 import dispatch.core.TaskService;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
-import dispatch.store.Outbox;
 import dispatch.store.Tx;
-import dispatch.telegram.Renderer;
 import dispatch.ui.UiServer.Caller;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.OptionalInt;
 import java.util.function.BiFunction;
 
 /**
@@ -40,14 +34,13 @@ public final class TasksApi {
 
     static final Text NOT_ADMIN = Text.of("refusal.notAdminTasks");
     static final Text NOT_YOURS = Text.of("refusal.notYours");
-    /** What the chat's "you decide" button answers, so the agent reads the same words from either place. */
-    private static final String YOU_DECIDE = Renderer.mongolian().getString("plan.youDecide");
 
     /** A month of an instance's finished tasks, for the desktop's list (D-2); the Mini App keeps its own ten. */
     private static final int OWNER_HISTORY = 200;
 
     private final Database db;
     private final TaskService tasks;
+    private final TaskCommands commands;
     private final TaskAccess access;
     private final boolean owner;
 
@@ -62,6 +55,7 @@ public final class TasksApi {
     public TasksApi(Database db, TaskService tasks, Groups groups, boolean owner) {
         this.db = db;
         this.tasks = tasks;
+        this.commands = tasks.commands();
         this.access = new TaskAccess(groups);
         this.owner = owner;
     }
@@ -114,66 +108,39 @@ public final class TasksApi {
                 .orElseThrow(() -> new ApiException(404, "not_found", Text.of("refusal.noTask", taskId)));
     }
 
-    /**
-     * The requester or an admin, by {@link TaskAccess} exactly as for /cancel in the chat. A refusal is answered here and
-     * only here: {@link TaskService} would also write it into the member's chat, where a tap in the Mini App does not belong.
-     */
+    /** {@link TaskCommand.Cancel}, exactly as /cancel in the chat; a refusal is answered here and never in the chat (ADR 0031). */
     ObjectNode cancel(Caller caller, JsonNode body) {
         long taskId = taskId(body);
-        CancelResult result = db.transactionReturning(tx -> {
-            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.CANCEL);
-            if (refused.isPresent()) {
-                throw cancelRefused(refused.get(), taskId);
-            }
-            CancelResult cancelled = tasks.cancel(tx, requester(caller), taskId, null, caller.ref());
-            // Allowed in this same transaction, so TaskService cannot refuse it. If it ever did, throwing here rolls back
-            // the refusal it wrote for the chat, and the 500 says the two disagree instead of a 200 hiding it.
-            if (cancelled != CancelResult.CANCELLED) {
-                throw new IllegalStateException("task #" + taskId + " was allowed a cancel but came back " + cancelled);
-            }
-            return cancelled;
-        });
-        return Json.object().put("result", result.name());
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller), new TaskCommand.Cancel(taskId))), "CANCELLED");
     }
 
-    private static ApiException cancelRefused(TaskAccess.Refusal refusal, long taskId) {
-        return switch (refusal) {
-            case NOT_MEMBER -> notMember();
-            case NOT_FOUND -> notFound(taskId);
-            case NOT_REQUESTER -> new ApiException(403, "not_yours", Text.of("refusal.cancelNotYours"));
-            case WRONG_PHASE -> new ApiException(409, "wrong_state", Text.of("refusal.ended"));
-            default -> throw new IllegalStateException("task access never refuses a cancel as " + refusal);
-        };
+    /** {@link TaskCommand.Retry}: the requester alone, and only after the task failed. */
+    ObjectNode retry(Caller caller, JsonNode body) {
+        long taskId = taskId(body);
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller), new TaskCommand.Retry(taskId))), "RETRIED");
     }
 
     /**
-     * The requester alone, and only after the task failed: an admin may stop someone's task but never start it again for
-     * them. Refused here and only here, as {@link #cancel} is.
+     * A task command's one answer to a page (ADR 0031): {@code {"result": done}}, a new task's number, or its refusal's
+     * words with the status its kind calls for. The desk's give answers through {@link #refused} too.
      */
-    ObjectNode retry(Caller caller, JsonNode body) {
-        long taskId = taskId(body);
-        RetryResult result = db.transactionReturning(tx -> {
-            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.RETRY);
-            if (refused.isPresent()) {
-                throw retryRefused(refused.get(), taskId);
-            }
-            RetryResult retried = tasks.retry(tx, requester(caller), taskId, null, caller.ref());
-            if (retried != RetryResult.RETRIED) {
-                throw new IllegalStateException("task #" + taskId + " was allowed a retry but came back " + retried);
-            }
-            return retried;
-        });
-        return Json.object().put("result", result.name());
+    static ObjectNode answered(CommandResult result, String done) {
+        return switch (result) {
+            case CommandResult.Refused refused -> throw refused(refused);
+            case CommandResult.Created created -> Json.object().put("result", "NEW_TASK").put("taskId", created.taskId());
+            case CommandResult.Unchanged _ -> Json.object().put("result", "UNCHANGED");
+            case CommandResult.Done _ -> Json.object().put("result", done);
+        };
     }
 
-    private static ApiException retryRefused(TaskAccess.Refusal refusal, long taskId) {
-        return switch (refusal) {
-            case NOT_MEMBER -> notMember();
-            case NOT_FOUND -> notFound(taskId);
-            case NOT_REQUESTER -> new ApiException(403, "cannot_retry", Text.of("refusal.retryNotYours"));
-            case NOT_FAILED -> new ApiException(409, "wrong_state", Text.of("refusal.retryNotFailed"));
-            default -> throw new IllegalStateException("task access never refuses a retry as " + refusal);
+    static ApiException refused(CommandResult.Refused refused) {
+        int status = switch (refused.reason().kind()) {
+            case INVALID -> 400;
+            case FORBIDDEN -> 403;
+            case NOT_FOUND -> 404;
+            case CONFLICT -> 409;
         };
+        return new ApiException(status, refused.reason().code(), refused.words());
     }
 
     /**
@@ -186,141 +153,55 @@ public final class TasksApi {
     }
 
     /**
-     * One answer to one question, by the same {@link TaskService#answer} the chat's buttons use: an option's index, the
-     * requester's own text, or "you decide". Questions are answered in order, as the chat asks them one at a time; the last
-     * answer sends them all to the agent as one correction. Answers with the task as it now stands.
+     * One answer to one question, the {@link TaskCommand.Answer} the chat's buttons give: an option's index, the requester's
+     * own text, or "you decide". Questions are answered in order, as the chat asks them one at a time; the last answer
+     * sends them all to the agent as one correction. Answers with the task as it now stands.
      */
     ObjectNode answer(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         int planSeq = number(body, "planSeq");
         int index = number(body, "index");
-        return db.transactionReturning(tx -> {
-            String questionRef = Outbox.sentQuestion(tx, taskId, planSeq, index).orElse(null);
-            String chatRef = caller.ref();
-            AnswerResult result;
-            if (body.path("option").isIntegralNumber()) {
-                result = tasks.chooseOption(tx, requester(caller), taskId, planSeq, index, body.path("option").asInt(), questionRef,
-                        questionRef, chatRef);
-            } else if (body.path("decide").asBoolean(false)) {
-                result = tasks.answer(tx, requester(caller), taskId, planSeq, index, YOU_DECIDE, questionRef, questionRef, chatRef);
-            } else {
-                result = tasks.answer(tx, requester(caller), taskId, planSeq, index, body.path("text").asText(""), questionRef,
-                        questionRef, chatRef);
-            }
-            return switch (result) {
-                case ANSWERED -> ownTask(tx, caller, taskId).put("result", result.name());
-                case EMPTY -> throw new ApiException(400, "invalid", Text.of("refusal.answerEmpty"));
-                case ALREADY_ANSWERED -> throw new ApiException(409, "already_answered", Text.of("refusal.answered"));
-                case OUT_OF_ORDER -> throw new ApiException(409, "out_of_order", Text.of("refusal.outOfOrder"));
-                case STALE -> throw stale();
-                case NOT_ALLOWED -> throw notMember();
-                case NOT_FOUND -> throw notFound(taskId);
-                case NOT_REQUESTER -> throw new ApiException(403, "not_yours", NOT_YOURS);
-                case PROMPTED, PROMPT_OPEN -> throw new IllegalStateException("answering never prompts: " + result);
-            };
-        });
+        TaskCommand.Choice choice = body.path("option").isIntegralNumber() ? new TaskCommand.Choice.Option(body.path("option").asInt())
+                : body.path("decide").asBoolean(false) ? new TaskCommand.Choice.YouDecide()
+                : new TaskCommand.Choice.Written(body.path("text").asText(""));
+        // Refused after the command's transaction commits: throwing inside it would roll back the command's log line too.
+        CommandResult result = db.transactionReturning(tx -> commands.run(tx, requester(caller),
+                new TaskCommand.Answer(taskId, planSeq, index, choice)));
+        if (result instanceof CommandResult.Refused refused) {
+            throw refused(refused);
+        }
+        return db.transactionReturning(tx -> ownTask(tx, caller, taskId)).put("result", "ANSWERED");
     }
 
-    /** {@link TaskService#approve}, exactly as the chat's button: refused while the plan still has open questions. */
+    /** {@link TaskCommand.Approve}, exactly as the chat's button: refused while the plan still has open questions. */
     ObjectNode approve(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         int planSeq = number(body, "planSeq");
-        ApproveResult result = db.transactionReturning(tx -> tasks.approve(tx, requester(caller), taskId, planSeq));
-        return switch (result) {
-            case APPROVED -> Json.object().put("result", result.name());
-            case OPEN_QUESTIONS -> throw new ApiException(409, "open_questions", Text.of("refusal.openQuestions"));
-            case STALE_PLAN -> throw stale();
-            case WRONG_STATE -> throw new ApiException(409, "wrong_state", Text.of("refusal.notWaiting"));
-            case NOT_ALLOWED -> throw notMember();
-            case NOT_FOUND -> throw notFound(taskId);
-            case NOT_REQUESTER -> throw new ApiException(403, "not_yours", NOT_YOURS);
-        };
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller), new TaskCommand.Approve(taskId, planSeq))), "APPROVED");
     }
 
-    /** {@link TaskService#reject}, exactly as the chat's button. */
+    /** {@link TaskCommand.Reject}, exactly as the chat's button. */
     ObjectNode reject(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         int planSeq = number(body, "planSeq");
-        RejectResult result = db.transactionReturning(tx -> tasks.reject(tx, requester(caller), taskId, planSeq));
-        return switch (result) {
-            case REJECTED -> Json.object().put("result", result.name());
-            case STALE_PLAN -> throw stale();
-            case WRONG_STATE -> throw new ApiException(409, "wrong_state", Text.of("refusal.notWaiting"));
-            case NOT_ALLOWED -> throw notMember();
-            case NOT_FOUND -> throw notFound(taskId);
-            case NOT_REQUESTER -> throw new ApiException(403, "not_yours", NOT_YOURS);
-        };
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller), new TaskCommand.Reject(taskId, planSeq))), "REJECTED");
     }
 
-    /**
-     * The requester's reply to a plan, written on the desktop (D-2): {@link TaskService#correct}, as the chat's reply to a
-     * plan. Refused here and only here, as {@link #cancel} is, so no refusal lands in the chat.
-     */
+    /** {@link TaskCommand.Correct}: the requester's reply to a plan, written on the desktop (D-2) as in the chat. */
     ObjectNode correct(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         int planSeq = number(body, "planSeq");
         String text = body.path("text").asText("");
-        CorrectResult result = db.transactionReturning(tx -> {
-            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.CORRECT, planSeq);
-            if (refused.isPresent()) {
-                throw correctRefused(refused.get(), taskId);
-            }
-            if (text.isBlank()) {
-                throw new ApiException(400, "invalid", Text.of("refusal.correctionEmpty"));
-            }
-            CorrectResult corrected = tasks.correct(tx, requester(caller), taskId, planSeq, text, null, caller.ref());
-            if (corrected != CorrectResult.CORRECTED) {
-                throw new IllegalStateException("task #" + taskId + " was allowed a correction but came back " + corrected);
-            }
-            return corrected;
-        });
-        return Json.object().put("result", result.name());
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller),
+                new TaskCommand.Correct(taskId, OptionalInt.of(planSeq), text))), "CORRECTED");
     }
 
-    /**
-     * More work on a finished task, written in the Mini App: {@link TaskService#followUp}, as a reply to the task's result
-     * in the chat. A merged task's follow-up becomes a new task, found again by its desk origin. Refused here only.
-     */
+    /** A merged task's follow-up becomes a new task: {"result": "NEW_TASK", "taskId"}; otherwise {"result": "QUEUED"}. */
     ObjectNode followUp(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         String text = body.path("text").asText("");
-        FollowUpResult result = db.transactionReturning(tx -> {
-            Optional<TaskAccess.Refusal> refused = access.of(tx, caller.ref(), taskId).refusal(TaskAccess.Action.FOLLOW_UP);
-            if (refused.isPresent()) {
-                throw followUpRefused(refused.get(), taskId);
-            }
-            if (text.isBlank()) {
-                throw new ApiException(400, "invalid", Text.of("refusal.followUpEmpty"));
-            }
-            FollowUpResult followed = tasks.followUp(tx, requester(caller), taskId, text,
-                    TaskService.DESK_ORIGIN + UUID.randomUUID(), caller.ref());
-            if (followed != FollowUpResult.QUEUED && followed != FollowUpResult.NEW_TASK) {
-                throw new IllegalStateException("task #" + taskId + " was allowed a follow-up but came back " + followed);
-            }
-            return followed;
-        });
-        return Json.object().put("result", result.name());
-    }
-
-    private static ApiException followUpRefused(TaskAccess.Refusal refusal, long taskId) {
-        return switch (refusal) {
-            case NOT_MEMBER -> notMember();
-            case NOT_FOUND -> notFound(taskId);
-            case NOT_REQUESTER -> new ApiException(403, "not_yours", NOT_YOURS);
-            case WRONG_PHASE, NOT_EXECUTED -> new ApiException(409, "wrong_state", Text.of("refusal.followUpNotFinished"));
-            default -> throw new IllegalStateException("task access never refuses a follow-up as " + refusal);
-        };
-    }
-
-    private static ApiException correctRefused(TaskAccess.Refusal refusal, long taskId) {
-        return switch (refusal) {
-            case NOT_MEMBER -> notMember();
-            case NOT_FOUND -> notFound(taskId);
-            case NOT_REQUESTER -> new ApiException(403, "not_yours", NOT_YOURS);
-            case STALE_PLAN -> stale();
-            case WRONG_PHASE -> new ApiException(409, "wrong_state", Text.of("refusal.notWaiting"));
-            default -> throw new IllegalStateException("task access never refuses a correction as " + refusal);
-        };
+        return answered(db.transactionReturning(tx -> commands.run(tx, requester(caller),
+                new TaskCommand.FollowUp(taskId, text, Origin.page()))), "QUEUED");
     }
 
     /** The caller's own task with its plan, what they may do with it, and the question to answer now (ADR 0027). */
@@ -342,16 +223,8 @@ public final class TasksApi {
         return task;
     }
 
-    private static ApiException stale() {
-        return new ApiException(409, "stale", Text.of("refusal.stalePlan"));
-    }
-
     private static ApiException notFound(long taskId) {
         return new ApiException(404, "not_found", Text.of("refusal.noTask", taskId));
-    }
-
-    private static ApiException notMember() {
-        return new ApiException(403, "not_a_member", Text.of("refusal.notMember"));
     }
 
     private static int number(JsonNode body, String field) {

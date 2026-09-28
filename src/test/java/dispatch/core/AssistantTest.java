@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
+import dispatch.Language;
+import dispatch.Text;
 import dispatch.agent.Agent;
 import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
@@ -70,7 +72,7 @@ class AssistantTest {
         agent = new StubAgent();
         AssistantHome home = new AssistantHome(dir.resolve("assistant"), dbFile, "/usr/bin/java", "/opt/dispatch.jar", "/usr/bin:/bin");
         home.install();
-        assistant = new Assistant(db, tasks, new AssistantActions(tasks, groups, projects, clock, "Чи шийд"), groups, projects, agent,
+        assistant = new Assistant(db, tasks, new AssistantActions(tasks, groups, projects, clock), groups, projects, agent,
                 home, project -> Optional.of(dir.resolve("clones").resolve(project)), clock, Duration.ofSeconds(5), typed::add, () -> { });
     }
 
@@ -168,7 +170,7 @@ class AssistantTest {
         JsonNode draft = payload.path("actions").get(0);
         assertEquals("life", draft.path("project").asText());
         assertEquals(Long.parseLong(row("SELECT id FROM assistant_action").get("id")), draft.path("id").asLong());
-        assertEquals("notFound", payload.path("notes").get(0).path("reason").asText());
+        assertEquals(Text.of("refused.notFound", 99L).render(Language.MN), payload.path("notes").get(0).path("words").asText());
         assertEquals("0", row("SELECT count(*) AS n FROM draft").get("n"), "nothing happens before the tap");
     }
 
@@ -270,7 +272,7 @@ class AssistantTest {
     }
 
     private void create(String title) {
-        db.transaction(tx -> tasks.create(tx, BOLD, "life", title, Priority.NORMAL, CHAT + "/900"));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Give("life", title, Priority.NORMAL, new Origin(CHAT + "/900"))));
     }
 
     private Map<String, String> row(String sql) {

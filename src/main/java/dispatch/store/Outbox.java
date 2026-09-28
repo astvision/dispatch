@@ -17,6 +17,7 @@ public final class Outbox {
      * A pending message as the sender sees it.
      *
      * @param editRef         the message this one redraws in place; null for a new message
+     * @param editOf          the outbox row whose message this one redraws, once that is sent; null otherwise
      * @param fallbackChatRef where the message goes if its chat refuses it; null when it has no fallback
      * @param fellBack        the message already went to its fallback
      */
@@ -27,6 +28,7 @@ public final class Outbox {
             String chatRef,
             String replyToRef,
             String editRef,
+            Long editOf,
             String fallbackChatRef,
             String fallbackReplyToRef,
             boolean fellBack,
@@ -91,20 +93,51 @@ public final class Outbox {
                 taskId, kind, chatRef, editRef, Json.write(payload), now, now);
     }
 
+    /**
+     * Redraws the message the outbox row {@code editOf} sends, once it is sent (ADR 0031): the sender waits for it, and
+     * drops this redraw if it never will be.
+     */
+    public static long enqueueEditOf(Tx tx, Long taskId, OutboxKind kind, String chatRef, long editOf, JsonNode payload,
+                                     Instant now) {
+        return tx.insert("""
+                        INSERT INTO outbox (task_id, kind, chat_ref, edit_of, payload, status, next_attempt_at, created_at)
+                        VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)""",
+                taskId, kind, chatRef, editOf, Json.write(payload), now, now);
+    }
+
     /** The pending message that has waited longest past its next attempt time. */
     public static Optional<Message> nextDue(Tx tx, Instant now) {
         return tx.one("""
-                        SELECT id, task_id, kind, chat_ref, reply_to_ref, edit_ref, fallback_chat_ref, fallback_reply_to_ref, fell_back,
-                               payload, attempts, created_at
+                        SELECT id, task_id, kind, chat_ref, reply_to_ref, edit_ref, edit_of, fallback_chat_ref, fallback_reply_to_ref,
+                               fell_back, payload, attempts, created_at
                         FROM outbox
                         WHERE status = 'PENDING' AND next_attempt_at <= ?
                         ORDER BY next_attempt_at, id
                         LIMIT 1""",
                 row -> new Message(row.longValue("id"), row.longOrNull("task_id"), row.enumValue("kind", OutboxKind.class),
-                        row.string("chat_ref"), row.string("reply_to_ref"), row.string("edit_ref"), row.string("fallback_chat_ref"),
-                        row.string("fallback_reply_to_ref"), row.intValue("fell_back") == 1, row.string("payload"),
-                        row.intValue("attempts"), row.instant("created_at")),
+                        row.string("chat_ref"), row.string("reply_to_ref"), row.string("edit_ref"), row.longOrNull("edit_of"),
+                        row.string("fallback_chat_ref"), row.string("fallback_reply_to_ref"), row.intValue("fell_back") == 1,
+                        row.string("payload"), row.intValue("attempts"), row.instant("created_at")),
                 now);
+    }
+
+    /** The outbox row that asks question {@code index} of plan {@code planSeq}, sent or on its way; empty if it never went out. */
+    public static Optional<Long> questionRow(Tx tx, long taskId, int planSeq, int index) {
+        return tx.one("""
+                        SELECT id FROM outbox
+                        WHERE task_id = ? AND kind = 'PLAN_QUESTION' AND edit_ref IS NULL AND edit_of IS NULL AND status <> 'FAILED'
+                          AND json_extract(payload, '$.planSeq') = ? AND json_extract(payload, '$.index') = ?
+                        ORDER BY id LIMIT 1""",
+                row -> row.longValue("id"), taskId, planSeq, index);
+    }
+
+    /** Where a redraw's original stands: PENDING, SENT or FAILED, and what Telegram called it once sent. */
+    public record Original(String status, String sentRef) {
+    }
+
+    public static Optional<Original> original(Tx tx, long id) {
+        return tx.one("SELECT status, sent_ref FROM outbox WHERE id = ?",
+                row -> new Original(row.string("status"), row.string("sent_ref")), id);
     }
 
     /** Whether question {@code index} of plan {@code planSeq} already has a prompt for its answer, sent or on its way. */
@@ -121,17 +154,21 @@ public final class Outbox {
     public static Optional<String> sentQuestion(Tx tx, long taskId, int planSeq, int index) {
         return tx.one("""
                         SELECT sent_ref FROM outbox
-                        WHERE task_id = ? AND kind = 'PLAN_QUESTION' AND edit_ref IS NULL AND sent_ref IS NOT NULL
+                        WHERE task_id = ? AND kind = 'PLAN_QUESTION' AND edit_ref IS NULL AND edit_of IS NULL AND sent_ref IS NOT NULL
                           AND json_extract(payload, '$.planSeq') = ? AND json_extract(payload, '$.index') = ?
                         ORDER BY id LIMIT 1""",
                 row -> row.string("sent_ref"), taskId, planSeq, index);
     }
 
+    /**
+     * The message Telegram knows as {@code sentRef}; empty for one of a kind this version no longer has (ADR 0031), so a
+     * reply to it is a reply to an unknown message.
+     */
     public static Optional<Sent> findSent(Tx tx, String sentRef) {
         return tx.one("SELECT id, task_id, kind, payload FROM outbox WHERE sent_ref = ?",
-                row -> new Sent(row.longValue("id"), row.longOrNull("task_id"), row.enumValue("kind", OutboxKind.class),
+                row -> new Sent(row.longValue("id"), row.longOrNull("task_id"), row.enumOrNull("kind", OutboxKind.class),
                         row.string("payload")),
-                sentRef);
+                sentRef).filter(sent -> sent.kind() != null);
     }
 
     public static void markSent(Tx tx, long id, int attempts, String sentRef, Instant now) {

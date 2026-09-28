@@ -1,10 +1,10 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
@@ -15,7 +15,6 @@ import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
 import dispatch.store.Runs;
-import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -23,6 +22,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +40,6 @@ class StatsTest {
     @TempDir
     Path dir;
 
-    private Path dbFile;
     private Database db;
     private TestClock clock;
     private TaskService tasks;
@@ -49,8 +48,7 @@ class StatsTest {
 
     @BeforeEach
     void setUp() {
-        dbFile = dir.resolve("dispatch.db");
-        db = Database.open(dbFile);
+        db = Database.open(dir.resolve("dispatch.db"));
         db.migrate();
         clock = new TestClock(Instant.parse("2026-09-17T10:00:00Z"));
         Projects projects = new Projects(List.of(project("alm"), project("life")), project -> Optional.empty());
@@ -155,27 +153,14 @@ class StatsTest {
         assertEquals("0.20", mine.get("summary").get("costUsd").asText());
     }
 
-    @Test
-    void statsCommandPostsMyMonthPrivatelyAndTheGroupsMonthInAGroup() {
-        db.transaction(tx -> tasks.stats(tx, BOLD.ref(), BOLDS_GROUPS, "telegram:100/1", "telegram:100"));
-        db.transaction(tx -> tasks.stats(tx, null, List.of("backend"), "telegram:-100/2", "telegram:-100"));
-
-        JsonNode mine = Json.read(SqlRows.single(dbFile, "SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:100/1'").get("payload"));
-        assertEquals("me", mine.get("view").asText());
-        assertEquals("month", mine.get("period").asText());
-        JsonNode group = Json.read(SqlRows.single(dbFile, "SELECT payload FROM outbox WHERE reply_to_ref = 'telegram:-100/2'").get("payload"));
-        assertEquals("group:backend", group.get("view").asText());
-        assertEquals(false, group.get("canViewMe").asBoolean());
-    }
-
     private JsonNode payload(String viewerRef, List<String> groupNames, String view, String period) {
         return db.transactionReturning(tx -> tasks.statsPayload(tx, viewerRef, groupNames, view, period)).orElseThrow();
     }
 
     private long give(Requester who, String project) {
         String origin = who.ref() + "/" + ++messages;
-        db.transaction(tx -> tasks.create(tx, who, project, "Task " + messages, Priority.NORMAL, origin));
-        return Long.parseLong(SqlRows.single(dbFile, "SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, who,
+                new TaskCommand.Give(project, "Task " + messages, Priority.NORMAL, new Origin(origin))))).taskId();
     }
 
     private void planned(long id, int seq, String cost) {
@@ -190,11 +175,11 @@ class StatsTest {
         planned(id, 1, planCost);
         int seq = 1;
         if (corrected) {
-            db.transaction(tx -> tasks.correct(tx, who, id, 1, "Also this", who.ref() + "/c" + id, who.ref()));
+            db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Correct(id, OptionalInt.of(1), "Also this")));
             planned(id, ++seq, "0.05");
         }
         int planSeq = seq;
-        db.transaction(tx -> tasks.approve(tx, who, id, planSeq));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Approve(id, planSeq)));
         claim();
         clock.advance(took.minus(Duration.between(start, clock.instant())));
         transitions.completed(id, seq + 1, result(executionCost), List.of("README.md"), "https://github.com/acme/" + project + "/pull/" + id);
@@ -203,13 +188,13 @@ class StatsTest {
     private void rejected(Requester who, String project, String planCost) {
         long id = give(who, project);
         planned(id, 1, planCost);
-        db.transaction(tx -> tasks.reject(tx, who, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Reject(id, 1)));
     }
 
     private void failedExecution(Requester who, String project, String planCost, String executionCost) {
         long id = give(who, project);
         planned(id, 1, planCost);
-        db.transaction(tx -> tasks.approve(tx, who, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Approve(id, 1)));
         claim();
         transitions.failed(id, 2, FailureReason.AGENT, "boom", result(executionCost));
     }

@@ -136,6 +136,8 @@ class DraftsTest {
         assertEquals("URGENT", payload.get("priority").asText());
         assertEquals("Fix login timeout", payload.get("title").asText());
         assertEquals(1, schedulerWakes.get());
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_GIVEN_ON_DESK'").get("n"),
+                "given from the writer's own message, which the task's news replies under: not from a page");
 
         JsonNode prompt = db.transactionReturning(tx -> tasks.draftPayload(tx, draftId)).orElseThrow();
         assertEquals("CREATED", prompt.get("status").asText());
@@ -176,6 +178,17 @@ class DraftsTest {
         assertEquals(DraftChoice.PROJECT_UNAVAILABLE, db.transactionReturning(tx -> tasks.chooseProject(tx, BOLD, bolds, "crm")));
         assertEquals(DraftChoice.NOT_FOUND, db.transactionReturning(tx -> tasks.chooseProject(tx, BOLD, 999, "life")));
         assertNull(row("SELECT project FROM draft WHERE id = ?", bolds).get("project"));
+    }
+
+    @Test
+    void priorityAfterTheChosenProjectStoppedTakingTasksGivesNoTask() {
+        long draftId = draft(BOLD, "Fix login timeout", "telegram:100/15");
+        db.transaction(tx -> tasks.chooseProject(tx, BOLD, draftId, "crm"));
+        unavailable = Set.of("crm");
+
+        assertEquals(DraftChoice.PROJECT_UNAVAILABLE, db.transactionReturning(tx -> tasks.choosePriority(tx, BOLD, draftId, Priority.NORMAL)));
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
+        assertEquals("OPEN", row("SELECT status FROM draft WHERE id = ?", draftId).get("status"), "still answerable once crm is back");
     }
 
     @Test

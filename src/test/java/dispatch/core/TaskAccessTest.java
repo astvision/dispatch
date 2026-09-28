@@ -1,12 +1,12 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
 import dispatch.core.TaskAccess.Action;
-import dispatch.core.TaskAccess.Refusal;
 import dispatch.core.TaskAccess.Sight;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
@@ -19,7 +19,6 @@ import dispatch.store.Database;
 import dispatch.store.PlanAnswers;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
-import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -73,7 +72,6 @@ class TaskAccessTest {
     @TempDir
     Path dir;
 
-    private Path dbFile;
     private Database db;
     private TestClock clock;
     private Groups groups;
@@ -83,8 +81,7 @@ class TaskAccessTest {
 
     @BeforeEach
     void setUp() {
-        dbFile = dir.resolve("dispatch.db");
-        db = Database.open(dbFile);
+        db = Database.open(dir.resolve("dispatch.db"));
         db.migrate();
         clock = new TestClock(Instant.parse("2026-09-25T10:00:00Z"));
         groups = new Groups(new Config.Telegram(List.of(300L, 400L, 600L), List.of(
@@ -309,7 +306,7 @@ class TaskAccessTest {
     /** Approved; its execution run (seq 2) runs, and its agent started. */
     private long executing() {
         long id = awaiting(PLAN);
-        db.transaction(tx -> tasks.approve(tx, BOLD, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
         ClaimedRun run = claim();
         transitions.agentStarted(id, run.seq(), null, null);
         return id;
@@ -351,13 +348,13 @@ class TaskAccessTest {
 
     private long rejected() {
         long id = awaiting(PLAN);
-        db.transaction(tx -> tasks.reject(tx, BOLD, id, 1));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Reject(id, 1)));
         return id;
     }
 
     private long cancelled() {
         long id = planning();
-        db.transaction(tx -> tasks.cancel(tx, BOLD, id, BOLD.ref() + "/cancel", BOLD.ref()));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(id)));
         return id;
     }
 
@@ -385,9 +382,9 @@ class TaskAccessTest {
     }
 
     private long create(String project) {
-        String origin = BOLD.ref() + "/" + System.nanoTime();
-        db.transaction(tx -> tasks.create(tx, BOLD, project, "Fix the login timeout", Priority.NORMAL, origin));
-        return Long.parseLong(SqlRows.single(dbFile, "SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
+        Origin origin = new Origin(BOLD.ref() + "/" + System.nanoTime());
+        return assertInstanceOf(CommandResult.Created.class, db.transactionReturning(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Give(project, "Fix the login timeout", Priority.NORMAL, origin)))).taskId();
     }
 
     private ClaimedRun claim() {
