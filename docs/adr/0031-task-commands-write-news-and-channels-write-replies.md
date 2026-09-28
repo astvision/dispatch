@@ -58,8 +58,8 @@ We rejected:
   replies, so the Telegram channel posts them. Drafts keep answering in the chat until they get a module of their own.
 - The commands are tested once, at `TaskCommands`' interface, on a real SQLite file. Each command's effect and news is
   covered, and one table maps situations to refusals. Some rules hold for every command and are proven once: a refusal
-  writes nothing, news never lands under the actor's message, and every refusal has its words in both languages. The
-  channels' tests only prove that they ask and relay. TaskAccess keeps its own table (ADR 0027).
+  writes nothing, and every refusal has its words in both languages. The channels' tests prove that they ask and relay,
+  and that news never lands under the actor's message. TaskAccess keeps its own table (ADR 0027).
 - A question's redraw names the question's outbox row, not its Telegram message. An answer given before the question is
   delivered, from the Mini App or the assistant, then redraws it once it is sent instead of sending it twice.
 - A merged task's follow-up is refused exactly as giving a task is. An unavailable project, or a requester who has left
