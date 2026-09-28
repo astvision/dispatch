@@ -140,10 +140,13 @@ public final class Tasks {
         return terms.isEmpty() ? null : "(" + String.join(" OR ", terms) + ")";
     }
 
-    /** Finished tasks with a worktree, unchanged since before {@code idleSince}, oldest first. */
+    /**
+     * Finished tasks with a worktree on this machine, unchanged since before {@code idleSince}, oldest first. One made on a
+     * member's computer is that computer's to sweep (WorkerSweeper), and its text is never a path here.
+     */
     public static List<Task> finishedIdleWithWorktree(Tx tx, Instant idleSince) {
-        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase IN (?, ?, ?, ?) AND worktree IS NOT NULL AND updated_at < ?"
-                        + " ORDER BY updated_at, id", Tasks::map,
+        return tx.list("SELECT " + COLUMNS + " FROM task WHERE phase IN (?, ?, ?, ?) AND worktree IS NOT NULL"
+                        + " AND worker_id IS NULL AND updated_at < ? ORDER BY updated_at, id", Tasks::map,
                 Phase.COMPLETED, Phase.FAILED, Phase.REJECTED, Phase.CANCELLED, idleSince);
     }
 

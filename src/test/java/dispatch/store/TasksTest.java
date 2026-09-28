@@ -5,8 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import dispatch.domain.Phase;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
+import dispatch.domain.Task;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -72,6 +74,24 @@ class TasksTest {
 
         assertEquals(Optional.empty(), db.transactionReturning(tx -> Tasks.workerOf(tx, active)), "unpinned: free for another computer");
         assertEquals(Optional.of(workerId), db.transactionReturning(tx -> Tasks.workerOf(tx, finished)), "finished work keeps its record");
+    }
+
+    @Test
+    void aWorktreeOnAMembersComputerIsNeverThisMachinesToSweep() {
+        long here = task();
+        long there = task();
+        long workerId = db.transactionReturning(tx -> Workers.insert(tx, "telegram:1", "laptop", "a".repeat(64), T0));
+        db.transaction(tx -> {
+            Tasks.recordWorktree(tx, here, "/var/lib/dispatch/worktrees/" + here, "abc", T0);
+            Tasks.recordWorktree(tx, there, "C:\\Users\\Ann\\dispatch\\worktrees\\" + there, "abc", T0);
+            Tasks.recordWorker(tx, there, workerId, T0);
+            Tasks.changePhase(tx, here, Phase.PLANNING, Phase.COMPLETED, T0);
+            Tasks.changePhase(tx, there, Phase.PLANNING, Phase.COMPLETED, T0);
+        });
+
+        List<Task> idle = db.transactionReturning(tx -> Tasks.finishedIdleWithWorktree(tx, T0.plusSeconds(60)));
+
+        assertEquals(List.of(here), idle.stream().map(Task::id).toList(), "a member's computer sweeps its own (WorkerSweeper)");
     }
 
     private long task() {
