@@ -167,7 +167,8 @@ public final class Workspaces {
 
     /**
      * Adds a removed worktree back on the task's branch, so a later run (a retry, a follow-up) continues where the task
-     * stopped. The sweep only removes worktrees whose commits are pushed; a branch that is gone from the clone is fetched.
+     * stopped. The sweep only removes worktrees whose commits are pushed, or whose task is merged; a branch that is gone from
+     * the clone is fetched.
      */
     public Path recreateWorktree(Config.Project project, long taskId) {
         Path repo = repo(project);

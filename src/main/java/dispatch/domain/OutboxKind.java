@@ -103,5 +103,7 @@ public enum OutboxKind {
     /** To the requester, under the result they tapped Merge on: the pull request is merged. Payload: taskId, base, prUrl. */
     TASK_MERGED,
     /** To the requester, under that result: GitHub refused the merge. Payload: taskId, and error (GitHub's words) or closed. */
-    MERGE_REFUSED
+    MERGE_REFUSED,
+    /** Under a follow-up to a merged task: it became a new task instead. Payload: taskId (the merged one), newTaskId. */
+    FOLLOW_UP_NEW_TASK
 }

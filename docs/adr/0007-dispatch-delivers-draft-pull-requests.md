@@ -22,7 +22,7 @@ Draft status marks the PR as unreviewed agent work; nothing merges without a hum
 
 ## Amended 2026-09-28: merging from Telegram
 
-A personal bot's result message offers its requester a Merge button. A tap marks the draft ready and squash-merges it with
+A bot that delivers on its own machine (every personal bot) offers the requester a Merge button on the result message. A tap marks the draft ready and squash-merges it with
 `gh`, deleting its branch; `gh` runs outside any clone, so no checkout changes. When GitHub refuses (a check still running,
 a review required), its reason is shown under the result and the button stays. A human still decides every merge: nothing
 merges without that tap. A team bot offers no button, since its members' own computers hold the credentials that

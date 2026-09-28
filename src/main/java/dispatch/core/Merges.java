@@ -15,6 +15,7 @@ import dispatch.store.Tx;
 import dispatch.workspace.WorkspaceException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,8 +76,13 @@ public final class Merges {
         TaskAccess.Verdict verdict = access.of(tx, who.ref(), taskId);
         Optional<TaskAccess.Refusal> refused = verdict.refusal(TaskAccess.Action.MERGE);
         if (refused.isPresent()) {
+            if (refused.get() == TaskAccess.Refusal.MERGED) {
+                // A result the merge was not tapped under still shows the button: it goes now.
+                redrawMerged(tx, taskId, who.ref(), messageRef, clock.instant());
+                tx.afterCommit(wakeOutbox);
+                return Outcome.MERGED;
+            }
             return switch (refused.get()) {
-                case MERGED -> Outcome.MERGED;
                 case NOT_MEMBER, NOT_FOUND, NOT_REQUESTER -> Outcome.NOT_ALLOWED;
                 default -> Outcome.WRONG_STATE;
             };
@@ -94,42 +100,89 @@ public final class Merges {
         return Outcome.STARTED;
     }
 
+    /** What GitHub answered: merged, or why not, as MERGE_REFUSED says it. */
+    private record Answer(boolean merged, ObjectNode refusal) {
+
+        static final Answer MERGED = new Answer(true, null);
+
+        static Answer refused(ObjectNode why) {
+            return new Answer(false, why);
+        }
+    }
+
     private void merge(Task task, Requester who, String messageRef) {
         try {
-            String state = pullRequests.state(task.prUrl());
-            if (state.equals("CLOSED")) {
-                refused(task, messageRef, Json.object().put("closed", true));
-                return;
+            Answer answer = ask(task);
+            try {
+                if (answer.merged()) {
+                    merged(task, who, messageRef);
+                } else {
+                    refused(task, messageRef, answer.refusal());
+                }
+            } catch (RuntimeException e) {
+                // GitHub has answered; only recording it failed. A later tap asks again and records what GitHub shows.
+                Log.error("merge.not_recorded", e, "task", task.id(), "pr", task.prUrl(), "merged", answer.merged());
             }
-            // Merged already, on GitHub or by a tap whose answer a restart lost: only recording it is left.
-            if (!state.equals("MERGED")) {
-                pullRequests.squashMerge(task.prUrl());
-            }
-            merged(task, who, messageRef);
-        } catch (WorkspaceException e) {
-            // GitHub's own refusal, such as a check still running: the requester reads why and taps again later.
-            refused(task, messageRef, Json.object().put("error", e.getMessage()));
-        } catch (RuntimeException e) {
-            Log.error("merge.failed", e, "task", task.id(), "pr", task.prUrl());
-            refused(task, messageRef, Json.object().put("error", e.getMessage() == null ? e.toString() : e.getMessage()));
         } finally {
             merging.remove(task.id());
         }
     }
 
+    /** GitHub alone, outside any transaction; its state after the merge is the answer, never gh's exit code. */
+    private Answer ask(Task task) {
+        String url = task.prUrl();
+        try {
+            String state = pullRequests.state(url);
+            if (state.equals("CLOSED")) {
+                return Answer.refused(Json.object().put("closed", true));
+            }
+            // Merged already, on GitHub or by a tap whose answer a restart lost: only recording it is left.
+            if (state.equals("MERGED")) {
+                return Answer.MERGED;
+            }
+            // A follow-up that began since the tap changes what would be merged: it goes first.
+            if (!stillMergeable(task.id())) {
+                return Answer.refused(Json.object().put("busy", true));
+            }
+            String error = null;
+            try {
+                pullRequests.squashMerge(url);
+            } catch (WorkspaceException e) {
+                // GitHub's own refusal, such as a check still running, unless the merge happened all the same.
+                error = e.getMessage();
+            }
+            // A merge queue or auto-merge takes the merge without merging yet; a merge whose branch could not be deleted
+            // fails though it merged.
+            if (pullRequests.state(url).equals("MERGED")) {
+                return Answer.MERGED;
+            }
+            return Answer.refused(error != null ? Json.object().put("error", error) : Json.object().put("queued", true));
+        } catch (RuntimeException e) {
+            // gh missing or logged out, or GitHub unreachable: the requester reads why and taps again later.
+            Log.warn("merge.github_failed", "task", task.id(), "pr", url, "error", String.valueOf(e.getMessage()));
+            return Answer.refused(Json.object().put("error", e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+    }
+
+    private boolean stillMergeable(long taskId) {
+        return db.transactionReturning(tx -> Tasks.find(tx, taskId))
+                .map(current -> current.phase() == Phase.COMPLETED && current.mergedAt() == null).orElse(false);
+    }
+
     private void merged(Task task, Requester who, String messageRef) {
         Instant now = clock.instant();
-        db.transaction(tx -> {
-            Tasks.merged(tx, task.id(), now);
-            Events.record(tx, task.id(), null, who.ref(), Phase.COMPLETED, Phase.COMPLETED, "merged", now);
+        boolean recorded = db.transactionReturning(tx -> {
+            if (!Tasks.merged(tx, task.id(), now)) {
+                return false;
+            }
+            Phase phase = Tasks.find(tx, task.id()).orElseThrow().phase();
+            Events.record(tx, task.id(), null, who.ref(), phase, phase, "merged", now);
             Outbox.enqueue(tx, task.id(), OutboxKind.TASK_MERGED, task.requester().ref(), messageRef,
                     Json.object().put("taskId", task.id()).put("base", task.baseBranch()).put("prUrl", task.prUrl()), now);
-            // The result that offered it is redrawn without its button.
-            Outbox.findSent(tx, messageRef).filter(sent -> sent.kind() == OutboxKind.TASK_COMPLETED).ifPresent(sent ->
-                    Outbox.enqueueEdit(tx, task.id(), OutboxKind.TASK_COMPLETED, task.requester().ref(), messageRef,
-                            ((ObjectNode) Json.read(sent.payload())).put("merged", true), now));
+            redrawMerged(tx, task.id(), task.requester().ref(), messageRef, now);
+            return true;
         });
-        Log.info("merge.done", "task", task.id(), "pr", task.prUrl());
+        Log.info("merge.done", "task", task.id(), "pr", task.prUrl(), "recorded", recorded);
         wakeOutbox.run();
     }
 
@@ -138,5 +191,13 @@ public final class Merges {
                 reason.put("taskId", task.id()), clock.instant()));
         Log.warn("merge.refused", "task", task.id(), "pr", task.prUrl(), "reason", reason.toString());
         wakeOutbox.run();
+    }
+
+    /** The result {@code messageRef}, if it is task {@code taskId}'s own, redrawn as merged: without its button. */
+    private static void redrawMerged(Tx tx, long taskId, String chatRef, String messageRef, Instant now) {
+        Outbox.findSent(tx, messageRef)
+                .filter(sent -> sent.kind() == OutboxKind.TASK_COMPLETED && Objects.equals(sent.taskId(), taskId))
+                .ifPresent(sent -> Outbox.enqueueEdit(tx, taskId, OutboxKind.TASK_COMPLETED, chatRef, messageRef,
+                        ((ObjectNode) Json.read(sent.payload())).put("merged", true), now));
     }
 }

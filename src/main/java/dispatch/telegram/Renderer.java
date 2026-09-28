@@ -212,9 +212,12 @@ public final class Renderer {
             case ASSISTANT_REPLY -> assistantReply(payload);
             case ADDITION_OFFERED -> additionOffered(payload);
             case TASK_MERGED -> plain(format("task.merged", taskId(payload), escape(payload.path("base").asText())));
-            case MERGE_REFUSED -> plain(payload.path("closed").asBoolean(false)
-                    ? format("task.mergeClosed", taskId(payload))
+            case MERGE_REFUSED -> plain(payload.path("closed").asBoolean(false) ? format("task.mergeClosed", taskId(payload))
+                    : payload.path("busy").asBoolean(false) ? format("task.mergeBusy", taskId(payload))
+                    : payload.path("queued").asBoolean(false) ? format("task.mergeQueued", taskId(payload))
                     : format("task.mergeRefused", taskId(payload), escapeWithin(payload.path("error").asText(), MERGE_ERROR_LIMIT)));
+            case FOLLOW_UP_NEW_TASK -> plain(format("task.followUpNewTask", taskId(payload),
+                    String.valueOf(payload.path("newTaskId").asLong())));
         };
     }
 

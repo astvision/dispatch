@@ -631,6 +631,16 @@ class RendererTest {
     }
 
     @Test
+    void aMergeThatDidNotHappenSaysWhy() {
+        assertEquals(renderer.text("task.mergeBusy").replace("{0}", "8"),
+                renderer.render(OutboxKind.MERGE_REFUSED, Json.object().put("taskId", 8).put("busy", true)).html());
+        assertEquals(renderer.text("task.mergeQueued").replace("{0}", "8"),
+                renderer.render(OutboxKind.MERGE_REFUSED, Json.object().put("taskId", 8).put("queued", true)).html());
+        assertTrue(renderer.render(OutboxKind.MERGE_REFUSED, Json.object().put("taskId", 8).put("error", "Required status check <build>"))
+                .html().contains("Required status check &lt;build&gt;"), "GitHub's own words, escaped");
+    }
+
+    @Test
     void anAdditionOfferNamesItsTaskAndWhoWroteItWithOneButton() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.ADDITION_OFFERED, Json.object().put("additionId", 3).put("taskId", 8)
                 .put("title", "Ажилтны жагсаалт").put("by", "Nomin").put("text", "Tooltip for <long> positions"));
@@ -936,6 +946,7 @@ class RendererTest {
                     .put("text", "Also a <tooltip>").put("requester", "Ali");
             case TASK_MERGED -> Json.object().put("taskId", 8).put("base", "main").put("prUrl", "https://github.com/acme/alm/pull/30");
             case MERGE_REFUSED -> Json.object().put("taskId", 8).put("error", "GraphQL: Required status check \"build\" is expected.");
+            case FOLLOW_UP_NEW_TASK -> Json.object().put("taskId", 8).put("newTaskId", 9);
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

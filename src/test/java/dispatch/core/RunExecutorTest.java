@@ -505,6 +505,22 @@ class RunExecutorTest {
     }
 
     @Test
+    void sweepKeepsAMergedTasksWorktreeWhileItHoldsUncommittedWork() throws Exception {
+        long id = queue("Fix the login timeout");
+        runNext();
+        approve(id);
+        runNext();
+        Path worktree = repos.stateDir.resolve("worktrees/" + id);
+        GitFixture.sh(dir, "git", "--git-dir=" + repos.origin, "branch", "-D", "dispatch/" + id);
+        db.transaction(tx -> dispatch.store.Tasks.merged(tx, id, Instant.parse("2026-09-17T12:00:00Z")));
+        // What a follow-up refused at delivery leaves behind: its PR had been merged on GitHub.
+        Files.writeString(worktree.resolve("NOTES.md"), "not delivered\n");
+
+        assertEquals(0, sweeper.sweep(), "merged excuses only the branch gone from origin, not work never delivered");
+        assertTrue(Files.exists(worktree.resolve("NOTES.md")));
+    }
+
+    @Test
     void sweepNeverTouchesATaskThatIsActiveAgain() throws Exception {
         long id = queue("Fix the login timeout");
         runNext();

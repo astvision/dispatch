@@ -61,6 +61,10 @@ class MergeButtonTest {
     /** What GitHub says of the pull request, and does when asked to merge it. */
     private String state = "OPEN";
     private String refusal;
+    /** A merge queue or auto-merge: gh takes the merge, but the pull request stays open for now. */
+    private boolean onlyQueues;
+    /** The state GitHub shows after a refused call, when the merge happened all the same (e.g. its branch could not be deleted). */
+    private String stateAfterRefusal;
     private final List<String> merged = new ArrayList<>();
     /** Merges start in the background; a test runs them when it chooses. */
     private final List<Runnable> started = new ArrayList<>();
@@ -88,9 +92,15 @@ class MergeButtonTest {
             @Override
             public void squashMerge(String url) {
                 if (refusal != null) {
+                    if (stateAfterRefusal != null) {
+                        state = stateAfterRefusal;
+                    }
                     throw new WorkspaceException(refusal);
                 }
                 merged.add(url);
+                if (!onlyQueues) {
+                    state = "MERGED";
+                }
             }
         };
         Merges merges = new Merges(db, groups, pullRequests, clock, () -> { }, started::add);
@@ -191,27 +201,109 @@ class MergeButtonTest {
     }
 
     @Test
+    void aFollowUpThatBeginsBeforeTheMergeRunsGoesFirst() throws Exception {
+        long taskId = delivered();
+        handler.handle(UpdateHandlerTest.privateCallback(970, BOLD, "Bold", "merge:" + taskId));
+        handler.handle(UpdateHandlerTest.message(971, 971, BOLD, "Bold", BOLD, "private", "Also cover the mobile login", resultMessage(88)));
+
+        runMerges();
+
+        assertTrue(merged.isEmpty(), "the follow-up changes what would be merged");
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'MERGE_REFUSED'").get("payload")).path("busy").asBoolean());
+        assertEquals(null, row("SELECT merged_at FROM task WHERE id = ?", taskId).get("merged_at"));
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+    }
+
+    @Test
+    void aMergeGitHubOnlyQueuedIsNotRecordedAsMerged() throws Exception {
+        long taskId = delivered();
+        onlyQueues = true;
+
+        handler.handle(UpdateHandlerTest.privateCallback(975, BOLD, "Bold", "merge:" + taskId));
+        runMerges();
+
+        assertEquals(null, row("SELECT merged_at FROM task WHERE id = ?", taskId).get("merged_at"), "GitHub's own state is the answer");
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'MERGE_REFUSED'").get("payload")).path("queued").asBoolean());
+    }
+
+    @Test
+    void aMergeThatHappenedThoughGhFailedIsRecorded() throws Exception {
+        long taskId = delivered();
+        refusal = "failed to delete remote branch dispatch/1";
+        stateAfterRefusal = "MERGED";
+
+        handler.handle(UpdateHandlerTest.privateCallback(976, BOLD, "Bold", "merge:" + taskId));
+        runMerges();
+
+        assertTrue(row("SELECT merged_at FROM task WHERE id = ?", taskId).get("merged_at") != null);
+        assertEquals("1", count("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_MERGED'"));
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind = 'MERGE_REFUSED'"));
+    }
+
+    @Test
+    void aTapUnderAnotherTasksResultRedrawsOnlyItsOwnTasksResult() throws Exception {
+        long first = delivered();
+        long second = delivered(89, "telegram:" + BOLD + "/11");
+
+        handler.handle(UpdateHandlerTest.privateCallback(980, BOLD, "Bold", "merge:" + second));
+        runMerges();
+
+        assertTrue(row("SELECT merged_at FROM task WHERE id = ?", second).get("merged_at") != null);
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE edit_ref IS NOT NULL"),
+                "message 88 is task " + first + "'s result, not the merged task's");
+    }
+
+    @Test
+    void aTapOnAnOlderResultAfterTheMergeDropsItsButtonToo() throws Exception {
+        long taskId = delivered();
+        long older = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED'").get("id"));
+        db.transaction(tx -> {
+            long copy = Outbox.enqueue(tx, taskId, dispatch.domain.OutboxKind.TASK_COMPLETED, "telegram:" + BOLD, null,
+                    Json.read(SqlRows.single(dbFile, "SELECT payload FROM outbox WHERE id = ?", older).get("payload")), clock.instant());
+            Outbox.markSent(tx, copy, 1, "telegram:" + BOLD + "/87", clock.instant());
+        });
+        handler.handle(UpdateHandlerTest.privateCallback(985, BOLD, "Bold", "merge:" + taskId));
+        runMerges();
+        answer();
+
+        handler.handle(UpdateHandlerTest.callback(986, BOLD, "Bold", BOLD, 87, "merge:" + taskId));
+
+        assertEquals(renderer.text("callback.mergeAlready"), answer());
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED' AND edit_ref = ?",
+                "telegram:" + BOLD + "/87").get("payload")).path("merged").asBoolean(), "the older result loses its button as well");
+    }
+
+    @Test
     void aReplyToAMergedTasksResultBecomesANewTask() throws Exception {
         long taskId = delivered();
         handler.handle(UpdateHandlerTest.privateCallback(960, BOLD, "Bold", "merge:" + taskId));
         runMerges();
 
-        handler.handle(UpdateHandlerTest.message(961, 961, BOLD, "Bold", BOLD, "private", "Also cover the mobile login", """
-                {"message_id":88,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":%d,"type":"private"},
-                 "date":1789640000,"text":"done"}""".formatted(BOLD)));
+        handler.handle(UpdateHandlerTest.message(961, 961, BOLD, "Bold", BOLD, "private", "Also cover the mobile login", resultMessage(88)));
 
-        Map<String, String> next = row("SELECT phase, project, description FROM task WHERE id <> ?", taskId);
+        Map<String, String> next = row("SELECT id, phase, project, description FROM task WHERE id <> ?", taskId);
         assertEquals("PLANNING", next.get("phase"), "planned afresh, from the base its merge moved");
         assertEquals("autoland-management", next.get("project"));
         assertEquals("Also cover the mobile login\n\n↩️ #" + taskId + " " + PR, next.get("description"));
         assertEquals("2", count("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId), "no follow-up run on the merged branch");
+        Map<String, String> told = row("SELECT chat_ref, reply_to_ref, payload FROM outbox WHERE kind = 'FOLLOW_UP_NEW_TASK'");
+        assertEquals("telegram:" + BOLD, told.get("chat_ref"));
+        assertEquals("telegram:" + BOLD + "/961", told.get("reply_to_ref"), "said under the reply, at once, not when its plan comes");
+        JsonNode payload = Json.read(told.get("payload"));
+        assertEquals(taskId, payload.get("taskId").asLong());
+        assertEquals(Long.parseLong(next.get("id")), payload.get("newTaskId").asLong());
     }
 
     /** A task Bold gave, planned, approved and delivered as {@link #PR}; its result was sent as message 88. */
     private long delivered() {
+        return delivered(88, "telegram:" + BOLD + "/10");
+    }
+
+    /** The same, its result sent as message {@code resultMessageId}, the task given by message {@code origin}. */
+    private long delivered(long resultMessageId, String origin) {
         Requester bold = new Requester("telegram:" + BOLD, "Bold");
-        db.transaction(tx -> tasks.create(tx, bold, "alm", "Fix the login timeout", Priority.NORMAL, "telegram:" + BOLD + "/10"));
-        long taskId = Long.parseLong(row("SELECT id FROM task").get("id"));
+        db.transaction(tx -> tasks.create(tx, bold, "alm", "Fix the login timeout", Priority.NORMAL, origin));
+        long taskId = Long.parseLong(row("SELECT id FROM task WHERE origin_ref = ?", origin).get("id"));
         db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(), List.of());
         transitions.planSucceeded(taskId, 1, plan, result(plan.toJson()));
@@ -219,9 +311,16 @@ class MergeButtonTest {
         db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
         transitions.agentStarted(taskId, 2, null, null);
         transitions.completed(taskId, 2, result(null), List.of("src/Auth.java"), PR);
-        long resultId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED'").get("id"));
-        db.transaction(tx -> Outbox.markSent(tx, resultId, 1, "telegram:" + BOLD + "/88", clock.instant()));
+        long resultId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'TASK_COMPLETED' AND task_id = ?", taskId).get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, resultId, 1, "telegram:" + BOLD + "/" + resultMessageId, clock.instant()));
         return taskId;
+    }
+
+    /** The bot's own message {@code messageId} in Bold's private chat, as a reply to it carries it. */
+    private static String resultMessage(long messageId) {
+        return """
+                {"message_id":%d,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":%d,"type":"private"},
+                 "date":1789640000,"text":"done"}""".formatted(messageId, BOLD);
     }
 
     private static AgentResult result(String structuredOutput) {

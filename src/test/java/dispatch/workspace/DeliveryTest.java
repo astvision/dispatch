@@ -99,6 +99,57 @@ class DeliveryTest {
     }
 
     @Test
+    void aFollowUpOntoAClosedPullRequestFailsToo() throws IOException {
+        Files.writeString(worktree.resolve("README.md"), "v2\n");
+        delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        String delivered = origin("rev-parse", "refs/heads/dispatch/42");
+        Files.writeString(worktree.resolve("fake-gh.state"), "CLOSED\n");
+        Files.writeString(worktree.resolve("README.md"), "v3\n");
+
+        WorkspaceException refused = assertThrows(WorkspaceException.class,
+                () -> delivery(null).deliver(worktree, 42, "main", delivered, COMMIT, FakeGh.PR_URL));
+
+        assertTrue(refused.getMessage().contains("closed"), refused.getMessage());
+    }
+
+    @Test
+    void aFollowUpWithNothingToDeliverNeedsNoOpenPullRequest() throws IOException {
+        Files.writeString(worktree.resolve("README.md"), "v2\n");
+        delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        String delivered = origin("rev-parse", "refs/heads/dispatch/42");
+        Files.writeString(worktree.resolve("fake-gh.state"), "MERGED\n");
+
+        Delivery.Result result = delivery(null).deliver(worktree, 42, "main", delivered, COMMIT, FakeGh.PR_URL);
+
+        assertEquals(List.of(), result.files(), "a follow-up that only answered delivers nothing, and needs no pull request open");
+    }
+
+    @Test
+    void aFollowUpWhosePullRequestCannotBeLookedUpIsStillDelivered() throws IOException {
+        Files.writeString(worktree.resolve("README.md"), "v2\n");
+        delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        String delivered = origin("rev-parse", "refs/heads/dispatch/42");
+        Files.writeString(worktree.resolve("README.md"), "v3\n");
+        String unreadable = FakeGh.PR_URL + "#GH:fail";
+
+        Delivery.Result result = delivery(null).deliver(worktree, 42, "main", delivered, COMMIT, unreadable);
+
+        assertEquals(unreadable, result.prUrl(), "a lookup GitHub could not answer guards nothing, so it blocks nothing");
+        assertEquals(result.commitSha(), origin("rev-parse", "refs/heads/dispatch/42"));
+    }
+
+    @Test
+    void aRedeliveryWhosePushAlreadyLandedNeedsNoOpenPullRequest() throws IOException {
+        Files.writeString(worktree.resolve("README.md"), "v2\n");
+        Delivery.Result first = delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
+        Files.writeString(worktree.resolve("fake-gh.state"), "MERGED\n");
+
+        Delivery.Result again = delivery(null).redeliver(worktree, 42, "main", start, COMMIT, FakeGh.PR_URL);
+
+        assertEquals(first.commitSha(), again.commitSha(), "nothing left to push, so nothing to refuse");
+    }
+
+    @Test
     void runWithoutChangesDeliversNothing() {
         Delivery.Result result = delivery(null).deliver(worktree, 42, "main", start, COMMIT, null);
 

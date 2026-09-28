@@ -42,7 +42,6 @@ public final class Delivery {
     /** @param existingPrUrl the task's pull request from an earlier delivery, null if none */
     public Result deliver(Path worktree, long taskId, String baseBranch, String startSha, Commit commit, String existingPrUrl) {
         String branch = "dispatch/" + taskId;
-        requireOpen(worktree, existingPrUrl);
         if (!head(worktree).equals(startSha)) {
             // The agent committed despite its rules. Without this, its work would be pushed as someone else's commits,
             // or reported as "no changes" because the working tree is clean.
@@ -53,6 +52,7 @@ public final class Delivery {
         if (files.isEmpty()) {
             return new Result(List.of(), null, existingPrUrl);
         }
+        requireOpen(worktree, existingPrUrl);
         commit(worktree, commit);
         String commitSha = head(worktree);
 
@@ -74,7 +74,6 @@ public final class Delivery {
      */
     public Result redeliver(Path worktree, long taskId, String baseBranch, String baseSha, Commit commit, String existingPrUrl) {
         String branch = "dispatch/" + taskId;
-        requireOpen(worktree, existingPrUrl);
         String pushed = pushedHead(worktree, branch);
         String start = pushed != null ? pushed : baseSha;
         if (!head(worktree).equals(start)) {
@@ -88,6 +87,7 @@ public final class Delivery {
             return new Result(List.of(), null, existingPrUrl);
         }
         if (!head.equals(pushed)) {
+            requireOpen(worktree, existingPrUrl);
             push(worktree, branch);
         }
         String prUrl = existingPrUrl != null
@@ -101,13 +101,21 @@ public final class Delivery {
     /**
      * More commits reach a task's pull request only while it is open. Pushed onto one merged or closed on GitHub, a follow-up
      * would be reported as delivered while it reaches nothing; the Merge button records its own merges, so this catches a
-     * merge done on GitHub. Nothing is committed or pushed then: the follow-up's changes stay in the worktree.
+     * merge done on GitHub. Checked only when there is something to push; nothing is committed or pushed after it
+     * fails, so the follow-up's changes stay in the worktree. A lookup GitHub cannot answer blocks nothing: this guards a
+     * rare case, and follow-ups were delivered without it before.
      */
     private void requireOpen(Path worktree, String prUrl) {
         if (prUrl == null) {
             return;
         }
-        String state = gh.pullRequestState(worktree, prUrl);
+        String state;
+        try {
+            state = gh.pullRequestState(worktree, prUrl);
+        } catch (WorkspaceException e) {
+            Log.warn("delivery.pr_state_unknown", "pr", prUrl, "error", e.getMessage());
+            return;
+        }
         if (!state.equals("OPEN")) {
             throw new WorkspaceException("pull request " + prUrl + " is " + state.toLowerCase(java.util.Locale.ROOT)
                     + ", so this follow-up was not delivered; give it as a new task");

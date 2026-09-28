@@ -847,7 +847,14 @@ public final class TaskService {
             // request of its own. The last line points back without words, so it never sways the plan's language.
             CreateResult created = create(tx, who, task.project(), text.strip() + "\n\n↩️ #" + taskId + " " + task.prUrl(),
                     task.priority(), originRef);
-            return created == CreateResult.CREATED ? FollowUpResult.NEW_TASK : FollowUpResult.REFUSED;
+            if (created != CreateResult.CREATED) {
+                return FollowUpResult.REFUSED;
+            }
+            // Said at once: its plan may be a while behind a busy queue, and it asks for approval as any new task does.
+            long newTaskId = Tasks.findByOrigin(tx, originRef).orElseThrow().id();
+            enqueue(tx, newTaskId, OutboxKind.FOLLOW_UP_NEW_TASK, chatRef, originRef,
+                    Json.object().put("taskId", taskId).put("newTaskId", newTaskId), now);
+            return FollowUpResult.NEW_TASK;
         }
         if (!Tasks.changePhase(tx, taskId, task.phase(), Phase.EXECUTING, now)) {
             refuse(tx, OutboxKind.FOLLOW_UP_REFUSED, who, verdict, taskId, TaskAccess.Refusal.WRONG_PHASE, originRef, chatRef, now);
