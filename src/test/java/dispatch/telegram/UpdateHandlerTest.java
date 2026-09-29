@@ -2370,6 +2370,21 @@ class UpdateHandlerTest {
         assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'ASSISTANT_REPLY'").get("payload")).path("new").asBoolean());
     }
 
+    /** Without "new" in COMMANDS this would be swallowed as a follow-up of the topic's finished task. */
+    @Test
+    void newInsideAFinishedTaskTopicIsACommandAndNotAFollowUp() {
+        List<dispatch.agent.RunRequest> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+        UpdateHandler withAssistant = assistantHandler(asked, Json.read("{\"reply\":\"ок\",\"actions\":[]}"));
+        long taskId = completedTask();
+        db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '57' WHERE id = ?", taskId));
+        String runsBefore = row("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId).get("n");
+
+        withAssistant.handle(topicMessage(721, 74, 100, "Bold", 57, "/new"));
+
+        assertEquals(runsBefore, row("SELECT count(*) AS n FROM run WHERE task_id = ?", taskId).get("n"), "no follow-up run");
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'ASSISTANT_REPLY'").get("payload")).path("new").asBoolean());
+    }
+
     private long taskAwaitingApproval() {
         return taskAwaitingApproval(List.of());
     }

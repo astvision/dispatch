@@ -73,7 +73,7 @@ public final class UpdateHandler {
     private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
     private static final Set<String> COMMANDS =
-            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "projects", "help", "start");
+            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "new", "projects", "help", "start");
     /** What Telegram accepts as a deep link's start parameter. */
     private static final java.util.regex.Pattern START_PARAMETER = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,64}");
     private static final Duration UNKNOWN_NOTICE_INTERVAL = Duration.ofHours(24);
