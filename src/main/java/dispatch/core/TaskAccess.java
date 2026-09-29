@@ -168,7 +168,9 @@ public final class TaskAccess {
     /** The owner on the desktop (D-2): every task of the instance's projects in full, acting as {@code memberRef}. */
     public Viewer owner(String memberRef) {
         Set<String> all = groups.all().stream().flatMap(group -> group.projects().stream()).collect(Collectors.toSet());
-        return new Viewer(groups.isMember(memberRef) ? memberRef : null, all, true);
+        // An admin in no group still acts: their verdicts allow cancelling any task (ADR 0020), and a null ref asks for none.
+        boolean acts = groups.isMember(memberRef) || groups.isAdmin(memberRef);
+        return new Viewer(acts ? memberRef : null, all, true);
     }
 
     /** A group chat looking at tasks: its own projects', as headlines. */

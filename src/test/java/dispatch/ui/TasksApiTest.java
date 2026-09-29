@@ -411,6 +411,24 @@ class TasksApiTest {
         assertEquals(0, detail.path("plan").path("current").asInt());
     }
 
+    /** ADR 0020, 0027: an admin cancels any task, and the desk offers it to an admin who is in no group too. */
+    @Test
+    void theDeskOffersAnAdminInNoGroupTheCancelOfEveryTask() {
+        groups.replace(new Config.Telegram(List.of(100L, 400L), List.of(new Config.Group("backend", -100L,
+                List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))));
+        long alis = create(ALI, "Add the export button");
+        Caller admin = new Caller("telegram:400", "Admin", true);
+        TasksApi desk = new TasksApi(db, tasks, groups, true);
+
+        JsonNode listed = desk.list(admin, Json.object().put("scope", "group"));
+        JsonNode detail = desk.detail(admin, Json.object().put("taskId", alis));
+        desk.cancel(admin, Json.object().put("taskId", alis));
+
+        assertEquals("[\"cancel\"]", item(listed, alis).path("actions").toString(), listed.toString());
+        assertEquals("[\"cancel\"]", detail.path("actions").toString());
+        assertEquals(dispatch.domain.Phase.CANCELLED, db.transactionReturning(tx -> Tasks.find(tx, alis)).orElseThrow().phase());
+    }
+
     @Test
     void aMemberStillSeesATeammatesTaskAsItsHeadline() {
         long theirs = planned(ALI, noQuestions());
