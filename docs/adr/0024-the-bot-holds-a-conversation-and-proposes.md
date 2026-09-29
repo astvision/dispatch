@@ -22,7 +22,14 @@ tasks under the ADR 0020 rules. Who is asking is not the model's to choose: each
 script in `<stateDir>/assistant-bin/`, first on the run's PATH, which sets the member, their projects and the state file itself
 and runs only `ask`; a scope the model writes in front of the command is overwritten.
 
-Personal instances only: a team's machine never runs Claude Code (ADR 0021), so a team bot drafts as before.
+~~Personal instances only: a team's machine never runs Claude Code (ADR 0021), so a team bot drafts as before.~~
+
+**Amended 2026-09-29:** a team machine that has Claude Code runs the assistant for its members too, on the machine
+owner's account, as it already runs ✂️ splitting (ADR 0013). A team bot felt dumb next to a personal one, and the
+per-member `dispatch` script already scopes each member to their own groups' projects. Members' tasks still run on
+their own computers (ADR 0021); the team machine has no project clones, so the assistant answers from tasks, not code.
+A team machine without Claude Code drafts every plain message, as before. A plain private message is the
+assistant's; `/task` still drafts directly.
 
 We rejected:
 - **An API tool loop in Java.** It needs an API key the owner does not have (Claude Code runs on their subscription)

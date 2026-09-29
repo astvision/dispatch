@@ -178,8 +178,9 @@ public final class App {
         Renderer renderer = new Renderer(Renderer.mongolian(), clock, botUsername);
         AssistantActions assistantActions = new AssistantActions(tasks, groups, projects, clock);
         Assistant assistant = null;
-        if (config.workers() == null && claude != null) {
-            // Personal mode only: in team mode this machine never runs Claude Code (ADR 0021), so it has no one to ask.
+        if (claude != null) {
+            // A team machine that has Claude Code answers members too, on its owner's account, as it already splits for them
+            // (ADR 0024, amended): members' tasks still run on their own computers (ADR 0021).
             AssistantHome home = AssistantHome.of(stateDir, environment);
             home.install();
             assistant = new Assistant(db, tasks, assistantActions, groups, projects, claude, home,

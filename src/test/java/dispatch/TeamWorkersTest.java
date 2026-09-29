@@ -152,6 +152,23 @@ class TeamWorkersTest {
     }
 
     @Test
+    void aMembersPlainPrivateMessageIsAnsweredByTheAssistantWhoseTapDraftsTheirTask() throws Exception {
+        telegram.pushUpdate(privateText(nextUpdateId(), 200, "Ali", "alm-д дасгалын тэмдэглэл нэм"));
+
+        JsonNode reply = awaitMessageTo(200, "Сайн байна уу");
+        assertTrue(reply.get("text").asText().contains("(ask: ok)"), "Ali's own dispatch ask answered: " + reply);
+        String confirm = reply.get("reply_markup").get("inline_keyboard").get(0).get(0).get("callback_data").asText();
+        long replyId = awaitSentMessageId("ASSISTANT_REPLY", 200);
+
+        telegram.pushUpdate(privateCallback(nextUpdateId(), 200, "Ali", confirm, replyId));
+
+        awaitSentMessageId("DRAFT_PROMPT", 200);
+        assertEquals("Дасгалын тэмдэглэл нэм", SqlRows.single(repos.stateDir.resolve("dispatch.db"),
+                "SELECT description FROM draft WHERE chat_ref = ?", "telegram:200").get("description"));
+        assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
+    }
+
+    @Test
     void aTaskGivenWhileTheComputerIsOffSaysSoAndStartsWhenItConnects() throws Exception {
         giveTask(100, "Bold", "Fix the login timeout on staging");
 
@@ -275,7 +292,8 @@ class TeamWorkersTest {
     }
 
     private void giveTask(long memberId, String name, String text) throws InterruptedException {
-        telegram.pushUpdate(privateText(nextUpdateId(), memberId, name, text));
+        // /task, not a plain message: a plain one is the assistant's to answer.
+        telegram.pushUpdate(privateCommand(nextUpdateId(), memberId, name, "/task " + text));
         long prompt = awaitSentMessageId("DRAFT_PROMPT", memberId);
         telegram.pushUpdate(privateCallback(nextUpdateId(), memberId, name, "draft:" + draftId(memberId) + ":prio:NORMAL",
                 prompt));
