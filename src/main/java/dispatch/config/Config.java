@@ -33,6 +33,11 @@ public record Config(
 
     /** The task's branch name: the instance's own prefix, or "dispatch" by default. */
     public String branch(long taskId) {
+        return branch(branchPrefix, taskId);
+    }
+
+    /** The task's branch name under {@code branchPrefix}, null meaning "dispatch": what the worker makes (Job.branchName). */
+    public static String branch(String branchPrefix, long taskId) {
         return (branchPrefix == null ? "dispatch" : branchPrefix) + "/" + taskId;
     }
 

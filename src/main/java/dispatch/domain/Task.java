@@ -59,9 +59,4 @@ public record Task(
     public String privateOriginRef() {
         return originRef.startsWith(requester.ref() + "/") ? originRef : null;
     }
-
-    /** The branch its work is done on, cut from {@link #baseBranch} (ADR 0007). */
-    public String branch() {
-        return "dispatch/" + id;
-    }
 }

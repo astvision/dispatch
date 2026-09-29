@@ -70,6 +70,8 @@ public final class TaskService {
     private final LongConsumer startSplit;
     /** Team mode: a task runs on its requester's own computer, so it waits when none of theirs is connected. */
     private final boolean requiresWorker;
+    /** The instance's own prefix for task branches (M); null for "dispatch". */
+    private final String branchPrefix;
 
     /** Without topics or splitting: for tests that need neither. */
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
@@ -86,6 +88,13 @@ public final class TaskService {
      */
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
                        Runnable wakeOutbox, boolean taskTopics, LongConsumer startSplit, boolean requiresWorker) {
+        this(groups, projects, activeRuns, clock, wakeScheduler, wakeOutbox, taskTopics, startSplit, requiresWorker, null);
+    }
+
+    /** @param branchPrefix the instance's own prefix for task branches (M: several instances on one computer); null for "dispatch" */
+    public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
+                       Runnable wakeOutbox, boolean taskTopics, LongConsumer startSplit, boolean requiresWorker, String branchPrefix) {
+        this.branchPrefix = branchPrefix;
         this.taskTopics = taskTopics;
         this.startSplit = startSplit;
         this.requiresWorker = requiresWorker;
@@ -621,7 +630,7 @@ public final class TaskService {
         Task task = found.get();
         ObjectNode payload = Json.object().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                 .put("requester", task.requester().name()).put("phase", task.phase().name()).put("priority", task.priority().name())
-                .put("prUrl", task.prUrl()).put("baseBranch", task.baseBranch()).put("branch", task.branch())
+                .put("prUrl", task.prUrl()).put("baseBranch", task.baseBranch()).put("branch", Config.branch(branchPrefix, task.id()))
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
                 .put("completedAt", text(task.completedAt()));
         putActions(payload, actionsOf(tx, viewer, List.of(task)).get(task.id()));

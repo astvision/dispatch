@@ -380,6 +380,18 @@ class TasksApiTest {
         assertEquals(2, answered.path("plan").path("current").asInt(), "the next question is the one to answer");
     }
 
+    /** The branch shown is the one the worker makes: a named instance's own prefix, not "dispatch" (M). */
+    @Test
+    void aTimelineShowsTheBranchWithTheInstancesOwnPrefix() {
+        TaskService team = new TaskService(groups, new Projects(List.of(), project -> Optional.empty()), new ActiveRuns(), clock,
+                () -> { }, () -> { }, false, draftId -> { }, false, "dispatch/team");
+        long mine = create(BOLD, "Fix the login timeout");
+
+        JsonNode timeline = new TasksApi(db, team, groups).timeline(BOLD_CALLER, Json.object().put("taskId", mine));
+
+        assertEquals("dispatch/team/" + mine, timeline.path("branch").asText());
+    }
+
     @Test
     void theDesksOwnerSeesEveryTaskInFullAndTellsTheirOwnApart() {
         long theirs = planned(ALI, noQuestions());
