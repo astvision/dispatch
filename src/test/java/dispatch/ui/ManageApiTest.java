@@ -225,6 +225,35 @@ class ManageApiTest {
         assertTrue(Files.readString(config).startsWith("# Our team's Dispatch\n"), "comments stay");
     }
 
+    /** ADR 0026: the add form names no agent, so a new project runs on Claude Code when configured, as on the CLI. */
+    @Test
+    void aProjectIsAddedOnClaudeCodeWhenSeveralAgentsAreConfigured() throws Exception {
+        Files.writeString(config, original.replace("  claude-code:\n    command: 'claude'\n",
+                "  gemini:\n    command: 'gemini'\n  codex:\n    command: 'codex'\n  claude-code:\n    command: 'claude'\n"));
+        GitFixture repos = GitFixture.create(dir, "life");
+
+        call("/api/manage/projects/add", """
+                {"version":"%s","folder":"%s","name":"life","baseBranch":"main"}"""
+                .formatted(version(), json(repos.repo("life").toString())));
+
+        assertEquals("claude-code", load().projects().get(2).agent());
+    }
+
+    /** Without Claude Code, several agents give the same one every time, not whichever the map happens to hold first. */
+    @Test
+    void aProjectIsAddedOnTheFirstAgentByNameWithoutClaudeCode() throws Exception {
+        Files.writeString(config, original.replace("  claude-code:\n    command: 'claude'\n",
+                        "  gemini:\n    command: 'gemini'\n  codex:\n    command: 'codex'\n")
+                .replace("    agent: claude-code\n", "    agent: gemini\n").replace("    model: opus     # the big one\n", ""));
+        GitFixture repos = GitFixture.create(dir, "life");
+
+        call("/api/manage/projects/add", """
+                {"version":"%s","folder":"%s","name":"life","baseBranch":"main"}"""
+                .formatted(version(), json(repos.repo("life").toString())));
+
+        assertEquals("codex", load().projects().get(2).agent());
+    }
+
     @Test
     void aProjectWithACarriageReturnInBaseBranchIsRefusedAndChangesNothing() throws Exception {
         GitFixture repos = GitFixture.create(dir, "life");

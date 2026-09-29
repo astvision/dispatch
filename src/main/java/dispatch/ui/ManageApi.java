@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -219,11 +220,22 @@ public final class ManageApi {
         String requestedGroup = SetupApi.optionalText(body, "group");
         return save(body, (text, config) -> {
             String group = requestedGroup != null ? requestedGroup : onlyGroup(config);
-            String agent = config.agents().keySet().iterator().next();
+            String agent = defaultAgent(config);
             List<String> lines = ProjectAddCommand.projectLines(new ProjectAddCommand.Project(name, alias, probe.folder(),
                     probe.originUrl(), baseBranch, agent, model, effort, plan, execute));
             return ConfigText.addProject(text, group, ConfigText.yaml(name), lines);
         });
+    }
+
+    /**
+     * The add form names no agent: Claude Code when configured, as {@code dispatch project add} chooses, else the first by
+     * name. The config's map keeps no order, and the Агент row switches the project afterwards (ADR 0026).
+     */
+    private static String defaultAgent(Config config) {
+        if (config.agents().containsKey("claude-code")) {
+            return "claude-code";
+        }
+        return new TreeSet<>(config.agents().keySet()).first();
     }
 
     private Saved editProject(JsonNode body) {
