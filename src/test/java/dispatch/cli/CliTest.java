@@ -156,6 +156,8 @@ class CliTest {
         Cli.Run run = (Cli.Run) Cli.parse(new String[]{"run", "--instance", "team", "--config", "/etc/dispatch/x.yaml"}, defaults);
 
         assertEquals(Path.of("/etc/dispatch/x.yaml"), run.configFile());
+        assertEquals("team", run.instance(), "the running bot still knows which instance it is, e.g. to restart itself");
+        assertEquals(null, ((Cli.Run) Cli.parse(new String[]{"run"}, defaults)).instance());
     }
 
     @Test

@@ -51,7 +51,9 @@ public final class Main {
             case Cli.Help _ -> System.out.print(Cli.usage(defaults));
             case Cli.ListInstances _ -> System.exit(new ListCommand(System.out,
                     instance -> Service.forThisMachine(Service.Kind.DISPATCH, instance)).run(defaults, System.getenv()));
-            case Cli.Run run -> run(run.configFile(), run.logFile());
+            case Cli.Run run -> run(run.configFile(), run.logFile(), run.instance() != null ? run.instance()
+                    // A unit installed before it passed --instance: the instance as the config file's name says.
+                    : defaults.instanceOf(run.configFile()));
             case Cli.Init init -> {
                 JLineTerminal terminal = JLineTerminal.system();
                 System.exit(new InitCommand(terminal, BotApi::create, defaults, Duration.ofMinutes(3),
@@ -96,7 +98,8 @@ public final class Main {
         new CountDownLatch(1).await(); // until Ctrl+C
     }
 
-    private static void run(Path configFile, Path logFile) throws InterruptedException {
+    /** @param instance the instance this bot is, null for the default one */
+    private static void run(Path configFile, Path logFile, String instance) throws InterruptedException {
         redirect(logFile);
         RunCommand.Prepared prepared;
         try {
@@ -113,7 +116,7 @@ public final class Main {
         App app;
         try {
             // Instants stay UTC everywhere; the zone (TZ) only affects clock times shown in chat.
-            app = App.start(prepared.config(), configFile, MemberWriter.file(configFile, prepared.environment()),
+            app = App.start(prepared.config(), configFile, instance, MemberWriter.file(configFile, prepared.environment()),
                     BotApi.create(prepared.config().secrets().telegramBotToken()), prepared.environment(), Clock.systemDefaultZone(), fatal -> {
                         Log.error("dispatch.fatal", fatal);
                         System.exit(1);

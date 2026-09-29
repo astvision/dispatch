@@ -37,7 +37,7 @@ final class SystemdService implements Service {
 
     @Override
     public void install(Spec spec) {
-        String line = Service.argumentsLine(spec, kind, SystemdService::quoted);
+        String line = Service.argumentsLine(spec, kind, instance, SystemdService::quoted);
         Service.write(unitFile, """
                 # Written by dispatch service install (ADR 0016).
                 [Unit]

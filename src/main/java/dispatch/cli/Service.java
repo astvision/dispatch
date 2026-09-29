@@ -25,16 +25,22 @@ public interface Service {
     record Spec(Path java, Path jar, Path configFile, Path logFile, String path, Path stateDir) {
 
         /**
-         * What follows {@code -jar dispatch.jar}: always the absolute config path this process resolved it to, never
-         * {@code --instance}, which would re-resolve XDG inside the service and break under a shell whose
+         * What follows {@code -jar dispatch.jar}: always the absolute config path this process resolved it to, since
+         * {@code --instance} alone would re-resolve XDG inside the service and break under a shell whose
          * {@code XDG_CONFIG_HOME} differs from the one setup ran under. A moved config folder needs {@code dispatch
          * service install --instance NAME} (or plain {@code install} for the default instance) again; a named
          * instance's unit, label or task name still comes from the instance its writer was made with.
+         *
+         * <p>A named instance also gets {@code --instance NAME}, which {@code --config} wins over for the config: it only
+         * tells the running bot which instance it is, so the Mini App restarts its own service, not the default one.
          */
-        public List<String> arguments(Kind kind) {
+        public List<String> arguments(Kind kind, String instance) {
             List<String> arguments = new java.util.ArrayList<>(kind.command());
             arguments.addAll(List.of("--config", configFile.toString()));
             arguments.addAll(List.of("--log-file", logFile.toString()));
+            if (instance != null) {
+                arguments.addAll(List.of("--instance", instance));
+            }
             return arguments;
         }
     }
@@ -214,8 +220,8 @@ public interface Service {
      * {@code kind.command()} unquoted, then {@code spec.arguments(kind)} quoted with {@code quote} — except a flag
      * ("--config", "--log-file"), which is never quoted.
      */
-    static String argumentsLine(Spec spec, Kind kind, java.util.function.UnaryOperator<String> quote) {
-        List<String> arguments = spec.arguments(kind);
+    static String argumentsLine(Spec spec, Kind kind, String instance, java.util.function.UnaryOperator<String> quote) {
+        List<String> arguments = spec.arguments(kind, instance);
         StringBuilder line = new StringBuilder(String.join(" ", kind.command()));
         for (int i = kind.command().size(); i < arguments.size(); i++) {
             String argument = arguments.get(i);

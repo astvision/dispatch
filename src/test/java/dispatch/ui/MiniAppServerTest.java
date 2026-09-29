@@ -58,7 +58,7 @@ class MiniAppServerTest {
         groups = new Groups(config.telegram());
         TaskService tasks = new TaskService(groups, new Projects(config.projects(), project -> Optional.empty()),
                 new ActiveRuns(), new TestClock(NOW), () -> { }, () -> { });
-        server = MiniApp.start(config, configFile, db, tasks, groups, "dispatch_backend_bot", "data:image/jpeg;base64,cGhvdG8=", token -> {
+        server = MiniApp.start(config, configFile, null, db, tasks, groups, "dispatch_backend_bot", "data:image/jpeg;base64,cGhvdG8=", token -> {
             // Only an unlink's best-effort leave asks for one, and it survives this as it survives Telegram failing.
             throw new IllegalStateException("no bot in these tests");
         }, Map.of("TELEGRAM_BOT_TOKEN", TOKEN), java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC), "/ui-test").orElseThrow();

@@ -40,7 +40,7 @@ final class WindowsTaskService implements Service {
     @Override
     public void install(Spec spec) {
         Path javaw = spec.java().resolveSibling("javaw.exe");
-        String line = Service.argumentsLine(spec, kind, WindowsTaskService::quoted);
+        String line = Service.argumentsLine(spec, kind, instance, WindowsTaskService::quoted);
         String arguments = "-jar " + quoted(spec.jar()) + " " + line;
         String task = """
                 <?xml version="1.0" encoding="UTF-16"?>

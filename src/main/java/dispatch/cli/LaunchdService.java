@@ -38,7 +38,7 @@ final class LaunchdService implements Service {
     @Override
     public void install(Spec spec) {
         StringBuilder arguments = new StringBuilder();
-        for (String argument : spec.arguments(kind)) {
+        for (String argument : spec.arguments(kind, instance)) {
             arguments.append("    <string>").append(xml(argument)).append("</string>\n");
         }
         Service.write(plist, """

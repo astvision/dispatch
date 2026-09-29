@@ -102,8 +102,9 @@ public final class App {
     /**
      * @param members    adds people whom an admin let join to the config (ADR 0015)
      * @param configFile the file {@code config} was read from; the Mini App's management pages save into it
+     * @param instance   the instance this bot is (ADR 0028), null for the default one; the Mini App restarts its service
      */
-    public static App start(Config config, Path configFile, MemberWriter members, BotApi api, Map<String, String> environment,
+    public static App start(Config config, Path configFile, String instance, MemberWriter members, BotApi api, Map<String, String> environment,
                             Clock clock, Consumer<Throwable> onFatal) {
         Path stateDir = config.stateDir();
         Git git = new Git("git", config.secrets().ghToken(), Duration.ofMinutes(5));
@@ -202,7 +203,7 @@ public final class App {
         UiServer miniApp = null;
         if (config.miniApp() != null) {
             try {
-                miniApp = dispatch.ui.MiniApp.start(config, configFile, db, tasks, groups, botUsername,
+                miniApp = dispatch.ui.MiniApp.start(config, configFile, instance, db, tasks, groups, botUsername,
                         dispatch.ui.MiniApp.botPhoto(api, me.path("id").asLong()), BotApi::create, environment, clock, "/ui")
                         .orElse(null);
             } catch (java.io.IOException e) {

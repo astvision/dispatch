@@ -183,6 +183,7 @@ class ServiceTest {
 
         String unit = Files.readString(home.resolve(".config/systemd/user/dispatch.service"));
         assertTrue(unit.contains("-jar \"/opt/dispatch.jar\" run --config"), unit);
+        assertFalse(unit.contains("--instance"), unit);
         assertEquals("systemd user service dispatch.service", service.describe());
     }
 
@@ -228,6 +229,7 @@ class ServiceTest {
 
         String unit = Files.readString(home.resolve(".config/systemd/user/dispatch-team.service"));
         assertTrue(unit.contains(" run --config \"" + home.resolve(".config/dispatch/team.yaml") + "\" --log-file "), unit);
+        assertTrue(unit.contains(" --instance \"team\""), "the bot knows it is team without re-reading XDG: " + unit);
         assertTrue(commands.run.contains("systemctl --user enable --now dispatch-team.service"), commands.run.toString());
         assertEquals("systemd user service dispatch-team.service", service.describe());
         assertFalse(Files.exists(home.resolve(".config/systemd/user/dispatch.service")), "the default unit is untouched");
@@ -243,6 +245,7 @@ class ServiceTest {
         String plist = Files.readString(home.resolve("Library/LaunchAgents/io.dispatch.agent.team.plist"));
         assertTrue(plist.contains("<string>--config</string>\n    <string>" + home.resolve(".config/dispatch/team.yaml") + "</string>"),
                 plist);
+        assertTrue(plist.contains("<string>--instance</string>\n    <string>team</string>"), plist);
 
         Service windows = Service.forOs("Windows 11", home, commands, "PC\\bold", Service.Kind.DISPATCH, "team");
         assertEquals("Task Scheduler task Dispatch-team", windows.describe());

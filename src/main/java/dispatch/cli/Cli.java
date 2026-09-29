@@ -37,8 +37,16 @@ public final class Cli {
     public record Ask(Long taskId) implements Invocation {
     }
 
-    /** @param logFile where output goes instead of the terminal, as a background service runs it; null for the terminal */
-    public record Run(Path configFile, Path logFile) implements Invocation {
+    /**
+     * @param logFile  where output goes instead of the terminal, as a background service runs it; null for the terminal
+     * @param instance the instance {@code --instance} named, which a named instance's service passes beside its
+     *                 {@code --config}; null when not given
+     */
+    public record Run(Path configFile, Path logFile, String instance) implements Invocation {
+
+        public Run(Path configFile, Path logFile) {
+            this(configFile, logFile, null);
+        }
     }
 
     /**
@@ -176,7 +184,7 @@ public final class Cli {
             case "run" -> {
                 arguments.allow(0, Set.of("config", "log-file", "instance"));
                 yield new Run(arguments.configFile(defaults), arguments.values().containsKey("log-file")
-                        ? Path.of(arguments.values().get("log-file")) : null);
+                        ? Path.of(arguments.values().get("log-file")) : null, arguments.instance());
             }
             case "service" -> {
                 if (arguments.positional().isEmpty() || !SERVICE_ACTIONS.contains(arguments.positional().getFirst())) {

@@ -344,7 +344,7 @@ class AppTest {
 
     private App start(MemberWriter members) {
         BotApi api = new BotApi(HttpClient.newHttpClient(), telegram.baseUri(), Duration.ofSeconds(60));
-        return App.start(config, dir.resolve("dispatch.yaml"), members, api, FakeClaude.environment(), Clock.systemUTC(),
+        return App.start(config, dir.resolve("dispatch.yaml"), null, members, api, FakeClaude.environment(), Clock.systemUTC(),
                 fatalErrors::add);
     }
 

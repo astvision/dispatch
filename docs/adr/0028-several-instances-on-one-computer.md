@@ -7,7 +7,9 @@ service name and `dispatch/<task>` branches, exactly as before. A named instance
 sibling config, secrets file, state directory and service, named after it (`team.yaml`, `dispatch-team.service`, and
 so on for launchd and Task Scheduler), so its `repos/` and `worktrees/` can never collide with another instance's.
 The service definition itself always runs `dispatch run --config <its absolute config path> --log-file …`, exactly
-like the default instance's; only its unit, label or task name says which instance it is. A moved config folder
+like the default instance's, and a named instance's adds `--instance NAME`: `--config` still picks the file, and the
+name tells the running bot which instance it is, so the Mini App's Restart restarts its own service. A unit written
+before that falls back to the instance the config file's name gives. A moved config folder
 needs `dispatch service install --instance NAME` again, same as the default instance needs it for `--config`.
 
 `dispatch init`, run again on a computer that already has an instance, offers to add another beside it instead of

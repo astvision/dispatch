@@ -46,11 +46,12 @@ public final class MiniApp {
      * refusing to start the bot over a missing web UI would stop tasks running for the sake of a page.
      *
      * @param configFile   where the management pages read and save the config
+     * @param instance     the instance this bot is (ADR 0028), null for the default one: whose service Restart restarts
      * @param botUsername  the bot's own @username, which the Mini App's header names
      * @param botPhoto     the bot's profile photo as a data URI ({@link #botPhoto}), null for its initials instead
      * @param resourceRoot the classpath folder of the bundled pages, "/ui" in the release jar
      */
-    public static Optional<UiServer> start(Config config, Path configFile, Database db, TaskService tasks, Groups groups,
+    public static Optional<UiServer> start(Config config, Path configFile, String instance, Database db, TaskService tasks, Groups groups,
                                            String botUsername, String botPhoto, Function<String, BotApi> bots,
                                            Map<String, String> environment, Clock clock, String resourceRoot) throws IOException {
         Config.MiniApp miniApp = config.miniApp();
@@ -60,10 +61,9 @@ public final class MiniApp {
             return Optional.empty();
         }
         // Inside dispatch run: a management change the bot can take live (an unlink) goes straight to its groups.
-        // The running bot knows only its own config file; the instance it belongs to comes from that file's name.
-        Locations here = Locations.current();
-        String instance = here.instanceOf(configFile);
-        UiRoutes management = UiRoutes.management(configFile, here.forInstance(instance), bots,
+        // The instance is handed in, not worked out again from the config file here: the service's environment may
+        // resolve XDG elsewhere than setup did, and a wrong answer would restart the default bot.
+        UiRoutes management = UiRoutes.management(configFile, Locations.current().forInstance(instance), bots,
                 Service.forThisMachine(Service.Kind.DISPATCH, instance), environment, version(), groups::replace);
         Map<String, BiFunction<Caller, JsonNode, Object>> post = new HashMap<>(management.post(true));
         post.putAll(new TasksApi(db, tasks, groups).routes());
