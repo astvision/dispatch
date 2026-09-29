@@ -133,6 +133,36 @@ class RemoteWorkersTest {
         assertTrue(execution.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");
     }
 
+    /**
+     * A computer takes the job only it can run before one any of its member's computers can: had the laptop taken the
+     * older unpinned job, its pinned one would wait for it, while the idle desktop may not take it, until the offer
+     * expired as "no computer took this run".
+     */
+    @Test
+    void aComputerTakesTheJobPinnedToItBeforeAnUnpinnedOne() throws Exception {
+        long pinned = queue(BOLD, "Fix the login timeout");
+        Workers.Paired laptop = pair(BOLD, "ann-laptop");
+        Workers.Paired desktop = pair(BOLD, "ann-desktop");
+        Thread plan = coordinate();
+        remote.next(laptop).orElseThrow();
+        remote.result(laptop, pinned, 1, JobResult.succeeded(agentResult()));
+        assertTrue(plan.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");
+        long unpinned = queue(BOLD, "Add the export button");
+        clock.advance(Duration.ofSeconds(1));
+        approveAndQueueExecution(pinned);
+        Thread first = coordinate(); // the older unpinned plan, offered first
+        Thread second = coordinate(); // the pinned execution
+
+        Job laptops = remote.next(laptop).orElseThrow();
+        Job desktops = remote.next(desktop).orElseThrow();
+
+        assertEquals(pinned, laptops.taskId(), "only the laptop holds this task's worktree");
+        assertEquals(unpinned, desktops.taskId());
+        remote.result(laptop, pinned, 2, JobResult.cancelled(null));
+        remote.result(desktop, unpinned, 1, JobResult.cancelled(null));
+        assertTrue(first.join(Duration.ofSeconds(10)) && second.join(Duration.ofSeconds(10)));
+    }
+
     @Test
     void sixtySecondsWithoutProgressEndsTheRunAsInterrupted() throws Exception {
         long id = queue(BOLD, "Fix the login timeout");
@@ -428,7 +458,7 @@ class RemoteWorkersTest {
                 }
             };
             Thread runThread = Thread.ofVirtual().start(() -> remote.run(minimalJob(id), countingEvents, control));
-            awaitOffer();
+            awaitOffer(0);
             remote.next(ann).orElseThrow();
 
             CountDownLatch ready = new CountDownLatch(2);
@@ -482,7 +512,7 @@ class RemoteWorkersTest {
             }
         };
         Thread runThread = Thread.ofVirtual().start(() -> remote.run(minimalJob(id), blockingEvents, control));
-        awaitOffer();
+        awaitOffer(0);
         remote.next(ann).orElseThrow();
 
         AtomicReference<RuntimeException> progressOutcome = new AtomicReference<>();
@@ -522,15 +552,16 @@ class RemoteWorkersTest {
                 project -> new Config.RunLimits(Duration.ofMinutes(30), new BigDecimal("2")),
                 project -> new Config.RunLimits(Duration.ofMinutes(60), new BigDecimal("10")), remote, () -> { });
         ClaimedRun claimed = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        int before = remote.offerCount();
         Thread thread = Thread.ofVirtual().start(() -> coordinator.execute(claimed));
-        awaitOffer();
+        awaitOffer(before);
         return thread;
     }
 
     /** The Coordinator reads the store before it offers the job; the test must not poll before that happened. */
-    private void awaitOffer() {
+    private void awaitOffer(int before) {
         Instant deadline = Instant.now().plusSeconds(10);
-        while (!remote.hasOffers()) {
+        while (remote.offerCount() <= before) {
             if (Instant.now().isAfter(deadline)) {
                 throw new AssertionError("the coordinator never offered the job");
             }

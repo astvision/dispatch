@@ -186,6 +186,13 @@ public final class RemoteWorkers implements Worker {
         }
     }
 
+    /** How many jobs are waiting or running; this class's tests wait for one more after offering. */
+    int offerCount() {
+        synchronized (lock) {
+            return offers.size();
+        }
+    }
+
     /**
      * Ends every parked {@code /api/worker/next} now and refuses to hand out any more jobs. {@link WorkerApi#close}
      * calls this before it stops its server: a poll parked in {@link #awaitMatch} is waiting on this class's own lock,
@@ -224,7 +231,12 @@ public final class RemoteWorkers implements Worker {
                 if (closed) {
                     return null;
                 }
-                Optional<Offer> match = offers.stream().filter(offer -> matches(offer, worker)).findFirst();
+                // A job pinned to this computer first: nobody else may take it, while an unpinned one can still go to
+                // another of the member's computers. Taking the unpinned one first would hold the pinned one until this
+                // computer is free again, or until its offer expires unclaimed.
+                Optional<Offer> match = offers.stream().filter(offer -> matches(offer, worker) && offer.onlyWorker != null)
+                        .findFirst()
+                        .or(() -> offers.stream().filter(offer -> matches(offer, worker)).findFirst());
                 if (match.isPresent()) {
                     Offer offer = match.get();
                     offer.takenBy = worker.id();
