@@ -118,7 +118,7 @@ public final class RunTransitions {
                     files.isEmpty() ? "no changes" : "delivered " + files.size() + " changed files", now);
             ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("prUrl", prUrl)
                     .put("filesChanged", files.size()).put("summary", summary);
-            if (offerMerge) {
+            if (offerMerge && TaskAccess.mergeRefusal(task(tx, taskId)).isEmpty()) {
                 payload.put("merge", true);
             }
             ArrayNode denials = payload.putArray("denials");

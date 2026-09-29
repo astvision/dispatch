@@ -279,6 +279,35 @@ class TaskAccessTest {
         assertEquals(1, verdict.currentQuestion());
     }
 
+    /**
+     * A personal bot's result offers Merge by the one rule: a follow-up that changed nothing still leaves the pull request
+     * its task delivered before, and a run that delivered nothing ever has none.
+     */
+    @Test
+    void aResultOffersMergeExactlyWhenItsRequesterMayMerge() {
+        transitions = new RunTransitions(db, clock, () -> { }, true);
+        long delivered = completed();
+        long nothing = completedWithoutChanges();
+        long followedUp = completed();
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.FollowUp(followedUp, "Also the docs",
+                new Origin(BOLD.ref() + "/follow-up"))));
+        ClaimedRun followUp = claim();
+        transitions.agentStarted(followedUp, followUp.seq(), null, null);
+        transitions.completed(followedUp, followUp.seq(), RESULT, List.of(), "https://github.com/acme/alm/pull/7");
+
+        assertEquals(true, offersMerge(delivered, 2));
+        assertEquals(false, offersMerge(nothing, 2));
+        assertEquals(true, offersMerge(followedUp, followUp.seq()));
+        assertEquals(verdict(BOLD, followedUp).allows(Action.MERGE), offersMerge(followedUp, followUp.seq()));
+    }
+
+    private boolean offersMerge(long taskId, int seq) {
+        String payload = dispatch.testing.SqlRows.single(dir.resolve("dispatch.db"),
+                "SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED' AND task_id = ? ORDER BY id DESC LIMIT 1", taskId)
+                .get("payload");
+        return dispatch.Json.read(payload).path("merge").asBoolean(false);
+    }
+
     private static Arguments row(String rule, Given given, Requester who, Action action, Refusal expected) {
         return Arguments.of(rule, given, who, action, expected);
     }

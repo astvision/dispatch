@@ -714,9 +714,8 @@ public final class Renderer {
             html.append("\n\n").append(text("task.mergedMark"));
             return plain(html.toString());
         }
-        // Only a bot that can merge offers it (a personal one), and only for a pull request there is.
-        boolean mergeable = payload.path("merge").asBoolean(false) && payload.hasNonNull("prUrl") && filesChanged > 0;
-        return new Rendered(html.toString(), mergeable
+        // Offered only by a bot that can merge (a personal one), where TaskAccess allowed it when the run completed.
+        return new Rendered(html.toString(), payload.path("merge").asBoolean(false)
                 ? List.of(List.of(new Button(text("button.merge"), "merge:" + payload.path("taskId").asLong())))
                 : List.of(), null);
     }

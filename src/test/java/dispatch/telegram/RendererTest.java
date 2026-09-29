@@ -789,6 +789,15 @@ class RendererTest {
         assertTrue(merged.html().contains(renderer.text("task.mergedMark")), merged.html());
     }
 
+    /** Whether to offer Merge was decided when the payload was written (TaskAccess); what this run changed does not matter. */
+    @Test
+    void aFollowUpThatChangedNothingStillOffersMergeForItsPullRequest() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 0, List.of()).put("merge", true);
+
+        assertEquals(List.of(List.of(new Renderer.Button("🔀 Нэгтгэх", "merge:42"))),
+                renderer.render(OutboxKind.TASK_COMPLETED, payload).keyboard());
+    }
+
     @Test
     void aMergeThatDidNotHappenSaysWhy() {
         assertEquals(renderer.text("task.mergeBusy").replace("{0}", "8"),

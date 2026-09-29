@@ -254,13 +254,20 @@ public final class TaskAccess {
                 boolean executed = Runs.agentStartedBefore(tx, task.id(), RunKind.EXECUTE, Integer.MAX_VALUE);
                 yield executed ? Optional.empty() : Optional.of(Refusal.NOT_EXECUTED);
             }
-            case MERGE -> {
-                if (task.mergedAt() != null) {
-                    yield Optional.of(Refusal.MERGED);
-                }
-                yield phase == Phase.COMPLETED && task.prUrl() != null ? Optional.empty() : Optional.of(Refusal.WRONG_PHASE);
-            }
+            case MERGE -> mergeRefusal(task);
         };
+    }
+
+    /**
+     * The Merge rule by itself, for a delivered task's result, which is written when the run completes and has no tap to
+     * ask {@link #of} about: it offers Merge to its requester, who sees their own task in full, exactly when this allows it.
+     * What the last run changed does not matter: a follow-up that changed nothing leaves the pull request as it was.
+     */
+    public static Optional<Refusal> mergeRefusal(Task task) {
+        if (task.mergedAt() != null) {
+            return Optional.of(Refusal.MERGED);
+        }
+        return task.phase() == Phase.COMPLETED && task.prUrl() != null ? Optional.empty() : Optional.of(Refusal.WRONG_PHASE);
     }
 
     private static int firstOpen(int questions, Set<Integer> answered) {
