@@ -147,13 +147,22 @@ public final class Tasks {
                 Phase.COMPLETED, Phase.FAILED, Phase.REJECTED, Phase.CANCELLED, idleSince);
     }
 
-    /** Moves {@code from} to {@code to}; entering a finished phase stamps completed_at. */
+    /**
+     * Moves {@code from} to {@code to}; entering a finished phase stamps completed_at. A finished task running again (a retry
+     * or follow-up) drops a pin to a computer revoked since: {@link #clearWorkerPin} kept it only as a record, and the run
+     * would otherwise wait for that computer forever.
+     */
     public static boolean changePhase(Tx tx, long id, Phase from, Phase to, Instant now) {
         Instant completedAt = to.isActive() ? null : now;
-        return tx.update("""
+        boolean changed = tx.update("""
                         UPDATE task SET phase = ?, completed_at = COALESCE(?, completed_at), updated_at = ?
                         WHERE id = ? AND phase = ?""",
                 to, completedAt, now, id, from) == 1;
+        if (changed && !from.isActive() && to.isActive()) {
+            tx.update("UPDATE task SET worker_id = NULL WHERE id = ? AND worker_id IN (SELECT id FROM worker WHERE revoked_at IS NOT NULL)",
+                    id);
+        }
+        return changed;
     }
 
     /** Sets the priority of a task that has not finished; false when it has. */
@@ -225,7 +234,7 @@ public final class Tasks {
      * Clears the pin to {@code workerId} on its still-active tasks, once that worker is revoked: a follow-up or retry
      * then goes to whichever of the member's other computers is live, rather than waiting on this one forever. The old
      * worktree stays on the revoked machine, so such a run starts a fresh one from the base branch. A finished task's
-     * pin is left as a record of which computer actually did the work.
+     * pin is left as a record of which computer actually did the work, until {@link #changePhase} runs the task again.
      */
     public static int clearWorkerPin(Tx tx, long workerId, Instant now) {
         return tx.update("UPDATE task SET worker_id = NULL, updated_at = ? WHERE worker_id = ? AND phase IN (?, ?, ?)",
