@@ -1,5 +1,6 @@
 package dispatch.ui;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.OwnerOnly;
@@ -14,7 +15,9 @@ import java.util.Optional;
 /**
  * {@code <stateDir>/desk.json}: where the running bot's desk port listens and the token it answers (D-2). Owner-only, and
  * written whole under another name before it is moved into place, so {@code dispatch ui} never reads half of it.
+ * Unknown fields are ignored: a newer bot may add one, and an older {@code dispatch ui} must still find it.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record DeskFile(int port, String token, String version, String name) {
 
     static final String FILE = "desk.json";

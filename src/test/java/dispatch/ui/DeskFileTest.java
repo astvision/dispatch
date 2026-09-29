@@ -35,6 +35,14 @@ class DeskFileTest {
     }
 
     @Test
+    void aFieldANewerBotAddedIsIgnored() throws IOException {
+        Files.writeString(DeskFile.in(state),
+                "{\"port\":41234,\"token\":\"t\",\"version\":\"9.9.9\",\"name\":\"acme\",\"added\":1}");
+
+        assertEquals(Optional.of(new DeskFile(41234, "t", "9.9.9", "acme")), DeskFile.read(state));
+    }
+
+    @Test
     void deletingIsQuietWhenThereIsNothingToDelete() throws IOException {
         new DeskFile(1, DeskFile.newToken(), "0.3.0", "acme").write(state);
         DeskFile.delete(state);
