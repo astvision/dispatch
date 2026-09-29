@@ -36,6 +36,8 @@ public final class Renderer {
     private static final int QUESTION_LIMIT = 3000;
     /** Telegram sets no documented limit on a button's label, but a longer one is cut off on screen. */
     private static final int BUTTON_LIMIT = 40;
+    /** Telegram's limit on a button's callback_data, in bytes; a longer one fails the whole message. */
+    private static final int CALLBACK_DATA_LIMIT = 64;
     /** Ten parts of this length still fit one message. */
     private static final int TOPIC_LIMIT = 300;
     /** The assistant's reply and each of its (at most three) proposals, escaped; together well under 4096. */
@@ -322,7 +324,7 @@ public final class Renderer {
             for (JsonNode candidate : projects) {
                 String name = candidate.path("name").asText();
                 String chosen = name.equals(payload.path("project").asText()) ? "✓ " : "";
-                row.add(new Button(chosen + label(candidate), "draft:" + id + ":p:" + name));
+                row.add(new Button(chosen + label(candidate), projectChoice(id, name)));
                 if (row.size() == 3) {
                     keyboard.add(row);
                     row = new ArrayList<>();
@@ -344,6 +346,15 @@ public final class Renderer {
         last.add(new Button(text("button.discard"), "draft:" + id + ":discard:x"));
         keyboard.add(last);
         return new Rendered(html, keyboard, null);
+    }
+
+    /**
+     * A project button's callback_data: the project's name, or as much of its start as fits, which choosing the project
+     * resolves to the one offered project it begins. Project names are ASCII (config validation), so a char is a byte.
+     */
+    private static String projectChoice(String draftId, String name) {
+        String prefix = "draft:" + draftId + ":p:";
+        return prefix + name.substring(0, Math.min(name.length(), CALLBACK_DATA_LIMIT - prefix.length()));
     }
 
     /** A split message's parts, one numbered line each. */

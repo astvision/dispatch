@@ -158,7 +158,7 @@ public final class App {
                 config::executeLimits, worker, schedulerSignal::wake, config.branchPrefix());
         TaskService tasks = new TaskService(groups, projects, activeRuns, clock,
                 schedulerSignal::wake, outboxSignal::wake, taskTopics, claude == null ? null : draftId -> splitter[0].start(draftId),
-                config.workers() != null);
+                config.workers() != null, config.branchPrefix());
         // Splitting happens before a project is chosen, so it cannot use the project's agent (ADR 0013).
         splitter[0] = claude == null ? null : new Splitter(db, tasks, claude, workspaces.splitsDir(), clock, Duration.ofMinutes(1));
 

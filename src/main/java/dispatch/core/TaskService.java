@@ -70,6 +70,8 @@ public final class TaskService {
     private final LongConsumer startSplit;
     /** Team mode: a task runs on its requester's own computer, so it waits when none of theirs is connected. */
     private final boolean requiresWorker;
+    /** The instance's own prefix for task branches (M); null for "dispatch". */
+    private final String branchPrefix;
 
     /** Without topics or splitting: for tests that need neither. */
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
@@ -86,6 +88,13 @@ public final class TaskService {
      */
     public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
                        Runnable wakeOutbox, boolean taskTopics, LongConsumer startSplit, boolean requiresWorker) {
+        this(groups, projects, activeRuns, clock, wakeScheduler, wakeOutbox, taskTopics, startSplit, requiresWorker, null);
+    }
+
+    /** @param branchPrefix the instance's own prefix for task branches (M: several instances on one computer); null for "dispatch" */
+    public TaskService(Groups groups, Projects projects, ActiveRuns activeRuns, Clock clock, Runnable wakeScheduler,
+                       Runnable wakeOutbox, boolean taskTopics, LongConsumer startSplit, boolean requiresWorker, String branchPrefix) {
+        this.branchPrefix = branchPrefix;
         this.taskTopics = taskTopics;
         this.startSplit = startSplit;
         this.requiresWorker = requiresWorker;
@@ -184,11 +193,26 @@ public final class TaskService {
         if (refused.isPresent()) {
             return refused.get();
         }
-        if (offeredProjects(who.ref()).stream().noneMatch(candidate -> candidate.name().equals(project))) {
+        Optional<String> offered = offeredNamed(who.ref(), project);
+        if (offered.isEmpty()) {
             return DraftChoice.PROJECT_UNAVAILABLE;
         }
-        Drafts.chooseProject(tx, draftId, project, clock.instant());
+        Drafts.chooseProject(tx, draftId, offered.get(), clock.instant());
         return DraftChoice.PROJECT_CHOSEN;
+    }
+
+    /**
+     * The offered project {@code named} names: by its whole name, or by its start alone when a button's 64 bytes had no
+     * room for more. A start that more than one offered project shares names none.
+     */
+    private Optional<String> offeredNamed(String requesterRef, String named) {
+        List<String> offered = offeredProjects(requesterRef).stream().map(Config.Project::name).toList();
+        if (offered.contains(named)) {
+            return Optional.of(named);
+        }
+        // ponytail: two projects sharing their first ~36 characters cannot both be chosen by button; give them a short id if that happens.
+        List<String> started = named.isEmpty() ? List.of() : offered.stream().filter(name -> name.startsWith(named)).toList();
+        return started.size() == 1 ? Optional.of(started.getFirst()) : Optional.empty();
     }
 
     /** Choosing the priority gives the task, provided the project is chosen and still one the member can use. */
@@ -606,7 +630,7 @@ public final class TaskService {
         Task task = found.get();
         ObjectNode payload = Json.object().put("taskId", task.id()).put("project", task.project()).put("title", task.title())
                 .put("requester", task.requester().name()).put("phase", task.phase().name()).put("priority", task.priority().name())
-                .put("prUrl", task.prUrl()).put("baseBranch", task.baseBranch()).put("branch", task.branch())
+                .put("prUrl", task.prUrl()).put("baseBranch", task.baseBranch()).put("branch", Config.branch(branchPrefix, task.id()))
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
                 .put("completedAt", text(task.completedAt()));
         putActions(payload, actionsOf(tx, viewer, List.of(task)).get(task.id()));

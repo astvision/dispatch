@@ -104,6 +104,21 @@ class TasksApiTest {
         assertTrue(mine > 0);
     }
 
+    /** The history's ten are counted among my own tasks, not among the group's before mine are picked out. */
+    @Test
+    void myFinishedTasksAreNotCrowdedOutByTeammatesNewerOnes() {
+        long alisOld = create(ALI, "Add the export button");
+        db.transaction(tx -> tasks.commands().run(tx, ALI, new TaskCommand.Cancel(alisOld)));
+        for (int i = 0; i < 10; i++) {
+            long boldsNew = create(BOLD, "Fix the login timeout " + i);
+            db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(boldsNew)));
+        }
+
+        JsonNode listed = api.list(ALI_CALLER, Json.object());
+
+        assertEquals(List.of(alisOld), taskIds(listed));
+    }
+
     @Test
     void anAdminSeesEveryTaskOfTheirGroupsWithSomeoneElsesAsAHeadline() {
         long boldsOwn = create(BOLD, "Fix the login timeout");
@@ -363,6 +378,18 @@ class TasksApiTest {
         assertEquals("[\"correct\",\"answer\",\"reject\",\"priority\",\"cancel\"]", detail.path("actions").toString());
         assertEquals(1, detail.path("plan").path("current").asInt());
         assertEquals(2, answered.path("plan").path("current").asInt(), "the next question is the one to answer");
+    }
+
+    /** The branch shown is the one the worker makes: a named instance's own prefix, not "dispatch" (M). */
+    @Test
+    void aTimelineShowsTheBranchWithTheInstancesOwnPrefix() {
+        TaskService team = new TaskService(groups, new Projects(List.of(), project -> Optional.empty()), new ActiveRuns(), clock,
+                () -> { }, () -> { }, false, draftId -> { }, false, "dispatch/team");
+        long mine = create(BOLD, "Fix the login timeout");
+
+        JsonNode timeline = new TasksApi(db, team, groups).timeline(BOLD_CALLER, Json.object().put("taskId", mine));
+
+        assertEquals("dispatch/team/" + mine, timeline.path("branch").asText());
     }
 
     @Test

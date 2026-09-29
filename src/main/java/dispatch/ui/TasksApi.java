@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.function.BiFunction;
 
 /**
@@ -90,7 +91,10 @@ public final class TasksApi {
         TaskAccess.Viewer viewer = viewer(caller);
         return db.transactionReturning(tx -> {
             ObjectNode active = tasks.statusPayload(tx, viewer);
-            ObjectNode finished = owner ? tasks.historyPayload(tx, viewer, OWNER_HISTORY) : tasks.historyPayload(tx, viewer);
+            // "me" reads the caller's own finished tasks alone, so the history's limit counts only theirs: teammates' newer
+            // tasks, picked out after the limit, would otherwise push a member's own off their page.
+            TaskAccess.Viewer finishedBy = wholeGroup ? viewer : new TaskAccess.Viewer(viewer.ref(), Set.of(), viewer.owner());
+            ObjectNode finished = owner ? tasks.historyPayload(tx, finishedBy, OWNER_HISTORY) : tasks.historyPayload(tx, finishedBy);
             ObjectNode answer = Json.object();
             ArrayNode listed = answer.putArray("tasks");
             for (ObjectNode task : merge(active, finished)) {

@@ -74,6 +74,31 @@ class TasksTest {
         assertEquals(Optional.of(workerId), db.transactionReturning(tx -> Tasks.workerOf(tx, finished)), "finished work keeps its record");
     }
 
+    /** A retry or follow-up of finished work pinned to a since-revoked computer would otherwise wait on it forever. */
+    @Test
+    void aFinishedTaskRunningAgainDropsAPinToARevokedComputerButKeepsALiveOne() {
+        long onRevoked = task();
+        long onLive = task();
+        long revoked = db.transactionReturning(tx -> Workers.insert(tx, "telegram:1", "laptop", "a".repeat(64), T0));
+        long live = db.transactionReturning(tx -> Workers.insert(tx, "telegram:1", "desktop", "b".repeat(64), T0));
+        db.transaction(tx -> {
+            Tasks.recordWorker(tx, onRevoked, revoked, T0);
+            Tasks.recordWorker(tx, onLive, live, T0);
+            Tasks.changePhase(tx, onRevoked, Phase.PLANNING, Phase.FAILED, T0);
+            Tasks.changePhase(tx, onLive, Phase.PLANNING, Phase.COMPLETED, T0);
+            Workers.revoke(tx, revoked, T0);
+            Tasks.clearWorkerPin(tx, revoked, T0);
+        });
+
+        db.transaction(tx -> {
+            Tasks.changePhase(tx, onRevoked, Phase.FAILED, Phase.EXECUTING, T0.plusSeconds(1));
+            Tasks.changePhase(tx, onLive, Phase.COMPLETED, Phase.EXECUTING, T0.plusSeconds(1));
+        });
+
+        assertEquals(Optional.empty(), db.transactionReturning(tx -> Tasks.workerOf(tx, onRevoked)), "free for another computer");
+        assertEquals(Optional.of(live), db.transactionReturning(tx -> Tasks.workerOf(tx, onLive)), "back to its worktree");
+    }
+
     private long task() {
         return db.transactionReturning(tx -> Tasks.insert(tx,
                 new Tasks.NewTask("alm", "t", "t", new Requester("telegram:1", "Bold"), "telegram:-1/" + UUID.randomUUID(),
