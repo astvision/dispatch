@@ -200,6 +200,23 @@ class RendererTest {
         assertTrue(html.contains("🔴") && html.contains("Fix &lt;login&gt;"), html);
     }
 
+    /** Telegram refuses a keyboard whose callback_data passes 64 bytes, and with it the whole prompt. */
+    @Test
+    void aLongProjectNameStillFitsItsButtonsCallbackData() {
+        String longName = "autoland-management-" + "x".repeat(60);
+        ObjectNode payload = draftPayload(List.of(longName, "crm"), null, "OPEN", null).put("draftId", Long.MAX_VALUE);
+
+        List<List<Renderer.Button>> keyboard = renderer.render(OutboxKind.DRAFT_PROMPT, payload).keyboard();
+
+        for (List<Renderer.Button> row : keyboard) {
+            for (Renderer.Button button : row) {
+                assertTrue(button.data().getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= 64, button.data());
+            }
+        }
+        String data = keyboard.getFirst().getFirst().data();
+        assertTrue(longName.startsWith(data.substring(("draft:" + Long.MAX_VALUE + ":p:").length())), data);
+    }
+
     @Test
     void draftPromptAsksForTheProjectInRowsOfThreeThenThePriority() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT,

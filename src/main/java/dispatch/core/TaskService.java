@@ -184,11 +184,26 @@ public final class TaskService {
         if (refused.isPresent()) {
             return refused.get();
         }
-        if (offeredProjects(who.ref()).stream().noneMatch(candidate -> candidate.name().equals(project))) {
+        Optional<String> offered = offeredNamed(who.ref(), project);
+        if (offered.isEmpty()) {
             return DraftChoice.PROJECT_UNAVAILABLE;
         }
-        Drafts.chooseProject(tx, draftId, project, clock.instant());
+        Drafts.chooseProject(tx, draftId, offered.get(), clock.instant());
         return DraftChoice.PROJECT_CHOSEN;
+    }
+
+    /**
+     * The offered project {@code named} names: by its whole name, or by its start alone when a button's 64 bytes had no
+     * room for more. A start that more than one offered project shares names none.
+     */
+    private Optional<String> offeredNamed(String requesterRef, String named) {
+        List<String> offered = offeredProjects(requesterRef).stream().map(Config.Project::name).toList();
+        if (offered.contains(named)) {
+            return Optional.of(named);
+        }
+        // ponytail: two projects sharing their first ~36 characters cannot both be chosen by button; give them a short id if that happens.
+        List<String> started = named.isEmpty() ? List.of() : offered.stream().filter(name -> name.startsWith(named)).toList();
+        return started.size() == 1 ? Optional.of(started.getFirst()) : Optional.empty();
     }
 
     /** Choosing the priority gives the task, provided the project is chosen and still one the member can use. */

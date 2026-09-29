@@ -108,6 +108,17 @@ class DraftsTest {
         assertNull(row("SELECT project FROM draft WHERE origin_ref = 'telegram:100/3'").get("project"), "asked again instead");
     }
 
+    /** A button with no room for a long project's whole name carries its start, which still names one project. */
+    @Test
+    void theStartOfAProjectsNameChoosesItWhenNoOtherProjectStartsSo() {
+        long draftId = draft(BOLD, "Fix login timeout", "telegram:100/5");
+
+        assertEquals(DraftChoice.PROJECT_CHOSEN, db.transactionReturning(tx -> tasks.chooseProject(tx, BOLD, draftId, "autoland-man")));
+        assertEquals("autoland-management", row("SELECT project FROM draft").get("project"));
+        assertEquals(DraftChoice.PROJECT_UNAVAILABLE, db.transactionReturning(tx -> tasks.chooseProject(tx, BOLD, draftId, "")),
+                "no start at all names no project");
+    }
+
     @Test
     void choosingTheProjectThenThePriorityGivesTheTask() {
         long draftId = draft(BOLD, "Fix login timeout", "telegram:100/5");
