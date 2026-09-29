@@ -2,7 +2,9 @@ package dispatch.telegram;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.core.TaskAccess;
+import dispatch.core.TaskCommand;
 import dispatch.domain.OutboxKind;
+import dispatch.domain.Priority;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.MessageFormat;
@@ -36,8 +38,6 @@ public final class Renderer {
     private static final int QUESTION_LIMIT = 3000;
     /** Telegram sets no documented limit on a button's label, but a longer one is cut off on screen. */
     private static final int BUTTON_LIMIT = 40;
-    /** Telegram's limit on a button's callback_data, in bytes; a longer one fails the whole message. */
-    private static final int CALLBACK_DATA_LIMIT = 64;
     /** Ten parts of this length still fit one message. */
     private static final int TOPIC_LIMIT = 300;
     /** The assistant's reply and each of its (at most three) proposals, escaped; together well under 4096. */
@@ -226,7 +226,7 @@ public final class Renderer {
             html.append("\n\n").append(text("addition.tooLong"));
         }
         List<List<Button>> keyboard = payload.hasNonNull("additionId")
-                ? List.of(List.of(new Button(text("button.addition"), "ad:" + payload.path("additionId").asLong())))
+                ? List.of(List.of(new Button(text("button.addition"), new Callback.Addition(payload.path("additionId").asLong()).data())))
                 : List.of();
         return new Rendered(html.toString(), keyboard, null);
     }
@@ -251,12 +251,12 @@ public final class Renderer {
                 // OPEN: asked below.
             }
         }
-        String chatId = String.valueOf(payload.path("chatId").asLong());
+        long chatId = payload.path("chatId").asLong();
         List<List<Button>> keyboard = new ArrayList<>();
         List<Button> row = new ArrayList<>();
         JsonNode projects = payload.path("projects");
         for (int index = 0; index < projects.size(); index++) {
-            row.add(new Button(projects.get(index).asText(), "link:" + chatId + ":" + index));
+            row.add(new Button(projects.get(index).asText(), new Callback.Link(chatId, index).data()));
             if (row.size() == 3) {
                 keyboard.add(row);
                 row = new ArrayList<>();
@@ -265,7 +265,7 @@ public final class Renderer {
         if (!row.isEmpty()) {
             keyboard.add(row);
         }
-        keyboard.add(List.of(new Button(text("button.groupNoLink"), "link:" + chatId + ":-")));
+        keyboard.add(List.of(new Button(text("button.groupNoLink"), new Callback.NoLink(chatId).data())));
         return new Rendered(format("group.linkAsk", title), keyboard, null);
     }
 
@@ -295,15 +295,16 @@ public final class Renderer {
                 // OPEN: asked below.
             }
         }
-        String id = String.valueOf(payload.path("draftId").asLong());
+        long draftId = payload.path("draftId").asLong();
         String header = payload.hasNonNull("part")
                 ? format("draft.headerPart", payload.path("part").asInt(), payload.path("parts").asInt())
                 : text("draft.header");
         String split = payload.path("split").asText();
         if (split.equals("PROPOSED")) {
             return new Rendered(header + "\n" + title + "\n\n" + format("draft.proposed", topics.size()) + "\n" + numbered(topics),
-                    List.of(List.of(new Button(format("button.splitInto", topics.size()), "draft:" + id + ":split:yes"),
-                            new Button(text("button.keepWhole"), "draft:" + id + ":split:no"))), null);
+                    List.of(List.of(
+                            new Button(format("button.splitInto", topics.size()), new Callback.DraftSplit(draftId, Callback.Split.YES).data()),
+                            new Button(text("button.keepWhole"), new Callback.DraftSplit(draftId, Callback.Split.NO).data()))), null);
         }
         String note = switch (split) {
             case "SPLITTING" -> "\n\n" + text("draft.splitting");
@@ -324,7 +325,7 @@ public final class Renderer {
             for (JsonNode candidate : projects) {
                 String name = candidate.path("name").asText();
                 String chosen = name.equals(payload.path("project").asText()) ? "✓ " : "";
-                row.add(new Button(chosen + label(candidate), projectChoice(id, name)));
+                row.add(new Button(chosen + label(candidate), new Callback.DraftProject(draftId, name).data()));
                 if (row.size() == 3) {
                     keyboard.add(row);
                     row = new ArrayList<>();
@@ -336,25 +337,17 @@ public final class Renderer {
         }
         List<Button> priorities = new ArrayList<>();
         for (String priority : PRIORITIES) {
-            priorities.add(new Button(PRIORITY_ICONS.get(priority) + " " + text("priority." + priority), "draft:" + id + ":prio:" + priority));
+            Callback choice = new Callback.DraftPriority(draftId, Priority.valueOf(priority));
+            priorities.add(new Button(PRIORITY_ICONS.get(priority) + " " + text("priority." + priority), choice.data()));
         }
         keyboard.add(priorities);
         List<Button> last = new ArrayList<>();
         if (payload.path("splittable").asBoolean()) {
-            last.add(new Button(text("button.split"), "draft:" + id + ":split:ask"));
+            last.add(new Button(text("button.split"), new Callback.DraftSplit(draftId, Callback.Split.ASK).data()));
         }
-        last.add(new Button(text("button.discard"), "draft:" + id + ":discard:x"));
+        last.add(new Button(text("button.discard"), new Callback.DraftDiscard(draftId).data()));
         keyboard.add(last);
         return new Rendered(html, keyboard, null);
-    }
-
-    /**
-     * A project button's callback_data: the project's name, or as much of its start as fits, which choosing the project
-     * resolves to the one offered project it begins. Project names are ASCII (config validation), so a char is a byte.
-     */
-    private static String projectChoice(String draftId, String name) {
-        String prefix = "draft:" + draftId + ":p:";
-        return prefix + name.substring(0, Math.min(name.length(), CALLBACK_DATA_LIMIT - prefix.length()));
     }
 
     /** A split message's parts, one numbered line each. */
@@ -379,7 +372,7 @@ public final class Renderer {
 
     /**
      * /help. In a group: a card with nothing personal on it and a link to the private chat. In a member's private chat: the
-     * home screen, or one of its pages, which a button edits that same message into. Buttons carry "help:" and a page name.
+     * home screen, or one of its pages, which a button (Callback.Help) edits that same message into.
      */
     private Rendered help(JsonNode payload) {
         String bot = escape(payload.path("bot").asText());
@@ -388,10 +381,10 @@ public final class Renderer {
                     List.of(List.of(Button.link(text("help.button.openPrivate"), "https://t.me/" + payload.path("bot").asText() + "?start=help"))),
                     null);
         }
-        List<List<Button>> back = List.of(List.of(new Button(text("help.button.back"), "help:home")));
+        List<List<Button>> back = List.of(List.of(new Button(text("help.button.back"), new Callback.Help("home").data())));
         return switch (payload.path("page").asText()) {
             case "task" -> new Rendered(text("help.task"),
-                    List.of(List.of(new Button(text("help.button.write"), "help:write")), back.getFirst()), null);
+                    List.of(List.of(new Button(text("help.button.write"), new Callback.Help("write").data())), back.getFirst()), null);
             // The reused messages' own buttons are left off: a priority button would redraw this as a plain status.
             case "status" -> new Rendered(status(payload.path("status")).html(), back, null);
             case "history" -> new Rendered(history(payload.path("history").path("tasks")).html(), back, null);
@@ -423,17 +416,18 @@ public final class Renderer {
         String html = format("help.greeting", escape(payload.path("firstName").asText())) + "\n" + String.join(" · ", who)
                 + "\n\n" + (live.isEmpty() ? text("help.live.idle") : String.join(" · ", live))
                 + "\n" + (projects.isEmpty() ? text("noProjects") : format("help.projects", projectList(projects)));
-        List<Button> buttons = new ArrayList<>(List.of(new Button(text("help.button.task"), "help:task"),
-                new Button(text("help.button.status"), "help:status"), new Button(text("help.button.history"), "help:history"),
-                new Button(text("help.button.projects"), "help:projects")));
+        List<Button> buttons = new ArrayList<>(List.of(new Button(text("help.button.task"), new Callback.Help("task").data()),
+                new Button(text("help.button.status"), new Callback.Help("status").data()),
+                new Button(text("help.button.history"), new Callback.Help("history").data()),
+                new Button(text("help.button.projects"), new Callback.Help("projects").data())));
         if (payload.path("computer").asBoolean()) {
-            buttons.add(new Button(text("help.button.computer"), "help:computer"));
+            buttons.add(new Button(text("help.button.computer"), new Callback.Help("computer").data()));
         }
         if (payload.hasNonNull("miniApp")) {
             buttons.add(Button.webApp(text("help.button.manage"), payload.get("miniApp").asText()));
         }
-        buttons.add(new Button(text("help.button.how"), "help:how"));
-        buttons.add(new Button(text("help.button.refresh"), "help:home"));
+        buttons.add(new Button(text("help.button.how"), new Callback.Help("how").data()));
+        buttons.add(new Button(text("help.button.refresh"), new Callback.Help("home").data()));
         List<List<Button>> keyboard = new ArrayList<>();
         for (int i = 0; i < buttons.size(); i += 2) {
             keyboard.add(buttons.subList(i, Math.min(i + 2, buttons.size())));
@@ -502,11 +496,11 @@ public final class Renderer {
                 // OPEN: asked below.
             }
         }
-        String id = String.valueOf(payload.path("requestId").asLong());
+        long requestId = payload.path("requestId").asLong();
         List<List<Button>> keyboard = new ArrayList<>();
         List<Button> row = new ArrayList<>();
         for (JsonNode group : payload.path("groups")) {
-            row.add(new Button(format("button.joinGroup", group.asText()), "join:" + id + ":" + group.asText()));
+            row.add(new Button(format("button.joinGroup", group.asText()), new Callback.Join(requestId, group.asText()).data()));
             if (row.size() == 3) {
                 keyboard.add(row);
                 row = new ArrayList<>();
@@ -515,7 +509,7 @@ public final class Renderer {
         if (!row.isEmpty()) {
             keyboard.add(row);
         }
-        keyboard.add(List.of(new Button(text("button.joinDeny"), "join:" + id + ":-")));
+        keyboard.add(List.of(new Button(text("button.joinDeny"), new Callback.JoinDeny(requestId).data())));
         return new Rendered(format("join.request", name, username, userId), keyboard, null);
     }
 
@@ -537,15 +531,15 @@ public final class Renderer {
     private Rendered plan(JsonNode payload) {
         String taskId = taskId(payload);
         JsonNode plan = payload.path("plan");
-        String planRef = taskId + ":" + payload.path("planSeq").asInt();
+        int planSeq = payload.path("planSeq").asInt();
         boolean openQuestions = !plan.path("questions").isEmpty();
         // The buttons are task access's: no Approve while the plan asks questions (G-1d, ADR 0027); either way the answers
         // come back as a correction.
         List<Button> decisions = new ArrayList<>();
         for (TaskAccess.Action action : TaskAccess.decisions(plan.path("questions").size())) {
             decisions.add(action == TaskAccess.Action.APPROVE
-                    ? new Button(text("button.approve"), "approve:" + planRef)
-                    : new Button(text("button.reject"), "reject:" + planRef));
+                    ? new Button(text("button.approve"), new Callback.Approve(payload.path("taskId").asLong(), planSeq).data())
+                    : new Button(text("button.reject"), new Callback.Reject(payload.path("taskId").asLong(), planSeq).data()));
         }
         List<List<Button>> buttons = List.of(decisions);
         String title = format("plan.title", taskId, escape(payload.path("project").asText()));
@@ -586,13 +580,17 @@ public final class Renderer {
             return plain(format("plan.questionAnswered", taskId, index, payload.path("total").asInt(), question,
                     escapeWithin(payload.get("answer").asText(), budget)));
         }
-        String data = "q:" + taskId + ":" + payload.path("planSeq").asInt() + ":" + index + ":";
+        long id = payload.path("taskId").asLong();
+        int planSeq = payload.path("planSeq").asInt();
         List<List<Button>> keyboard = new ArrayList<>();
         JsonNode options = payload.path("options");
         for (int option = 0; option < options.size(); option++) {
-            keyboard.add(List.of(new Button(label(options.get(option).asText()), data + option)));
+            Callback chosen = new Callback.Answer(id, planSeq, index, new TaskCommand.Choice.Option(option));
+            keyboard.add(List.of(new Button(label(options.get(option).asText()), chosen.data())));
         }
-        keyboard.add(List.of(new Button(text("button.answerOwn"), data + "w"), new Button(text("button.youDecide"), data + "d")));
+        Callback youDecide = new Callback.Answer(id, planSeq, index, new TaskCommand.Choice.YouDecide());
+        keyboard.add(List.of(new Button(text("button.answerOwn"), new Callback.WriteAnswer(id, planSeq, index).data()),
+                new Button(text("button.youDecide"), youDecide.data())));
         return new Rendered(format("plan.question", taskId, index, payload.path("total").asInt(), question), keyboard, null);
     }
 
@@ -624,7 +622,8 @@ public final class Renderer {
             html.append('\n').append(!done ? number + ". " : outcome.equals("DONE") ? "✔️ " : "✖️ ").append(assistantAction(action));
             if (!done) {
                 String label = type.equals("draft") ? text("assistant.button.draft") : format("assistant.button." + type, taskId(action));
-                keyboard.add(List.of(new Button(label("✅ " + number + ". " + label), "as:" + action.path("id").asLong())));
+                Callback confirm = new Callback.AssistantAction(action.path("id").asLong());
+                keyboard.add(List.of(new Button(label("✅ " + number + ". " + label), confirm.data())));
             }
             number++;
         }
@@ -716,7 +715,7 @@ public final class Renderer {
         }
         // Offered only by a bot that can merge (a personal one), where TaskAccess allowed it when the run completed.
         return new Rendered(html.toString(), payload.path("merge").asBoolean(false)
-                ? List.of(List.of(new Button(text("button.merge"), "merge:" + payload.path("taskId").asLong())))
+                ? List.of(List.of(new Button(text("button.merge"), new Callback.Merge(payload.path("taskId").asLong()).data())))
                 : List.of(), null);
     }
 
@@ -767,7 +766,8 @@ public final class Renderer {
             List<Button> row = new ArrayList<>();
             for (String priority : PRIORITIES) {
                 String current = priority.equals(task.path("priority").asText()) ? "✓" : "";
-                row.add(new Button("#" + id + " " + current + PRIORITY_ICONS.get(priority), "prio:" + id + ":" + priority));
+                Callback choice = new Callback.StatusPriority(task.path("taskId").asLong(), Priority.valueOf(priority));
+                row.add(new Button("#" + id + " " + current + PRIORITY_ICONS.get(priority), choice.data()));
             }
             keyboard.add(row);
         }
@@ -856,14 +856,14 @@ public final class Renderer {
         List<Button> periods = new ArrayList<>();
         for (String option : List.of("week", "month", "all")) {
             String chosen = option.equals(period) ? "✓ " : "";
-            periods.add(new Button(chosen + text("stats.period." + option), "stats:" + option + ":" + view));
+            periods.add(new Button(chosen + text("stats.period." + option), new Callback.Stats(option, view).data()));
         }
         keyboard.add(periods);
         return new Rendered(joinWithin(blocks, "\n"), keyboard, null);
     }
 
     private static Button statsButton(String label, String period, String view, String currentView) {
-        return new Button((view.equals(currentView) ? "✓ " : "") + label, "stats:" + period + ":" + view);
+        return new Button((view.equals(currentView) ? "✓ " : "") + label, new Callback.Stats(period, view).data());
     }
 
     private Rendered timeline(JsonNode payload) {
