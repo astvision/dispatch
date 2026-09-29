@@ -737,31 +737,6 @@ public final class UpdateHandler {
         return true;
     }
 
-    /** A button under a plan's question: an option's index, "w" to write one's own answer or "d" to let the agent decide (G-1d). */
-    private void onQuestionButton(Tx tx, JsonNode callback, Requester who, String[] parts) {
-        String callbackId = callback.path("id").asText();
-        Optional<Long> taskId = taskId(parts[1]);
-        Optional<Long> planSeq = taskId(parts[2]);
-        Optional<Long> index = taskId(parts[3]);
-        Optional<Long> option = taskId(parts[4]);
-        boolean known = parts[4].equals("w") || parts[4].equals("d") || option.isPresent();
-        if (taskId.isEmpty() || planSeq.isEmpty() || index.isEmpty() || !known) {
-            answer(tx, callbackId, "callback.unknown");
-            return;
-        }
-        JsonNode message = callback.path("message");
-        long chatId = message.path("chat").path("id").asLong();
-        int seq = planSeq.get().intValue();
-        int question = index.get().intValue();
-        if (parts[4].equals("w")) {
-            askForAnswer(tx, callbackId, who, taskId.get(), seq, question, Refs.message(chatId, message.path("message_id").asLong(), null));
-            return;
-        }
-        TaskCommand.Choice choice = parts[4].equals("d") ? new TaskCommand.Choice.YouDecide()
-                : new TaskCommand.Choice.Option(option.get().intValue());
-        notice(tx, callbackId, commands.run(tx, who, new TaskCommand.Answer(taskId.get(), seq, question, choice)), "callback.answered");
-    }
-
     /**
      * ✍️ under a question: the requester writes their own answer as a forced reply under it (G-1d), once. "You decide" stands
      * in for the words not written yet: it is never empty, so the check says only whether this question may be answered now.
@@ -788,72 +763,53 @@ public final class UpdateHandler {
     private void onCallback(Tx tx, JsonNode callback) {
         String callbackId = callback.path("id").asText();
         JsonNode from = callback.path("from");
-        JsonNode chat = callback.path("message").path("chat");
-        boolean servedChat = groups.isGroupChat(Refs.chat(chat.path("id").asLong())) || isPrivateChatOf(chat, from);
-        String data = callback.path("data").asText();
-        if (servedChat && from.has("id") && data.startsWith("stats:")) {
-            onStatsButton(tx, callback, data);
-            return;
-        }
-        String[] parts = data.split(":");
-        if (from.has("id") && parts.length == 2 && parts[0].equals("help")) {
-            onHelpButton(tx, callback, parts[1]);
-            return;
-        }
-        if (servedChat && from.has("id") && parts.length == 3 && parts[0].equals("join") && taskId(parts[1]).isPresent()) {
-            onJoinButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
-            return;
-        }
-        if (servedChat && from.has("id") && parts.length == 4 && parts[0].equals("draft") && taskId(parts[1]).isPresent()) {
-            Requester presser = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
-            onDraftButton(tx, callback, presser, taskId(parts[1]).get(), parts[2], parts[3]);
-            return;
-        }
-        if (groupLinks != null && isPrivateChatOf(chat, from) && parts.length == 3 && parts[0].equals("link") && taskId(parts[1]).isPresent()) {
-            // The prompt only ever goes to a private chat; parts[1] is the negative group chat id, which taskId also parses.
-            onLinkButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get(), parts[2]);
-            return;
-        }
-        if (merges != null && isPrivateChatOf(chat, from) && parts.length == 2 && parts[0].equals("merge") && taskId(parts[1]).isPresent()) {
-            onMergeButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get());
-            return;
-        }
-        if (isPrivateChatOf(chat, from) && parts.length == 2 && parts[0].equals("ad") && taskId(parts[1]).isPresent()) {
-            onAdditionButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get());
-            return;
-        }
-        if (assistantActions != null && isPrivateChatOf(chat, from) && parts.length == 2 && parts[0].equals("as")
-                && taskId(parts[1]).isPresent()) {
-            onAssistantButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), taskId(parts[1]).get());
-            return;
-        }
-        if (servedChat && from.has("id") && parts.length == 5 && parts[0].equals("q")) {
-            onQuestionButton(tx, callback, new Requester(Refs.user(from.get("id").asLong()), displayName(from)), parts);
-            return;
-        }
-        boolean known = parts.length == 3 && Set.of("approve", "reject", "prio").contains(parts[0]);
-        if (!servedChat || !known || !from.has("id")) {
-            answer(tx, callbackId, "callback.unknown");
-            return;
-        }
-        Optional<Long> taskId = taskId(parts[1]);
-        if (taskId.isEmpty()) {
+        JsonNode message = callback.path("message");
+        JsonNode chat = message.path("chat");
+        boolean privateChat = isPrivateChatOf(chat, from);
+        boolean servedChat = groups.isGroupChat(Refs.chat(chat.path("id").asLong())) || privateChat;
+        Optional<Callback> parsed = Callback.parse(callback.path("data").asText());
+        if (parsed.isEmpty() || !from.has("id") || !pressableIn(parsed.get(), servedChat, privateChat)) {
             answer(tx, callbackId, "callback.unknown");
             return;
         }
         Requester who = new Requester(Refs.user(from.get("id").asLong()), displayName(from));
-        if (parts[0].equals("prio")) {
-            onPriorityButton(tx, callback, who, taskId.get(), parts[2]);
-            return;
+        switch (parsed.get()) {
+            case Callback.Approve approve -> notice(tx, callbackId,
+                    commands.run(tx, who, new TaskCommand.Approve(approve.taskId(), approve.planSeq())), "callback.approved");
+            case Callback.Reject reject -> notice(tx, callbackId,
+                    commands.run(tx, who, new TaskCommand.Reject(reject.taskId(), reject.planSeq())), "callback.rejected");
+            case Callback.StatusPriority priority -> onPriorityButton(tx, callback, who, priority.taskId(), priority.priority());
+            case Callback.Draft draft -> onDraftButton(tx, callback, who, draft);
+            case Callback.Answer chosen -> notice(tx, callbackId,
+                    commands.run(tx, who, new TaskCommand.Answer(chosen.taskId(), chosen.planSeq(), chosen.question(), chosen.choice())),
+                    "callback.answered");
+            case Callback.WriteAnswer write -> askForAnswer(tx, callbackId, who, write.taskId(), write.planSeq(), write.question(),
+                    Refs.message(chat.path("id").asLong(), message.path("message_id").asLong(), null));
+            case Callback.AssistantAction action -> onAssistantButton(tx, callback, who, action.actionId());
+            case Callback.Addition addition -> onAdditionButton(tx, callback, who, addition.additionId());
+            case Callback.Merge merge -> onMergeButton(tx, callback, who, merge.taskId());
+            case Callback.GroupLink link -> onLinkButton(tx, callback, who, link);
+            case Callback.JoinChoice join -> onJoinButton(tx, callback, who, join);
+            case Callback.Stats stats -> onStatsButton(tx, callback, stats);
+            case Callback.Help help -> onHelpButton(tx, callback, help.page());
         }
-        Optional<Long> planSeq = taskId(parts[2]);
-        if (planSeq.isEmpty()) {
-            answer(tx, callbackId, "callback.unknown");
-            return;
-        }
-        int seq = planSeq.get().intValue();
-        TaskCommand decision = parts[0].equals("approve") ? new TaskCommand.Approve(taskId.get(), seq) : new TaskCommand.Reject(taskId.get(), seq);
-        notice(tx, callbackId, commands.run(tx, who, decision), parts[0].equals("approve") ? "callback.approved" : "callback.rejected");
+    }
+
+    /**
+     * Whether a button is served in the chat it was pressed in; one that is not is answered as unknown. Most work in any chat
+     * Dispatch serves. Link prompts, merges, additions and the assistant's proposals only ever go to the presser's own
+     * private chat, and all but additions only on a bot that has them. Help checks its chat itself, to say why it refuses.
+     */
+    private boolean pressableIn(Callback pressed, boolean servedChat, boolean privateChat) {
+        return switch (pressed) {
+            case Callback.Help _ -> true;
+            case Callback.Addition _ -> privateChat;
+            case Callback.GroupLink _ -> groupLinks != null && privateChat;
+            case Callback.Merge _ -> merges != null && privateChat;
+            case Callback.AssistantAction _ -> assistantActions != null && privateChat;
+            case Callback.Approve _, Callback.Reject _, Callback.StatusPriority _, Callback.Draft _, Callback.Answer _,
+                 Callback.WriteAnswer _, Callback.JoinChoice _, Callback.Stats _ -> servedChat;
+        };
     }
 
     /**
@@ -861,29 +817,23 @@ public final class UpdateHandler {
      * (ADR 0013).
      * The prompt is redrawn to show the choice, the new task or the parts.
      */
-    private void onDraftButton(Tx tx, JsonNode callback, Requester who, long draftId, String kind, String value) {
+    private void onDraftButton(Tx tx, JsonNode callback, Requester who, Callback.Draft button) {
         String callbackId = callback.path("id").asText();
         JsonNode message = callback.path("message");
         long chatId = message.path("chat").path("id").asLong();
         long messageId = message.path("message_id").asLong();
-        DraftChoice choice;
-        if (kind.equals("p")) {
-            choice = tasks.chooseProject(tx, who, draftId, value);
-        } else if (kind.equals("prio") && Set.of("URGENT", "NORMAL", "LOW").contains(value)) {
-            choice = tasks.choosePriority(tx, who, draftId, Priority.valueOf(value));
-        } else if (kind.equals("split") && value.equals("ask")) {
-            // This prompt is redrawn again when the split's answer arrives.
-            choice = tasks.split(tx, who, draftId, Refs.message(chatId, messageId, null));
-        } else if (kind.equals("split") && value.equals("yes")) {
-            choice = tasks.acceptSplit(tx, who, draftId);
-        } else if (kind.equals("split") && value.equals("no")) {
-            choice = tasks.keepWhole(tx, who, draftId);
-        } else if (kind.equals("discard")) {
-            choice = tasks.discard(tx, who, draftId);
-        } else {
-            answer(tx, callbackId, "callback.unknown");
-            return;
-        }
+        long draftId = button.draftId();
+        DraftChoice choice = switch (button) {
+            case Callback.DraftProject project -> tasks.chooseProject(tx, who, draftId, project.name());
+            case Callback.DraftPriority priority -> tasks.choosePriority(tx, who, draftId, priority.priority());
+            case Callback.DraftSplit split -> switch (split.choice()) {
+                // This prompt is redrawn again when the split's answer arrives.
+                case ASK -> tasks.split(tx, who, draftId, Refs.message(chatId, messageId, null));
+                case YES -> tasks.acceptSplit(tx, who, draftId);
+                case NO -> tasks.keepWhole(tx, who, draftId);
+            };
+            case Callback.DraftDiscard _ -> tasks.discard(tx, who, draftId);
+        };
         answer(tx, callbackId, switch (choice) {
             case PROJECT_CHOSEN -> "callback.projectChosen";
             case CREATED -> "callback.taskCreated";
@@ -983,9 +933,13 @@ public final class UpdateHandler {
         }
     }
 
-    /** An admin's button on a join request: a group to add the person to, or "-" to deny. The request is redrawn with the decision. */
-    private void onJoinButton(Tx tx, JsonNode callback, Requester presser, long requestId, String choice) {
-        JoinDecision decision = choice.equals("-") ? membership.deny(tx, presser, requestId) : membership.approve(tx, presser, requestId, choice);
+    /** An admin's button on a join request: a group to add the person to, or deny. The request is redrawn with the decision. */
+    private void onJoinButton(Tx tx, JsonNode callback, Requester presser, Callback.JoinChoice choice) {
+        long requestId = choice.requestId();
+        JoinDecision decision = switch (choice) {
+            case Callback.JoinDeny _ -> membership.deny(tx, presser, requestId);
+            case Callback.Join join -> membership.approve(tx, presser, requestId, join.group());
+        };
         answer(tx, callback.path("id").asText(), switch (decision) {
             case APPROVED -> "callback.joinApproved";
             case DENIED -> "callback.joinDenied";
@@ -1007,7 +961,7 @@ public final class UpdateHandler {
     }
 
     /** A view or period button under statistics; the same message is redrawn, for the groups its chat may see. */
-    private void onStatsButton(Tx tx, JsonNode callback, String data) {
+    private void onStatsButton(Tx tx, JsonNode callback, Callback.Stats button) {
         String callbackId = callback.path("id").asText();
         JsonNode message = callback.path("message");
         long chatId = message.path("chat").path("id").asLong();
@@ -1016,10 +970,9 @@ public final class UpdateHandler {
         List<String> visibleGroups = privateChat
                 ? groups.groupsOfMember(viewer)
                 : groups.groupOfChat(Refs.chat(chatId)).map(List::of).orElse(List.of());
-        String[] parts = data.split(":", 3);
-        Optional<ObjectNode> payload = parts.length == 3 && !visibleGroups.isEmpty()
-                ? tasks.statsPayload(tx, viewer, visibleGroups, parts[2], parts[1])
-                : Optional.empty();
+        Optional<ObjectNode> payload = visibleGroups.isEmpty()
+                ? Optional.empty()
+                : tasks.statsPayload(tx, viewer, visibleGroups, button.view(), button.period());
         if (payload.isEmpty()) {
             answer(tx, callbackId, "callback.unknown");
             return;
@@ -1031,15 +984,8 @@ public final class UpdateHandler {
     }
 
     /** A priority button under a status report: change it, then redraw that report so it shows the new order. */
-    private void onPriorityButton(Tx tx, JsonNode callback, Requester who, long taskId, String value) {
+    private void onPriorityButton(Tx tx, JsonNode callback, Requester who, long taskId, Priority priority) {
         String callbackId = callback.path("id").asText();
-        Priority priority;
-        try {
-            priority = Priority.valueOf(value);
-        } catch (IllegalArgumentException e) {
-            answer(tx, callbackId, "callback.unknown");
-            return;
-        }
         CommandResult result = commands.run(tx, who, new TaskCommand.Reprioritize(taskId, priority));
         notice(tx, callbackId, result, result instanceof CommandResult.Unchanged ? "callback.priorityUnchanged" : "callback.priorityChanged");
         if (!(result instanceof CommandResult.Done)) {
@@ -1214,19 +1160,14 @@ public final class UpdateHandler {
         return telegram.errorCode() == 403 || message.contains("chat not found") || message.contains("can't initiate conversation");
     }
 
-    /** A button on a link prompt: a project's index in the prompt's list, or "-" to leave the group unlinked. */
-    private void onLinkButton(Tx tx, JsonNode callback, Requester presser, long chatId, String choice) {
+    /** A button on a link prompt: a project's index in the prompt's list, or leave the group unlinked. */
+    private void onLinkButton(Tx tx, JsonNode callback, Requester presser, Callback.GroupLink choice) {
+        long chatId = choice.chatId();
         Optional<GroupLinks.Prompt> prompt = groupLinks.prompt(tx, chatId);
-        Optional<Long> index = taskId(choice);
-        GroupLinks.Result result;
-        if (choice.equals("-")) {
-            result = groupLinks.decline(tx, presser, chatId);
-        } else if (index.isPresent()) {
-            result = groupLinks.link(tx, presser, chatId, index.get());
-        } else {
-            answer(tx, callback.path("id").asText(), "callback.unknown");
-            return;
-        }
+        GroupLinks.Result result = switch (choice) {
+            case Callback.NoLink _ -> groupLinks.decline(tx, presser, chatId);
+            case Callback.Link link -> groupLinks.link(tx, presser, chatId, link.index());
+        };
         // Answered first: after-commits run in order, and the button's spinner should not wait on the calls below.
         answer(tx, callback.path("id").asText(), switch (result) {
             case LINKED -> "callback.groupLinked";
@@ -1242,8 +1183,9 @@ public final class UpdateHandler {
             return;
         }
         ObjectNode payload = Json.object().put("chatId", chatId).put("title", prompt.orElseThrow().title()).put("status", result.name());
-        if (result == GroupLinks.Result.LINKED) {
-            payload.put("project", prompt.get().projects().get(index.orElseThrow().intValue()));
+        if (choice instanceof Callback.Link link) {
+            // The result is LINKED or DECLINED here, and only a project's button links.
+            payload.put("project", prompt.get().projects().get((int) link.index()));
         } else {
             tx.afterCommit(() -> bestEffort("leaveChat", () -> api.leaveChat(chatId)));
         }
