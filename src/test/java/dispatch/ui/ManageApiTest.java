@@ -254,6 +254,20 @@ class ManageApiTest {
         assertEquals("codex", load().projects().get(2).agent());
     }
 
+    /** What the add form shows before it asks for a name: the clone's folder, name, origin and base branch. */
+    @Test
+    void aFolderIsListedAndAClonePickedFromItIsProbed() throws Exception {
+        GitFixture repos = GitFixture.create(dir, "life");
+
+        JsonNode listed = call("/api/manage/folders", "{\"path\":\"%s\"}".formatted(json(repos.repo("life").getParent().toString())));
+        JsonNode probed = call("/api/manage/projects/probe", "{\"folder\":\"%s\"}".formatted(json(repos.repo("life").toString())));
+
+        assertTrue(listed.path("folders").toString().contains("\"name\":\"life\",\"path\""), listed.toString());
+        assertEquals("life", probed.path("name").asText());
+        assertEquals(repos.origin.toString(), probed.path("originUrl").asText());
+        assertEquals(repos.repo("life").toString(), probed.path("folder").asText());
+    }
+
     @Test
     void aProjectWithACarriageReturnInBaseBranchIsRefusedAndChangesNothing() throws Exception {
         GitFixture repos = GitFixture.create(dir, "life");

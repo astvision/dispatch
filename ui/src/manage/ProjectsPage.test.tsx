@@ -15,8 +15,8 @@ vi.mock("../api", async (importOriginal) => ({
   editProject: vi.fn(),
   removeProject: vi.fn(),
   addProject: vi.fn(),
-  listFolders: vi.fn(),
-  probeProject: vi.fn(),
+  listProjectFolders: vi.fn(),
+  probeClone: vi.fn(),
 }));
 
 const matchMedia = window.matchMedia;
@@ -60,10 +60,10 @@ test("removing a project asks first", async () => {
 
 test("a clone picked in the folder browser is added", async () => {
   vi.mocked(api.getConfig).mockResolvedValue(teamConfig);
-  vi.mocked(api.listFolders).mockResolvedValue({
+  vi.mocked(api.listProjectFolders).mockResolvedValue({
     path: "/home/bold", parent: "/home", truncated: false, folders: [{ name: "life", path: "/home/bold/life", gitClone: true }],
   });
-  vi.mocked(api.probeProject).mockResolvedValue({
+  vi.mocked(api.probeClone).mockResolvedValue({
     folder: "/home/bold/life", name: "life", originUrl: null, originHadCredentials: false, baseBranch: "master",
   });
   const add = vi.mocked(api.addProject).mockResolvedValue(saved);

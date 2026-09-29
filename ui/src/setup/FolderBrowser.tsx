@@ -5,8 +5,14 @@ import { listFolders, type FolderListing } from "../api";
 import { useT } from "../i18n/i18n";
 import { useAction } from "../useAction";
 
+interface Props {
+  onPick: (folder: string) => void;
+  /** Where the folders come from: setup's route by default, the management pages' own when adding a project. */
+  list?: (path: string | null) => Promise<FolderListing>;
+}
+
 /** Folders on the machine that runs Dispatch; the browser may be on another computer. */
-export default function FolderBrowser({ onPick }: { onPick: (folder: string) => void }) {
+export default function FolderBrowser({ onPick, list = listFolders }: Props) {
   const t = useT();
   const [listing, setListing] = useState<FolderListing | null>(null);
   const [typedPath, setTypedPath] = useState("");
@@ -16,7 +22,7 @@ export default function FolderBrowser({ onPick }: { onPick: (folder: string) => 
 
   const open = async (path: string | null) => {
     const asked = ++latest.current;
-    const found = await run(() => listFolders(path));
+    const found = await run(() => list(path));
     // An older listing that answers late never replaces the one asked for after it.
     if (!found || asked !== latest.current) return;
     setListing(found);

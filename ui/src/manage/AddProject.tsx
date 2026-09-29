@@ -1,6 +1,6 @@
 import { Alert, Button, Card } from "antd";
 import { useState } from "react";
-import { probeProject, type ProjectFields, type ProjectView } from "../api";
+import { listProjectFolders, probeClone, type ProjectFields, type ProjectView } from "../api";
 import { useT } from "../i18n/i18n";
 import FolderBrowser from "../setup/FolderBrowser";
 import { useAction } from "../useAction";
@@ -22,14 +22,14 @@ export default function AddProject({ groups, busy, onAdd, onCancel }: Props) {
   const probing = useAction();
 
   const pick = async (folder: string) => {
-    const found = await probing.run(() => probeProject(folder));
+    const found = await probing.run(() => probeClone(folder));
     if (found) setProbe(found);
   };
 
   if (!probe) {
     return (
       <Card title={t("projects.chooseClone")} extra={<Button onClick={onCancel}>{t("common.cancel")}</Button>}>
-        <FolderBrowser onPick={(folder) => void pick(folder)} />
+        <FolderBrowser list={listProjectFolders} onPick={(folder) => void pick(folder)} />
         {probing.error && <Alert type="error" showIcon message={probing.error.message} style={{ marginTop: 12 }} />}
       </Card>
     );

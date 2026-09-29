@@ -134,6 +134,11 @@ public final class ManageApi {
         return Map.ofEntries(
                 Map.entry("/api/manage/config", body -> config()),
                 Map.entry("/api/manage/settings", this::settings),
+                // Adding a project picks its clone first. The setup routes that do this for dispatch ui are never served
+                // by the Mini App (ADR 0019), so the management pages have their own, admin-only there like every one here.
+                Map.entry("/api/manage/folders", body -> Folders.list(SetupApi.optionalText(body, "path"),
+                        Path.of(System.getProperty("user.home")))),
+                Map.entry("/api/manage/projects/probe", this::probeProject),
                 Map.entry("/api/manage/projects/add", this::addProject),
                 Map.entry("/api/manage/projects/edit", this::editProject),
                 Map.entry("/api/manage/projects/remove", this::removeProject),
@@ -206,6 +211,12 @@ public final class ManageApi {
             return current == null ? ConfigEdit.set(edited, At.of("agents", "claude-code", "command"), claude)
                     : change(edited, At.of("agents", "claude-code", "command"), current.command(), claude, claude);
         });
+    }
+
+    private SetupApi.ProjectView probeProject(JsonNode body) {
+        ProjectProbe probe = probe(SetupApi.text(body, "folder"));
+        return new SetupApi.ProjectView(probe.folder().toString(), probe.defaultName(), probe.originUrl(),
+                probe.originHadCredentials(), probe.defaultBranch());
     }
 
     private Saved addProject(JsonNode body) {

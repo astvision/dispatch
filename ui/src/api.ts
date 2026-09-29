@@ -190,6 +190,9 @@ export const nextGroup = (signal?: AbortSignal) =>
 export const checkClaude = (command: string) => post<{ command: string; version: string }>("/api/setup/claude", { command });
 export const listFolders = (path: string | null) => post<FolderListing>("/api/setup/folders", { path });
 export const probeProject = (folder: string) => post<ProjectView>("/api/setup/project", { folder });
+// The management pages' own: the Mini App serves no setup route, so adding a project there cannot use the two above.
+export const listProjectFolders = (path: string | null) => post<FolderListing>("/api/manage/folders", { path });
+export const probeClone = (folder: string) => post<ProjectView>("/api/manage/projects/probe", { folder });
 export const writeSetup = (payload: SetupPayload) => post<Written>("/api/setup/write", payload);
 export const installService = () => post<ServiceView>("/api/service/install");
 export const stopService = () => post<ServiceView>("/api/service/stop");

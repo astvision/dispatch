@@ -187,6 +187,23 @@ class MiniAppServerTest {
         }
     }
 
+    /** Adding a project browses the bot machine's folders and probes a clone: an admin's, as every management route. */
+    @Test
+    void anAdminBrowsesFoldersAndProbesACloneToAddAProject() throws Exception {
+        String home = "{\"path\":\"" + dir.toString().replace("\\", "\\\\") + "\"}";
+
+        HttpResponse<String> folders = post("/api/manage/folders", initData(100), home);
+        HttpResponse<String> probed = post("/api/manage/projects/probe", initData(100),
+                "{\"folder\":\"" + dir.toString().replace("\\", "\\\\") + "\"}");
+
+        assertEquals(200, folders.statusCode(), folders.body());
+        assertTrue(folders.body().contains("\"folders\""), folders.body());
+        assertTrue(probed.body().contains("\"error\""), "not a clone, but the route is there: " + probed.body());
+        assertTrue(probed.statusCode() != 404, probed.body());
+        assertEquals(403, post("/api/manage/folders", initData(200), home).statusCode(), "a member lists nothing");
+        assertEquals(403, post("/api/manage/projects/probe", initData(200), home).statusCode());
+    }
+
     @Test
     void theSetupRoutesAreNotHereAtAll() throws Exception {
         assertEquals(404, post("/api/setup/state", initData(100)).statusCode(), "Dispatch is never set up from Telegram");
