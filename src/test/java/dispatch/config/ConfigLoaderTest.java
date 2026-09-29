@@ -340,6 +340,14 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void groupIsNotNamedLikeTheDenyButton() throws IOException {
+        ConfigException error = assertThrows(ConfigException.class,
+                () -> ConfigLoader.load(write(VALID.replace("  - name: backend\n", "  - name: \"-\"\n")), ENV));
+
+        assertTrue(error.getMessage().contains("telegram.groups[0].name: '-' alone is not a group name"), error.getMessage());
+    }
+
+    @Test
     void groupNeedsNoChatForAPersonalBot() throws IOException {
         String personal = VALID.replace("      chatId: -1001234567890\n", "")
                 .replace(TWO_PROJECTS_IN_BACKEND, BACKEND_AND_MOBILE.replace("      chatId: -1009876543210\n", ""));

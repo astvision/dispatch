@@ -151,6 +151,9 @@ public final class ConfigLoader {
             } else if (group.name().length() > MAX_GROUP_NAME) {
                 // A join request's button carries the name, and Telegram allows 64 bytes of button data.
                 errors.add(Text.of("config.nameAt", at, MAX_GROUP_NAME));
+            } else if (group.name().equals("-")) {
+                // A join request's deny button carries "-" where an approve button carries the group's name.
+                errors.add(Text.of("config.nameDash", at));
             } else if (!names.add(group.name().toLowerCase())) {
                 errors.add(Text.of("config.nameIs", at, group.name()));
             }
