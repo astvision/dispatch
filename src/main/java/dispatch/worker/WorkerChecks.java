@@ -200,12 +200,20 @@ public final class WorkerChecks {
         Readiness.Check gh = ghAuthenticated(config)
                 ? new Readiness.Check(true, null)
                 : new Readiness.Check(false, "not logged in");
+        // Claude Code is always checked (its command defaults to "claude"); another agent only when this computer has one.
+        Map<String, Readiness.Check> agents = new LinkedHashMap<>();
+        config.agentCommands().forEach((agent, command) -> {
+            if (!agent.equals("claude-code")) {
+                agents.put(agent, Setup.claudeVersion(command).map(line -> new Readiness.Check(true, line))
+                        .orElseGet(() -> new Readiness.Check(false, "cannot run " + command)));
+            }
+        });
         Map<String, Readiness.Check> projects = new LinkedHashMap<>();
         for (Map.Entry<String, WorkerConfig.Project> entry : config.projects().entrySet()) {
             projects.put(entry.getKey(), cloneUsable(entry.getValue())
                     ? new Readiness.Check(true, null)
                     : new Readiness.Check(false, "clone missing at " + entry.getValue().path()));
         }
-        return new Readiness(claude, gh, projects);
+        return new Readiness(claude, gh, projects, agents);
     }
 }

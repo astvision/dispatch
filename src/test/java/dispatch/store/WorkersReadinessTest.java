@@ -100,7 +100,7 @@ class WorkersReadinessTest {
 
     @Test
     void aMemberWithNoComputerIsNotHeld() {
-        assertTrue(db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:999", null, SEEN_SINCE, "alm", RunKind.PLAN))
+        assertTrue(db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:999", null, SEEN_SINCE, "alm", "claude-code", RunKind.PLAN))
                 .isEmpty());
     }
 
@@ -143,6 +143,6 @@ class WorkersReadinessTest {
     }
 
     private Optional<Readiness.Blocker> blockerOf(Long pinnedWorker, String project, RunKind kind) {
-        return db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:100", pinnedWorker, SEEN_SINCE, project, kind));
+        return db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:100", pinnedWorker, SEEN_SINCE, project, "claude-code", kind));
     }
 }

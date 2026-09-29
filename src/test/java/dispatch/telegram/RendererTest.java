@@ -110,6 +110,20 @@ class RendererTest {
         assertTrue(clone.contains("dispatch worker init") && clone.contains("no clone of alm"), clone);
     }
 
+    /** ADR 0026: a project on Codex or Gemini CLI is held by that agent, and the message names it. */
+    @Test
+    void aTaskHeldByAnotherAgentNamesThatAgent() {
+        String codex = renderer.render(OutboxKind.WORKER_BLOCKED,
+                Json.object().put("taskId", 7).put("code", "codex").put("detail", "cannot run codex")).html();
+        String gemini = renderer.render(OutboxKind.WORKER_BLOCKED,
+                Json.object().put("taskId", 7).put("code", "gemini").put("detail", "cannot run gemini")).html();
+
+        assertTrue(codex.contains("#7") && codex.contains("Codex") && codex.contains("cannot run codex"), codex);
+        assertTrue(gemini.contains("Gemini CLI") && gemini.contains("cannot run gemini"), gemini);
+        assertEquals("Codex ажиллахгүй байна", messages.getString("status.blocked.codex"));
+        assertEquals("Gemini CLI ажиллахгүй байна", messages.getString("status.blocked.gemini"));
+    }
+
     @Test
     void failureNamesTheReasonAndKeepsHugeDetailWithinTheLimit() {
         ObjectNode payload = Json.object().put("taskId", 42).put("reason", "TIMEOUT").put("detail", "x".repeat(6000));

@@ -7,6 +7,7 @@ import dispatch.store.Runs;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 
@@ -56,7 +57,8 @@ public final class Scheduler implements Runnable {
         while (!stopped) {
             Instant now = clock.instant();
             Instant seenSince = workerSeenWithin == null ? null : now.minus(workerSeenWithin);
-            Optional<ClaimedRun> next = db.transactionReturning(tx -> Runs.claimNext(tx, maxConcurrentRuns, now, seenSince));
+            Optional<ClaimedRun> next = db.transactionReturning(tx -> Runs.claimNext(tx, maxConcurrentRuns, now, seenSince,
+                    tasks == null ? Map.of() : tasks.agentsOfProjects()));
             if (next.isPresent()) {
                 ClaimedRun run = next.get();
                 Log.info("run.claimed", "task", run.taskId(), "run", run.seq(), "kind", run.kind());

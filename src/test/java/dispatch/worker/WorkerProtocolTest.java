@@ -82,6 +82,24 @@ class WorkerProtocolTest extends WorkerApiFixture {
         assertTrue(stored.projects().get("alm").ok());
     }
 
+    /** ADR 0026: the other agents a computer has travel beside Claude Code's check, which older team machines read. */
+    @Test
+    void nextCarriesEachOtherAgentsReadinessToo() throws Exception {
+        String key = pair();
+
+        post(WorkerApi.NEXT, key, """
+                {"readiness": {"claude": {"ok": false, "detail": "cannot run claude"},
+                               "gh": {"ok": true},
+                               "projects": {},
+                               "agents": {"codex": {"ok": true, "detail": "codex-cli 0.155.1"}, "gemini": {"ok": false}}}}""");
+
+        Readiness stored = db.transactionReturning(tx ->
+                Workers.readiness(tx, Workers.ofMember(tx, BOLD.ref()).getFirst().id()));
+        assertFalse(stored.claude().ok());
+        assertEquals(new Readiness.Check(true, "codex-cli 0.155.1"), stored.agents().get("codex"));
+        assertFalse(stored.agents().get("gemini").ok());
+    }
+
     @Test
     void nextCarriesHowManyRunsTheComputerTakesAtOnceAndANonsenseCountIsRefused() throws Exception {
         String key = pair();

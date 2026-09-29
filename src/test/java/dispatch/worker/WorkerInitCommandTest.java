@@ -86,6 +86,28 @@ class WorkerInitCommandTest extends WorkerApiFixture {
         }
     }
 
+    /** ADR 0026: a team whose projects all run on Codex needs Codex here, not Claude Code, and init writes its command. */
+    @Test
+    void aComputerForCodexProjectsIsSetUpWithoutClaudeCode() throws Exception {
+        Config.Project codex = new Config.Project("alm", null, almRepo(), null, "main", "codex", null, null,
+                List.of(), null, null, null);
+        try (WorkerApi team = WorkerApi.start(config("http://127.0.0.1:0", codex), groups(), keys, remote, attachments(), db,
+                clock)) {
+            Path workerFile = dir.resolve("config/worker.yaml");
+            ScriptedTerminal terminal = new ScriptedTerminal(
+                    "http://127.0.0.1:" + team.port(), "ann-laptop", keys.newCode(BOLD),
+                    "A clone I already have", repos.repo("alm").toString(),
+                    JAVA,                                  // codex command
+                    JAVA, "y");
+
+            int status = init(terminal, workerFile);
+
+            assertEquals(0, status, terminal.output());
+            assertFalse(terminal.output().contains("claude command"), terminal.output());
+            assertEquals(JAVA, WorkerConfigLoader.load(workerFile).codexCommand());
+        }
+    }
+
     @Test
     void itClonesAProjectIntoItsOwnStateDirectoryWhenTheMemberHasNoClone() throws Exception {
         Path workerFile = dir.resolve("config/worker.yaml");

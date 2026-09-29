@@ -45,7 +45,10 @@ We rejected:
 - `dispatch project add --agent`, and the Mini App's **Агент** row, put a project on another agent and add that agent's
   command when the config has none; switching drops the project's model and effort, which name the old agent's.
 - `dispatch check` runs each agent's `--version`, names what to install, and warns when Codex is not logged in.
-- A member's computer without the project's agent fails the run with what to add. Its readiness (T-1) still reports
-  Claude Code only; per-agent readiness is left for when a team runs Codex or Gemini CLI on members' computers.
+- A member's computer without the project's agent fails the run with what to add. Its readiness (T-1, ADR 0022)
+  reports each agent it has — Claude Code as before, and Codex and Gemini CLI when `worker.yaml` names them — and a
+  run is held only by the agent its project runs on, so a computer without Claude Code takes a Codex project's runs.
+  `dispatch worker init` asks for the agents of the projects set up there, not for Claude Code whatever they run on,
+  and fails only when none of them runs.
 - The Codex and Gemini CLI adapters were built from their published event formats (Codex 0.155.1, Gemini CLI 0.61) and
   a recorded Codex failure; a successful live run of each is still to be recorded.

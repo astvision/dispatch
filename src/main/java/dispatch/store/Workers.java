@@ -114,6 +114,10 @@ public final class Workers {
         readiness.projects().forEach((project, check) ->
                 tx.update("INSERT INTO worker_project (worker_id, project, ok, detail) VALUES (?, ?, ?, ?)",
                         workerId, project, check.ok() ? 1 : 0, check.detail()));
+        tx.update("DELETE FROM worker_agent WHERE worker_id = ?", workerId);
+        readiness.agents().forEach((agent, check) ->
+                tx.update("INSERT INTO worker_agent (worker_id, agent, ok, detail) VALUES (?, ?, ?, ?)",
+                        workerId, agent, check.ok() ? 1 : 0, check.detail()));
     }
 
     /** How many runs this computer takes at once, as its last poll said; {@link Runs#claimNext} counts on it. */
@@ -138,7 +142,14 @@ public final class Workers {
                 workerId)) {
             projects.put(project.getKey(), project.getValue());
         }
-        return new Readiness(base.get().claude(), base.get().gh(), projects);
+        Map<String, Readiness.Check> agents = new LinkedHashMap<>();
+        for (Map.Entry<String, Readiness.Check> agent : tx.list(
+                "SELECT agent, ok, detail FROM worker_agent WHERE worker_id = ?",
+                row -> Map.entry(row.string("agent"), new Readiness.Check(row.intValue("ok") == 1, row.string("detail"))),
+                workerId)) {
+            agents.put(agent.getKey(), agent.getValue());
+        }
+        return new Readiness(base.get().claude(), base.get().gh(), projects, agents);
     }
 
     /**
@@ -151,15 +162,16 @@ public final class Workers {
      * state is "not connected", which the offline path already says.
      *
      * @param pinnedWorkerId the computer holding the task's worktree, or null when it has none yet
+     * @param agent          the agent {@code project} runs on (ADR 0026)
      */
     public static Optional<Readiness.Blocker> blockerOf(Tx tx, String memberRef, Long pinnedWorkerId, Instant seenSince,
-                                                        String project, RunKind kind) {
+                                                        String project, String agent, RunKind kind) {
         Optional<Readiness.Blocker> first = Optional.empty();
         for (Paired worker : ofMember(tx, memberRef)) {
             if ((pinnedWorkerId != null && worker.id() != pinnedWorkerId) || !isLive(tx, worker.id(), seenSince)) {
                 continue;
             }
-            Optional<Readiness.Blocker> blocker = readiness(tx, worker.id()).blocker(project, kind);
+            Optional<Readiness.Blocker> blocker = readiness(tx, worker.id()).blocker(project, agent, kind);
             if (blocker.isEmpty()) {
                 return Optional.empty();
             }

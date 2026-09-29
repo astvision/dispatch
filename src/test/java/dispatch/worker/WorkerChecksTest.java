@@ -79,6 +79,22 @@ class WorkerChecksTest extends WorkerApiFixture {
         assertTrue(readiness.gh().ok(), "claude's own failure must not drag gh's field down with it");
     }
 
+    /** ADR 0026: each other agent this computer has is reported too, so a project on it is held only by it. */
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "alwaysSucceeds installs a POSIX shell script")
+    void readinessReportsEachOtherAgentThisComputerHas() throws Exception {
+        String noSuchGemini = dir.resolve("no-such-gemini").toString();
+        WorkerConfig config = new WorkerConfig("http://127.0.0.1:" + api.port(), "ann-laptop", 1,
+                dir.resolve("no-such-claude").toString(), alwaysSucceeds("gh").toString(), dir, Map.of(), JAVA, noSuchGemini);
+
+        Readiness readiness = new WorkerChecks(config).readiness();
+
+        assertFalse(readiness.claude().ok());
+        assertTrue(readiness.agents().get("codex").ok(), readiness.toString());
+        assertFalse(readiness.agents().get("gemini").ok());
+        assertTrue(readiness.agents().get("gemini").detail().contains(noSuchGemini), readiness.toString());
+    }
+
     @Test
     @DisabledOnOs(value = OS.WINDOWS, disabledReason = "alwaysSucceeds installs a POSIX shell script")
     void readinessMarksOnlyTheProjectWithAMissingClone() throws Exception {

@@ -557,6 +557,13 @@ public final class TaskService {
         return payload;
     }
 
+    /** Each project's agent (ADR 0026): what a member's computer is asked about before it gets that project's run. */
+    public Map<String, String> agentsOfProjects() {
+        Map<String, String> agents = new HashMap<>();
+        projects.all().forEach(project -> agents.put(project.name(), project.agent()));
+        return agents;
+    }
+
     /**
      * Tells each requester what on their computer holds their queued run — once per reason, not once per call — and
      * forgets the reason once nothing holds it, so /status stops saying so. The scheduler calls this whenever it found
@@ -565,6 +572,7 @@ public final class TaskService {
      * @param workerSeenSince how recently a computer must have reported to count, as the scheduler's claim uses
      */
     public void reportBlocked(Tx tx, Instant workerSeenSince) {
+        Map<String, String> agentOf = agentsOfProjects();
         for (Runs.InProgress run : Runs.queued(tx)) {
             Optional<Task> task = Tasks.find(tx, run.taskId());
             if (task.isEmpty()) {
@@ -572,7 +580,7 @@ public final class TaskService {
             }
             String requesterRef = task.get().requester().ref();
             Optional<Readiness.Blocker> blocker = Workers.blockerOf(tx, requesterRef, Tasks.workerOf(tx, run.taskId()).orElse(null),
-                    workerSeenSince, run.project(), run.kind());
+                    workerSeenSince, run.project(), agentOf.getOrDefault(run.project(), "claude-code"), run.kind());
             if (blocker.isEmpty()) {
                 Tasks.setBlockedReason(tx, run.taskId(), null);
                 continue;

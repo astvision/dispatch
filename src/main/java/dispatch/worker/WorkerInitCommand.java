@@ -30,13 +30,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
  * `dispatch worker init`: sets this computer up to run its owner's own tasks (ADR 0021). It pairs with the team, asks
  * the team machine which projects the member has, maps each to a clone here (one the member already has, or one it
- * clones), checks Claude Code and the GitHub CLI, and writes {@code worker.yaml} beside an owner-only
+ * clones), checks the agents its projects run on and the GitHub CLI, and writes {@code worker.yaml} beside an owner-only
  * {@code worker.env}.
  *
  * <p>Unlike `dispatch init`, one thing is written before the summary: the pairing code is one-time, so the key it
@@ -88,7 +90,7 @@ public final class WorkerInitCommand {
                     + "dispatch worker init --force");
         }
         Path envFile = SecretsFile.beside(workerFile);
-        terminal.say("Dispatch worker setup. Your tasks will run here, with your own Claude Code login and clones.");
+        terminal.say("Dispatch worker setup. Your tasks will run here, with your own agent login and clones.");
         terminal.say("Your key is saved as soon as you pair (the code works once); if you stop before finishing, running "
                 + "this again reuses that saved key -- nothing else is written until you confirm the summary.");
 
@@ -117,19 +119,19 @@ public final class WorkerInitCommand {
         Path stateDir = locations.stateDir().resolve("worker");
         Map<String, WorkerConfig.Project> projects = projects(team.projects(), stateDir);
 
-        terminal.step("3/5 Claude Code");
-        String claude = claude(environment);
+        terminal.step("3/5 Agents");
+        Map<String, String> agents = agents(neededAgents(team.projects(), projects.keySet()), environment);
 
         terminal.step("4/5 GitHub CLI");
         String gh = gh();
 
         terminal.step("5/5 Summary");
-        summary(team.team(), paired, projects, claude, gh, workerFile);
+        summary(team.team(), paired, projects, agents, gh, workerFile);
         if (!terminal.confirm("Write this setup?", true)) {
             throw new CliException("cancelled; " + workerFile + " was not written, but your key stays in " + envFile
                     + " -- no new code needed next time");
         }
-        write(workerFile, render(paired, projects, claude, gh, stateDir));
+        write(workerFile, render(paired, projects, agents, gh, stateDir));
         terminal.ok("wrote " + workerFile);
         offerService(workerFile, environment);
     }
@@ -436,13 +438,51 @@ public final class WorkerInitCommand {
         }
     }
 
-    private String claude(Map<String, String> environment) {
-        Optional<Path> found = Setup.findClaude(environment);
-        if (found.isEmpty()) {
-            terminal.say("claude was not found; install Claude Code, or give the full path to claude.");
+    /**
+     * The agents the projects set up here run on (ADR 0026), Claude Code first; Claude Code alone when none is set up
+     * yet or the team machine is too old to name them.
+     */
+    private static Set<String> neededAgents(List<WorkerClient.ProjectInfo> team, Set<String> setUp) {
+        Set<String> needed = new TreeSet<>(); // "claude-code" sorts first
+        team.stream().filter(project -> setUp.contains(project.name()))
+                .forEach(project -> needed.add(project.agent() == null ? "claude-code" : project.agent()));
+        return needed.isEmpty() ? Set.of("claude-code") : needed;
+    }
+
+    /**
+     * Each needed agent's command. One that cannot run is not fatal while another can: its projects' runs wait, and the
+     * member is told why (ADR 0022), until it runs here. With none that runs, this computer could do nothing.
+     */
+    private Map<String, String> agents(Set<String> needed, Map<String, String> environment) {
+        Map<String, String> commands = new LinkedHashMap<>();
+        List<String> failed = new ArrayList<>();
+        for (String agent : needed) {
+            boolean claudeCode = agent.equals("claude-code");
+            Optional<Path> found = claudeCode ? Setup.findClaude(environment) : Optional.empty();
+            if (claudeCode && found.isEmpty()) {
+                terminal.say("claude was not found; install Claude Code, or give the full path to claude.");
+            }
+            String name = claudeCode ? "claude" : agent;
+            String command = agentCommand(name, found.map(Path::toString).orElse(name));
+            if (command == null) {
+                failed.add(agent);
+            }
+            // Written even when it cannot run yet, by its usual name: the computer then reports it as broken, and its
+            // projects' runs wait saying so instead of failing for want of a command.
+            commands.put(agent, command == null ? name : command);
         }
+        if (failed.size() == needed.size()) {
+            throw new CliException(String.join(", ", failed) + " could not be run; install it and run dispatch worker "
+                    + "init --force again");
+        }
+        failed.forEach(agent -> terminal.warn(agent + " cannot run here; its projects' tasks will wait until it does"));
+        return commands;
+    }
+
+    /** @return the command once {@code --version} runs, null when it never did */
+    private String agentCommand(String name, String defaultCommand) {
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            String command = required("claude command", found.map(Path::toString).orElse("claude"));
+            String command = required(name + " command", defaultCommand);
             Optional<String> version = terminal.during("Checking " + command, () -> Setup.claudeVersion(command));
             if (version.isPresent()) {
                 terminal.ok(version.get());
@@ -450,7 +490,7 @@ public final class WorkerInitCommand {
             }
             terminal.warn("cannot run " + command + " --version");
         }
-        throw new CliException("Claude Code could not be run; install it and run dispatch worker init --force again");
+        return null;
     }
 
     /** Not fatal: a member can log in to gh later, and only delivery needs it. */
@@ -465,18 +505,18 @@ public final class WorkerInitCommand {
         return command;
     }
 
-    private void summary(String team, Paired paired, Map<String, WorkerConfig.Project> projects, String claude,
+    private void summary(String team, Paired paired, Map<String, WorkerConfig.Project> projects, Map<String, String> agents,
                          String gh, Path workerFile) {
         terminal.say("  Team      " + team + " (" + paired.teamUrl() + ") as " + paired.name());
         terminal.say("  Projects  " + (projects.isEmpty() ? "none yet" : projects.entrySet().stream()
                 .map(entry -> entry.getKey() + " → " + entry.getValue().path())
                 .collect(Collectors.joining(", "))));
-        terminal.say("  Claude    " + claude);
+        agents.forEach((agent, command) -> terminal.say("  " + String.format("%-10s", agent) + command));
         terminal.say("  GitHub    " + gh);
         terminal.say("  Config    " + workerFile);
     }
 
-    private String render(Paired paired, Map<String, WorkerConfig.Project> projects, String claude, String gh,
+    private String render(Paired paired, Map<String, WorkerConfig.Project> projects, Map<String, String> agents, String gh,
                           Path stateDir) {
         StringBuilder yaml = new StringBuilder()
                 .append("# Written by dispatch worker init. Edit it freely: dispatch check says if something is wrong.\n")
@@ -484,8 +524,16 @@ public final class WorkerInitCommand {
                 .append("name: ").append(ConfigText.quoted(paired.name())).append('\n')
                 .append("maxConcurrentRuns: 1\n")
                 .append("stateDir: ").append(ConfigText.quoted(stateDir.toString())).append('\n');
+        String claude = agents.getOrDefault("claude-code", "claude");
         if (!claude.equals("claude")) {
             yaml.append("claudeCommand: ").append(ConfigText.quoted(claude)).append('\n');
+        }
+        // Another agent's command is always written: without it, this computer has none (WorkerConfig).
+        if (agents.containsKey("codex")) {
+            yaml.append("codexCommand: ").append(ConfigText.quoted(agents.get("codex"))).append('\n');
+        }
+        if (agents.containsKey("gemini")) {
+            yaml.append("geminiCommand: ").append(ConfigText.quoted(agents.get("gemini"))).append('\n');
         }
         if (!gh.equals("gh")) {
             yaml.append("ghCommand: ").append(ConfigText.quoted(gh)).append('\n');

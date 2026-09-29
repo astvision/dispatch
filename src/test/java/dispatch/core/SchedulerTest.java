@@ -293,6 +293,35 @@ class SchedulerTest {
                 "a started run is held by nothing, so the next block is news again");
     }
 
+    /** ADR 0026: a Codex project's run is claimed on a computer without Claude Code, and held while Codex cannot run. */
+    @Test
+    void aRunIsHeldByTheAgentItsProjectRunsOn() {
+        long taskId = queuedPlanFor(BOLD, "alm");
+        long workerId = pairedWorkerFor(BOLD);
+        db.transaction(tx -> Workers.touch(tx, workerId, clock.instant()));
+        Map<String, String> onCodex = Map.of("alm", "codex");
+        db.transaction(tx -> Workers.saveReadiness(tx, workerId,
+                new Readiness(new Readiness.Check(false, "cannot run claude"), new Readiness.Check(true, null),
+                        Map.of("alm", new Readiness.Check(true, null)),
+                        Map.of("codex", new Readiness.Check(false, "cannot run codex"))), clock.instant()));
+
+        assertTrue(claim(onCodex).isEmpty(), "Codex cannot run here");
+        assertEquals("codex", db.transactionReturning(tx -> Workers.blockerOf(tx, BOLD.ref(), null,
+                clock.instant().minus(Workers.SEEN_WITHIN), "alm", "codex", RunKind.PLAN)).orElseThrow().code());
+
+        db.transaction(tx -> Workers.saveReadiness(tx, workerId,
+                new Readiness(new Readiness.Check(false, "cannot run claude"), new Readiness.Check(true, null),
+                        Map.of("alm", new Readiness.Check(true, null)),
+                        Map.of("codex", new Readiness.Check(true, "codex-cli 0.155.1"))), clock.instant()));
+
+        assertEquals(taskId, claim(onCodex).orElseThrow().taskId(), "Claude Code is not what this project needs");
+    }
+
+    private Optional<ClaimedRun> claim(Map<String, String> agentOf) {
+        return db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(), clock.instant().minus(Workers.SEEN_WITHIN),
+                agentOf));
+    }
+
     @Test
     void ghDoesNotHoldAPlanningRun() {
         long taskId = queuedPlanFor(BOLD, "alm");

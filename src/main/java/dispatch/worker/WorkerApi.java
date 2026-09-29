@@ -351,7 +351,10 @@ public final class WorkerApi implements AutoCloseable {
         Map<String, Readiness.Check> projects = new LinkedHashMap<>();
         reported.path("projects").properties().forEach(entry ->
                 projects.put(entry.getKey(), check(entry.getValue())));
-        return Optional.of(new Readiness(check(reported.path("claude")), check(reported.path("gh")), projects));
+        // An older worker reports Claude Code alone: its other agents, if any, hold nothing.
+        Map<String, Readiness.Check> agents = new LinkedHashMap<>();
+        reported.path("agents").properties().forEach(entry -> agents.put(entry.getKey(), check(entry.getValue())));
+        return Optional.of(new Readiness(check(reported.path("claude")), check(reported.path("gh")), projects, agents));
     }
 
     /** How many runs the worker takes at once; null from a worker older than this field, which the claim counts as one. */

@@ -8,7 +8,7 @@ Not every blocker holds every run:
 
 | Blocker | Holds |
 |---|---|
-| `claude` cannot run | every run: planning and execution both need it |
+| the project's agent cannot run (`claude`, or `codex` / `gemini` per ADR 0026) | every run of that agent's projects: planning and execution both need it |
 | `gh` not authenticated | only runs that deliver (EXECUTE, DELIVER); planning never touches GitHub |
 | a project's clone missing | only that project's runs |
 
