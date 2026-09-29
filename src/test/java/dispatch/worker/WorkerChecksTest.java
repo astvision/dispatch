@@ -44,6 +44,29 @@ class WorkerChecksTest extends WorkerApiFixture {
                 findings.toString());
     }
 
+    @Test
+    void aComputerWithCodexButNoClaudeCodeOnlyWarnsAboutClaude() throws Exception {
+        String noSuchClaude = dir.resolve("no-such-claude").toString();
+        Path workerFile = writeWorker(pair(), repos.repo("alm").toString(), noSuchClaude, "codexCommand: '" + JAVA + "'\n");
+
+        List<Checks.Finding> findings = WorkerChecks.run(workerFile, Map.of(), finding -> { });
+
+        assertFalse(Checks.failed(findings), "Codex projects run here: " + findings);
+        assertTrue(findings.stream().anyMatch(f -> f.area().equals("claude") && f.level() == Checks.Level.WARN), findings.toString());
+        assertTrue(findings.stream().anyMatch(f -> f.area().equals("codex") && f.level() == Checks.Level.OK), findings.toString());
+    }
+
+    @Test
+    void anAgentThisComputerNamesButCannotRunIsAFailure() throws Exception {
+        String noSuchCodex = dir.resolve("no-such-codex").toString();
+        Path workerFile = writeWorker(pair(), repos.repo("alm").toString(), JAVA, "codexCommand: '" + noSuchCodex + "'\n");
+
+        List<Checks.Finding> findings = WorkerChecks.run(workerFile, Map.of(), finding -> { });
+
+        assertTrue(findings.stream().anyMatch(f -> f.area().equals("codex") && f.level() == Checks.Level.FAIL
+                && f.message().english().contains(noSuchCodex)), findings.toString());
+    }
+
     /**
      * {@link WorkerChecks#readiness()} directly: it is the source of truth for every downstream decision and
      * message in this milestone (ADR 0021), so its mapping — which check lands in which field — needs its own
@@ -178,12 +201,18 @@ class WorkerChecksTest extends WorkerApiFixture {
 
     /** worker.yaml and worker.env as `dispatch worker init` writes them; {@code clone} null maps no project at all. */
     private Path writeWorker(String key, String clone) throws Exception {
+        return writeWorker(key, clone, JAVA, "");
+    }
+
+    /** @param agentLines further worker.yaml lines, such as a codexCommand */
+    private Path writeWorker(String key, String clone, String claudeCommand, String agentLines) throws Exception {
         Path workerFile = dir.resolve("config/worker.yaml");
         Files.createDirectories(workerFile.getParent());
         StringBuilder yaml = new StringBuilder("team: 'http://127.0.0.1:" + api.port() + "'\nname: 'ann-laptop'\n")
                 .append("stateDir: '").append(dir.resolve("state/worker")).append("'\n")
-                .append("claudeCommand: '").append(JAVA).append("'\n")
-                .append("ghCommand: '").append(JAVA).append("'\n");
+                .append("claudeCommand: '").append(claudeCommand).append("'\n")
+                .append("ghCommand: '").append(JAVA).append("'\n")
+                .append(agentLines);
         if (clone != null) {
             yaml.append("projects:\n  alm:\n    path: '").append(clone).append("'\n");
         }

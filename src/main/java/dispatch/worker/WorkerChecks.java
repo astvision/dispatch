@@ -122,12 +122,27 @@ public final class WorkerChecks {
         }
     }
 
+    /**
+     * Claude Code, and each other agent this computer names (ADR 0026). A named agent that cannot run fails; Claude Code
+     * missing only warns when another agent is here, since that agent's projects still run (the same rule as worker init).
+     */
     private static void checkClaude(WorkerConfig config, Consumer<Checks.Finding> add) {
+        boolean otherAgent = config.agentCommands().keySet().stream().anyMatch(agent -> !agent.equals("claude-code"));
         Optional<String> version = Setup.claudeVersion(config.claudeCommand());
         add.accept(version
                 .map(line -> new Checks.Finding(Checks.Level.OK, "claude", Text.raw("claude: " + line)))
-                .orElseGet(() -> new Checks.Finding(Checks.Level.FAIL, "claude", Text.raw("claude: cannot run "
-                        + config.claudeCommand() + "; install Claude Code, or set claudeCommand to its full path"))));
+                .orElseGet(() -> new Checks.Finding(otherAgent ? Checks.Level.WARN : Checks.Level.FAIL, "claude",
+                        Text.raw("claude: cannot run " + config.claudeCommand() + "; install Claude Code, or set claudeCommand"
+                                + " to its full path" + (otherAgent ? " (only Claude Code projects wait for it)" : "")))));
+        config.agentCommands().forEach((agent, command) -> {
+            if (agent.equals("claude-code")) {
+                return;
+            }
+            add.accept(Setup.claudeVersion(command)
+                    .map(line -> new Checks.Finding(Checks.Level.OK, agent, Text.raw(agent + ": " + line)))
+                    .orElseGet(() -> new Checks.Finding(Checks.Level.FAIL, agent, Text.raw(agent + ": cannot run " + command
+                            + "; install it, or set " + agent + "Command to its full path"))));
+        });
     }
 
     private static void checkGh(WorkerConfig config, Consumer<Checks.Finding> add) {
