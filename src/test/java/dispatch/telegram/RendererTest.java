@@ -28,6 +28,20 @@ class RendererTest {
     private final Renderer renderer = new Renderer(messages, clock, "dispatch_backend_bot");
 
     @Test
+    void everyTextKeyIsDefinedOnce() throws Exception {
+        // A properties file keeps the last of two same keys, so a second one silently changes the first one's screens.
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        try (var in = RendererTest.class.getResourceAsStream("/messages_mn.properties")) {
+            for (String line : new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).split("\n")) {
+                int equals = line.indexOf('=');
+                if (!line.startsWith("#") && equals > 0) {
+                    assertTrue(seen.add(line.substring(0, equals).strip()), "defined twice: " + line);
+                }
+            }
+        }
+    }
+
+    @Test
     void planSummaryShowsTheUnderstandingStepCountDecisionsAndCostWithAWideStartButton() {
         ObjectNode payload = planPayload(List.of("Read <auth.timeout> & default to 60s", "Add AuthClientTimeoutTest"), List.of());
         decision(payload, "Which <timeout>?", "the login one", "every call");
