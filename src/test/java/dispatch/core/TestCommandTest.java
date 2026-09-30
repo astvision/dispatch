@@ -98,4 +98,15 @@ class TestCommandTest {
         assertFalse(run.passed());
         assertTrue(run.tail().contains("cannot run"), run.tail());
     }
+
+    @Test
+    void dispatchSecretsAreNotInTheCommandsEnvironment() {
+        TestCommand withSecrets = new TestCommand(Confinement.none("test"), java.util.Map.of("PATH", System.getenv("PATH"),
+                "GH_TOKEN", "secret-x", "TELEGRAM_BOT_TOKEN", "t", "HOME", System.getProperty("user.home")));
+
+        TestRunner.TestRun run = withSecrets.run("echo \"${GH_TOKEN:-none} ${TELEGRAM_BOT_TOKEN:-none}\"", dir,
+                dir.resolve("t.log"), Duration.ofSeconds(10), () -> false);
+
+        assertEquals("none none", run.tail().strip());
+    }
 }

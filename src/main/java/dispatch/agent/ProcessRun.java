@@ -29,6 +29,13 @@ public final class ProcessRun implements RunHandle {
     private static final Set<String> WITHHELD_VARIABLES = Set.of("TELEGRAM_BOT_TOKEN", "GH_TOKEN", "DISPATCH_WORKER_KEY");
     private static final int STDERR_TAIL_BYTES = 2000;
 
+    /** {@code base} without Dispatch's own secrets: the one place that decides what a child of an agent run may see. */
+    public static Map<String, String> agentEnvironment(Map<String, String> base) {
+        Map<String, String> copy = new java.util.HashMap<>(base);
+        WITHHELD_VARIABLES.forEach(copy::remove);
+        return copy;
+    }
+
     private final Process process;
     private final Path stderrLog;
     private final Duration cancelGrace;
@@ -63,9 +70,9 @@ public final class ProcessRun implements RunHandle {
                                    List<String> agentStateInHome) {
         ProcessBuilder builder = new ProcessBuilder().directory(request.workdir().toFile());
         builder.environment().clear();
-        builder.environment().putAll(environment);
-        builder.environment().putAll(request.environment());
-        WITHHELD_VARIABLES.forEach(builder.environment()::remove);
+        Map<String, String> merged = new java.util.HashMap<>(environment);
+        merged.putAll(request.environment());
+        builder.environment().putAll(agentEnvironment(merged));
         List<String> confined = confinement.wrap(commandLine, request, agentStateInHome, builder.environment());
         builder.command(confined);
         Path stdoutLog = Path.of(request.logBase() + ".jsonl");

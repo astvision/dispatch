@@ -2,6 +2,7 @@ package dispatch.core;
 
 import dispatch.Log;
 import dispatch.ProcessTrees;
+import dispatch.agent.ProcessRun;
 import dispatch.agent.RunRequest;
 import dispatch.agent.sandbox.Confinement;
 import dispatch.domain.RunKind;
@@ -14,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
@@ -28,9 +30,16 @@ public final class TestCommand implements TestRunner {
     private static final Duration GRACE = Duration.ofSeconds(5);
 
     private final Confinement confinement;
+    private final Map<String, String> environment;
 
     public TestCommand(Confinement confinement) {
+        this(confinement, System.getenv());
+    }
+
+    /** @param environment what the command may see; Dispatch's own secrets are dropped, as for an agent (ADR 0009) */
+    public TestCommand(Confinement confinement, Map<String, String> environment) {
         this.confinement = confinement;
+        this.environment = ProcessRun.agentEnvironment(environment);
     }
 
     @Override
@@ -44,11 +53,13 @@ public final class TestCommand implements TestRunner {
         Process process;
         try {
             Files.createDirectories(log.getParent());
-            process = new ProcessBuilder(confinement.wrap(shell, asRun, List.of(), System.getenv()))
+            ProcessBuilder builder = new ProcessBuilder(confinement.wrap(shell, asRun, List.of(), environment))
                     .directory(dir.toFile())
                     .redirectErrorStream(true)
-                    .redirectOutput(log.toFile())
-                    .start();
+                    .redirectOutput(log.toFile());
+            builder.environment().clear();
+            builder.environment().putAll(environment);
+            process = builder.start();
         } catch (IOException | RuntimeException e) {
             return new TestRun(-1, false, false, "cannot run the test command: " + e);
         }
