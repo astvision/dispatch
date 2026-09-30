@@ -24,6 +24,29 @@ public final class Instances {
     private Instances() {
     }
 
+    /**
+     * The state dirs and clones of the other instances on this computer, which an agent of {@code ownConfigFile}'s
+     * process must not see. Never throws: discovery must not block startup, so a failure hides fewer paths and is logged.
+     */
+    public static List<Path> othersPrivate(Path ownConfigFile, Map<String, String> processEnvironment) {
+        try {
+            Path own = ownConfigFile.toAbsolutePath().normalize();
+            List<Path> hidden = new ArrayList<>();
+            for (Found other : discover(Locations.current(), processEnvironment)) {
+                if (other.config() == null || other.configFile().toAbsolutePath().normalize().equals(own)) {
+                    continue;
+                }
+                hidden.add(other.config().stateDir());
+                other.config().projects().stream().map(Config.Project::path).filter(java.util.Objects::nonNull)
+                        .map(Path::of).forEach(hidden::add);
+            }
+            return hidden;
+        } catch (RuntimeException e) {
+            dispatch.Log.warn("sandbox.instances_not_discovered", "error", e.getMessage());
+            return List.of();
+        }
+    }
+
     /** The default instance first (only if its file exists), then named ones sorted by name; never throws for a single bad file. */
     public static List<Found> discover(Locations defaults, Map<String, String> processEnvironment) {
         List<Found> found = new ArrayList<>();

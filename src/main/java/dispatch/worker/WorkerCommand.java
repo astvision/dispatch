@@ -164,7 +164,8 @@ public final class WorkerCommand {
             }
             List<Path> clones = config.projects().values().stream().map(WorkerConfig.Project::path).map(Path::of).toList();
             Map<String, Agent> agents = Agents.create(config.agentCommands(), environment, config.stateDir(),
-                    Confinements.of(sandbox, config.stateDir(), options.workerFile(), clones));
+                    Confinements.of(sandbox, config.stateDir(), options.workerFile(), clones,
+                    dispatch.cli.Instances.othersPrivate(options.workerFile(), environment)));
             ActiveRuns activeRuns = new ActiveRuns();
             WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery,
                     Redactor.fromEnvironment(environment), activeRuns);
