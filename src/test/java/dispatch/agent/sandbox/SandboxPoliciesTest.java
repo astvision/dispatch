@@ -251,6 +251,23 @@ class SandboxPoliciesTest {
         assertTrue(policy.writable().contains(home.resolve(".claude.json")), "Claude Code must write it");
     }
 
+    @Test
+    void splitAndAssistantRunsGetNoGitDirWhateverTheirWorkdirHolds() throws IOException {
+        // Their workdirs are agent-writable and not worktrees: a .git planted by an earlier run would mount a clone read-write.
+        Path clone = Files.createDirectories(home.resolve("code/alm/.git/worktrees/1")).getParent().getParent().getParent();
+        SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir, clone), List.of(clone));
+        for (RunKind kind : List.of(RunKind.SPLIT, RunKind.ASSISTANT)) {
+            Path workdir = Files.createDirectories(stateDir.resolve(kind.name().toLowerCase()));
+            Files.writeString(workdir.resolve(".git"), "gitdir: " + clone.resolve(".git/worktrees/1"));
+
+            SandboxPolicy policy = policies.forRun(request(kind, workdir, List.of()), List.of(".claude"));
+
+            assertNull(policy.gitCommonDir(), kind.name());
+            assertNull(policy.worktreeAdmin(), kind.name());
+            assertTrue(policy.readOnly().stream().noneMatch(path -> path.startsWith(clone)), kind + " " + policy.readOnly());
+        }
+    }
+
     private static RunRequest request(RunKind kind, Path workdir, List<Path> readOnlyDirs) {
         return new RunRequest(kind, workdir, "prompt", UUID.randomUUID(), false, readOnlyDirs, null, null, null,
                 workdir.resolve("run"));

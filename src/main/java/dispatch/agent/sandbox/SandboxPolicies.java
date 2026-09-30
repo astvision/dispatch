@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /** What each run may touch on this machine (spec: 2026-09-30-agent-sandbox-design, "The policy"). */
@@ -25,6 +26,7 @@ public final class SandboxPolicies {
             ".codex/config.toml", ".gemini/settings.json", ".gradle/init.d", ".gradle/gradle.properties", ".m2/settings.xml");
     private static final List<String> SECRETS = List.of(".ssh", ".config/gh", ".gnupg");
     private static final String GITDIR_PREFIX = "gitdir: ";
+    private static final Set<RunKind> IN_WORKTREE = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW);
     private static final List<String> GIT_CONTROL = List.of("config", "hooks", "info");
 
     private final Path home;
@@ -84,7 +86,9 @@ public final class SandboxPolicies {
                 .flatMap(paths -> paths)
                 .filter(Files::isDirectory)
                 .toList();
-        GitLink git = gitLink(workdir);
+        // Only a task's worktree has a git dir. A split's or the assistant's workdir is agent-writable and no worktree:
+        // a .git an earlier run planted there would otherwise mount any configured clone read-write.
+        GitLink git = IN_WORKTREE.contains(request.kind()) ? gitLink(workdir) : null;
         if (git == null) {
             return new SandboxPolicy(workdir, null, null, readOnly, writable, hidden);
         }
@@ -115,7 +119,7 @@ public final class SandboxPolicies {
 
     /**
      * A worktree's .git is a file naming {@code <common>/worktrees/<name>}; git needs the common dir to read objects
-     * and update the index. Null when the workdir is not a worktree (a split, the assistant) or holds its own .git.
+     * and update the index. Null when the workdir is not a worktree or holds its own .git.
      * The file lives in the agent-writable workdir, so the common dir it names must be a configured clone's .git or
      * {@code <stateDir>/repos/<name>/.git}: anything else would be mounted read-write over the hidden directories.
      */
