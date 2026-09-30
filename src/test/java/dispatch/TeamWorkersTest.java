@@ -125,6 +125,9 @@ class TeamWorkersTest {
                 "not even the worker key that got Bold's own computer its clone");
 
         Path db = repos.stateDir.resolve("dispatch.db");
+        Map<String, String> alisPlanStep = SqlRows.single(db, "SELECT kind, outcome, ended_at FROM run_step WHERE task_id = 2 AND seq = 1");
+        assertEquals("PLAN", alisPlanStep.get("kind"), "a worker's steps reach the team machine");
+        assertEquals("DONE", alisPlanStep.get("outcome"));
         assertEquals("0", SqlRows.single(db, "SELECT count(*) AS n FROM run WHERE pid IS NOT NULL").get("n"),
                 "a remote run records no process on the team machine");
         assertEquals("2", SqlRows.single(db, "SELECT count(DISTINCT worker_id) AS n FROM task").get("n"),

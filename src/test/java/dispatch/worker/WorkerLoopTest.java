@@ -185,9 +185,10 @@ class WorkerLoopTest extends WorkerApiFixture {
 
             @Override
             public boolean progress(RemoteWorkers.Progress progress) {
-                // The first two posts are JobRunner's own worktreeCreated/agentStarted events, not the ticker (see
-                // JobRunner.run): revoking on those would only hit their own best-effort catch, never WorkerLoop.tick.
-                if (progressCalls.incrementAndGet() > 2 && revoked.compareAndSet(false, true)) {
+                // The first three posts are JobRunner's own worktreeCreated, plan step started and agentStarted events,
+                // not the ticker (see JobRunner.run): revoking on those would only hit their own best-effort catch, never
+                // WorkerLoop.tick.
+                if (progressCalls.incrementAndGet() > 3 && revoked.compareAndSet(false, true)) {
                     throw new WorkerClient.RevokedException("simulated: this key was revoked mid-run");
                 }
                 return super.progress(progress);

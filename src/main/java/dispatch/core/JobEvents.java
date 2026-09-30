@@ -30,4 +30,8 @@ public interface JobEvents {
     /** @param detail {@link StepDetail}'s JSON, or null */
     default void stepEnded(int n, RunStep.Outcome outcome, String detail) {
     }
+
+    /** A team worker's steps, whole (RM-2): they replace what the store held for the run. */
+    default void stepsReported(java.util.List<RunStep> steps) {
+    }
 }

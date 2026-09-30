@@ -222,6 +222,26 @@ class RemoteWorkersTest {
     }
 
     @Test
+    void aWorkersStepsReplaceTheRunsStepsOnEachProgress() throws Exception {
+        long id = queue(BOLD, "Fix the login timeout");
+        Workers.Paired ann = pair(BOLD, "ann-laptop");
+        Thread run = coordinate();
+        remote.next(ann).orElseThrow();
+
+        remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, null, null,
+                List.of(new RemoteWorkers.Step(1, "PLAN", 1, "2026-09-30T10:00:00Z", null, null, null))));
+        assertEquals("PLAN", row("SELECT kind, outcome FROM run_step WHERE task_id = ?", id).get("kind"));
+        remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, null, null,
+                List.of(new RemoteWorkers.Step(1, "PLAN", 1, "2026-09-30T10:00:00Z", "2026-09-30T10:01:44Z", "DONE", null))));
+
+        Map<String, String> step = row("SELECT kind, outcome, ended_at FROM run_step WHERE task_id = ?", id);
+        assertEquals("DONE", step.get("outcome"));
+        assertEquals("2026-09-30T10:01:44.000Z", step.get("ended_at"), "the worker's own times");
+        remote.result(ann, id, 1, JobResult.succeeded(agentResult()));
+        assertTrue(run.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");
+    }
+
+    @Test
     void aCancelReachesTheWorkerThroughItsNextProgress() throws Exception {
         long id = queue(BOLD, "Fix the login timeout");
         Workers.Paired ann = pair(BOLD, "ann-laptop");

@@ -207,6 +207,24 @@ class WorkerProtocolTest extends WorkerApiFixture {
     }
 
     @Test
+    void aStepNoDispatchWouldSendIsRefusedAsInvalid() throws Exception {
+        String key = pair();
+        offer(job("Implement the approved plan"));
+        post(WorkerApi.NEXT, key, "{}");
+
+        for (String step : java.util.List.of(
+                "{\"n\":1,\"kind\":\"DANCE\",\"round\":1,\"startedAt\":\"2026-09-30T10:00:00Z\"}",
+                "{\"n\":0,\"kind\":\"TEST\",\"round\":1,\"startedAt\":\"2026-09-30T10:00:00Z\"}",
+                "{\"n\":1,\"kind\":\"TEST\",\"round\":1,\"startedAt\":\"yesterday\"}",
+                "{\"n\":1,\"kind\":\"TEST\",\"round\":1,\"startedAt\":\"2026-09-30T10:00:00Z\",\"colour\":\"red\"}")) {
+            HttpResponse<String> answer = post(WorkerApi.PROGRESS, key, "{\"taskId\":7,\"seq\":2,\"loopSteps\":[" + step + "]}");
+
+            assertEquals(400, answer.statusCode(), step);
+            assertEquals("invalid", Json.read(answer.body()).get("error").asText(), step);
+        }
+    }
+
+    @Test
     void aNonNumericTaskIdOrSeqIsRefusedAsInvalidNotMisreadAsZero() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
