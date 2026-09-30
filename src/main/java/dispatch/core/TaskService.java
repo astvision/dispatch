@@ -250,7 +250,9 @@ public final class TaskService {
      * A writer's reply to their open draft's prompt adds context: its text goes under the description's
      * {@value #CONTEXT_HEADING} section, one paragraph per reply, and its files join the draft's. The prompt is redrawn with
      * the count. False when the reply is not this, so it keeps its old meaning: the draft is someone else's or no longer
-     * open, or the reply has neither text nor files.
+     * open, or the reply has neither text nor files. A reply to a whole message's prompt while its split is SPLITTING or
+     * PROPOSED goes to that whole draft: if it is then split, its files reach every part (copied with the rest) but its
+     * text does not, since each part's description is its proposed topic.
      *
      * @param files     the reply's files, numbered on from the draft's so none collide
      * @param promptRef the prompt replied to

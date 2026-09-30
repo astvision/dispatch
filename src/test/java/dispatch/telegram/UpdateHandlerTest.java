@@ -277,6 +277,26 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void aReplyToASplitPartsPromptAddsContextToThatPartAlone() {
+        handler.handle(message(540, 40, 100, "Bold", 100L, "private", "Fix the login timeout, add make help", null));
+        handler.handle(privateCallback(541, 100, "Bold", "draft:1:split:ask"));
+        db.transaction(tx -> tasks.splitProposed(tx, 1, List.of("Fix the login timeout", "Add make help")));
+        handler.handle(privateCallback(542, 100, "Bold", "draft:1:split:yes"));
+        long second = Long.parseLong(row("SELECT id FROM draft WHERE parent_id = 1 AND part = 2").get("id"));
+        long prompt = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'DRAFT_PROMPT' AND json_extract(payload, '$.draftId') = ?",
+                second).get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, prompt, 1, "telegram:100/920", clock.instant()));
+
+        handler.handle(message(543, 43, 100, "Bold", 100L, "private", "Only the lint target", botMessage(920)));
+
+        assertEquals("Add make help\n\nНэмэлт мэдээлэл:\nOnly the lint target",
+                row("SELECT description FROM draft WHERE id = ?", second).get("description"));
+        assertEquals("Fix the login timeout", row("SELECT description FROM draft WHERE parent_id = 1 AND part = 1").get("description"));
+        assertEquals("Fix the login timeout, add make help", row("SELECT description FROM draft WHERE id = 1").get("description"));
+        assertEquals("3", row("SELECT count(*) AS n FROM draft").get("n"), "context, not a new draft");
+    }
+
+    @Test
     void aReplyToADraftThatIsNoLongerOpenKeepsItsOldMeaning() {
         handler.handle(message(535, 35, 300, "Sara", 300L, "private", "Add make help", null));
         draftPromptSentAs("telegram:300/901");
