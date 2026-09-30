@@ -73,6 +73,15 @@ export function openTelegramLink(url: string) {
   }
 }
 
+/** Opens a web page in the viewer's own browser, outside Telegram; in a new tab when not opened by Telegram. */
+export function openLink(url: string) {
+  if (bridge.TelegramWebviewProxy || window.parent !== window) {
+    post("web_app_open_link", { url });
+  } else {
+    window.open(url, "_blank", "noopener");
+  }
+}
+
 function sync() {
   const visible = top() !== null;
   if (visible === shown) return;

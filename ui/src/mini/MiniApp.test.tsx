@@ -6,7 +6,7 @@ import { saved, teamConfig } from "../manage/fixtures";
 import { myRunningTask, someoneElsesTask } from "./fixtures";
 
 // Opened from Telegram: the shell asks who is looking, never the setup state, which this server does not serve.
-vi.mock("../telegram", () => ({ inTelegram: true, initData: "signed", themeParams: null, prefersDark: false }));
+vi.mock("../telegram", () => ({ inTelegram: true, initData: "signed", themeParams: null, prefersDark: false, telegramOnComputer: false }));
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),

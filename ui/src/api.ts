@@ -296,6 +296,8 @@ export const getLogs = (filter: { lines?: number; level?: LogLevel | null; event
                         signal?: AbortSignal) =>
   post<Logs>("/api/manage/logs", filter, signal);
 export const restartService = () => post<ServiceView>("/api/service/restart");
+/** A fresh one-time link to the web UI on the bot's computer (Mini App, admins; ADR 0018 amended). */
+export const openWebUi = () => post<{ url: string }>("/api/webui/open");
 
 // The Mini App (spec: Task pages). Only `dispatch run` serves these, because only it holds the queue.
 

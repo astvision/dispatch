@@ -1,11 +1,13 @@
 import {
-  BookOutlined, CommentOutlined, ControlOutlined, DashboardOutlined, FileTextOutlined, FolderOutlined, ProfileOutlined,
-  SearchOutlined, SettingOutlined, TeamOutlined, UnorderedListOutlined,
+  BookOutlined, CommentOutlined, ControlOutlined, DashboardOutlined, DesktopOutlined, FileTextOutlined, FolderOutlined,
+  ProfileOutlined, SearchOutlined, SettingOutlined, TeamOutlined, UnorderedListOutlined,
 } from "@ant-design/icons";
 import { Input } from "antd";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ApiError, listTasks, type Me, type TaskRow } from "../api";
-import { haptic } from "./backButton";
+import { ApiError, listTasks, openWebUi, type Me, type TaskRow } from "../api";
+import { telegramOnComputer } from "../telegram";
+import { useAction } from "../useAction";
+import { haptic, openLink } from "./backButton";
 import { Avatar, Header, Row, Section } from "./List";
 import { PROJECTS_PATH } from "./paths";
 import TicketSheet, { type Decision } from "./TicketSheet";
@@ -91,13 +93,35 @@ function MenuRow({ icon, title, onClick }: { icon: ReactNode; title: string; onC
 }
 
 /**
+ * The desktop web UI in the viewer's browser, already signed in. The link only opens on the computer the bot runs on
+ * (127.0.0.1), which is why the row says so.
+ */
+function WebUiRow() {
+  const opening = useAction();
+  const open = async () => {
+    if (opening.busy) return;
+    const answer = await opening.run(openWebUi);
+    if (answer) openLink(answer.url);
+  };
+  return (
+    <>
+      <Row leading={<span aria-hidden="true" className="mini-row-icon"><DesktopOutlined /></span>} title="Вэб UI нээх"
+           subtitle={opening.busy ? "Нээж байна…" : "Хөтөч дээр, Dispatch ажилладаг энэ компьютер дээр"} onClick={() => void open()} />
+      {opening.error && <p className="mini-note" role="alert">{opening.error.message}</p>}
+    </>
+  );
+}
+
+/**
  * The Mini App's first screen, laid out as BotFather's: the bot's photo and name, a search, then sections of rows:
  * what waits on the owner, what is moving, what finished, and every other page.
  */
-export default function HomePage({ me, navigate, intervalMs = 5000 }: {
+export default function HomePage({ me, navigate, intervalMs = 5000, onComputer = telegramOnComputer }: {
   me: Me;
   navigate: (path: string) => void;
   intervalMs?: number;
+  /** Whether Telegram runs on a computer here, the only place the web UI's link can open. */
+  onComputer?: boolean;
 }) {
   const { tasks, error, reload } = useTasks(intervalMs);
   const now = useNow(1000);
@@ -166,6 +190,7 @@ export default function HomePage({ me, navigate, intervalMs = 5000 }: {
           <MenuRow icon={<ControlOutlined />} title="Тохиргоо" onClick={() => navigate("/settings")} />
           <MenuRow icon={<FileTextOutlined />} title="Лог" onClick={() => navigate("/logs")} />
           <MenuRow icon={<DashboardOutlined />} title="Тойм" onClick={() => navigate("/overview")} />
+          {onComputer && <WebUiRow />}
         </Section>
       )}
 

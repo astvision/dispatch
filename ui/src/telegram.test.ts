@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readLaunch } from "./telegram";
+import { onComputer, readLaunch } from "./telegram";
 
 describe("reading what Telegram put in the fragment", () => {
   it("takes the launch data and the theme out of the fragment", () => {
@@ -13,6 +13,13 @@ describe("reading what Telegram put in the fragment", () => {
     expect(launch.theme?.bg_color).toBe("#1c1c1e");
     expect(launch.theme?.button_color).toBe("#2ea6ff");
     expect(launch.dark).toBe(true);
+  });
+
+  it("tells a computer's Telegram from a phone's, which decides whether the web UI can open", () => {
+    expect(readLaunch("#tgWebAppData=x&tgWebAppPlatform=tdesktop").platform).toBe("tdesktop");
+    expect(readLaunch("#tgWebAppData=x").platform).toBeNull();
+    for (const platform of ["tdesktop", "macos", "weba", "webk"]) expect(onComputer(platform)).toBe(true);
+    for (const platform of ["ios", "android", "android_x", "unknown", null]) expect(onComputer(platform)).toBe(false);
   });
 
   it("says it is not in Telegram when there is no launch data", () => {

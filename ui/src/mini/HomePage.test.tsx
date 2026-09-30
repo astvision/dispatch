@@ -16,6 +16,7 @@ vi.mock("../api", async (importOriginal) => ({
   rejectPlan: vi.fn(),
   correctPlan: vi.fn(),
   followUpTask: vi.fn(),
+  openWebUi: vi.fn(),
 }));
 
 const ME: api.Me = { ref: "telegram:100", name: "Bold", admin: false, bot: "dispatch_task_bot" };
@@ -67,6 +68,40 @@ describe("the home screen", () => {
   afterEach(() => {
     delete bridge.TelegramWebviewProxy;
     vi.resetAllMocks();
+  });
+
+  it("offers an admin on a computer the web UI, opened in their browser through Telegram", async () => {
+    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [] });
+    vi.mocked(api.openWebUi).mockResolvedValue({ url: "http://127.0.0.1:7878/?t=abc" });
+    render(<HomePage me={{ ...ME, admin: true }} navigate={() => {}} onComputer />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Вэб UI нээх/ }));
+
+    await waitFor(() => expect(bridge.TelegramWebviewProxy!.postEvent).toHaveBeenCalledWith("web_app_open_link",
+      JSON.stringify({ url: "http://127.0.0.1:7878/?t=abc" })));
+  });
+
+  it("says why the web UI did not open", async () => {
+    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [] });
+    vi.mocked(api.openWebUi).mockRejectedValue(new api.ApiError("webui_by_hand", "энд терминалд dispatch ui ажиллуулна уу"));
+    render(<HomePage me={{ ...ME, admin: true }} navigate={() => {}} onComputer />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Вэб UI нээх/ }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("dispatch ui ажиллуулна уу");
+    expect(bridge.TelegramWebviewProxy!.postEvent).not.toHaveBeenCalledWith("web_app_open_link", expect.anything());
+  });
+
+  it("offers no web UI on a phone, nor to a member", async () => {
+    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [] });
+    const { unmount } = render(<HomePage me={{ ...ME, admin: true }} navigate={() => {}} onComputer={false} />);
+    expect(await screen.findByText("Тойм")).toBeInTheDocument();
+    expect(screen.queryByText("Вэб UI нээх")).toBeNull();
+    unmount();
+
+    render(<HomePage me={ME} navigate={() => {}} onComputer />);
+    expect(await screen.findByText("Гарын авлага")).toBeInTheDocument();
+    expect(screen.queryByText("Вэб UI нээх")).toBeNull();
   });
 
   it("lists what waits on me, what is moving and what finished, each task with its state in words", async () => {

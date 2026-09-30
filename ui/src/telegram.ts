@@ -25,6 +25,8 @@ export interface Launch {
   theme: ThemeParams | null;
   /** Telegram's own idea of which theme is on, which the colours alone cannot always tell us. */
   dark: boolean;
+  /** Which Telegram app opened the page ("tdesktop", "macos", "ios", ...), or null. */
+  platform: string | null;
 }
 
 /** Exported for the tests; the app uses the value read once at load. */
@@ -34,11 +36,13 @@ export function readLaunch(hash: string): Launch {
   const initData = fragment.get("tgWebAppData");
   const theme = parseTheme(fragment.get("tgWebAppThemeParams"));
   const scheme = fragment.get("tgWebAppColorScheme");
+  const platform = fragment.get("tgWebAppPlatform");
   return {
     initData: initData && initData.length > 0 ? initData : null,
     theme,
     // Some clients (Telegram Desktop) leave the scheme out; their background colour still says which one is on.
     dark: scheme === "dark" || scheme === "light" ? scheme === "dark" : isDarkColour(theme?.bg_color),
+    platform: platform && platform.length > 0 ? platform : null,
   };
 }
 
@@ -69,3 +73,13 @@ export const inTelegram = launch.initData !== null;
 export const initData = launch.initData;
 export const themeParams = launch.theme;
 export const prefersDark = launch.dark;
+
+/** Telegram's apps on a computer: its desktop app, the macOS one, and Telegram Web. */
+const DESKTOP_PLATFORMS = ["tdesktop", "macos", "weba", "webk", "web"];
+
+/** Whether the viewer may be on a computer, where the web UI can open in their browser (ADR 0018, amended). */
+export function onComputer(platform: string | null): boolean {
+  return platform !== null && DESKTOP_PLATFORMS.includes(platform);
+}
+
+export const telegramOnComputer = onComputer(launch.platform);
