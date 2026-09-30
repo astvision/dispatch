@@ -19,11 +19,13 @@ public record Confinement(Sandbox sandbox, SandboxPolicies policies) {
         return new Confinement(new NoSandbox(reason), null);
     }
 
-    public List<String> wrap(List<String> commandLine, RunRequest request, List<String> agentStateInHome) {
+    /** @param environment the agent process's environment, whose XDG_RUNTIME_DIR the sandbox hides */
+    public List<String> wrap(List<String> commandLine, RunRequest request, List<String> agentStateInHome,
+                             java.util.Map<String, String> environment) {
         if (sandbox.unavailableReason() != null) {
             return List.copyOf(commandLine);
         }
-        return sandbox.wrap(commandLine, policies.forRun(request, agentStateInHome));
+        return sandbox.wrap(commandLine, policies.forRun(request, agentStateInHome, environment));
     }
 
     public SandboxUse use() {

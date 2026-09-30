@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,7 +45,7 @@ class SandboxPoliciesTest {
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir));
 
         SandboxPolicy policy = policies.forRun(request(RunKind.EXECUTE, worktree, List.of(attachments)),
-                List.of(".claude", ".claude.json"));
+                List.of(".claude", ".claude.json"), Map.of("XDG_RUNTIME_DIR", root.resolve("no-runtime-dir").toString()));
 
         assertEquals(worktree, policy.workdir());
         assertEquals(stateDir.resolve("repos/alm/.git"), policy.gitCommonDir());
@@ -161,6 +162,28 @@ class SandboxPoliciesTest {
 
         assertFalse(policy.writable().contains(stateDir.resolve("dispatch.db")));
         assertFalse(policy.readOnly().contains(stateDir.resolve("assistant-bin")));
+    }
+
+    @Test
+    void theAgentsRuntimeDirIsHidden() throws IOException {
+        // Its sockets (systemd --user, ssh-agent, gpg-agent, the Secret Service) would run things outside the sandbox.
+        Path runtime = Files.createDirectories(root.resolve("run-user"));
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
+                .forRun(request(RunKind.PLAN, stateDir, List.of()), List.of(), Map.of("XDG_RUNTIME_DIR", runtime.toString()));
+
+        assertTrue(policy.hidden().contains(runtime), policy.hidden().toString());
+    }
+
+    @Test
+    void withoutXdgRuntimeDirTheUsersRunUserDirIsHidden() throws IOException {
+        Path runUser = Path.of("/run/user/" + Files.getAttribute(home, "unix:uid"));
+        org.junit.jupiter.api.Assumptions.assumeTrue(Files.isDirectory(runUser), "no " + runUser + " here");
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
+                .forRun(request(RunKind.PLAN, stateDir, List.of()), List.of(), Map.of());
+
+        assertTrue(policy.hidden().contains(runUser), policy.hidden().toString());
     }
 
     private static RunRequest request(RunKind kind, Path workdir, List<Path> readOnlyDirs) {

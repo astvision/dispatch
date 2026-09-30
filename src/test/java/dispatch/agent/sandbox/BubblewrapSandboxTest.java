@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -120,6 +121,25 @@ class BubblewrapSandboxTest {
 
         assertTrue(process.exitValue() != 0, "the write succeeded");
         assertEquals(before, Files.readString(worktree.resolve(".git")));
+    }
+
+    @Test
+    void theRuntimeDirsSocketsAreGone() throws Exception {
+        Path runtime = Files.createDirectories(root.resolve("run-user"));
+        Path socket = runtime.resolve("agent.sock");
+        try (var server = java.nio.channels.ServerSocketChannel.open(java.net.StandardProtocolFamily.UNIX)) {
+            server.bind(java.net.UnixDomainSocketAddress.of(socket));
+            SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
+                    .forRun(new RunRequest(RunKind.PLAN, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
+                            worktree.resolve("run")), List.of(), Map.of("XDG_RUNTIME_DIR", runtime.toString()));
+
+            Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c",
+                    "if [ -e '" + socket + "' ]; then echo visible; else echo hidden; fi"), policy))
+                    .redirectErrorStream(true).start();
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS));
+
+            assertEquals("hidden", new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip());
+        }
     }
 
     private static void git(Path dir, String... args) throws IOException, InterruptedException {

@@ -31,7 +31,8 @@ public final class Bubblewrap implements Sandbox {
     public List<String> wrap(List<String> commandLine, SandboxPolicy policy) {
         List<String> args = new ArrayList<>(List.of(command,
                 // The sandbox ends with Dispatch, and the agent cannot inject input into Dispatch's terminal.
-                "--die-with-parent", "--unshare-pid", "--new-session",
+                // --unshare-ipc: no SysV IPC or POSIX message queues shared with the owner's processes.
+                "--die-with-parent", "--unshare-pid", "--unshare-ipc", "--new-session",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"));
         for (Path hidden : policy.hidden()) {
             args.addAll(List.of("--tmpfs", hidden.toString()));
