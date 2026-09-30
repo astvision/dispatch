@@ -3,6 +3,7 @@ package dispatch.telegram;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.core.TaskAccess;
 import dispatch.core.TaskCommand;
+import dispatch.core.VerifyLoop;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Priority;
 import java.math.BigDecimal;
@@ -886,6 +887,7 @@ public final class Renderer {
             case "UNVERIFIED" -> text("verify.testsUnverified")
                     + (verification.path("lastRunPassed").asBoolean(false) ? "" : testTail(verification));
             case "NO_COMMAND" -> text("verify.noTestCommand");
+            case "SKIPPED" -> text("verify.testsSkipped");
             default -> text("verify.testsNotRun");
         });
         html.append('\n').append(switch (verification.path("review").asText()) {
@@ -893,9 +895,12 @@ public final class Renderer {
             case "FINDINGS" -> format("verify.reviewFindings", String.valueOf(verification.path("findings").size()));
             case "FIXED_UNREVIEWED" -> format("verify.reviewFixed", String.valueOf(blocking(verification.path("findings"))));
             case "FAILED" -> format("verify.reviewFailed", escapeWithin(verification.path("reviewError").asText(""), VERIFY_LINE_LIMIT));
+            case "SKIPPED" -> text("verify.reviewSkipped");
             default -> text("verify.reviewNotRun");
         });
-        if (verification.hasNonNull("stoppedBy")) {
+        if (VerifyLoop.DELIVERED_EARLY.equals(verification.path("stoppedBy").asText(null))) {
+            html.append('\n').append(text("verify.deliveredEarly"));
+        } else if (verification.hasNonNull("stoppedBy")) {
             html.append('\n').append(format("verify.stopped", escapeWithin(verification.path("stoppedBy").asText(), VERIFY_LINE_LIMIT)));
         }
         return html.toString();

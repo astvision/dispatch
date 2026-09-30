@@ -184,7 +184,7 @@ class WorkerLoopTest extends WorkerApiFixture {
             }
 
             @Override
-            public boolean progress(RemoteWorkers.Progress progress) {
+            public RemoteWorkers.Reply progress(RemoteWorkers.Progress progress) {
                 // The first three posts are JobRunner's own worktreeCreated, plan step started and agentStarted events,
                 // not the ticker (see JobRunner.run): revoking on those would only hit their own best-effort catch, never
                 // WorkerLoop.tick.

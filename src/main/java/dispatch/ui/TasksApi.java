@@ -73,6 +73,7 @@ public final class TasksApi {
                 Map.entry("/api/tasks/retry", this::retry),
                 Map.entry("/api/tasks/detail", this::detail),
                 Map.entry("/api/tasks/run", this::run),
+                Map.entry("/api/tasks/run/control", this::control),
                 Map.entry("/api/tasks/answer", this::answer),
                 Map.entry("/api/tasks/approve", this::approve),
                 Map.entry("/api/tasks/reject", this::reject),
@@ -162,6 +163,30 @@ public final class TasksApi {
         long taskId = taskId(body);
         return db.transactionReturning(tx -> {
             ownTask(tx, caller, taskId);
+            return tasks.runPayload(tx, taskId).orElseThrow(() -> notFound(taskId));
+        });
+    }
+
+    /**
+     * ⏭ {@code {"action": "skip", "step": n}} or 📦 {@code {"action": "deliverNow"}} on the requester's running execution
+     * (RM-4), answered with the run as it now stands. A tap on a step that already ended changes nothing.
+     */
+    ObjectNode control(Caller caller, JsonNode body) {
+        long taskId = taskId(body);
+        String action = body.path("action").asText("");
+        return db.transactionReturning(tx -> {
+            ownTask(tx, caller, taskId);
+            if (!access.of(tx, caller.ref(), taskId).allows(TaskAccess.Action.STEER)) {
+                throw new ApiException(409, "not_running", Text.of("refusal.notRunning", taskId));
+            }
+            boolean active = switch (action) {
+                case "skip" -> tasks.skip(taskId, number(body, "step"));
+                case "deliverNow" -> tasks.deliverNow(taskId);
+                default -> throw new ApiException(400, "invalid", Text.of("refusal.missingField", "action"));
+            };
+            if (!active) {
+                throw new ApiException(409, "not_running", Text.of("refusal.notRunning", taskId));
+            }
             return tasks.runPayload(tx, taskId).orElseThrow(() -> notFound(taskId));
         });
     }

@@ -82,7 +82,7 @@ public final class JobRunner implements Worker {
 
     @Override
     public JobResult run(Job job, JobEvents events, ActiveRuns.ActiveRun control) {
-        Steps steps = new Steps(events);
+        Steps steps = new Steps(events, control);
         return switch (job.kind()) {
             case PLAN -> plan(job, events, control, steps);
             case EXECUTE -> implement(job, events, control, steps);
@@ -94,18 +94,23 @@ public final class JobRunner implements Worker {
     /** Numbers a run's steps from 1 and reports each as it starts and ends (RM-1). */
     private static final class Steps {
         private final JobEvents events;
+        private final ActiveRuns.ActiveRun control;
         private int count;
 
-        Steps(JobEvents events) {
+        Steps(JobEvents events, ActiveRuns.ActiveRun control) {
             this.events = events;
+            this.control = control;
         }
 
         int started(RunStep.Kind kind, int round) {
-            events.stepStarted(++count, kind, round);
+            count++;
+            control.stepStarted(count, kind);
+            events.stepStarted(count, kind, round);
             return count;
         }
 
         void ended(int step, RunStep.Outcome outcome, String detail) {
+            control.stepEnded(step);
             events.stepEnded(step, outcome, detail);
         }
 
@@ -249,6 +254,16 @@ public final class JobRunner implements Worker {
             @Override
             public void stepEnded(int step, RunStep.Outcome outcome, String detail) {
                 steps.ended(step, outcome, detail);
+            }
+
+            @Override
+            public boolean skipRequested(int step) {
+                return control.skipRequested(step);
+            }
+
+            @Override
+            public boolean deliverNowRequested() {
+                return control.deliverNowRequested();
             }
         };
     }

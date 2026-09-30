@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.core.Review;
 import dispatch.core.Verification;
+import dispatch.core.VerifyLoop;
 import dispatch.domain.OutboxKind;
 import dispatch.testing.TestClock;
 import java.time.Duration;
@@ -1367,6 +1368,20 @@ class RendererTest {
         assertTrue(html.contains("FooTest &lt;boom&gt;"), html);
         assertTrue(html.contains("🔍 ⚠️ 1 зөвлөмж үлдсэн"), html);
         assertTrue(html.contains("⏹ Эрт зогссон: time"), html);
+    }
+
+    @Test
+    void aResultSaysWhatTheRequesterSkippedAndThatTheyDeliveredEarly() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 2, List.of());
+        payload.set("verification", Json.MAPPER.valueToTree(new Verification(Verification.Tests.SKIPPED, 0, null,
+                Verification.ReviewState.SKIPPED, List.of(), null, VerifyLoop.DELIVERED_EARLY)));
+
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload).html();
+
+        assertTrue(html.contains(messages.getString("verify.testsSkipped")), html);
+        assertTrue(html.contains(messages.getString("verify.reviewSkipped")), html);
+        assertTrue(html.contains(messages.getString("verify.deliveredEarly")), html);
+        assertFalse(html.contains("delivered early by the requester"), "said in Mongolian, not in the commit's English: " + html);
     }
 
     @Test

@@ -197,7 +197,7 @@ public final class WorkerLoop implements Runnable {
             // The run's steps as the monitor shows them (RM-2): sent whole, so a lost post is made good by the next.
             List<RunStep> steps = new CopyOnWriteArrayList<>();
             ticker = Thread.ofVirtual().name("worker-progress-" + job.taskId()).start(() -> tick(job, control, steps));
-            report(job, runnerFor(job).run(local.get(), events(job, steps), control));
+            report(job, runnerFor(job).run(local.get(), events(job, steps, control), control));
         } catch (RuntimeException e) {
             Log.error("worker.run_failed", e, "task", job.taskId(), "run", job.seq());
             report(job, JobResult.failed(FailureReason.INTERNAL, "the worker broke: " + e.getMessage(), null));
@@ -243,7 +243,7 @@ public final class WorkerLoop implements Runnable {
      * {@link ActiveRuns#stopAll}, while {@link #carry}'s {@code finally} still calls {@link LocalAgents#forget} — orphaning
      * the agent from both this run's cancel path and the next start's {@link LocalAgents#killOrphans}.
      */
-    private JobEvents events(Job job, List<RunStep> steps) {
+    private JobEvents events(Job job, List<RunStep> steps, ActiveRuns.ActiveRun control) {
         return new JobEvents() {
 
             @Override
@@ -270,24 +270,35 @@ public final class WorkerLoop implements Runnable {
             @Override
             public void stepStarted(int n, RunStep.Kind kind, int round) {
                 steps.add(new RunStep(n, kind, round, Instant.now(), null, null, null));
-                sendSteps(job, steps);
+                sendSteps(job, steps, control);
             }
 
             @Override
             public void stepEnded(int n, RunStep.Outcome outcome, String detail) {
                 RunStep started = steps.get(n - 1);
                 steps.set(n - 1, new RunStep(n, started.kind(), started.round(), started.startedAt(), Instant.now(), outcome, detail));
-                sendSteps(job, steps);
+                sendSteps(job, steps, control);
             }
         };
     }
 
     /** Best-effort, like the ticker, which sends the same list again within {@link #progressInterval}. */
-    private void sendSteps(Job job, List<RunStep> steps) {
+    private void sendSteps(Job job, List<RunStep> steps, ActiveRuns.ActiveRun control) {
         try {
-            client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, false, null, null, reported(steps)));
+            steer(control, client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, false, null, null,
+                    reported(steps))));
         } catch (RuntimeException e) {
             Log.warn("worker.progress_failed", "task", job.taskId(), "error", e.getMessage());
+        }
+    }
+
+    /** The requester's ⏭ and 📦 from the team machine, applied to this computer's run, whose agent they cancel (RM-4). */
+    private static void steer(ActiveRuns.ActiveRun control, RemoteWorkers.Reply reply) {
+        if (reply.skipStep() > 0) {
+            control.skip(reply.skipStep());
+        }
+        if (reply.deliverNow()) {
+            control.deliverNow();
         }
     }
 
@@ -302,10 +313,11 @@ public final class WorkerLoop implements Runnable {
             try {
                 Thread.sleep(progressInterval);
                 var activity = activeRuns.activity(job.taskId());
-                boolean cancel = client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, false,
+                RemoteWorkers.Reply reply = client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, false,
                         activity.map(a -> a.steps()).orElse(null), activity.map(a -> a.lastAction()).orElse(null),
                         reported(steps)));
-                if (cancel) {
+                steer(control, reply);
+                if (reply.cancel()) {
                     control.stop(ActiveRuns.StopReason.CANCELLED);
                     return;
                 }

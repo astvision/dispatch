@@ -287,11 +287,18 @@ public final class RemoteWorkers implements Worker {
     }
 
     /** What the worker is doing; renews the lease and answers whether the member cancelled the task. */
-    public boolean progress(Workers.Paired worker, Progress progress) {
+    /**
+     * What the team machine answers a progress with: a cancel, and the requester's ⏭ (the step's number, 0 for none) and
+     * 📦 (RM-4). A worker older than the controls reads only {@code cancel}.
+     */
+    public record Reply(boolean cancel, int skipStep, boolean deliverNow) {
+    }
+
+    public Reply progress(Workers.Paired worker, Progress progress) {
         Offer offer;
         boolean newWorktree;
         boolean newAgent;
-        boolean cancelled;
+        Reply reply;
         synchronized (lock) {
             offer = held(worker, progress.taskId(), progress.seq());
             offer.leaseUntil = clock.instant().plus(LEASE);
@@ -306,7 +313,8 @@ public final class RemoteWorkers implements Worker {
             if (progress.steps() != null) {
                 offer.control.reportActivity(new AgentActivity(progress.steps(), progress.lastAction()));
             }
-            cancelled = offer.control.stopReason() == ActiveRuns.StopReason.CANCELLED;
+            reply = new Reply(offer.control.stopReason() == ActiveRuns.StopReason.CANCELLED, offer.control.skippedStep(),
+                    offer.control.deliverNowRequested());
         }
         // Reserved under the lock above so two overlapping posts can each fire at most once; written outside it so a
         // slow DB write never blocks every other worker's next/progress/result.
@@ -321,7 +329,7 @@ public final class RemoteWorkers implements Worker {
             List<RunStep> steps = progress.loopSteps().stream().map(Step::toRunStep).toList();
             fireEffect(offer, () -> offer.events.stepsReported(steps));
         }
-        return cancelled;
+        return reply;
     }
 
     /**

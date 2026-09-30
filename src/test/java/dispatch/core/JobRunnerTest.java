@@ -371,6 +371,44 @@ class JobRunnerTest {
     }
 
     @Test
+    void skippingAHangingFixCancelsOnlyThatCallAndTheRunReviewsAndDelivers() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+        fixesHang = true;
+        ActiveRuns.ActiveRun execution = new ActiveRuns().register(TASK, 2);
+        AtomicReference<JobResult> result = new AtomicReference<>();
+        Thread run = Thread.ofVirtual().start(() -> result.set(executeWithLoop(true, execution,
+                (command, workdir, log, limit, stop, started) -> new TestRunner.TestRun(1, false, false, "FooTest failed"))));
+        assertTrue(fixStarted.await(15, java.util.concurrent.TimeUnit.SECONDS), "the fix never started");
+
+        execution.skip(3);   // 1 implement, 2 test, 3 fix
+
+        assertTrue(run.join(Duration.ofSeconds(15)), "the skipped fix still hangs");
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.get().outcome());
+        assertEquals(List.of("1 IMPLEMENT 1 → DONE", "2 TEST 1 → FAILED", "3 FIX 1 → SKIPPED", "4 REVIEW 1 → OK", "5 DELIVER 1 → DONE"),
+                loopEvents.steps);
+        assertEquals(null, result.get().verification().stoppedBy());
+    }
+
+    @Test
+    void deliverNowDuringAHangingFixDeliversAtOnceWithoutAReview() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        fixesHang = true;
+        ActiveRuns.ActiveRun execution = new ActiveRuns().register(TASK, 2);
+        AtomicReference<JobResult> result = new AtomicReference<>();
+        Thread run = Thread.ofVirtual().start(() -> result.set(executeWithLoop(true, execution,
+                (command, workdir, log, limit, stop, started) -> new TestRunner.TestRun(1, false, false, "FooTest failed"))));
+        assertTrue(fixStarted.await(15, java.util.concurrent.TimeUnit.SECONDS), "the fix never started");
+
+        execution.deliverNow();
+
+        assertTrue(run.join(Duration.ofSeconds(15)), "deliver now left the fix hanging");
+        assertEquals(FakeGh.PR_URL, result.get().prUrl());
+        assertEquals(List.of(RunKind.EXECUTE, RunKind.EXECUTE), agentKindsStarted, "no reviewer after deliver now");
+        assertTrue(lastCommitBody().contains("Stopped early: delivered early by the requester"), lastCommitBody());
+    }
+
+    @Test
     void anInterruptDuringALoopCallFailsTheRunWithoutDelivering() throws Exception {
         answers.put(RunKind.EXECUTE, answer(null, "1.00"));
         fixesHang = true;

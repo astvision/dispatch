@@ -206,9 +206,9 @@ class RemoteWorkersTest {
 
         clock.advance(Duration.ofSeconds(50));
         assertFalse(remote.progress(ann, new RemoteWorkers.Progress(id, 1, "/home/ann/work/alm-7", "6f3030a", true, 12,
-                "Bash: git status")));
+                "Bash: git status")).cancel());
         clock.advance(Duration.ofSeconds(50));
-        assertFalse(remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, 14, "Edit: README.md")));
+        assertFalse(remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, 14, "Edit: README.md")).cancel());
 
         assertEquals("/home/ann/work/alm-7", row("SELECT worktree FROM task WHERE id = ?", id).get("worktree"));
         assertEquals("6f3030a", row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha"));
@@ -242,6 +242,24 @@ class RemoteWorkersTest {
     }
 
     @Test
+    void aSkipAndADeliverNowReachTheWorkerThroughItsNextProgress() throws Exception {
+        long id = queue(BOLD, "Fix the login timeout");
+        Workers.Paired ann = pair(BOLD, "ann-laptop");
+        Thread run = coordinate();
+        remote.next(ann).orElseThrow();
+        RemoteWorkers.Progress tick = new RemoteWorkers.Progress(id, 1, null, null, false, 3, "Bash: ls");
+        assertEquals(new RemoteWorkers.Reply(false, 0, false), remote.progress(ann, tick));
+
+        assertTrue(activeRuns.skip(id, 3));
+        assertEquals(new RemoteWorkers.Reply(false, 3, false), remote.progress(ann, tick));
+        assertTrue(activeRuns.deliverNow(id));
+        assertEquals(new RemoteWorkers.Reply(false, 3, true), remote.progress(ann, tick));
+
+        remote.result(ann, id, 1, JobResult.succeeded(agentResult()));
+        assertTrue(run.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");
+    }
+
+    @Test
     void aCancelReachesTheWorkerThroughItsNextProgress() throws Exception {
         long id = queue(BOLD, "Fix the login timeout");
         Workers.Paired ann = pair(BOLD, "ann-laptop");
@@ -250,7 +268,7 @@ class RemoteWorkersTest {
 
         db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(id)));
 
-        assertTrue(remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, 3, "Bash: ls")));
+        assertTrue(remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, 3, "Bash: ls")).cancel());
         remote.result(ann, id, 1, JobResult.cancelled(null));
         assertTrue(run.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");
         assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));

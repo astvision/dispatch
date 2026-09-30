@@ -785,8 +785,37 @@ public final class TaskService {
         if (run.status() == RunStatus.RUNNING) {
             activeRuns.activity(taskId).ifPresent(activity ->
                     payload.putObject("activity").put("steps", activity.steps()).put("lastAction", activity.lastAction()));
+            activeRuns.run(taskId).ifPresent(active -> putControls(payload, RunSteps.of(tx, taskId, run.seq()), active));
         }
         return Optional.of(payload);
+    }
+
+    /**
+     * What the run monitor offers now (RM-4): ⏭ on the running test, fix or review, by its number, unless it was already
+     * skipped; 📦 while such a step runs, until it was asked for. Whether the caller may use them is TaskAccess's STEER.
+     */
+    private static void putControls(ObjectNode payload, List<RunStep> steps, ActiveRuns.ActiveRun active) {
+        RunStep current = steps.isEmpty() || steps.getLast().outcome() != null ? null : steps.getLast();
+        boolean loopStep = current != null && (current.kind() == RunStep.Kind.TEST || current.kind() == RunStep.Kind.FIX
+                || current.kind() == RunStep.Kind.REVIEW);
+        ObjectNode controls = payload.putObject("controls");
+        if (loopStep && !active.skipRequested(current.n())) {
+            controls.put("skip", current.n());
+        } else {
+            controls.putNull("skip");
+        }
+        controls.put("deliverNow", loopStep && !active.deliverNowRequested());
+        controls.put("deliverNowRequested", active.deliverNowRequested());
+    }
+
+    /** ⏭ on the task's running step (RM-4); false when no run of the task is active here. */
+    public boolean skip(long taskId, int step) {
+        return activeRuns.skip(taskId, step);
+    }
+
+    /** 📦 deliver now on the task's running execution (RM-4); false when no run of the task is active here. */
+    public boolean deliverNow(long taskId) {
+        return activeRuns.deliverNow(taskId);
     }
 
     /**

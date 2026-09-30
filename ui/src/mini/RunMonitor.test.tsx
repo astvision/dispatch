@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
 import type { RunView } from "../api";
@@ -7,6 +7,7 @@ import RunMonitor from "./RunMonitor";
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   getTaskRun: vi.fn(),
+  steerRun: vi.fn(),
 }));
 
 const running: RunView = {
@@ -64,5 +65,31 @@ describe("the run monitor", () => {
     expect(await screen.findByText(/README.md:12/)).toBeInTheDocument();
     expect(screen.getByText(/install command is stale/)).toBeInTheDocument();
     expect(screen.getByText("$1.05")).toBeInTheDocument();
+  });
+
+  it("skips the running step and delivers now with one tap each", async () => {
+    const steerable: RunView = { ...running, controls: { skip: 3, deliverNow: true, deliverNowRequested: false } };
+    vi.mocked(api.getTaskRun).mockResolvedValue(steerable);
+    vi.mocked(api.steerRun).mockResolvedValue({ ...steerable, controls: { skip: null, deliverNow: true, deliverNowRequested: false } });
+
+    render(<RunMonitor taskId={15} live />);
+    fireEvent.click(await screen.findByRole("button", { name: "⏭ Засвар 1/3-г алгасах" }));
+
+    await waitFor(() => expect(api.steerRun).toHaveBeenCalledWith(15, { action: "skip", step: 3 }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /алгасах/ })).not.toBeInTheDocument());
+    vi.mocked(api.steerRun).mockResolvedValue({ ...steerable, controls: { skip: null, deliverNow: false, deliverNowRequested: true } });
+    fireEvent.click(screen.getByRole("button", { name: "📦 Одоо хүргэх" }));
+
+    await waitFor(() => expect(api.steerRun).toHaveBeenCalledWith(15, { action: "deliverNow" }));
+    expect(await screen.findByText("📦 Хүргэхээр зогсоож байна…")).toBeInTheDocument();
+  });
+
+  it("offers nothing on a finished run", async () => {
+    vi.mocked(api.getTaskRun).mockResolvedValue({ ...running, status: "SUCCEEDED", controls: undefined });
+
+    render(<RunMonitor taskId={15} live={false} />);
+
+    expect(await screen.findByText("Хэрэгжүүлэлт")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

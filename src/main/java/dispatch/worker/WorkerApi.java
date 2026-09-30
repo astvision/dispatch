@@ -292,11 +292,12 @@ public final class WorkerApi implements AutoCloseable {
                 json(exchange, 200, Json.write(answer));
             }
             case PROGRESS -> {
-                boolean cancel = workers.progress(worker, new RemoteWorkers.Progress(
+                RemoteWorkers.Reply reply = workers.progress(worker, new RemoteWorkers.Progress(
                         requiredLong(body, "taskId"), requiredInt(body, "seq"),
                         text(body, "worktree"), text(body, "baseSha"), body.path("agentStarted").asBoolean(false),
                         optionalInt(body, "steps"), text(body, "lastAction"), loopSteps(body)));
-                json(exchange, 200, Json.write(Json.object().put("cancel", cancel)));
+                json(exchange, 200, Json.write(Json.object().put("cancel", reply.cancel()).put("skipStep", reply.skipStep())
+                        .put("deliverNow", reply.deliverNow())));
             }
             case RESULT -> {
                 JobResult result = readJobResult(required(body, "result"));
