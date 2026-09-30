@@ -291,6 +291,14 @@ class CoordinatorTest {
         assertFalse(json.contains("\"reviewPrompt\""), json);
     }
 
+    @Test
+    void aLoopOffProjectWithATestCommandStillSendsNoTestToItsWorker() {
+        String json = Json.write(approvedExecutionJob(loopProject("off")));
+
+        assertFalse(json.contains("\"test\""), json);
+        assertFalse(json.contains("\"loop\""), json);
+    }
+
     private static Config.Project loopProject(String loop) {
         return new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm", "main", "claude-code", null,
                 "high", List.of(".env"), null, new Config.PhaseSettings("opus", null), new Config.PhaseSettings(null, "low"),
