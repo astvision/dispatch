@@ -278,8 +278,8 @@ public final class Renderer {
     }
 
     /**
-     * A draft's prompt. While open: project buttons (in rows of three, when there is a choice), a priority row and ✂️ for a
-     * whole message; while a split is proposed, its parts and the choice between splitting and keeping the message whole.
+     * A draft's prompt. While open: its short view, or its detail view (see {@link #draftDetailView}), with ✂️ for a whole
+     * message; while a split is proposed, its parts and the choice between splitting and keeping the message whole.
      */
     private Rendered draftPrompt(JsonNode payload) {
         String title = escapeWithin(payload.path("title").asText(), TITLE_LIMIT);
@@ -323,14 +323,21 @@ public final class Renderer {
         List<String> skipped = new ArrayList<>();
         payload.path("skippedFiles").forEach(file -> skipped.add(escape(file.asText())));
         String tooLarge = skipped.isEmpty() ? "" : "\n\n" + format("draft.filesTooLarge", String.join(", ", skipped));
+        String priority = payload.path("priority").asText("LOW");
+        String chosen = project == null ? text("draft.chooseProject") : format("draft.projectPriority", project, PRIORITY_ICONS.get(priority));
         // A payload from before the views has none: one with its project gets the short view.
         if (project != null && !payload.path("view").asText().equals("DETAIL")) {
-            return draftShortView(payload, header + "\n" + title + "\n"
-                    + format("draft.projectPriority", project, PRIORITY_ICONS.get(payload.path("priority").asText("LOW"))) + note + tooLarge);
+            return draftShortView(payload, header + "\n" + title + "\n" + chosen + note + tooLarge);
         }
-        String html = header + "\n" + title + "\n\n"
-                + (project == null ? text("draft.chooseProject") : format("draft.project", project)) + "\n" + text("draft.choosePriority")
-                + note + tooLarge;
+        return draftDetailView(payload, header + "\n" + title + "\n\n" + chosen + "\n" + text("draft.replyHint") + note + tooLarge, priority);
+    }
+
+    /**
+     * The open draft's detail view: every project (in rows of three, when there is a choice) and priority to choose, the
+     * chosen ones marked; ✅ and ↩️ once it has a project.
+     */
+    private Rendered draftDetailView(JsonNode payload, String html, String chosenPriority) {
+        long draftId = payload.path("draftId").asLong();
         List<List<Button>> keyboard = new ArrayList<>();
         JsonNode projects = payload.path("projects");
         if (projects.size() > 1) {
@@ -350,10 +357,15 @@ public final class Renderer {
         }
         List<Button> priorities = new ArrayList<>();
         for (String priority : PRIORITIES) {
-            Callback choice = new Callback.DraftPriority(draftId, Priority.valueOf(priority));
-            priorities.add(new Button(PRIORITY_ICONS.get(priority) + " " + text("priority." + priority), choice.data()));
+            String chosen = priority.equals(chosenPriority) ? "✓ " : "";
+            priorities.add(new Button(chosen + PRIORITY_ICONS.get(priority) + " " + text("priority." + priority),
+                    new Callback.DraftPick(draftId, Priority.valueOf(priority)).data()));
         }
         keyboard.add(priorities);
+        if (payload.hasNonNull("project")) {
+            keyboard.add(List.of(new Button(text("button.send"), new Callback.DraftSend(draftId).data()),
+                    new Button(text("button.back"), new Callback.DraftView(draftId, false).data())));
+        }
         keyboard.add(splitAndDiscard(payload, draftId));
         return new Rendered(html, keyboard, null);
     }

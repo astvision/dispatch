@@ -219,6 +219,33 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void theDetailViewChoosesThePriorityWithoutGivingTheTaskAndBackReturnsToSend() throws Exception {
+        handler.handle(message(520, 22, 300, "Sara", 300L, "private", "Add make help", null));
+        long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
+
+        handler.handle(privateCallback(521, 300, "Sara", "draft:" + draftId + ":view:detail"));
+        JsonNode detail = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(detail.get("reply_markup").toString().contains("✓ 🟢"), detail.toString());
+        assertTrue(detail.get("reply_markup").toString().contains("draft:" + draftId + ":view:default"), detail.toString());
+
+        handler.handle(privateCallback(522, 300, "Sara", "draft:" + draftId + ":pick:URGENT"));
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
+        telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2));
+        assertEquals(renderer.text("callback.priorityChosen"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode picked = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(picked.get("reply_markup").toString().contains("✓ 🔴"), picked.toString());
+
+        handler.handle(privateCallback(523, 300, "Sara", "draft:" + draftId + ":view:default"));
+        JsonNode back = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(back.get("text").asText().contains("🔴"), back.toString());
+        assertTrue(back.get("reply_markup").toString().contains("draft:" + draftId + ":send:x"), back.toString());
+
+        handler.handle(privateCallback(524, 300, "Sara", "draft:" + draftId + ":send:x"));
+        assertEquals("URGENT", row("SELECT priority FROM task").get("priority"));
+    }
+
+    @Test
     void theBinClosesADraftThatIsNotATaskAndRedrawsItsPrompt() throws Exception {
         handler.handle(message(516, 17, 100, "Bold", 100L, "private", "Is this a task, or are you doing it yourself?", null));
         long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
@@ -279,7 +306,7 @@ class UpdateHandlerTest {
         assertEquals(renderer.text("callback.keptWhole"),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
         JsonNode kept = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
-        assertTrue(kept.get("reply_markup").toString().contains("draft:" + second + ":prio:URGENT"), kept.toString());
+        assertTrue(kept.get("reply_markup").toString().contains("draft:" + second + ":pick:URGENT"), kept.toString());
         assertFalse(kept.get("reply_markup").toString().contains(":split:"), kept.toString());
         assertEquals(renderer.text("callback.unknown"),
                 telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());

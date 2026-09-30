@@ -30,6 +30,7 @@ class CallbackTest {
         GOLDEN.put(new Callback.DraftSend(7), "draft:7:send:x");
         GOLDEN.put(new Callback.DraftView(7, true), "draft:7:view:detail");
         GOLDEN.put(new Callback.DraftView(7, false), "draft:7:view:default");
+        GOLDEN.put(new Callback.DraftPick(7, Priority.URGENT), "draft:7:pick:URGENT");
         GOLDEN.put(new Callback.Answer(42, 2, 1, new TaskCommand.Choice.Option(3)), "q:42:2:1:3");
         GOLDEN.put(new Callback.Answer(42, 2, 1, new TaskCommand.Choice.YouDecide()), "q:42:2:1:d");
         GOLDEN.put(new Callback.WriteAnswer(42, 2, 1), "q:42:2:1:w");
@@ -81,7 +82,7 @@ class CallbackTest {
     void malformedDataIsNoButton() {
         for (String data : new String[] {"", ":", ":::", "unknown:1", "approve:1", "approve:1:2:3", "approve:x:1", "approve:1:x",
                 "reject:1:", "prio:1:HIGH", "prio:1:urgent", "draft:1:p:", "draft:x:p:backend", "draft:1:prio:HIGH",
-                "draft:1:split:ASK", "draft:1:split:maybe", "draft:1:other:x", "draft:1::x", "draft:1:p:a:b", "draft:1:view:other", "q:1:1:1",
+                "draft:1:split:ASK", "draft:1:split:maybe", "draft:1:other:x", "draft:1::x", "draft:1:p:a:b", "draft:1:view:other", "draft:1:pick:HIGH", "q:1:1:1",
                 "q:1:1:1:x", "q:x:1:1:0", "q:1:1:1:0:0", "as:", "as:x", "ad:1:2", "merge:", "merge:x", "link:1", "link:x:1",
                 "link:1:x", "link:1: -", "join:1", "join:x:backend", "join:1:", "help", "help:", "help:a:b", "stats:week",
                 "stats", "Approve:1:1", " approve:1:1", null}) {

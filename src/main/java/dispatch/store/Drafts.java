@@ -80,6 +80,11 @@ public final class Drafts {
                 project, now, id, DraftStatus.OPEN) == 1;
     }
 
+    public static boolean choosePriority(Tx tx, long id, Priority priority, Instant now) {
+        return tx.update("UPDATE draft SET priority = ?, updated_at = ? WHERE id = ? AND status = ?",
+                priority, now, id, DraftStatus.OPEN) == 1;
+    }
+
     /** Shows the prompt's detail view, or its short one; false when the draft is no longer open. */
     public static boolean showDetail(Tx tx, long id, boolean detail, Instant now) {
         return tx.update("UPDATE draft SET detail = ?, updated_at = ? WHERE id = ? AND status = ?",

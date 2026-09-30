@@ -826,6 +826,7 @@ public final class UpdateHandler {
         DraftChoice choice = switch (button) {
             case Callback.DraftProject project -> tasks.chooseProject(tx, who, draftId, project.name());
             case Callback.DraftPriority priority -> tasks.choosePriority(tx, who, draftId, priority.priority());
+            case Callback.DraftPick pick -> tasks.pickPriority(tx, who, draftId, pick.priority());
             case Callback.DraftSend _ -> tasks.send(tx, who, draftId);
             case Callback.DraftView view -> tasks.showDetail(tx, who, draftId, view.detail());
             case Callback.DraftSplit split -> switch (split.choice()) {
@@ -838,6 +839,7 @@ public final class UpdateHandler {
         };
         answer(tx, callbackId, switch (choice) {
             case PROJECT_CHOSEN -> "callback.projectChosen";
+            case PRIORITY_CHOSEN -> "callback.priorityChosen";
             case VIEW_CHANGED -> "callback.done";
             case CREATED -> "callback.taskCreated";
             case ALREADY_CREATED -> "callback.alreadyCreated";
@@ -854,7 +856,7 @@ public final class UpdateHandler {
             case DISCARDED -> "callback.discarded";
             case ALREADY_DISCARDED -> "callback.alreadyDiscarded";
         });
-        if (!Set.of(DraftChoice.PROJECT_CHOSEN, DraftChoice.VIEW_CHANGED, DraftChoice.CREATED, DraftChoice.SPLITTING, DraftChoice.SPLIT, DraftChoice.KEPT_WHOLE,
+        if (!Set.of(DraftChoice.PROJECT_CHOSEN, DraftChoice.PRIORITY_CHOSEN, DraftChoice.VIEW_CHANGED, DraftChoice.CREATED, DraftChoice.SPLITTING, DraftChoice.SPLIT, DraftChoice.KEPT_WHOLE,
                         DraftChoice.DISCARDED)
                 .contains(choice)) {
             return;

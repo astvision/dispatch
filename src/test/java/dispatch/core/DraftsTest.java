@@ -185,6 +185,26 @@ class DraftsTest {
     }
 
     @Test
+    void theDetailViewOnlySelectsUntilSendAndBackNeedsAProject() {
+        long draftId = draft(BOLD, "Fix login timeout", "telegram:100/32");
+
+        assertEquals(DraftChoice.CHOOSE_PROJECT_FIRST, db.transactionReturning(tx -> tasks.showDetail(tx, BOLD, draftId, false)));
+        assertEquals(DraftChoice.PROJECT_CHOSEN, db.transactionReturning(tx -> tasks.chooseProject(tx, BOLD, draftId, "crm")));
+        assertEquals(DraftChoice.PRIORITY_CHOSEN, db.transactionReturning(tx -> tasks.pickPriority(tx, BOLD, draftId, Priority.URGENT)));
+        assertEquals(DraftChoice.NOT_REQUESTER, db.transactionReturning(tx -> tasks.pickPriority(tx, SARA, draftId, Priority.LOW)));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"), "choosing never gives the task");
+        JsonNode detail = payload(draftId);
+        assertEquals("DETAIL", detail.get("view").asText(), "choosing the project keeps the view it was chosen in");
+        assertEquals("URGENT", detail.get("priority").asText());
+        assertEquals(DraftChoice.VIEW_CHANGED, db.transactionReturning(tx -> tasks.showDetail(tx, BOLD, draftId, false)));
+        assertEquals("DEFAULT", payload(draftId).get("view").asText());
+        assertEquals(DraftChoice.CREATED, db.transactionReturning(tx -> tasks.send(tx, BOLD, draftId)));
+        assertEquals("URGENT", row("SELECT priority FROM task").get("priority"));
+        assertEquals("crm", row("SELECT project FROM task").get("project"));
+    }
+
+    @Test
     void withTopicsOnEachGivenTaskGetsItsOwnTopicInTheWritersPrivateChat() {
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, schedulerWakes::incrementAndGet, () -> { }, true, draftId -> { }, false);
         long draftId = draft(SARA, "Add make help", "telegram:300/20");

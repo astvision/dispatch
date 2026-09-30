@@ -59,6 +59,7 @@ public sealed interface Callback {
         }
     }
 
+    /** A priority button of a prompt from before the short view (and its detail view): pressing it gives the task. */
     record DraftPriority(long draftId, Priority priority) implements Draft {
         @Override
         public String data() {
@@ -71,6 +72,14 @@ public sealed interface Callback {
         @Override
         public String data() {
             return fit("draft:" + draftId + ":send:x");
+        }
+    }
+
+    /** A priority in a draft's detail view: chosen for the task, which ✅ then gives. */
+    record DraftPick(long draftId, Priority priority) implements Draft {
+        @Override
+        public String data() {
+            return fit("draft:" + draftId + ":pick:" + priority.name());
         }
     }
 
@@ -274,6 +283,7 @@ public sealed interface Callback {
             case "split" -> new DraftSplit(draftId, Split.of(value));
             case "discard" -> new DraftDiscard(draftId);
             case "send" -> new DraftSend(draftId);
+            case "pick" -> new DraftPick(draftId, Priority.valueOf(value));
             case "view" -> switch (value) {
                 case "detail" -> new DraftView(draftId, true);
                 case "default" -> new DraftView(draftId, false);

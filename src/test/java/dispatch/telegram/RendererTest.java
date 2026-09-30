@@ -236,21 +236,37 @@ class RendererTest {
     }
 
     @Test
-    void draftPromptAsksForTheProjectInRowsOfThreeThenThePriority() {
+    void draftPromptWithoutAProjectAsksForItInRowsOfThreeAndOffersNoSend() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT,
-                draftPayload(List.of("alm", "crm", "life", "billing"), null, "OPEN", null));
+                draftPayload(List.of("alm", "crm", "life", "billing"), null, "OPEN", null).put("priority", "LOW").put("view", "DETAIL"));
 
         assertTrue(rendered.html().contains("Fix the &lt;login&gt; timeout"), rendered.html());
-        assertTrue(rendered.html().contains(messages.getString("draft.chooseProject")), rendered.html());
+        assertTrue(rendered.html().contains("Төсөл сонгоно уу"), rendered.html());
+        assertTrue(rendered.html().contains(messages.getString("draft.replyHint")), rendered.html());
         List<List<Renderer.Button>> keyboard = rendered.keyboard();
         assertEquals(4, keyboard.size());
         assertEquals(List.of(new Renderer.Button("alm", "draft:5:p:alm"), new Renderer.Button("crm", "draft:5:p:crm"),
                 new Renderer.Button("life", "draft:5:p:life")), keyboard.get(0));
         assertEquals(List.of(new Renderer.Button("billing", "draft:5:p:billing")), keyboard.get(1));
-        assertEquals("draft:5:prio:URGENT", keyboard.get(2).get(0).data());
-        assertEquals("draft:5:prio:LOW", keyboard.get(2).get(2).data());
+        assertEquals(List.of(new Renderer.Button("🔴 Яаралтай", "draft:5:pick:URGENT"), new Renderer.Button("🟡 Энгийн", "draft:5:pick:NORMAL"),
+                new Renderer.Button("✓ 🟢 Хүлээж болно", "draft:5:pick:LOW")), keyboard.get(2));
         assertEquals(List.of(new Renderer.Button(messages.getString("button.discard"), "draft:5:discard:x")), keyboard.get(3),
-                "not a task, e.g. a question that mentioned them");
+                "no ✅ or ↩️ without a project; 🗑 still, e.g. for a question that mentioned them");
+    }
+
+    @Test
+    void detailViewMarksTheChosenProjectAndPriorityAndOffersSendAndBack() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm", "crm"), "crm", "OPEN", null).put("priority", "URGENT").put("view", "DETAIL"));
+
+        assertEquals(messages.getString("draft.header") + "\nFix the &lt;login&gt; timeout\n\nТөсөл: <b>crm</b> · 🔴\n"
+                + messages.getString("draft.replyHint"), rendered.html());
+        assertEquals(List.of(
+                List.of(new Renderer.Button("alm", "draft:5:p:alm"), new Renderer.Button("✓ crm", "draft:5:p:crm")),
+                List.of(new Renderer.Button("✓ 🔴 Яаралтай", "draft:5:pick:URGENT"), new Renderer.Button("🟡 Энгийн", "draft:5:pick:NORMAL"),
+                        new Renderer.Button("🟢 Хүлээж болно", "draft:5:pick:LOW")),
+                List.of(new Renderer.Button("✅ Илгээх", "draft:5:send:x"), new Renderer.Button("↩️ Буцах", "draft:5:view:default")),
+                List.of(new Renderer.Button(messages.getString("button.discard"), "draft:5:discard:x"))), rendered.keyboard());
     }
 
     @Test
@@ -265,15 +281,11 @@ class RendererTest {
     }
 
     @Test
-    void draftPromptMarksTheChosenProjectAndWithOneProjectAsksOnlyForPriority() {
-        Renderer.Rendered chosen = renderer.render(OutboxKind.DRAFT_PROMPT,
-                draftPayload(List.of("alm", "crm"), "crm", "OPEN", null).put("view", "DETAIL"));
+    void withOneProjectTheDetailViewOffersNoProjectButtons() {
         Renderer.Rendered single = renderer.render(OutboxKind.DRAFT_PROMPT,
                 draftPayload(List.of("life"), "life", "OPEN", null).put("view", "DETAIL"));
 
-        assertEquals("✓ crm", chosen.keyboard().getFirst().get(1).text());
-        assertTrue(chosen.html().contains("crm"), chosen.html());
-        assertEquals(2, single.keyboard().size(), "priority, then 🗑 only");
+        assertEquals(3, single.keyboard().size(), "priority, ✅ ↩️, then 🗑");
         assertTrue(single.html().contains("life"), single.html());
     }
 
@@ -284,7 +296,7 @@ class RendererTest {
 
         assertEquals(List.of(new Renderer.Button(messages.getString("button.split"), "draft:5:split:ask"),
                 new Renderer.Button(messages.getString("button.discard"), "draft:5:discard:x")), rendered.keyboard().getLast());
-        assertEquals("draft:5:prio:URGENT", rendered.keyboard().get(1).getFirst().data());
+        assertEquals("draft:5:pick:URGENT", rendered.keyboard().get(1).getFirst().data());
     }
 
     @Test

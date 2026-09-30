@@ -238,6 +238,16 @@ public final class TaskService {
         return give(tx, who, found.get(), priority);
     }
 
+    /** A priority in the detail view: chosen for ✅ to give the task with, never giving it itself. */
+    public DraftChoice pickPriority(Tx tx, Requester who, long draftId, Priority priority) {
+        Optional<DraftChoice> refused = refusal(Drafts.find(tx, draftId), who);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        Drafts.choosePriority(tx, draftId, priority, clock.instant());
+        return DraftChoice.PRIORITY_CHOSEN;
+    }
+
     /** ⚙️ shows the prompt's detail view, ↩️ its short one again, which needs a project to show. */
     public DraftChoice showDetail(Tx tx, Requester who, long draftId, boolean detail) {
         Optional<Draft> found = Drafts.find(tx, draftId);

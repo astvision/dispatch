@@ -2,6 +2,8 @@ package dispatch.core;
 
 public enum DraftChoice {
     PROJECT_CHOSEN,
+    /** A priority chosen in the detail view, for ✅ to give the task with. */
+    PRIORITY_CHOSEN,
     /** ⚙️ or ↩️: the prompt shows its other view. */
     VIEW_CHANGED,
     CREATED,
