@@ -78,6 +78,7 @@ class GroupAckTest {
         assertEquals(GROUP + "/30", reaction.get("reply_to_ref"));
         assertEquals("✍", Json.read(reaction.get("payload")).get("emoji").asText());
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'GROUP_WORKING'").get("n"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_QUEUED'").get("n"), "the reaction says it all");
     }
 
     @Test

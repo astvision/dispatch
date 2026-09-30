@@ -115,17 +115,8 @@ class TaskLifecycleTest {
         assertEquals("PLANNING", event.get("to_phase"));
         assertEquals("telegram:100", event.get("actor"));
 
-        Map<String, String> message = row("SELECT * FROM outbox");
-        assertEquals("TASK_QUEUED", message.get("kind"));
-        assertEquals(CHAT, message.get("chat_ref"));
-        assertNull(message.get("reply_to_ref"), "the task was given privately, so nothing in the group to reply to");
-        assertEquals("PENDING", message.get("status"));
-        JsonNode payload = Json.read(message.get("payload"));
-        assertEquals(id, payload.get("taskId").asLong());
-        assertEquals("autoland-management", payload.get("project").asText());
-        assertEquals("Bold", payload.get("requester").asText());
-        assertEquals("NORMAL", payload.get("priority").asText());
-        assertEquals("Fix login timeout on staging", payload.get("title").asText());
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox").get("n"),
+                "the group hears nothing of a task given privately; its requester's prompt already says it was taken");
 
         assertEquals(1, schedulerWakes.get());
         assertEquals(1, outboxWakes.get());

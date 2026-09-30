@@ -13,8 +13,8 @@ import java.time.Instant;
 /**
  * Reacts on the group message that started a group-origin task instead of the old ✉️ line, by the requester's own
  * choice (G-1e). A task with no real group to react in — a personal bot's own chat (ADR 0014), or one given directly
- * rather than by mentioning the bot in a group — gets nothing here; TASK_QUEUED and the outcome lines already cover
- * a real group on their own.
+ * rather than by mentioning the bot in a group — gets nothing here; the outcome lines already cover a real group on
+ * their own. A new task has no line in the group any more (2026-09-30): this reaction is all the group sees of it.
  */
 final class GroupAcks {
 

@@ -1128,7 +1128,7 @@ class UpdateHandlerTest {
     @Test
     void aRefusedCancelIsAnsweredUnderTheCommandInItsWords() {
         long id = task("Fix it");
-        long last = Long.parseLong(row("SELECT max(id) AS id FROM outbox").get("id"));
+        long last = Long.parseLong(row("SELECT coalesce(max(id), 0) AS id FROM outbox").get("id"));
 
         handler.handle(privateCommand(596, 200, "Ali", "/cancel " + id));
 
@@ -1355,9 +1355,12 @@ class UpdateHandlerTest {
     void repliesToOtherBotMessagesAndCommandsForOtherBotsAreNotCorrections() {
         long taskId = taskAwaitingApproval(List.of());
         planMessageSentAs(1000);
-        long messagesBefore = Long.parseLong(row("SELECT count(*) AS n FROM outbox").get("n"));
         String ackRef = "telegram:" + GROUP + "/999";
-        db.transaction(tx -> tx.update("UPDATE outbox SET status = 'SENT', sent_ref = ? WHERE kind = 'TASK_QUEUED'", ackRef));
+        // A queued line from before new tasks stopped getting one: still a bot message, and no plan.
+        long ack = db.transactionReturning(tx -> Outbox.enqueue(tx, taskId, dispatch.domain.OutboxKind.TASK_QUEUED, "telegram:" + GROUP,
+                null, Json.object(), clock.instant()));
+        db.transaction(tx -> Outbox.markSent(tx, ack, 1, ackRef, clock.instant()));
+        long messagesBefore = Long.parseLong(row("SELECT count(*) AS n FROM outbox").get("n"));
 
         handler.handle(message(542, 43, 200, "Ali", GROUP, "supergroup", "thanks", botMessage(999)));
         handler.handle(message(543, 44, 200, "Ali", GROUP, "supergroup", "/start@other_bot", botMessage(1000)));
@@ -1848,7 +1851,7 @@ class UpdateHandlerTest {
     }
 
     @Test
-    void tappingTheProjectLinksItAndTheNextTaskIsAnnouncedThereWithoutARestart() throws Exception {
+    void tappingTheProjectLinksItAndTheNextTaskBelongsThereWithoutARestart() throws Exception {
         UpdateHandler handler = personalHandler();
         handler.handle(myChatMember(703, 100, -4883391545L, "note", "member"));
         long promptId = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().path("message_id").asLong(1);
@@ -1858,7 +1861,8 @@ class UpdateHandlerTest {
         assertTrue(personalGroups.isGroupChat("telegram:-4883391545"), "the running groups, not only the file");
         assertEquals("GROUP_LINKED", row("SELECT kind FROM outbox WHERE chat_ref = 'telegram:-4883391545'").get("kind"));
         give(personalTasks, BOLD, "life", "Fix it", "telegram:100/77");
-        assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_QUEUED' AND chat_ref = 'telegram:-4883391545'").get("n"));
+        assertEquals("telegram:-4883391545", row("SELECT chat_ref FROM task").get("chat_ref"));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_QUEUED'").get("n"), "no line in the group");
     }
 
     @Test

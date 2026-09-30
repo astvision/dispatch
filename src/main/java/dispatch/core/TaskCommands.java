@@ -427,7 +427,7 @@ public final class TaskCommands {
         return new CommandResult.Created(id);
     }
 
-    /** The task with its first plan run queued, announced in its project's group. */
+    /** The task with its first plan run queued. */
     private long insertTask(Tx tx, Requester who, Config.Project project, String description, Priority priority, String originRef,
                             Instant now) {
         Optional<String> groupChat = groups.chatOfTask(project.name(), originRef);
@@ -440,18 +440,16 @@ public final class TaskCommands {
             Outbox.enqueue(tx, id, OutboxKind.TOPIC_CREATE, who.ref(), null, Json.object().put("taskId", id), now);
             tx.afterCommit(wakeOutbox);
         }
-        if (groupChat.isPresent()) {
-            Outbox.enqueue(tx, id, OutboxKind.TASK_QUEUED, groupChat.get(), null, Json.object().put("taskId", id)
-                    .put("project", project.name()).put("requester", who.name()).put("priority", priority.name())
-                    .put("title", TaskService.title(description)), now);
-            tx.afterCommit(wakeOutbox);
-        }
         if (requiresWorker && !Workers.hasConnected(tx, who.ref(), now.minus(Workers.SEEN_WITHIN))) {
             // Said once, when the task is given; /status keeps showing it until a computer connects.
             Outbox.enqueue(tx, id, OutboxKind.WORKER_WAITING, who.ref(), null, Json.object().put("taskId", id), now);
             tx.afterCommit(wakeOutbox);
         }
+        // The group gets no line of its own for a new task, only the reaction on a group message that gave it (G-1e).
         GroupAcks.react(tx, task(tx, id), GroupReaction.TASK_CREATED, now);
+        if (groupChat.isPresent()) {
+            tx.afterCommit(wakeOutbox);
+        }
         tx.afterCommit(wakeScheduler);
         tx.afterCommit(() -> Log.info("task.created", "task", id, "project", project.name(), "priority", priority,
                 "requester", who.ref()));

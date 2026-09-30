@@ -134,20 +134,14 @@ class DraftsTest {
         assertEquals("URGENT", task.get("priority"));
         assertEquals("Fix login timeout", task.get("description"));
         assertEquals("telegram:100/5", task.get("origin_ref"));
-        assertEquals(BACKEND, task.get("chat_ref"), "the project's group hears about it");
+        assertEquals(BACKEND, task.get("chat_ref"), "the project's group's task");
         assertEquals("2026-09-17T10:00:20.000Z", task.get("created_at"));
         Map<String, String> draft = row("SELECT * FROM draft");
         assertEquals("CREATED", draft.get("status"));
         assertEquals(task.get("id"), draft.get("task_id"));
         assertEquals("QUEUED", row("SELECT status FROM run WHERE task_id = ?", task.get("id")).get("status"));
 
-        Map<String, String> announcement = row("SELECT * FROM outbox WHERE kind = 'TASK_QUEUED'");
-        assertEquals(BACKEND, announcement.get("chat_ref"));
-        assertNull(announcement.get("reply_to_ref"));
-        JsonNode payload = Json.read(announcement.get("payload"));
-        assertEquals("Bold", payload.get("requester").asText());
-        assertEquals("URGENT", payload.get("priority").asText());
-        assertEquals("Fix login timeout", payload.get("title").asText());
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_QUEUED'").get("n"), "no line in the group");
         assertEquals(1, schedulerWakes.get());
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_GIVEN_ON_DESK'").get("n"),
                 "given from the writer's own message, which the task's news replies under: not from a page");

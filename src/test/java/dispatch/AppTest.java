@@ -95,9 +95,6 @@ class AppTest {
 
         giveTask(1, "Staging дээр нэвтрэх үед timeout болж байна", "NORMAL");
 
-        JsonNode announced = awaitMessageContaining("#1");
-        assertEquals(GROUP, announced.get("chat_id").asLong(), "the group hears who gave which task");
-        assertTrue(announced.get("text").asText().contains("Bold"), announced.toString());
         JsonNode plan = awaitMessageContaining("The user reports that login");
         assertEquals(100, plan.get("chat_id").asLong(), "the plan goes to the requester privately");
         assertEquals("reject:1:1", plan.get("reply_markup").get("inline_keyboard").get(0).get(1).get("callback_data").asText());
