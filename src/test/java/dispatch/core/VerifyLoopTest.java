@@ -38,9 +38,31 @@ class VerifyLoopTest {
     private final List<BigDecimal> fixBudgets = new ArrayList<>();
     /** Each step as the loop reported it: "TEST 1 → FAILED {detail}". */
     private final List<String> steps = new ArrayList<>();
+    /** The steps the requester skipped, by number, and whether they asked to deliver now. */
+    private final java.util.Set<Integer> skipped = new java.util.HashSet<>();
+    private boolean deliverNow;
+    /** What the requester does while a step runs: "skip" or "deliver", applied to the running step's kind. */
+    private final java.util.Map<String, String> duringStep = new java.util.HashMap<>();
+
+    /** The requester's tap while {@code kind} runs; the loop sees it through skipRequested and deliverNowRequested. */
+    private boolean tapDuring(String kind) {
+        String tap = duringStep.get(kind);
+        if (tap == null) {
+            return false;
+        }
+        if (tap.equals("skip")) {
+            skipped.add(steps.size());
+        } else {
+            deliverNow = true;
+        }
+        return true;
+    }
 
     private final TestRunner tests = (command, dir, log, timeout, stop, started) -> {
         calls.add("test");
+        if (tapDuring("TEST") && stop.getAsBoolean()) {
+            return new TestRunner.TestRun(-1, false, true, "");
+        }
         boolean pass = testResults.isEmpty() || testResults.pop();
         return new TestRunner.TestRun(pass ? 0 : 1, false, false, pass ? "ok" : "FooTest failed");
     };
@@ -50,6 +72,10 @@ class VerifyLoopTest {
         public AgentResult fix(String prompt, BigDecimal budgetUsd, Duration timeout) {
             calls.add("fix");
             fixBudgets.add(budgetUsd);
+            if (tapDuring("FIX")) {
+                // The agent call is cancelled under the loop, as JobRunner's is, and ends failed.
+                return result(AgentOutcome.FAILED, null, fixCost);
+            }
             clock.advance(fixTakes);
             stopped = stopAfterFix;
             return fixAnswer != null ? fixAnswer : result(fixOutcome, null, fixCost);
@@ -58,6 +84,9 @@ class VerifyLoopTest {
         @Override
         public AgentResult review(String prompt, BigDecimal budgetUsd, Duration timeout) {
             calls.add("review");
+            if (tapDuring("REVIEW")) {
+                return result(AgentOutcome.FAILED, null, new BigDecimal("0.05"));
+            }
             return result(reviewOutcome, reviewAnswer, new BigDecimal("0.05"));
         }
 
@@ -80,6 +109,16 @@ class VerifyLoopTest {
         @Override
         public void stepEnded(int step, RunStep.Outcome outcome, String detail) {
             steps.set(step - 1, steps.get(step - 1) + " → " + outcome + (detail == null ? "" : " " + detail));
+        }
+
+        @Override
+        public boolean skipRequested(int step) {
+            return skipped.contains(step);
+        }
+
+        @Override
+        public boolean deliverNowRequested() {
+            return deliverNow;
         }
     };
 
@@ -130,6 +169,62 @@ class VerifyLoopTest {
         run();
 
         assertEquals("FIX 1 → FAILED {\"error\":\"agent broke\"}", steps.get(1));
+    }
+
+    @Test
+    void aSkippedFixIsNoFixAndTheLoopGoesOnToTheReview() {
+        testResults.add(false);
+        duringStep.put("FIX", "skip");
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("TEST 1 → FAILED {\"tail\":\"FooTest failed\"}", "FIX 1 → SKIPPED", "REVIEW 1 → OK"), steps);
+        assertEquals(Verification.Tests.FAILING, outcome.verification().tests());
+        assertEquals(null, outcome.verification().stoppedBy(), "a skip is not the loop stopping");
+    }
+
+    @Test
+    void aSkippedTestIsReportedSkippedAndTheReviewStillRuns() {
+        duringStep.put("TEST", "skip");
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("TEST 1 → SKIPPED", "REVIEW 1 → OK"), steps);
+        assertEquals(Verification.Tests.SKIPPED, outcome.verification().tests());
+    }
+
+    @Test
+    void aSkippedReviewIsReportedSkippedAndFixesNothing() {
+        duringStep.put("REVIEW", "skip");
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("TEST 1 → PASSED", "REVIEW 1 → SKIPPED"), steps);
+        assertEquals(Verification.ReviewState.SKIPPED, outcome.verification().review());
+        assertEquals(null, outcome.verification().reviewError());
+    }
+
+    @Test
+    void deliverNowEndsTheRunningStepAndEverythingAfterIt() {
+        testResults.add(false);
+        duringStep.put("FIX", "deliver");
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("TEST 1 → FAILED {\"tail\":\"FooTest failed\"}", "FIX 1 → SKIPPED"), steps);
+        assertEquals(List.of("test", "fix"), calls, "no review after deliver now");
+        assertEquals(VerifyLoop.DELIVERED_EARLY, outcome.verification().stoppedBy());
+    }
+
+    @Test
+    void deliverNowAskedDuringTheImplementationRunsNoLoopAtAll() {
+        deliverNow = true;
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of(), calls);
+        assertEquals(VerifyLoop.DELIVERED_EARLY, outcome.verification().stoppedBy());
+        assertEquals(Verification.Tests.NOT_RUN, outcome.verification().tests());
     }
 
     @Test

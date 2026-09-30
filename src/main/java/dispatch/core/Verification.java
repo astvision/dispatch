@@ -9,16 +9,20 @@ import java.util.List;
  * @param lastRunPassed whether the last test run passed; what UNVERIFIED reports as the last result
  * @param testTail    the last run's output tail; null when the tests never ran
  * @param reviewError why the reviewer gave no usable answer; null otherwise
- * @param stoppedBy   "budget", "time", or "fix failed: <reason>" when the loop stopped early; null otherwise
+ * @param stoppedBy   "budget", "time", "fix failed: <reason>" or {@link VerifyLoop#DELIVERED_EARLY} when the loop
+ *                    stopped early; null otherwise
  */
 public record Verification(Tests tests, int testRuns, boolean lastRunPassed, String testTail, ReviewState review, List<Review.Finding> findings,
                            String reviewError, String stoppedBy) {
 
-    /** UNVERIFIED: a fix changed the code after the last test run and nothing re-ran the tests. */
-    public enum Tests { PASSED, FAILING, UNVERIFIED, NO_COMMAND, NOT_RUN }
+    /**
+     * UNVERIFIED: a fix changed the code after the last test run and nothing re-ran the tests. SKIPPED: the requester cut
+     * the last test run short (RM-4).
+     */
+    public enum Tests { PASSED, FAILING, UNVERIFIED, NO_COMMAND, NOT_RUN, SKIPPED }
 
     /** FIXED_UNREVIEWED: the blocking findings went to a fix that succeeded, and nothing reviewed that fix. */
-    public enum ReviewState { OK, FINDINGS, FIXED_UNREVIEWED, FAILED, NOT_RUN }
+    public enum ReviewState { OK, FINDINGS, FIXED_UNREVIEWED, FAILED, NOT_RUN, SKIPPED }
 
     public Verification {
         findings = findings == null ? List.of() : List.copyOf(findings);
@@ -40,6 +44,7 @@ public record Verification(Tests tests, int testRuns, boolean lastRunPassed, Str
                     + ", run " + testRuns + ")" + (lastRunPassed ? "" : "\n\n" + indented(testTail) + "\n");
             case NO_COMMAND -> "- Tests: no test command configured";
             case NOT_RUN -> "- Tests: not run";
+            case SKIPPED -> "- Tests: skipped by the requester";
         });
         out.append('\n').append(switch (review) {
             case OK -> "- Review: ok";
@@ -47,6 +52,7 @@ public record Verification(Tests tests, int testRuns, boolean lastRunPassed, Str
             case FIXED_UNREVIEWED -> "- Review: " + blockingCount() + " blocking fixed, not re-reviewed" + listed();
             case FAILED -> "- Review: failed (" + reviewError + ")";
             case NOT_RUN -> "- Review: not run";
+            case SKIPPED -> "- Review: skipped by the requester";
         });
         if (stoppedBy != null) {
             out.append("\n- Stopped early: ").append(stoppedBy);

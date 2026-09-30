@@ -70,6 +70,7 @@ class TasksApiTest {
     private Groups groups;
     /** Why alm cannot take tasks now; null while it can. */
     private final AtomicReference<String> unavailable = new AtomicReference<>();
+    private final ActiveRuns activeRuns = new ActiveRuns();
 
     @BeforeEach
     void setUp() {
@@ -83,7 +84,7 @@ class TasksApiTest {
         // handed, so the admin has to be an admin here for the cancel rules to hold.
         groups = new Groups(new Config.Telegram(List.of(100L), List.of(new Config.Group("backend", -100L,
                 List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("alm")))));
-        tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.ofNullable(unavailable.get())), new ActiveRuns(),
+        tasks = new TaskService(groups, new Projects(List.of(alm), project -> Optional.ofNullable(unavailable.get())), activeRuns,
                 clock, () -> { }, () -> { });
         api = new TasksApi(db, tasks, groups);
         transitions = new RunTransitions(db, clock, () -> { });
@@ -287,6 +288,42 @@ class TasksApiTest {
         JsonNode step = api.run(ALI_CALLER, Json.object().put("taskId", taskId)).path("steps").get(0);
 
         assertEquals("FooTest failed", step.path("detail").path("tail").asText());
+    }
+
+    @Test
+    void theRequesterSkipsTheRunningTestAndAsksToDeliverNow() {
+        long taskId = executing(ALI);
+        ActiveRuns.ActiveRun active = activeRuns.register(taskId, 2);
+        transitions.stepStarted(taskId, 2, 1, RunStep.Kind.IMPLEMENT, 1);
+        transitions.stepEnded(taskId, 2, 1, RunStep.Outcome.DONE, null);
+        transitions.stepStarted(taskId, 2, 2, RunStep.Kind.TEST, 1);
+        active.stepStarted(2, RunStep.Kind.TEST);
+
+        JsonNode offered = api.run(ALI_CALLER, Json.object().put("taskId", taskId)).path("controls");
+        assertEquals(2, offered.path("skip").asInt());
+        assertTrue(offered.path("deliverNow").asBoolean());
+
+        JsonNode afterSkip = api.control(ALI_CALLER, Json.object().put("taskId", taskId).put("action", "skip").put("step", 2));
+        assertTrue(active.skipRequested(2));
+        assertTrue(afterSkip.path("controls").path("skip").isNull(), "a skipped step is not offered again");
+
+        JsonNode afterDeliver = api.control(ALI_CALLER, Json.object().put("taskId", taskId).put("action", "deliverNow"));
+        assertTrue(active.deliverNowRequested());
+        assertFalse(afterDeliver.path("controls").path("deliverNow").asBoolean());
+        assertTrue(afterDeliver.path("controls").path("deliverNowRequested").asBoolean());
+        assertTrue(api.detail(ALI_CALLER, Json.object().put("taskId", taskId)).path("actions").toString().contains("steer"));
+
+        assertEquals("403 not_yours", refused(() -> api.control(BOLD_CALLER, Json.object().put("taskId", taskId).put("action", "deliverNow"))),
+                "even an admin steers nobody else's run");
+        assertEquals("400 invalid", refused(() -> api.control(ALI_CALLER, Json.object().put("taskId", taskId).put("action", "dance"))));
+        activeRuns.unregister(active);
+    }
+
+    @Test
+    void aFinishedTaskCannotBeSteered() {
+        long taskId = finished(ALI);
+
+        assertEquals("409 not_running", refused(() -> api.control(ALI_CALLER, Json.object().put("taskId", taskId).put("action", "deliverNow"))));
     }
 
     @Test
@@ -528,6 +565,15 @@ class TasksApiTest {
         assertEquals(Text.of("refused.projectUnavailable", "alm", "repos/alm is being cloned"), refused.text());
         assertEquals(outboxBefore, SqlRows.single(dbFile, "SELECT count(*) AS n FROM outbox").get("n"),
                 "a refusal the Mini App shows must not also be sent to the chat");
+    }
+
+    /** A task of {@code who} whose execution run is claimed and running. */
+    private long executing(Requester who) {
+        long taskId = planned(who, noQuestions());
+        db.transaction(tx -> tasks.commands().run(tx, who, new TaskCommand.Approve(taskId, 1)));
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.agentStarted(run.taskId(), run.seq(), null, null);
+        return taskId;
     }
 
     private long finished(Requester who) {

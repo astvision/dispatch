@@ -43,7 +43,9 @@ public final class TaskAccess {
         RETRY("retry"),
         FOLLOW_UP("followUp"),
         /** Its delivered pull request, from the result's Merge button (ADR 0007, amended). */
-        MERGE("merge");
+        MERGE("merge"),
+        /** Its running execution, from the Mini App's run monitor: ⏭ skip a step, 📦 deliver now (RM-4). */
+        STEER("steer");
 
         private final String json;
 
@@ -257,6 +259,7 @@ public final class TaskAccess {
                 yield executed ? Optional.empty() : Optional.of(Refusal.NOT_EXECUTED);
             }
             case MERGE -> mergeRefusal(task);
+            case STEER -> phase == Phase.EXECUTING ? Optional.empty() : Optional.of(Refusal.WRONG_PHASE);
         };
     }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getTaskRun, type RunStepView, type RunView } from "../api";
+import { ApiError, getTaskRun, steerRun, type RunStepView, type RunView } from "../api";
 import { clock } from "./tickets";
 
 /** How often a live run is asked again; a team worker's own progress comes every 10 s, so its steps may lag that much. */
@@ -33,6 +33,20 @@ export default function RunMonitor({ taskId, live }: { taskId: number; live: boo
   const [skew, setSkew] = useState(0);
   const [failed, setFailed] = useState(false);
   const [, setTick] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState<string | null>(null);
+
+  const steer = async (control: Parameters<typeof steerRun>[1]) => {
+    setBusy(true);
+    setRefusal(null);
+    try {
+      setRun(await steerRun(taskId, control));
+    } catch (e) {
+      setRefusal(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     const abort = new AbortController();
@@ -68,8 +82,36 @@ export default function RunMonitor({ taskId, live }: { taskId: number; live: boo
         ))}
       </ol>
       {run.costUsd && <p className="run-cost num">${run.costUsd}</p>}
+      {live && run.controls && <Controls run={run} busy={busy} onSteer={(control) => void steer(control)} />}
+      {refusal && <p className="sheet-error" role="alert">{refusal}</p>}
       {failed && <p className="quiet">Холболт тасарсан, дахин оролдож байна…</p>}
     </section>
+  );
+}
+
+/** ⏭ the running test, fix or review, and 📦 deliver now; what the server offers is what shows (RM-4). */
+function Controls({ run, busy, onSteer }: {
+  run: RunView;
+  busy: boolean;
+  onSteer: (control: Parameters<typeof steerRun>[1]) => void;
+}) {
+  const controls = run.controls!;
+  const skippable = run.steps.find((step) => step.n === controls.skip);
+  if (!skippable && !controls.deliverNow && !controls.deliverNowRequested) return null;
+  return (
+    <div className="run-controls">
+      {skippable && (
+        <button type="button" className="choice" disabled={busy} onClick={() => onSteer({ action: "skip", step: skippable.n })}>
+          ⏭ {label(skippable)}-г алгасах
+        </button>
+      )}
+      {controls.deliverNow && (
+        <button type="button" className="choice" disabled={busy} onClick={() => onSteer({ action: "deliverNow" })}>
+          📦 Одоо хүргэх
+        </button>
+      )}
+      {controls.deliverNowRequested && <p className="quiet">📦 Хүргэхээр зогсоож байна…</p>}
+    </div>
   );
 }
 

@@ -26,6 +26,8 @@ public final class VerifyLoop {
     static final Duration AGENT_STEP_NEEDS = Duration.ofMinutes(5);
     public static final int DIFF_LIMIT = 60_000;
     static final BigDecimal BUDGET_FLOOR = new BigDecimal("0.05");
+    /** The Verification's stoppedBy when the requester tapped 📦 deliver now (RM-4). */
+    public static final String DELIVERED_EARLY = "delivered early by the requester";
 
     public interface Agents {
         /** Resumes the building session; a result whose outcome is not SUCCEEDED ends the loop. */
@@ -45,6 +47,12 @@ public final class VerifyLoop {
 
         /** @param detail {@link StepDetail}'s JSON, or null */
         void stepEnded(int step, RunStep.Outcome outcome, String detail);
+
+        /** The requester tapped ⏭ on this step (RM-4); a fix or review call it was running has been cancelled. */
+        boolean skipRequested(int step);
+
+        /** The requester tapped 📦 deliver now (RM-4): the running step was cancelled and nothing else runs. */
+        boolean deliverNowRequested();
     }
 
     /** @param budgetUsd null for no budget; @param spentUsd what the run has already cost */
@@ -94,7 +102,11 @@ public final class VerifyLoop {
         }
 
         Outcome run() {
-            testAndFix();
+            if (agents.deliverNowRequested()) {
+                stoppedBy = DELIVERED_EARLY;
+            } else {
+                testAndFix();
+            }
             if (stoppedBy == null && !stop.getAsBoolean() && setup.reviewPrompt() != null) {
                 review();
             }
@@ -114,6 +126,10 @@ public final class VerifyLoop {
                 if (stop.getAsBoolean()) {
                     return;
                 }
+                if (agents.deliverNowRequested()) {
+                    stoppedBy = DELIVERED_EARLY;
+                    return;
+                }
                 if (timeLeft().compareTo(TEST_STEP_NEEDS) < 0) {
                     stoppedBy = "time";
                     Log.info("verify.step", "step", "test", "outcome", "stopped: time");
@@ -121,14 +137,26 @@ public final class VerifyLoop {
                 }
                 Path log = Path.of(setup.logBase() + ".test-" + (testRuns + 1) + ".log");
                 int step = agents.stepStarted(RunStep.Kind.TEST, testRuns + 1);
-                TestRunner.TestRun result = tests.run(setup.testCommand(), setup.worktree(), log, TEST_TIMEOUT, stop,
-                        agents::testStarted);
-                testRuns++;
-                tail = result.tail();
+                TestRunner.TestRun result = tests.run(setup.testCommand(), setup.worktree(), log, TEST_TIMEOUT,
+                        () -> stop.getAsBoolean() || tapped(step), agents::testStarted);
                 if (result.stopped()) {
-                    agents.stepEnded(step, RunStep.Outcome.STOPPED, null);
+                    if (stop.getAsBoolean()) {
+                        testRuns++;
+                        tail = result.tail();
+                        agents.stepEnded(step, RunStep.Outcome.STOPPED, null);
+                        return;
+                    }
+                    // A test the requester cut short says nothing about the code: it is not counted as a run.
+                    agents.stepEnded(step, RunStep.Outcome.SKIPPED, null);
+                    if (agents.deliverNowRequested()) {
+                        stoppedBy = DELIVERED_EARLY;
+                    } else {
+                        testState = Verification.Tests.SKIPPED;
+                    }
                     return;
                 }
+                testRuns++;
+                tail = result.tail();
                 agents.stepEnded(step, result.passed() ? RunStep.Outcome.PASSED : RunStep.Outcome.FAILED,
                         result.passed() ? null : StepDetail.tail(tail));
                 testState = result.passed() ? Verification.Tests.PASSED : Verification.Tests.FAILING;
@@ -150,6 +178,14 @@ public final class VerifyLoop {
             int step = agents.stepStarted(RunStep.Kind.REVIEW, 1);
             AgentResult result = agents.review(setup.reviewPrompt() + "\n" + capped(agents.diff()), budgetLeft(), timeLeft());
             record(result);
+            if (tapped(step)) {
+                reviewState = Verification.ReviewState.SKIPPED;
+                agents.stepEnded(step, RunStep.Outcome.SKIPPED, null);
+                if (agents.deliverNowRequested()) {
+                    stoppedBy = DELIVERED_EARLY;
+                }
+                return;
+            }
             if (result.outcome() != AgentOutcome.SUCCEEDED) {
                 reviewState = Verification.ReviewState.FAILED;
                 reviewError = reason(result);
@@ -199,6 +235,14 @@ public final class VerifyLoop {
             AgentResult result = agents.fix(prompt, budgetLeft(), timeLeft());
             record(result);
             Log.info("verify.step", "step", "fix", "outcome", result.outcome());
+            if (tapped(step)) {
+                // Whatever the cancelled fix changed stays in the worktree, but it counts as no fix: the tests say nothing new.
+                agents.stepEnded(step, RunStep.Outcome.SKIPPED, null);
+                if (agents.deliverNowRequested()) {
+                    stoppedBy = DELIVERED_EARLY;
+                }
+                return false;
+            }
             if (result.outcome() != AgentOutcome.SUCCEEDED) {
                 stoppedBy = "fix failed: " + reason(result);
                 agents.stepEnded(step, RunStep.Outcome.FAILED, StepDetail.error(reason(result)));
@@ -209,8 +253,17 @@ public final class VerifyLoop {
             return true;
         }
 
+        /** The requester skipped this step or asked to deliver now while it ran. */
+        private boolean tapped(int step) {
+            return agents.skipRequested(step) || agents.deliverNowRequested();
+        }
+
         private boolean agentStepAllowed() {
             if (stop.getAsBoolean()) {
+                return false;
+            }
+            if (agents.deliverNowRequested()) {
+                stoppedBy = DELIVERED_EARLY;
                 return false;
             }
             if (timeLeft().compareTo(AGENT_STEP_NEEDS) < 0) {

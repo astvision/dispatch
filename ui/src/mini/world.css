@@ -145,3 +145,6 @@
 .run-findings { margin: 4px 0 0; padding: 0; list-style: none; font-size: 13px; line-height: 1.45; display: grid; gap: 3px; }
 .run-findings code { font-family: var(--mono); font-size: 12px; }
 .run-cost { margin: 6px 0 0; font-size: 12.5px; color: var(--hint-ink); text-align: right; }
+.run-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.run-controls .choice { flex: 1 1 140px; text-align: center; }
+.run-controls p { flex-basis: 100%; margin: 0; }
