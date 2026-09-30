@@ -214,7 +214,8 @@ public final class Coordinator {
     private void succeeded(Job job, JobResult result) {
         switch (job.kind()) {
             case PLAN -> finishPlan(job.taskId(), job.seq(), result.agent());
-            case EXECUTE -> transitions.completed(job.taskId(), job.seq(), result.agent(), result.files(), result.prUrl());
+            case EXECUTE -> transitions.completed(job.taskId(), job.seq(), result.agent(), result.agent().summary(), result.files(),
+                    result.prUrl(), result.verification());
             case DELIVER -> transitions.completed(job.taskId(), job.seq(), null, job.deliverySummary(), result.files(),
                     result.prUrl());
             case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a task's run");

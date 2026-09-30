@@ -637,4 +637,18 @@ class TaskLifecycleTest {
         JsonNode payload = Json.read(row("SELECT * FROM outbox WHERE kind = 'PLAN_READY'").get("payload"));
         assertFalse(payload.has("unsandboxed"));
     }
+
+    @Test
+    void aCompletedRunCarriesItsVerificationToTheRequester() {
+        long id = executing("20");
+        Verification verification = new Verification(Verification.Tests.FAILING, 4, "FooTest failed",
+                Verification.ReviewState.OK, List.of(), null, null);
+
+        transitions.completed(id, 2, executionResult(List.of()), "Made it configurable.", List.of("A.java"),
+                "https://github.com/acme/alm/pull/7", verification);
+
+        JsonNode payload = Json.read(row("SELECT * FROM outbox WHERE kind = 'TASK_COMPLETED'").get("payload"));
+        assertEquals("FAILING", payload.path("verification").path("tests").asText());
+        assertEquals(4, payload.path("verification").path("testRuns").asInt());
+    }
 }

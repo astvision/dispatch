@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
+import dispatch.core.Review;
+import dispatch.core.Verification;
 import dispatch.domain.OutboxKind;
 import dispatch.testing.TestClock;
 import java.time.Duration;
@@ -1226,5 +1228,26 @@ class RendererTest {
         String html = renderer.render(OutboxKind.TASK_COMPLETED, payload).html();
 
         assertTrue(html.contains("⚠️ Sandbox-гүй ажилласан: bubblewrap (bwrap) is not installed"), html);
+    }
+
+    @Test
+    void aCompletedResultShowsItsVerification() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 2, List.of());
+        payload.set("verification", Json.MAPPER.valueToTree(new Verification(Verification.Tests.FAILING, 4, "FooTest <boom>",
+                Verification.ReviewState.FINDINGS, List.of(new Review.Finding("minor", "A.java", 3, "rename")), null, "time")));
+
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload).html();
+
+        assertTrue(html.contains("🧪 ❌ Тест унасан хэвээр (4 удаа)"), html);
+        assertTrue(html.contains("FooTest &lt;boom&gt;"), html);
+        assertTrue(html.contains("🔍 ⚠️ 1 зөвлөмж үлдсэн"), html);
+        assertTrue(html.contains("⏹ Эрт зогссон: time"), html);
+    }
+
+    @Test
+    void aResultWithoutVerificationHasNoBlock() {
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, completedPayload("https://github.com/acme/alm/pull/7", 2, List.of())).html();
+
+        assertFalse(html.contains("🧪"), html);
     }
 }

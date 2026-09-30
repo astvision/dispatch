@@ -25,6 +25,8 @@ public final class Renderer {
     /** Limits on escaped text, so markup-heavy agent output cannot push a message past Telegram's limit. */
     private static final int DETAIL_LIMIT = 1500;
     private static final int SUMMARY_LIMIT = 2500;
+    private static final int TEST_TAIL_LIMIT = 600;
+    private static final int VERIFY_LINE_LIMIT = 200;
     private static final int DENIAL_LIMIT = 200;
     private static final int DENIALS_SHOWN = 5;
     private static final int TITLE_LIMIT = 80;
@@ -696,10 +698,13 @@ public final class Renderer {
         StringBuilder html = new StringBuilder(format("task.completed", taskId(payload), escape(payload.path("project").asText())))
                 .append('\n')
                 .append(filesChanged == 0 ? text("task.completedNoChanges") : format("task.completedPr", escape(payload.path("prUrl").asText())));
+        String verification = verificationBlock(payload.path("verification"));
         String summary = payload.path("summary").asText("").strip();
         if (!summary.isEmpty()) {
-            html.append("\n\n").append(escapeWithin(summary, SUMMARY_LIMIT));
+            // The verification takes its room out of the summary's, so the message stays within Telegram's limit.
+            html.append("\n\n").append(escapeWithin(summary, SUMMARY_LIMIT - verification.length()));
         }
+        html.append(verification);
         JsonNode denials = payload.path("denials");
         if (!denials.isEmpty()) {
             html.append("\n\n").append(format("task.denials", denials.size()));
@@ -723,6 +728,32 @@ public final class Renderer {
         return new Rendered(html.toString(), payload.path("merge").asBoolean(false)
                 ? List.of(List.of(new Button(text("button.merge"), new Callback.Merge(payload.path("taskId").asLong()).data())))
                 : List.of(), null);
+    }
+
+    /** The verify loop's findings under a result (spec: verify loop); nothing for a run without the loop. */
+    private String verificationBlock(JsonNode verification) {
+        if (verification.isMissingNode() || verification.isNull()) {
+            return "";
+        }
+        StringBuilder html = new StringBuilder("\n\n");
+        String runs = String.valueOf(verification.path("testRuns").asInt());
+        html.append(switch (verification.path("tests").asText()) {
+            case "PASSED" -> format("verify.testsPassed", runs);
+            case "FAILING" -> format("verify.testsFailing", runs)
+                    + "\n<pre>" + escapeWithin(verification.path("testTail").asText(""), TEST_TAIL_LIMIT) + "</pre>";
+            case "NO_COMMAND" -> text("verify.noTestCommand");
+            default -> text("verify.testsNotRun");
+        });
+        html.append('\n').append(switch (verification.path("review").asText()) {
+            case "OK" -> text("verify.reviewOk");
+            case "FINDINGS" -> format("verify.reviewFindings", String.valueOf(verification.path("findings").size()));
+            case "FAILED" -> format("verify.reviewFailed", escapeWithin(verification.path("reviewError").asText(""), VERIFY_LINE_LIMIT));
+            default -> text("verify.reviewNotRun");
+        });
+        if (verification.hasNonNull("stoppedBy")) {
+            html.append('\n').append(format("verify.stopped", escapeWithin(verification.path("stoppedBy").asText(), VERIFY_LINE_LIMIT)));
+        }
+        return html.toString();
     }
 
     private Rendered status(JsonNode payload) {

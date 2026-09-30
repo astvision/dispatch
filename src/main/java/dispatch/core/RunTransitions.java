@@ -103,6 +103,12 @@ public final class RunTransitions {
      * @param prUrl   the task's pull request, null when nothing has been delivered
      */
     public void completed(long taskId, int seq, AgentResult result, String summary, List<String> files, String prUrl) {
+        completed(taskId, seq, result, summary, files, prUrl, null);
+    }
+
+    /** @param verification what the verify loop found; null for a run without the loop */
+    public void completed(long taskId, int seq, AgentResult result, String summary, List<String> files, String prUrl,
+            Verification verification) {
         db.transaction(tx -> {
             Instant now = clock.instant();
             Task task = task(tx, taskId);
@@ -126,6 +132,9 @@ public final class RunTransitions {
                 result.denials().forEach(denials::add);
             }
             putRunDetails(payload, run, result, now);
+            if (verification != null) {
+                payload.set("verification", Json.MAPPER.valueToTree(verification));
+            }
             enqueueForRequester(tx, task, OutboxKind.TASK_COMPLETED, payload, now);
             enqueue(tx, task, OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", taskId).put("project", task.project())
                     .put("prUrl", prUrl).put("filesChanged", files.size()), now);
