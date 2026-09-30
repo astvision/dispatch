@@ -215,14 +215,45 @@ public final class TaskService {
         return started.size() == 1 ? Optional.of(started.getFirst()) : Optional.empty();
     }
 
-    /** Choosing the priority gives the task, provided the project is chosen and still one the member can use. */
+    /** ✅ on a draft's prompt gives the task at the priority chosen there, LOW unless another was. */
+    public DraftChoice send(Tx tx, Requester who, long draftId) {
+        Optional<Draft> found = Drafts.find(tx, draftId);
+        Optional<DraftChoice> refused = refusal(found, who);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        return give(tx, who, found.get(), found.get().priority());
+    }
+
+    /**
+     * A priority button of a prompt from before the lighter prompt: choosing it gives the task, as it always has, provided
+     * the project is chosen and still one the member can use.
+     */
     public DraftChoice choosePriority(Tx tx, Requester who, long draftId, Priority priority) {
         Optional<Draft> found = Drafts.find(tx, draftId);
         Optional<DraftChoice> refused = refusal(found, who);
         if (refused.isPresent()) {
             return refused.get();
         }
-        Draft draft = found.get();
+        return give(tx, who, found.get(), priority);
+    }
+
+    /** ⚙️ shows the prompt's detail view, ↩️ its short one again, which needs a project to show. */
+    public DraftChoice showDetail(Tx tx, Requester who, long draftId, boolean detail) {
+        Optional<Draft> found = Drafts.find(tx, draftId);
+        Optional<DraftChoice> refused = refusal(found, who);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        if (!detail && found.get().project() == null) {
+            return DraftChoice.CHOOSE_PROJECT_FIRST;
+        }
+        Drafts.showDetail(tx, draftId, detail, clock.instant());
+        return DraftChoice.VIEW_CHANGED;
+    }
+
+    private DraftChoice give(Tx tx, Requester who, Draft draft, Priority priority) {
+        long draftId = draft.id();
         if (draft.project() == null) {
             return DraftChoice.CHOOSE_PROJECT_FIRST;
         }
@@ -238,8 +269,8 @@ public final class TaskService {
     }
 
     /**
-     * What a draft's prompt shows: while open, the projects to choose from and how far a split has come; once created, the
-     * task; once split, its parts.
+     * What a draft's prompt shows: while open, its view, project and priority, the projects to choose from and how far a
+     * split has come; once created, the task; once split, its parts.
      */
     public Optional<ObjectNode> draftPayload(Tx tx, long draftId) {
         return Drafts.find(tx, draftId).map(draft -> {
@@ -249,8 +280,10 @@ public final class TaskService {
             ArrayNode listed = payload.putArray("projects");
             offeredProjects(draft.requesterRef())
                     .forEach(project -> listed.addObject().put("name", project.name()).put("alias", project.alias()));
-            payload.put("priority", draft.taskId() == null ? null
+            payload.put("priority", draft.taskId() == null ? draft.priority().name()
                     : Tasks.find(tx, draft.taskId()).map(task -> task.priority().name()).orElse(null));
+            // With no project there is nothing for the short view to send: the detail view asks for one.
+            payload.put("view", draft.detail() || draft.project() == null ? "DETAIL" : "DEFAULT");
             payload.put("split", draft.splitState() == null ? null : draft.splitState().name());
             ArrayNode skipped = payload.putArray("skippedFiles");
             Attachments.forDraft(tx, draftId).stream().filter(Attachment::tooLarge).forEach(file -> skipped.add(file.name()));

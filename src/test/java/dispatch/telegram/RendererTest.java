@@ -254,9 +254,22 @@ class RendererTest {
     }
 
     @Test
+    void draftPromptShowsItsProjectAndPriorityWithSendAndDetailOnly() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm", "crm"), "crm", "OPEN", null).put("priority", "LOW").put("view", "DEFAULT"));
+
+        assertEquals(messages.getString("draft.header") + "\nFix the &lt;login&gt; timeout\nТөсөл: <b>crm</b> · 🟢", rendered.html());
+        assertEquals(List.of(
+                List.of(new Renderer.Button("✅ Илгээх", "draft:5:send:x"), new Renderer.Button("⚙️ Дэлгэрэнгүй", "draft:5:view:detail")),
+                List.of(new Renderer.Button(messages.getString("button.discard"), "draft:5:discard:x"))), rendered.keyboard());
+    }
+
+    @Test
     void draftPromptMarksTheChosenProjectAndWithOneProjectAsksOnlyForPriority() {
-        Renderer.Rendered chosen = renderer.render(OutboxKind.DRAFT_PROMPT, draftPayload(List.of("alm", "crm"), "crm", "OPEN", null));
-        Renderer.Rendered single = renderer.render(OutboxKind.DRAFT_PROMPT, draftPayload(List.of("life"), "life", "OPEN", null));
+        Renderer.Rendered chosen = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm", "crm"), "crm", "OPEN", null).put("view", "DETAIL"));
+        Renderer.Rendered single = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("life"), "life", "OPEN", null).put("view", "DETAIL"));
 
         assertEquals("✓ crm", chosen.keyboard().getFirst().get(1).text());
         assertTrue(chosen.html().contains("crm"), chosen.html());

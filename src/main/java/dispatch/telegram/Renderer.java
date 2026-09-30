@@ -323,6 +323,11 @@ public final class Renderer {
         List<String> skipped = new ArrayList<>();
         payload.path("skippedFiles").forEach(file -> skipped.add(escape(file.asText())));
         String tooLarge = skipped.isEmpty() ? "" : "\n\n" + format("draft.filesTooLarge", String.join(", ", skipped));
+        // A payload from before the views has none: one with its project gets the short view.
+        if (project != null && !payload.path("view").asText().equals("DETAIL")) {
+            return draftShortView(payload, header + "\n" + title + "\n"
+                    + format("draft.projectPriority", project, PRIORITY_ICONS.get(payload.path("priority").asText("LOW"))) + note + tooLarge);
+        }
         String html = header + "\n" + title + "\n\n"
                 + (project == null ? text("draft.chooseProject") : format("draft.project", project)) + "\n" + text("draft.choosePriority")
                 + note + tooLarge;
@@ -349,13 +354,28 @@ public final class Renderer {
             priorities.add(new Button(PRIORITY_ICONS.get(priority) + " " + text("priority." + priority), choice.data()));
         }
         keyboard.add(priorities);
-        List<Button> last = new ArrayList<>();
-        if (payload.path("splittable").asBoolean()) {
-            last.add(new Button(text("button.split"), new Callback.DraftSplit(draftId, Callback.Split.ASK).data()));
-        }
-        last.add(new Button(text("button.discard"), new Callback.DraftDiscard(draftId).data()));
-        keyboard.add(last);
+        keyboard.add(splitAndDiscard(payload, draftId));
         return new Rendered(html, keyboard, null);
+    }
+
+    /** The open draft's short view: send it as it is, or open the detail view to change it. */
+    private Rendered draftShortView(JsonNode payload, String html) {
+        long draftId = payload.path("draftId").asLong();
+        List<List<Button>> keyboard = new ArrayList<>();
+        keyboard.add(List.of(new Button(text("button.send"), new Callback.DraftSend(draftId).data()),
+                new Button(text("button.detail"), new Callback.DraftView(draftId, true).data())));
+        keyboard.add(splitAndDiscard(payload, draftId));
+        return new Rendered(html, keyboard, null);
+    }
+
+    /** ✂️ for a whole message that can still be split, and 🗑. */
+    private List<Button> splitAndDiscard(JsonNode payload, long draftId) {
+        List<Button> row = new ArrayList<>();
+        if (payload.path("splittable").asBoolean()) {
+            row.add(new Button(text("button.split"), new Callback.DraftSplit(draftId, Callback.Split.ASK).data()));
+        }
+        row.add(new Button(text("button.discard"), new Callback.DraftDiscard(draftId).data()));
+        return row;
     }
 
     /** A split message's parts, one numbered line each. */

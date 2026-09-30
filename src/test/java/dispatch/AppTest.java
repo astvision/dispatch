@@ -189,9 +189,9 @@ class AppTest {
         assertEquals(messages.getString("callback.split"), awaitCallbackAnswer());
         JsonNode third = awaitMessageContaining("Сарын тайлан");
         assertEquals(1, third.get("reply_parameters").get("message_id").asLong(), "each part's prompt is under the message");
-        assertTrue(third.get("reply_markup").toString().contains("draft:4:prio:LOW"), third.toString());
+        assertTrue(third.get("reply_markup").toString().contains("draft:4:send:x"), third.toString());
 
-        telegram.pushUpdate(privateCallback(4, 100, "Bold", "draft:4:prio:LOW", 0));
+        telegram.pushUpdate(privateCallback(4, 100, "Bold", "draft:4:send:x", 0));
 
         assertEquals(messages.getString("callback.taskCreated"), awaitCallbackAnswer());
         Path db = repos.stateDir.resolve("dispatch.db");

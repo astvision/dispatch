@@ -158,6 +158,33 @@ class DraftsTest {
     }
 
     @Test
+    void aDraftWithItsProjectOpensInTheShortViewAtLowPriorityAndSendGivesIt() {
+        long draftId = draft(SARA, "Add make help", "telegram:300/30");
+
+        JsonNode prompt = payload(draftId);
+        assertEquals("DEFAULT", prompt.get("view").asText());
+        assertEquals("LOW", prompt.get("priority").asText());
+        assertEquals(DraftChoice.CREATED, db.transactionReturning(tx -> tasks.send(tx, SARA, draftId)));
+
+        Map<String, String> task = row("SELECT * FROM task");
+        assertEquals("life", task.get("project"));
+        assertEquals("LOW", task.get("priority"));
+        assertEquals(task.get("id"), row("SELECT task_id FROM draft").get("task_id"));
+        assertEquals(DraftChoice.ALREADY_CREATED, db.transactionReturning(tx -> tasks.send(tx, SARA, draftId)));
+        assertEquals("1", row("SELECT count(*) AS n FROM task").get("n"));
+    }
+
+    @Test
+    void withoutAProjectTheDraftOpensInTheDetailViewAndSendAsksForOne() {
+        long draftId = draft(BOLD, "Fix login timeout", "telegram:100/31");
+
+        assertEquals("DETAIL", payload(draftId).get("view").asText());
+        assertEquals(DraftChoice.CHOOSE_PROJECT_FIRST, db.transactionReturning(tx -> tasks.send(tx, BOLD, draftId)));
+        assertEquals(DraftChoice.NOT_REQUESTER, db.transactionReturning(tx -> tasks.send(tx, SARA, draftId)));
+        assertEquals("0", row("SELECT count(*) AS n FROM task").get("n"));
+    }
+
+    @Test
     void withTopicsOnEachGivenTaskGetsItsOwnTopicInTheWritersPrivateChat() {
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, schedulerWakes::incrementAndGet, () -> { }, true, draftId -> { }, false);
         long draftId = draft(SARA, "Add make help", "telegram:300/20");
@@ -279,6 +306,10 @@ class DraftsTest {
     private long draft(Requester who, String text, String originRef) {
         assertEquals(DraftResult.DRAFTED, db.transactionReturning(tx -> tasks.draft(tx, who, null, text, originRef)));
         return Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = ?", originRef).get("id"));
+    }
+
+    private JsonNode payload(long draftId) {
+        return db.transactionReturning(tx -> tasks.draftPayload(tx, draftId)).orElseThrow();
     }
 
     private static Config.Project project(String name, String alias) {

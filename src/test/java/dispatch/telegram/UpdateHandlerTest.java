@@ -203,6 +203,22 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void sendGivesTheDraftAtLowPriorityWhenNoneWasChosen() throws Exception {
+        handler.handle(message(518, 21, 300, "Sara", 300L, "private", "Add make help", null));
+        long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
+
+        handler.handle(privateCallback(519, 300, "Sara", "draft:" + draftId + ":send:x"));
+
+        Map<String, String> task = row("SELECT * FROM task");
+        assertEquals("life", task.get("project"));
+        assertEquals("LOW", task.get("priority"));
+        assertEquals(renderer.text("callback.taskCreated"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode created = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(created.get("text").asText().contains("#" + task.get("id")), created.toString());
+    }
+
+    @Test
     void theBinClosesADraftThatIsNotATaskAndRedrawsItsPrompt() throws Exception {
         handler.handle(message(516, 17, 100, "Bold", 100L, "private", "Is this a task, or are you doing it yourself?", null));
         long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));

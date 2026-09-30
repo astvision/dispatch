@@ -15,6 +15,8 @@ import java.util.List;
  * @param parentId  the draft of the whole message this part came from
  * @param part      this part's number, from 1
  * @param sourceRef someone's message in a group this draft was given in reply to (G-1b, G-1c); null otherwise
+ * @param priority  the priority chosen on the prompt; LOW until one is
+ * @param detail    the prompt shows its detail view, with every project and priority to choose from
  */
 public record Draft(
         long id,
@@ -33,5 +35,7 @@ public record Draft(
         Integer part,
         Instant createdAt,
         Instant updatedAt,
-        String sourceRef) {
+        String sourceRef,
+        Priority priority,
+        boolean detail) {
 }

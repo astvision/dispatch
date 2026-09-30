@@ -2,6 +2,8 @@ package dispatch.core;
 
 public enum DraftChoice {
     PROJECT_CHOSEN,
+    /** ⚙️ or ↩️: the prompt shows its other view. */
+    VIEW_CHANGED,
     CREATED,
     ALREADY_CREATED,
     EXPIRED,

@@ -813,8 +813,8 @@ public final class UpdateHandler {
     }
 
     /**
-     * A button on a draft's prompt: project, priority, 🗑 not a task, or ✂️ and its proposal's split and keep-whole choices
-     * (ADR 0013).
+     * A button on a draft's prompt: ✅ send, ⚙️/↩️ its views, project, priority, 🗑 not a task, or ✂️ and its proposal's
+     * split and keep-whole choices (ADR 0013).
      * The prompt is redrawn to show the choice, the new task or the parts.
      */
     private void onDraftButton(Tx tx, JsonNode callback, Requester who, Callback.Draft button) {
@@ -826,6 +826,8 @@ public final class UpdateHandler {
         DraftChoice choice = switch (button) {
             case Callback.DraftProject project -> tasks.chooseProject(tx, who, draftId, project.name());
             case Callback.DraftPriority priority -> tasks.choosePriority(tx, who, draftId, priority.priority());
+            case Callback.DraftSend _ -> tasks.send(tx, who, draftId);
+            case Callback.DraftView view -> tasks.showDetail(tx, who, draftId, view.detail());
             case Callback.DraftSplit split -> switch (split.choice()) {
                 // This prompt is redrawn again when the split's answer arrives.
                 case ASK -> tasks.split(tx, who, draftId, Refs.message(chatId, messageId, null));
@@ -836,6 +838,7 @@ public final class UpdateHandler {
         };
         answer(tx, callbackId, switch (choice) {
             case PROJECT_CHOSEN -> "callback.projectChosen";
+            case VIEW_CHANGED -> "callback.done";
             case CREATED -> "callback.taskCreated";
             case ALREADY_CREATED -> "callback.alreadyCreated";
             case EXPIRED -> "callback.draftExpired";
@@ -851,7 +854,7 @@ public final class UpdateHandler {
             case DISCARDED -> "callback.discarded";
             case ALREADY_DISCARDED -> "callback.alreadyDiscarded";
         });
-        if (!Set.of(DraftChoice.PROJECT_CHOSEN, DraftChoice.CREATED, DraftChoice.SPLITTING, DraftChoice.SPLIT, DraftChoice.KEPT_WHOLE,
+        if (!Set.of(DraftChoice.PROJECT_CHOSEN, DraftChoice.VIEW_CHANGED, DraftChoice.CREATED, DraftChoice.SPLITTING, DraftChoice.SPLIT, DraftChoice.KEPT_WHOLE,
                         DraftChoice.DISCARDED)
                 .contains(choice)) {
             return;

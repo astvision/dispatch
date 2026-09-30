@@ -66,6 +66,22 @@ public sealed interface Callback {
         }
     }
 
+    /** ✅ on a draft's prompt: give the task with the project and priority the draft has now. */
+    record DraftSend(long draftId) implements Draft {
+        @Override
+        public String data() {
+            return fit("draft:" + draftId + ":send:x");
+        }
+    }
+
+    /** ⚙️ (the detail view, with every project and priority) or ↩️ (back to the short view). */
+    record DraftView(long draftId, boolean detail) implements Draft {
+        @Override
+        public String data() {
+            return fit("draft:" + draftId + ":view:" + (detail ? "detail" : "default"));
+        }
+    }
+
     /** ✂️ (ask for a split), or the answer to a proposed one: split, or keep the message whole. */
     record DraftSplit(long draftId, Split choice) implements Draft {
         @Override
@@ -257,6 +273,12 @@ public sealed interface Callback {
             case "prio" -> new DraftPriority(draftId, Priority.valueOf(value));
             case "split" -> new DraftSplit(draftId, Split.of(value));
             case "discard" -> new DraftDiscard(draftId);
+            case "send" -> new DraftSend(draftId);
+            case "view" -> switch (value) {
+                case "detail" -> new DraftView(draftId, true);
+                case "default" -> new DraftView(draftId, false);
+                default -> null;
+            };
             default -> null;
         };
     }

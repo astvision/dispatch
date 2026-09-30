@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.domain.Draft;
 import dispatch.domain.DraftStatus;
+import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.SplitState;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /** SQL for drafts. Changes are conditional on the draft still being open. */
@@ -17,7 +19,7 @@ public final class Drafts {
 
     private static final String COLUMNS = """
             id, requester_ref, requester_name, chat_ref, origin_ref, description, project, status, task_id, prompt_ref, split_state,
-            topics, parent_id, part, created_at, updated_at, source_ref""";
+            topics, parent_id, part, created_at, updated_at, source_ref, priority, detail""";
 
     private Drafts() {
     }
@@ -35,10 +37,13 @@ public final class Drafts {
     public static long insert(Tx tx, NewDraft draft, Instant now) {
         return tx.insert("""
                         INSERT INTO draft (requester_ref, requester_name, chat_ref, origin_ref, description, project, status,
-                                           parent_id, part, created_at, updated_at, source_ref)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                           parent_id, part, created_at, updated_at, source_ref, detail)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 draft.requester().ref(), draft.requester().name(), draft.chatRef(), draft.originRef(), draft.description(),
-                draft.project(), DraftStatus.OPEN, draft.parentId(), draft.part(), now, now, draft.sourceRef());
+                draft.project(), DraftStatus.OPEN, draft.parentId(), draft.part(), now, now, draft.sourceRef(),
+                // Without a project the short view has nothing to send: the prompt opens on its detail view, and stays there
+                // once a project is chosen until ↩️.
+                draft.project() == null ? 1 : 0);
     }
 
     public static Optional<Draft> find(Tx tx, long id) {
@@ -73,6 +78,12 @@ public final class Drafts {
     public static boolean chooseProject(Tx tx, long id, String project, Instant now) {
         return tx.update("UPDATE draft SET project = ?, updated_at = ? WHERE id = ? AND status = ?",
                 project, now, id, DraftStatus.OPEN) == 1;
+    }
+
+    /** Shows the prompt's detail view, or its short one; false when the draft is no longer open. */
+    public static boolean showDetail(Tx tx, long id, boolean detail, Instant now) {
+        return tx.update("UPDATE draft SET detail = ?, updated_at = ? WHERE id = ? AND status = ?",
+                detail ? 1 : 0, now, id, DraftStatus.OPEN) == 1;
     }
 
     public static boolean created(Tx tx, long id, long taskId, Instant now) {
@@ -144,7 +155,9 @@ public final class Drafts {
                 row.intOrNull("part"),
                 row.instant("created_at"),
                 row.instant("updated_at"),
-                row.string("source_ref"));
+                row.string("source_ref"),
+                Objects.requireNonNullElse(row.enumValue("priority", Priority.class), Priority.LOW),
+                row.intValue("detail") == 1);
     }
 
     private static List<String> topics(String json) {

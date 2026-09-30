@@ -43,7 +43,7 @@ public final class Database implements AutoCloseable {
             "db/019-member-prefs.sql", "db/020-assistant.sql", "db/021-draft-discarded.sql", "db/022-worker-capacity.sql",
             "db/023-additions.sql", "db/024-merged.sql", "db/025-draft-source.sql", "db/026-outbox-edit-of.sql",
             "db/027-retired-reply-kinds.sql", "db/028-worker-agent.sql", "db/029-run-sandbox.sql",
-            "db/030-task-head.sql");
+            "db/030-task-head.sql", "db/031-draft-view.sql");
 
     private final Connection connection;
     private final ReentrantLock lock = new ReentrantLock();
