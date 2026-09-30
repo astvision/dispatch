@@ -61,6 +61,12 @@ public final class Tasks {
         tx.update("UPDATE task SET topic_ref = NULL, updated_at = ? WHERE id = ?", now, id);
     }
 
+    /** The projects {@code requesterRef} gave tasks for, the one of their latest task first. */
+    public static List<String> recentProjects(Tx tx, String requesterRef) {
+        return tx.list("SELECT project FROM task WHERE requester_ref = ? GROUP BY project ORDER BY max(id) DESC",
+                row -> row.string("project"), requesterRef);
+    }
+
     public static boolean existsWithOrigin(Tx tx, String originRef) {
         return tx.one("SELECT 1 AS found FROM task WHERE origin_ref = ?", row -> true, originRef).isPresent();
     }

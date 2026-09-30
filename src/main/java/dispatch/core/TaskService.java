@@ -113,8 +113,8 @@ public final class TaskService {
     }
 
     /**
-     * A member's private message becomes a draft; its prompt asks for the project, unless the member can use only one or
-     * named one, and for the priority (ADR 0012).
+     * A member's private message becomes a draft (ADR 0012). Its project is the one the member named, else their only one,
+     * else the one of their latest task still offered to them; with none of these its prompt opens on the detail view to ask.
      *
      * @param projectKey a project the member named, null if none; one they cannot use is ignored and asked for instead
      * @param originRef  the message in the member's private chat
@@ -169,7 +169,8 @@ public final class TaskService {
             return DraftResult.NO_PROJECTS;
         }
         String named = projectKey == null ? null : projects.find(projectKey).map(Config.Project::name).orElse(null);
-        String project = preselected(offered, named);
+        String preselected = preselected(offered, named);
+        String project = preselected != null ? preselected : lastUsed(tx, who.ref(), offered);
         long id = Drafts.insert(tx, new Drafts.NewDraft(who, chatRef, originRef, description, project, null, null,
                 group == null ? null : group.sourceRef()), now);
         Attachments.addToDraft(tx, id, attachments);
@@ -466,6 +467,13 @@ public final class TaskService {
             return named;
         }
         return offered.size() == 1 ? offered.getFirst().name() : null;
+    }
+
+    /** The project of the member's latest task that is still one they are offered; null for none. */
+    private static String lastUsed(Tx tx, String requesterRef, List<Config.Project> offered) {
+        Set<String> names = new HashSet<>();
+        offered.forEach(project -> names.add(project.name()));
+        return Tasks.recentProjects(tx, requesterRef).stream().filter(names::contains).findFirst().orElse(null);
     }
 
     /** The member's projects that can take tasks now, in config order. */

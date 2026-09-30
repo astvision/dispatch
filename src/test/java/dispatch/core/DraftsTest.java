@@ -205,6 +205,23 @@ class DraftsTest {
     }
 
     @Test
+    void withoutANamedOrOnlyProjectTheLatestTaskStillOfferedGivesTheProject() {
+        give(BOLD, "life", "Add make help", "telegram:100/40");
+        give(BOLD, "crm", "Rename the report", "telegram:100/41");
+
+        long crm = draft(BOLD, "Drop old logs", "telegram:100/42");
+        unavailable = Set.of("crm");
+        long life = draft(BOLD, "Fix login timeout", "telegram:100/43");
+        db.transaction(tx -> tasks.draft(tx, BOLD, "alm", "Tune the cache", "telegram:100/44"));
+
+        assertEquals("crm", row("SELECT project FROM draft WHERE id = ?", crm).get("project"));
+        assertEquals("DEFAULT", payload(crm).get("view").asText(), "nothing left to ask");
+        assertEquals("life", row("SELECT project FROM draft WHERE id = ?", life).get("project"), "crm takes no tasks now");
+        assertEquals("autoland-management", row("SELECT project FROM draft WHERE origin_ref = 'telegram:100/44'").get("project"),
+                "the project named with the task still comes first");
+    }
+
+    @Test
     void withTopicsOnEachGivenTaskGetsItsOwnTopicInTheWritersPrivateChat() {
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, schedulerWakes::incrementAndGet, () -> { }, true, draftId -> { }, false);
         long draftId = draft(SARA, "Add make help", "telegram:300/20");
@@ -326,6 +343,12 @@ class DraftsTest {
     private long draft(Requester who, String text, String originRef) {
         assertEquals(DraftResult.DRAFTED, db.transactionReturning(tx -> tasks.draft(tx, who, null, text, originRef)));
         return Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = ?", originRef).get("id"));
+    }
+
+    private void give(Requester who, String project, String text, String originRef) {
+        long draftId = draft(who, text, originRef);
+        db.transaction(tx -> tasks.chooseProject(tx, who, draftId, project));
+        assertEquals(DraftChoice.CREATED, db.transactionReturning(tx -> tasks.send(tx, who, draftId)));
     }
 
     private JsonNode payload(long draftId) {
