@@ -180,6 +180,8 @@ public final class Assistant {
         UUID session = context.session().orElseGet(UUID::randomUUID);
         boolean thinkHard = text.toLowerCase(Locale.ROOT).contains(THINK_HARD);
         List<Spent> spent = new ArrayList<>();
+        // The first before the agent starts, so even an answer that comes at once was typed; the loop repeats it.
+        type(chatRef);
         Thread typingLoop = Thread.ofVirtual().name("assistant-typing-" + who.ref()).start(() -> keepTyping(chatRef));
         try {
             Map<String, String> environment = home.environmentFor(who.ref(), visible, groups.isAdmin(who.ref()));
@@ -328,16 +330,20 @@ public final class Assistant {
 
     private void keepTyping(String chatRef) {
         try {
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    typing.accept(chatRef);
-                } catch (RuntimeException e) {
-                    Log.warn("assistant.typing_failed", "chat", chatRef, "error", e.getMessage());
-                }
+            while (true) {
                 Thread.sleep(TYPING_INTERVAL);
+                type(chatRef);
             }
         } catch (InterruptedException e) {
             // The turn is over.
+        }
+    }
+
+    private void type(String chatRef) {
+        try {
+            typing.accept(chatRef);
+        } catch (RuntimeException e) {
+            Log.warn("assistant.typing_failed", "chat", chatRef, "error", e.getMessage());
         }
     }
 
