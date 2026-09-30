@@ -53,11 +53,15 @@ PR with the failing tail is still useful to the requester, who decides; a withhe
   project.
 - The reviewer sees the plan and the diff and can be wrong either way. Its findings are advice
   the building session acts on once; what is left is listed on the pull request.
-- The Verification block is in the commit body, so it also stays in git history. A later `DELIVER` retry does not add it
-  again.
+- The Verification block is in the commit body, so it also stays in git history. When delivery fails after the loop, the
+  run's stored summary carries the block, so the `DELIVER` retry commits it (and does not add it twice).
+- The block claims only what was checked: tests a successful fix changed after their last run, with no re-run, are
+  reported as not re-run (`UNVERIFIED`), and blocking findings a fix addressed are reported as fixed but not re-reviewed
+  (`FIXED_UNREVIEWED`), all of them still listed.
+- The reviewer diffs against the task's base, so a follow-up's reviewer sees the whole task's change.
 - A job with the loop off carries no new fields, so older workers still read it. A job with the loop on, and a result with
   a Verification, are refused by a machine from before this version (the protocol rejects unknown fields): upgrade the
   team machine and its workers together.
-- Limits kept: a loop call's orphan tracking records the latest agent pid, so the test process tree is not recorded for
-  orphan kill; a timed-out loop call's own partial cost is not counted.
+- The test command's process is recorded for orphan kill while it runs, as each agent call's is.
+- Limits kept: a timed-out loop call's own partial cost is not counted.
 - The Mini App and `dispatch ui` do not show the Verification, nor edit `test` and `loop`; they are set in the YAML.

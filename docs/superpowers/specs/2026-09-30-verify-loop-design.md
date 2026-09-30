@@ -138,8 +138,21 @@ Where the code differs from the design above:
 - **Verification block.** It is appended to the delivery commit's body, which is the PR body, so it also stays in git
   history; a later `DELIVER` retry does not add it again. Its text is the English `Verification` block of
   `Verification.block()`, not the emoji block sketched above. The Telegram result uses the Mongolian `verify.*` keys
-  (`verify.testsPassed`, `testsFailing`, `noTestCommand`, `testsNotRun`, `reviewOk`, `reviewFindings`, `reviewFailed`,
-  `reviewNotRun`, `stopped`) in `messages_mn.properties`.
+  (`verify.testsPassed`, `testsFailing`, `testsUnverified`, `noTestCommand`, `testsNotRun`, `reviewOk`, `reviewFindings`,
+  `reviewFixed`, `reviewFailed`, `reviewNotRun`, `stopped`) in `messages_mn.properties`. Findings are listed as code
+  spans, so a reviewer's `@name` or `#12` pings no one and links nothing; the parser keeps at most 20 findings of 500
+  characters (the schema's caps, which Codex and Gemini do not enforce).
+- **The block claims only what was checked.** Tests that a successful fix changed after their last run, with no re-run
+  (time, budget or a stop), are `UNVERIFIED`: "not re-run after the last change (last run: pass|failing, run N)". Blocking
+  findings handed to a fix that succeeded are `FIXED_UNREVIEWED`: "N blocking fixed, not re-reviewed", with every finding
+  the reviewer made still listed, since nothing reviews the fix.
+- **Review diff.** The reviewer gets the diff from the task's base (`Job.baseSha`, where its branch started), so a
+  follow-up's reviewer sees the earlier executions' change too; only a job without a recorded base falls back to the
+  run's start commit.
+- **Delivery retry.** When delivery fails after the loop, the run's stored summary already carries the Verification
+  block, so the `DELIVER` retry commits it.
+- **Orphan kill.** The test command's process is recorded as the run's pid (with its start time) while it runs, exactly
+  as each agent call's is, so startup recovery ends a test tree left by a crash.
 - **Loop-call timeouts.** A fix or review call gets the time left minus a 2-minute delivery reserve. When it runs out only
   that agent is cancelled, the call counts as failed ("timed out after ..."), the loop stops and the run still delivers.
   Only the implementation call keeps the run-level watchdog, whose timeout fails the run.
@@ -149,5 +162,5 @@ Where the code differs from the design above:
   `DISPATCH_WORKER_KEY` withheld (`ProcessRun.agentEnvironment`), and runs in the same sandbox.
 - **Compatibility.** A job with the loop off carries no new fields, so older workers still read it; a job with the loop on,
   and a result with a Verification, need the team machine and its workers upgraded together.
-- **Known limits.** A loop call's orphan tracking records the latest agent pid, so the test process tree is not recorded
-  for orphan kill; a timed-out loop call's own partial cost is not counted.
+- **Known limits.** A timed-out loop call's own partial cost is not counted. After a `DELIVER` retry the Telegram result
+  shows the English block inside the summary, not the Mongolian lines.
