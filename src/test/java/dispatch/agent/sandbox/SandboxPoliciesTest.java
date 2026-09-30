@@ -18,6 +18,8 @@ import java.util.UUID;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 class SandboxPoliciesTest {
@@ -30,6 +32,8 @@ class SandboxPoliciesTest {
 
     @BeforeEach
     void setUp() throws IOException {
+        // Production resolves real paths; /var is /private/var on macOS and Windows has 8.3 short names.
+        root = root.toRealPath();
         home = Files.createDirectories(root.resolve("home"));
         stateDir = Files.createDirectories(root.resolve("state"));
         configDir = Files.createDirectories(home.resolve(".config/dispatch"));
@@ -182,6 +186,7 @@ class SandboxPoliciesTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "no unix uid on Windows; the sandbox is Linux-only")
     void withoutXdgRuntimeDirTheUsersRunUserDirIsHidden() throws IOException {
         Path runUser = Path.of("/run/user/" + Files.getAttribute(home, "unix:uid"));
         org.junit.jupiter.api.Assumptions.assumeTrue(Files.isDirectory(runUser), "no " + runUser + " here");

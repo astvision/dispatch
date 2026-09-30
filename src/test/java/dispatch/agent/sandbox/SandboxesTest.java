@@ -18,7 +18,7 @@ class SandboxesTest {
         Sandbox sandbox = Sandboxes.detect(SandboxSetting.AUTO, probe("Linux", "/usr/bin/bwrap", new Probe.Trial(0, "")));
 
         assertInstanceOf(Bubblewrap.class, sandbox);
-        assertEquals(List.of(List.of("/usr/bin/bwrap", "--ro-bind", "/", "/", "--unshare-pid", "--proc", "/proc", "true")), trials);
+        assertEquals(List.of(List.of(Path.of("/usr/bin/bwrap").toString(), "--ro-bind", "/", "/", "--unshare-pid", "--proc", "/proc", "true")), trials);
     }
 
     @Test

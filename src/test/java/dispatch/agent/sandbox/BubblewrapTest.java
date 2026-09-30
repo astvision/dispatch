@@ -6,7 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 
+@DisabledOnOs(value = OS.WINDOWS, disabledReason = "bubblewrap is Linux-only; Windows prints these paths with backslashes")
 class BubblewrapTest {
 
     private static final List<String> CLAUDE = List.of("claude", "-p", "--output-format", "stream-json");
