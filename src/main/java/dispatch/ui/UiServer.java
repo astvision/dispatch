@@ -112,6 +112,8 @@ public final class UiServer implements AutoCloseable {
     private final Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes;
     /** Null when this server answers every call itself. */
     private final Forward forward;
+    /** When the last request came, so a {@code dispatch ui} the bot started can stop once nobody uses it. */
+    private volatile long lastRequestMillis = System.currentTimeMillis();
 
     private UiServer(HttpServer server, Auth auth, String resourceRoot, Map<String, Function<Caller, Object>> getRoutes,
                      Map<String, BiFunction<Caller, JsonNode, Object>> postRoutes, Forward forward) {
@@ -176,12 +178,18 @@ public final class UiServer implements AutoCloseable {
         return auth.entryUri().orElseThrow(() -> new IllegalStateException("this server has no login link"));
     }
 
+    /** When the last request came, or when the server started if none did. */
+    public java.time.Instant lastRequestAt() {
+        return java.time.Instant.ofEpochMilli(lastRequestMillis);
+    }
+
     @Override
     public void close() {
         server.stop(0);
     }
 
     private void handle(HttpExchange exchange) throws IOException {
+        lastRequestMillis = System.currentTimeMillis();
         try (exchange) {
             try {
                 respond(exchange);

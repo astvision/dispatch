@@ -86,16 +86,30 @@ public final class Main {
 
     private static void ui(Cli.Ui options, Locations defaults) throws InterruptedException {
         UiServer server;
+        UiCommand command = new UiCommand(System.out, BotApi::create, defaults.forInstance(options.instance()),
+                Service.forThisMachine(Service.Kind.DISPATCH, options.instance()), "/ui");
         try {
-            server = new UiCommand(System.out, BotApi::create, defaults.forInstance(options.instance()),
-                    Service.forThisMachine(Service.Kind.DISPATCH, options.instance()), "/ui").start(options, System.getenv());
+            server = command.start(options, System.getenv());
         } catch (CliException e) {
             System.err.println(e.getMessage());
             System.exit(1);
             return;
         }
-        Runtime.getRuntime().addShutdownHook(new Thread(server::close, "dispatch-ui-shutdown"));
-        new CountDownLatch(1).await(); // until Ctrl+C
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            server.close();
+            command.forget(server);
+        }, "dispatch-ui-shutdown"));
+        if (options.idleMinutes() == 0) {
+            new CountDownLatch(1).await(); // until Ctrl+C
+            return;
+        }
+        // Started by the bot for the Mini App (ADR 0018): an open page asks every few seconds, so a quiet server is unused.
+        java.time.Duration idle = java.time.Duration.ofMinutes(options.idleMinutes());
+        while (java.time.Duration.between(server.lastRequestAt(), java.time.Instant.now()).compareTo(idle) < 0) {
+            Thread.sleep(60_000);
+        }
+        System.out.println("Dispatch UI: no request for " + options.idleMinutes() + " minutes, stopping.");
+        System.exit(0);
     }
 
     /** @param instance the instance this bot is, null for the default one */

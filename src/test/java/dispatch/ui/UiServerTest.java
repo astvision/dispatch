@@ -60,6 +60,53 @@ class UiServerTest {
         assertEquals(401, get(server.loginUri(), null).statusCode(), "the link works once");
     }
 
+    /** ADR 0018, amended: the bot on this computer asks for another link, which the Mini App opens in a browser. */
+    @Test
+    void theBotWithTheKeyGetsAFreshLinkThatAlsoWorksOnce() throws Exception {
+        try (UiServer keyed = UiServer.start(0, "/ui-test", port -> new UiAuth(port, "the-key"), Map.of("/api/ping", caller -> Map.of()),
+                Map.of())) {
+            HttpResponse<String> minted = mint(keyed, "the-key");
+
+            assertEquals(200, minted.statusCode(), minted.body());
+            URI link = URI.create(dispatch.Json.read(minted.body()).path("url").asText());
+            assertEquals("127.0.0.1:" + keyed.port(), link.getAuthority(), "only a browser on this computer can open it");
+            HttpResponse<String> login = get(link, null);
+            assertEquals(302, login.statusCode());
+            assertEquals(200, get(URI.create("http://127.0.0.1:" + keyed.port() + "/api/ping"),
+                    cookie(login.headers().firstValue("Set-Cookie").orElseThrow())).statusCode());
+            assertEquals(401, get(link, null).statusCode(), "a minted link works once too");
+            assertEquals(302, get(keyed.loginUri(), null).statusCode(), "the printed link is its own");
+        }
+    }
+
+    @Test
+    void aLinkIsRefusedWithoutTheKeyOrWhereNoKeyWasGiven() throws Exception {
+        try (UiServer keyed = UiServer.start(0, "/ui-test", port -> new UiAuth(port, "the-key"), Map.of(), Map.of())) {
+            assertEquals(403, mint(keyed, "wrong").statusCode());
+            assertEquals(403, mint(keyed, null).statusCode());
+        }
+        HttpResponse<String> unkeyed = mint(server, "anything");
+        assertEquals(401, unkeyed.statusCode(), "a server started without a key serves no /link");
+        assertFalse(unkeyed.body().contains("url"), unkeyed.body());
+    }
+
+    @Test
+    void everyRequestMovesTheLastRequestTime() throws Exception {
+        java.time.Instant before = server.lastRequestAt();
+        Thread.sleep(5);
+        get(path("/api/ping"), null);
+        assertTrue(server.lastRequestAt().isAfter(before));
+    }
+
+    private HttpResponse<String> mint(UiServer target, String key) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + target.port() + "/link"))
+                .POST(HttpRequest.BodyPublishers.noBody());
+        if (key != null) {
+            request.header(UiAuth.KEY_HEADER, key);
+        }
+        return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
     @Test
     void theApiNeedsASession() throws Exception {
         HttpResponse<String> response = get(path("/api/ping"), null);

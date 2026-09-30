@@ -68,7 +68,13 @@ public final class Cli {
      * @param instance    null for the default instance, else the name a second instance runs under
      * @param portGiven   true when --port was given explicitly, not defaulted
      */
-    public record Ui(Path configFile, int port, boolean openBrowser, String instance, boolean portGiven) implements Invocation {
+    /** @param idleMinutes stop after this long without a request, 0 for never: the bot starts it with 30 (ADR 0018) */
+    public record Ui(Path configFile, int port, boolean openBrowser, String instance, boolean portGiven, int idleMinutes)
+            implements Invocation {
+
+        public Ui(Path configFile, int port, boolean openBrowser, String instance, boolean portGiven) {
+            this(configFile, port, openBrowser, instance, portGiven, 0);
+        }
 
         public Ui(Path configFile, int port, boolean openBrowser) {
             this(configFile, port, openBrowser, null, true);
@@ -218,10 +224,11 @@ public final class Cli {
                 yield new Check(arguments.configFile(defaults));
             }
             case "ui" -> {
-                arguments.allow(0, Set.of("config", "port", "no-browser", "instance"));
+                arguments.allow(0, Set.of("config", "port", "no-browser", "instance", "idle-minutes"));
                 arguments.refuseConfigWithInstance();
                 yield new Ui(arguments.configFile(defaults), port(arguments.values().getOrDefault("port", "7878")),
-                        !arguments.switches().contains("no-browser"), arguments.instance(), arguments.values().containsKey("port"));
+                        !arguments.switches().contains("no-browser"), arguments.instance(), arguments.values().containsKey("port"),
+                        idleMinutes(arguments.values().getOrDefault("idle-minutes", "0")));
             }
             case "worker" -> {
                 if (arguments.positional().isEmpty()) {
@@ -293,6 +300,18 @@ public final class Cli {
             // falls through to the message below
         }
         throw new CliException("--port needs a number from 1 to 65535, not " + value);
+    }
+
+    private static int idleMinutes(String value) {
+        try {
+            int minutes = Integer.parseInt(value);
+            if (minutes >= 0) {
+                return minutes;
+            }
+        } catch (NumberFormatException e) {
+            // falls through to the message below
+        }
+        throw new CliException("--idle-minutes needs a whole number of minutes, 0 for never, not " + value);
     }
 
     /** A command's positional arguments, --name value options and --switches. */

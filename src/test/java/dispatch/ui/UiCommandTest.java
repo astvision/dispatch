@@ -57,6 +57,24 @@ class UiCommandTest {
         }
     }
 
+    /** The bot on this computer finds it through ui.json, owner-only; a clean stop takes the file away. */
+    @Test
+    void itTellsTheBotWhereItListensAndForgetsItAtAStop() throws Exception {
+        UiCommand command = command("/ui-test");
+        Path state = dir.resolve("state");
+        try (UiServer server = command.start(new Cli.Ui(dir.resolve("dispatch.yaml"), 0, false), Map.of())) {
+            UiFile file = UiFile.read(state).orElseThrow();
+            assertEquals(server.port(), file.port());
+            assertEquals(64, file.key().length(), "256 random bits");
+            if (java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+                assertEquals("rw-------", java.nio.file.attribute.PosixFilePermissions.toString(
+                        java.nio.file.Files.getPosixFilePermissions(UiFile.in(state))));
+            }
+            command.forget(server);
+        }
+        assertTrue(UiFile.read(state).isEmpty());
+    }
+
     @Test
     void theManagementRoutesAreServed() throws Exception {
         try (UiServer server = command("/ui-test").start(new Cli.Ui(dir.resolve("dispatch.yaml"), 0, false), Map.of())) {
