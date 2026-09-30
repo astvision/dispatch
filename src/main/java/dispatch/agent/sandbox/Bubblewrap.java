@@ -45,6 +45,13 @@ public final class Bubblewrap implements Sandbox {
         // Optional: a machine without ~/.gemini or ~/.m2 runs all the same.
         policy.writable().forEach(path -> bind(args, "--bind-try", path));
         policy.readOnly().forEach(path -> bind(args, "--ro-bind-try", path));
+        if (policy.worktreeAdmin() != null) {
+            // Over the read-only worktrees dir: git writes this worktree's index and HEAD here. Then read-only again
+            // what says where its config is (commondir) and its own config (config.worktree).
+            bind(args, "--bind", policy.worktreeAdmin());
+            bind(args, "--ro-bind-try", policy.worktreeAdmin().resolve("config.worktree"));
+            bind(args, "--ro-bind-try", policy.worktreeAdmin().resolve("commondir"));
+        }
         args.addAll(List.of("--chdir", policy.workdir().toString(), "--"));
         args.addAll(commandLine);
         return List.copyOf(args);

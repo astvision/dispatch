@@ -53,7 +53,8 @@ class SandboxPoliciesTest {
         assertEquals(List.of(attachments, home.resolve(".claude/settings.json"), home.resolve(".claude/settings.local.json"),
                 home.resolve(".codex/config.toml"), home.resolve(".gemini/settings.json"), home.resolve(".gradle/init.d"),
                 home.resolve(".gradle/gradle.properties"), home.resolve(".m2/settings.xml"), worktree.resolve(".git"), common.resolve("config"), common.resolve("hooks"),
-                common.resolve("info"), gitDir.resolve("config.worktree"), gitDir.resolve("commondir")), policy.readOnly());
+                common.resolve("info"), common.resolve("worktrees")), policy.readOnly());
+        assertEquals(gitDir, policy.worktreeAdmin());
         assertEquals(List.of(home.resolve(".claude"), home.resolve(".claude.json"), home.resolve(".m2"),
                 home.resolve(".gradle"), home.resolve(".npm"), home.resolve(".cache")), policy.writable());
         assertEquals(List.of(home.resolve(".ssh"), home.resolve(".config/gh"), configDir, stateDir), policy.hidden());
@@ -191,7 +192,7 @@ class SandboxPoliciesTest {
     }
 
     @Test
-    void theGitConfigHooksAndWorktreeAdminFilesAreMountedBackReadOnlyAfterTheGitDir() throws IOException {
+    void theGitConfigHooksAndOtherWorktreesAdminDirsAreMountedBackReadOnlyAfterTheGitDir() throws IOException {
         // Dispatch's own git later runs outside the sandbox with GH_TOKEN; config and hooks there must stay Dispatch's.
         Path common = stateDir.resolve("repos/alm/.git");
         Path gitDir = Files.createDirectories(common.resolve("worktrees/7"));
@@ -202,7 +203,9 @@ class SandboxPoliciesTest {
                 .forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of());
 
         assertTrue(policy.readOnly().containsAll(List.of(common.resolve("config"), common.resolve("hooks"), common.resolve("info"),
-                gitDir.resolve("config.worktree"), gitDir.resolve("commondir"))), policy.readOnly().toString());
+                common.resolve("worktrees"))), policy.readOnly().toString());
+        // Mounted back read-write over that, with its own commondir and config.worktree read-only again (Bubblewrap).
+        assertEquals(gitDir, policy.worktreeAdmin());
     }
 
     @Test

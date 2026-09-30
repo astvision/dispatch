@@ -84,18 +84,15 @@ public final class SandboxPolicies {
                 .toList();
         GitLink git = gitLink(workdir);
         if (git == null) {
-            return new SandboxPolicy(workdir, null, readOnly, writable, hidden);
+            return new SandboxPolicy(workdir, null, null, readOnly, writable, hidden);
         }
         // Mounted after the workdir and the git dir: the agent cannot point the next run's mounts somewhere else, nor
         // plant config (core.fsmonitor, filters, remotes) or hooks that Dispatch's own git runs outside the sandbox.
         readOnly.add(workdir.resolve(".git"));
         GIT_CONTROL.forEach(name -> readOnly.add(git.commonDir().resolve(name)));
-        if (git.worktreeAdmin() != null) {
-            // commondir says where this worktree's config is; config.worktree is its own config.
-            readOnly.add(git.worktreeAdmin().resolve("config.worktree"));
-            readOnly.add(git.worktreeAdmin().resolve("commondir"));
-        }
-        return new SandboxPolicy(workdir, git.commonDir(), readOnly, writable, hidden);
+        // Other worktrees' admin dirs: a rewritten commondir there would redirect Dispatch's git in that worktree.
+        readOnly.add(git.commonDir().resolve("worktrees"));
+        return new SandboxPolicy(workdir, git.commonDir(), git.worktreeAdmin(), readOnly, writable, hidden);
     }
 
     /**

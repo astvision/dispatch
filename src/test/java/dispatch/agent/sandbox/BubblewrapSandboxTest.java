@@ -170,6 +170,30 @@ class BubblewrapSandboxTest {
         assertFalse(Files.exists(common.resolve("hooks/post-commit")));
     }
 
+    @Test
+    void theAgentCannotWriteASiblingWorktreesAdminDirButGitStillWorksInItsOwn() throws Exception {
+        // A rewritten sibling commondir would point Dispatch's git in that worktree at a config the agent wrote.
+        Path clone = stateDir.resolve("repos/alm");
+        git(clone, "worktree", "add", "-q", "-b", "dispatch/8", stateDir.resolve("worktrees/8").toString());
+        Path sibling = clone.resolve(".git/worktrees/8");
+        String before = Files.readString(sibling.resolve("commondir"));
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
+                        worktree.resolve("run")), List.of());
+
+        Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", """
+                if { echo /elsewhere > "$0/commondir"; } 2>/dev/null; then echo sibling-written; else echo sibling-refused; fi
+                if mkdir "$0/../9" 2>/dev/null; then echo admin-created; else echo admin-refused; fi
+                echo x > x.txt && git add x.txt && git -c user.name=t -c user.email=t@t commit -q -m x && echo commit-ok
+                git status --porcelain && echo status-ok
+                """, sibling.toString()), policy)).directory(worktree.toFile()).redirectErrorStream(true).start();
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS));
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+        assertEquals(List.of("sibling-refused", "admin-refused", "commit-ok", "status-ok"), output.strip().lines().toList(), output);
+        assertEquals(before, Files.readString(sibling.resolve("commondir")));
+    }
+
     private static void git(Path dir, String... args) throws IOException, InterruptedException {
         List<String> command = new java.util.ArrayList<>(List.of("git"));
         command.addAll(List.of(args));

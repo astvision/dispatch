@@ -9,11 +9,13 @@ import java.util.List;
  *
  * @param workdir      read-write, and where the agent starts
  * @param gitCommonDir the clone's .git that a worktree's .git file points to, read-write; null when the run has none
+ * @param worktreeAdmin {@code <gitCommonDir>/worktrees/<name>} of the run's own worktree, read-write over the read-only
+ *                     {@code worktrees} dir, its {@code commondir} and {@code config.worktree} read-only again; null when none
  * @param readOnly     mounted back read-only when they exist
  * @param writable     mounted back read-write when they exist
  * @param hidden       existing directories replaced by empty ones
  */
-public record SandboxPolicy(Path workdir, Path gitCommonDir, List<Path> readOnly, List<Path> writable, List<Path> hidden) {
+public record SandboxPolicy(Path workdir, Path gitCommonDir, Path worktreeAdmin, List<Path> readOnly, List<Path> writable, List<Path> hidden) {
 
     public SandboxPolicy {
         readOnly = List.copyOf(readOnly);

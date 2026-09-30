@@ -16,8 +16,9 @@ class BubblewrapTest {
         SandboxPolicy policy = new SandboxPolicy(
                 Path.of("/state/worktrees/7"),
                 Path.of("/state/repos/alm/.git"),
+                Path.of("/state/repos/alm/.git/worktrees/7"),
                 List.of(Path.of("/state/attachments/7"), Path.of("/state/worktrees/7/.git"), Path.of("/state/repos/alm/.git/config"),
-                        Path.of("/home/ann/.claude/settings.json")),
+                        Path.of("/state/repos/alm/.git/worktrees"), Path.of("/home/ann/.claude/settings.json")),
                 List.of(Path.of("/home/ann/.claude"), Path.of("/home/ann/.m2")),
                 List.of(Path.of("/home/ann/.ssh"), Path.of("/state")));
 
@@ -36,7 +37,13 @@ class BubblewrapTest {
                 // Read-only over the read-write mounts above: order is what makes them read-only.
                 "--ro-bind-try", "/state/worktrees/7/.git", "/state/worktrees/7/.git",
                 "--ro-bind-try", "/state/repos/alm/.git/config", "/state/repos/alm/.git/config",
+                "--ro-bind-try", "/state/repos/alm/.git/worktrees", "/state/repos/alm/.git/worktrees",
                 "--ro-bind-try", "/home/ann/.claude/settings.json", "/home/ann/.claude/settings.json",
+                // Other worktrees' admin dirs stay read-only; git writes this run's own index and HEAD, but not where its
+                // config comes from.
+                "--bind", "/state/repos/alm/.git/worktrees/7", "/state/repos/alm/.git/worktrees/7",
+                "--ro-bind-try", "/state/repos/alm/.git/worktrees/7/config.worktree", "/state/repos/alm/.git/worktrees/7/config.worktree",
+                "--ro-bind-try", "/state/repos/alm/.git/worktrees/7/commondir", "/state/repos/alm/.git/worktrees/7/commondir",
                 "--chdir", "/state/worktrees/7",
                 "--",
                 "claude", "-p", "--output-format", "stream-json"), wrapped);
@@ -44,7 +51,7 @@ class BubblewrapTest {
 
     @Test
     void aRunWithoutAGitDirMountsOnlyItsWorkdir() {
-        SandboxPolicy policy = new SandboxPolicy(Path.of("/state/splits/3"), null, List.of(), List.of(), List.of());
+        SandboxPolicy policy = new SandboxPolicy(Path.of("/state/splits/3"), null, null, List.of(), List.of(), List.of());
 
         List<String> wrapped = new Bubblewrap("bwrap").wrap(List.of("claude"), policy);
 
