@@ -175,7 +175,8 @@ public final class RunTransitions {
                 result == null ? null : result.turns(),
                 output,
                 result == null ? null : Json.write(result.denials()),
-                result == null ? null : result.model());
+                result == null ? null : result.model(),
+                result == null || result.sandbox() == null ? null : result.sandbox().name());
         if (!Runs.finish(tx, run.taskId(), run.seq(), finish, now)) {
             tx.afterCommit(() -> Log.warn("run.already_finished", "task", run.taskId(), "run", run.seq(),
                     "status", run.status(), "ignored", status));
@@ -186,6 +187,10 @@ public final class RunTransitions {
         if (result != null && result.requestedModel() != null) {
             tx.afterCommit(() -> Log.warn("agent.model_differs", "task", run.taskId(), "run", run.seq(),
                     "requested", result.requestedModel(), "answered", result.model()));
+        }
+        if (result != null && result.sandbox() != null && result.sandbox().unsandboxedReason() != null) {
+            tx.afterCommit(() -> Log.warn("agent.unsandboxed", "task", run.taskId(), "run", run.seq(),
+                    "reason", result.sandbox().unsandboxedReason()));
         }
         return true;
     }
@@ -201,6 +206,9 @@ public final class RunTransitions {
         payload.put("model", result.model());
         if (result.requestedModel() != null) {
             payload.put("requestedModel", result.requestedModel());
+        }
+        if (result.sandbox() != null && result.sandbox().unsandboxedReason() != null) {
+            payload.put("unsandboxed", result.sandbox().unsandboxedReason());
         }
     }
 

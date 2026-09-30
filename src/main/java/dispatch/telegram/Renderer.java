@@ -563,7 +563,7 @@ public final class Renderer {
             html.append("\n<i>").append(text("plan.replyHint")).append("</i>\n");
         }
         html.append("\n<i>").append(modelPrefix(payload)).append(format("plan.footer", money(payload.path("costUsd")),
-                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload));
+                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload)).append(sandboxWarning(payload));
 
         if (html.length() <= MESSAGE_LIMIT) {
             return new Rendered(html.toString(), buttons, null);
@@ -713,7 +713,7 @@ public final class Renderer {
             }
         }
         html.append("\n\n<i>").append(modelPrefix(payload)).append(format("task.completedFooter", filesChanged, money(payload.path("costUsd")),
-                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload));
+                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload)).append(sandboxWarning(payload));
         html.append("\n").append(text("task.followUpHint"));
         if (payload.path("merged").asBoolean(false)) {
             html.append("\n\n").append(text("task.mergedMark"));
@@ -1045,6 +1045,14 @@ public final class Renderer {
     /** "sonnet-5 · " before a footer; nothing for a run recorded before models were. */
     private static String modelPrefix(JsonNode payload) {
         return payload.hasNonNull("model") ? escape(shortModels(payload.get("model").asText())) + " · " : "";
+    }
+
+    /** A line saying the run's agent was not sandboxed, and why (spec: 2026-09-30-agent-sandbox-design). */
+    private String sandboxWarning(JsonNode payload) {
+        if (!payload.hasNonNull("unsandboxed")) {
+            return "";
+        }
+        return "\n" + format("run.unsandboxed", escape(payload.get("unsandboxed").asText()));
     }
 
     /** A line saying the run was answered by another model than its config asks for. */

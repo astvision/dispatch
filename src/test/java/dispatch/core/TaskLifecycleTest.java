@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.SandboxUse;
 import dispatch.config.Config;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
@@ -610,5 +611,30 @@ class TaskLifecycleTest {
 
     private Map<String, String> row(String sql, Object... params) {
         return SqlRows.single(dbFile, sql, params);
+    }
+
+    @Test
+    void anUnsandboxedPlanRunIsRecordedAndItsPlanSaysWhy() {
+        long id = create(BOLD, "alm", "Fix login timeout", "20");
+        ClaimedRun run = claim();
+
+        transitions.planSucceeded(id, run.seq(), PLAN,
+                agentResult(List.of()).withSandbox(new SandboxUse("none", "not available on Windows")));
+
+        assertEquals("none", row("SELECT sandbox FROM run WHERE task_id = ?", id).get("sandbox"));
+        JsonNode payload = Json.read(row("SELECT * FROM outbox WHERE kind = 'PLAN_READY'").get("payload"));
+        assertEquals("not available on Windows", payload.get("unsandboxed").asText());
+    }
+
+    @Test
+    void aSandboxedPlanRunIsRecordedWithoutAWarning() {
+        long id = create(BOLD, "alm", "Fix login timeout", "20");
+        ClaimedRun run = claim();
+
+        transitions.planSucceeded(id, run.seq(), PLAN, agentResult(List.of()).withSandbox(new SandboxUse("bubblewrap", null)));
+
+        assertEquals("bubblewrap", row("SELECT sandbox FROM run WHERE task_id = ?", id).get("sandbox"));
+        JsonNode payload = Json.read(row("SELECT * FROM outbox WHERE kind = 'PLAN_READY'").get("payload"));
+        assertFalse(payload.has("unsandboxed"));
     }
 }

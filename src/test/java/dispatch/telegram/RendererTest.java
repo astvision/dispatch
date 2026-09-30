@@ -1201,4 +1201,30 @@ class RendererTest {
             case PLAN_ANSWER_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1).put("index", 2);
         };
     }
+
+    @Test
+    void anUnsandboxedPlanSaysWhyUnderItsFooter() {
+        ObjectNode payload = planPayload(List.of("Raise the timeout"), List.of()).put("unsandboxed", "not available on <Windows>");
+
+        String html = renderer.render(OutboxKind.PLAN_READY, payload).html();
+
+        assertTrue(html.contains("⚠️ Sandbox-гүй ажилласан: not available on &lt;Windows&gt;"), html);
+    }
+
+    @Test
+    void aSandboxedOrOlderPlanHasNoSandboxLine() {
+        String html = renderer.render(OutboxKind.PLAN_READY, planPayload(List.of("Raise the timeout"), List.of())).html();
+
+        assertFalse(html.contains("Sandbox-гүй"), html);
+    }
+
+    @Test
+    void anUnsandboxedResultSaysWhyUnderItsFooter() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 2, List.of())
+                .put("unsandboxed", "bubblewrap (bwrap) is not installed");
+
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload).html();
+
+        assertTrue(html.contains("⚠️ Sandbox-гүй ажилласан: bubblewrap (bwrap) is not installed"), html);
+    }
 }
