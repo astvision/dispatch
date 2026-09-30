@@ -16,6 +16,12 @@ public final class SandboxPolicies {
 
     /** Writable so builds fetch new dependencies as they do outside the sandbox; a poisoned cache is the accepted cost. */
     private static final List<String> CACHES = List.of(".m2", ".gradle", ".npm", ".cache");
+    /**
+     * Inside the writable dirs, but run as code by a later agent or build outside any sandbox: hooks, notify commands,
+     * MCP servers, init scripts, JVM args. ~/.claude.json stays writable (Claude Code writes it), so its mcpServers are not.
+     */
+    private static final List<String> CODE_IN_WRITABLE = List.of(".claude/settings.json", ".claude/settings.local.json",
+            ".codex/config.toml", ".gemini/settings.json", ".gradle/init.d", ".gradle/gradle.properties", ".m2/settings.xml");
     private static final List<String> SECRETS = List.of(".ssh", ".config/gh", ".gnupg");
     private static final String GITDIR_PREFIX = "gitdir: ";
     private static final List<String> GIT_CONTROL = List.of("config", "hooks", "info");
@@ -58,6 +64,13 @@ public final class SandboxPolicies {
         agentStateInHome.forEach(entry -> writable.add(home.resolve(entry)));
         CACHES.forEach(cache -> writable.add(home.resolve(cache)));
         List<Path> readOnly = new ArrayList<>(request.readOnlyDirs());
+        // The run's own log dir, where Codex's --output-schema is written, is under the hidden state dir. A split logs
+        // into its workdir, which is already there: mounting it read-only would cover the writable workdir.
+        Path logDir = request.logBase().toAbsolutePath().normalize().getParent();
+        if (!workdir.startsWith(logDir)) {
+            readOnly.add(logDir);
+        }
+        CODE_IN_WRITABLE.forEach(entry -> readOnly.add(home.resolve(entry)));
         if (request.kind() == RunKind.ASSISTANT) {
             // dispatch ask reads the state file, and SQLite writes -shm even to read a WAL database (AssistantHome).
             Path database = stateDir.resolve("dispatch.db");
