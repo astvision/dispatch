@@ -233,4 +233,34 @@ final class Prompts {
         return "Answer the owner's last message again, from the start: read what you need and think it through properly. "
                 + "Your answer replaces the previous one.";
     }
+
+    /** The verify loop hands a red test run back to the building session. */
+    static String testFailure(String commandLine, String tail) {
+        return """
+                Dispatch ran the project's tests after your change and they failed:
+
+                $ %s
+                <output>
+                %s
+                </output>
+
+                Find the cause and fix it in this repository. If a test is wrong rather than the code, fix the test and \
+                say why. Do not commit. End with a short summary of what you changed.
+                """.formatted(commandLine, tail);
+    }
+
+    /** The verify loop hands the reviewer's blocking findings back to the building session. */
+    static String reviewFindings(List<Review.Finding> blocking) {
+        StringBuilder list = new StringBuilder();
+        for (Review.Finding finding : blocking) {
+            list.append("- ").append(finding.file()).append(finding.line() > 0 ? ":" + finding.line() : "")
+                    .append(": ").append(finding.text()).append('\n');
+        }
+        return """
+                A reviewer checked your change against the approved plan and found problems that must be fixed:
+
+                %s
+                Fix them in this repository. Do not commit. End with a short summary of what you changed.
+                """.formatted(list);
+    }
 }
