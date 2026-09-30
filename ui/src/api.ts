@@ -428,6 +428,38 @@ export interface TaskDetail {
   plan?: PlanView;
 }
 
+/** One step of a run (RM): the implementation, a test run, a fix, the review, the delivery, or a plan run's one call. */
+export interface RunStepView {
+  n: number;
+  kind: "PLAN" | "IMPLEMENT" | "TEST" | "FIX" | "REVIEW" | "DELIVER";
+  round: number;
+  startedAt: string;
+  endedAt: string | null;
+  /** Null while the step runs. */
+  outcome: "DONE" | "PASSED" | "FAILED" | "OK" | "FINDINGS" | "SKIPPED" | "STOPPED" | null;
+  detail?: {
+    tail?: string;
+    findings?: { severity: string; file: string; line: number; text: string }[];
+    error?: string;
+  };
+}
+
+/** The task's latest run step by step, for its requester: what the run monitor shows. */
+export interface RunView {
+  taskId: number;
+  seq: number;
+  kind: "PLAN" | "EXECUTE" | "DELIVER";
+  status: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  costUsd: string | null;
+  /** The server's clock when it answered: step times are counted against it, not the phone's. */
+  now: string;
+  steps: RunStepView[];
+  /** While it runs on the bot's own computer or a worker: the agent's tool calls so far and the latest one. */
+  activity?: { steps: number; lastAction: string | null };
+}
+
 /** One answer to a question: an offered option's index, the requester's own words, or "you decide". */
 export type Answer = { option: number } | { text: string } | { decide: true };
 
@@ -444,6 +476,7 @@ export const taskTimeline = (taskId: number, signal?: AbortSignal) => post<Timel
 export const cancelTask = (taskId: number) => post<{ result: string }>("/api/tasks/cancel", { taskId });
 export const retryTask = (taskId: number) => post<{ result: string }>("/api/tasks/retry", { taskId });
 export const getTaskDetail = (taskId: number, signal?: AbortSignal) => post<TaskDetail>("/api/tasks/detail", { taskId }, signal);
+export const getTaskRun = (taskId: number, signal?: AbortSignal) => post<RunView>("/api/tasks/run", { taskId }, signal);
 export const answerQuestion = (taskId: number, planSeq: number, index: number, answer: Answer) =>
   post<TaskDetail & { result: string }>("/api/tasks/answer", { taskId, planSeq, index, ...answer });
 export const approvePlan = (taskId: number, planSeq: number) => post<{ result: string }>("/api/tasks/approve", { taskId, planSeq });

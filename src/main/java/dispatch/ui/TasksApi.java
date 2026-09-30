@@ -66,17 +66,18 @@ public final class TasksApi {
     }
 
     public Map<String, BiFunction<Caller, JsonNode, Object>> routes() {
-        return Map.of(
-                "/api/tasks/list", this::list,
-                "/api/tasks/timeline", this::timeline,
-                "/api/tasks/cancel", this::cancel,
-                "/api/tasks/retry", this::retry,
-                "/api/tasks/detail", this::detail,
-                "/api/tasks/answer", this::answer,
-                "/api/tasks/approve", this::approve,
-                "/api/tasks/reject", this::reject,
-                "/api/tasks/correct", this::correct,
-                "/api/tasks/followUp", this::followUp);
+        return Map.ofEntries(
+                Map.entry("/api/tasks/list", this::list),
+                Map.entry("/api/tasks/timeline", this::timeline),
+                Map.entry("/api/tasks/cancel", this::cancel),
+                Map.entry("/api/tasks/retry", this::retry),
+                Map.entry("/api/tasks/detail", this::detail),
+                Map.entry("/api/tasks/run", this::run),
+                Map.entry("/api/tasks/answer", this::answer),
+                Map.entry("/api/tasks/approve", this::approve),
+                Map.entry("/api/tasks/reject", this::reject),
+                Map.entry("/api/tasks/correct", this::correct),
+                Map.entry("/api/tasks/followUp", this::followUp));
     }
 
     /**
@@ -154,6 +155,15 @@ public final class TasksApi {
     ObjectNode detail(Caller caller, JsonNode body) {
         long taskId = taskId(body);
         return db.transactionReturning(tx -> ownTask(tx, caller, taskId));
+    }
+
+    /** The task's latest run step by step (RM-3), for its requester alone, as the plan is. */
+    ObjectNode run(Caller caller, JsonNode body) {
+        long taskId = taskId(body);
+        return db.transactionReturning(tx -> {
+            ownTask(tx, caller, taskId);
+            return tasks.runPayload(tx, taskId).orElseThrow(() -> notFound(taskId));
+        });
     }
 
     /**

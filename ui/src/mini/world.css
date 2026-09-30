@@ -126,3 +126,22 @@
 @media (prefers-reduced-motion: reduce) {
   .sheet, .sheet-backdrop { animation: none; }
 }
+
+/* The run monitor (RM-3): one row per step, time on the right, the running one's action under it */
+.run-monitor { margin-top: 16px; }
+.run-rail { list-style: none; margin: 0; padding: 0; }
+.run-step { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; column-gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--rule); }
+.run-step:first-child { border-top: 0; }
+.run-icon { font-size: 15px; line-height: 20px; text-align: center; }
+.run-name { font-size: 15px; line-height: 20px; min-width: 0; }
+.run-name small { display: block; font-size: 12.5px; line-height: 1.4; color: var(--hint-ink); overflow-wrap: anywhere; }
+.run-step[data-running] .run-name { font-weight: 600; }
+.run-step[data-running] .run-time { color: var(--link); }
+.run-step[data-outcome="SKIPPED"] .run-name { color: var(--hint-ink); }
+.run-time { font: 13px/20px var(--mono); color: var(--hint-ink); white-space: nowrap; }
+.run-detail { grid-column: 2 / 4; margin-top: 4px; }
+.run-detail summary { cursor: pointer; font-size: 13px; color: var(--link); }
+.run-detail pre { margin: 6px 0 0; padding: 8px 10px; background: var(--ground); border-radius: 6px; font: 12px/1.45 var(--mono); overflow-x: auto; white-space: pre; }
+.run-findings { margin: 4px 0 0; padding: 0; list-style: none; font-size: 13px; line-height: 1.45; display: grid; gap: 3px; }
+.run-findings code { font-family: var(--mono); font-size: 12px; }
+.run-cost { margin: 6px 0 0; font-size: 12.5px; color: var(--hint-ink); text-align: right; }
