@@ -1,6 +1,6 @@
 # Verify loop (VL): test and review before the draft PR
 
-Status: approved design, 2026-09-30. Builds on the agent sandbox (branch `agent-sandbox`, ADR 0032).
+Status: approved design, 2026-09-30; amended as built (see "As built" and [ADR 0033](../../adr/0033-an-execution-tests-and-reviews-its-change-before-delivery.md)). Builds on the agent sandbox (branch `agent-sandbox`, ADR 0032).
 
 ## Goal
 
@@ -87,7 +87,7 @@ again, no agent) does not.
   with a timeout that terminates the whole process tree, and returns exit code, duration and the output's tail.
 - `RunKind.REVIEW`: each agent starts a reviewer run like a PLAN run (read-only mode, fresh session, no resume) with
   the review schema (`src/main/resources/review-schema.json`) and a review prompt; the reviewer's model and effort are
-  the project's `plan` choice.
+  the execution's (see "As built").
 - `record Verification(TestStatus tests, int testRounds, String testTail, ReviewStatus review,
   List<Finding> findings, String stoppedBy)`, carried in `JobResult` and so from team workers to the team machine.
 - `Delivery` writes the Verification block into the PR body; `RunTransitions` adds it to the completed payload;
@@ -128,3 +128,26 @@ The Verification block:
 - ADR 0033 "An execution tests and reviews its change before delivery".
 - ARCHITECTURE.md: the loop in "Flows" and "Agent boundary" (REVIEW); CONTEXT.md: **Verification**, **Review**.
 - README (mn, en): `loop` and `test` in the project settings.
+
+## As built
+
+Where the code differs from the design above:
+
+- **Reviewer model.** The reviewer uses the execution's model and effort, not the project's `plan` choice: a Job carries
+  one phase's model.
+- **Verification block.** It is appended to the delivery commit's body, which is the PR body, so it also stays in git
+  history; a later `DELIVER` retry does not add it again. Its text is the English `Verification` block of
+  `Verification.block()`, not the emoji block sketched above. The Telegram result uses the Mongolian `verify.*` keys
+  (`verify.testsPassed`, `testsFailing`, `noTestCommand`, `testsNotRun`, `reviewOk`, `reviewFindings`, `reviewFailed`,
+  `reviewNotRun`, `stopped`) in `messages_mn.properties`.
+- **Loop-call timeouts.** A fix or review call gets the time left minus a 2-minute delivery reserve. When it runs out only
+  that agent is cancelled, the call counts as failed ("timed out after ..."), the loop stops and the run still delivers.
+  Only the implementation call keeps the run-level watchdog, whose timeout fails the run.
+- **Interrupt and cancel.** Dispatch stopping during the loop ends the run INTERRUPTED and a member's cancel ends it
+  CANCELLED, neither delivering; both record the whole run's cost, loop calls included.
+- **The test command's environment.** It gets the environment agents get, with `TELEGRAM_BOT_TOKEN`, `GH_TOKEN` and
+  `DISPATCH_WORKER_KEY` withheld (`ProcessRun.agentEnvironment`), and runs in the same sandbox.
+- **Compatibility.** A job with the loop off carries no new fields, so older workers still read it; a job with the loop on,
+  and a result with a Verification, need the team machine and its workers upgraded together.
+- **Known limits.** A loop call's orphan tracking records the latest agent pid, so the test process tree is not recorded
+  for orphan kill; a timed-out loop call's own partial cost is not counted.

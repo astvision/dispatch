@@ -64,6 +64,14 @@ _Avoid_: Amendment, comment, note
 Handing an execution run's changes to the team: committing them to the task's branch, pushing, and opening or updating the task's draft pull request. On a personal bot, its requester may then merge that pull request with one tap; a merged task takes no more commits.
 _Avoid_: Publish, deploy, release
 
+**Verification**:
+What the verify loop found before delivery: whether the project's tests pass, what the reviewer left, and whether the loop stopped early. It is written into the delivery commit and the requester's result.
+_Avoid_: QA, check
+
+**Review**:
+A fresh read-only agent session that judges an execution's change against the approved plan. Its blocking findings go back to the building session.
+_Avoid_: Audit, inspection
+
 **Run**:
 One invocation of an agent on a task: either a planning run (read-only) or an execution run (implementing an approved plan or a follow-up). All runs of a task work on the same branch. Planning runs continue one agent conversation. Execution runs continue another, which starts from the approved plan instead of the investigation.
 _Avoid_: Attempt, execution, job

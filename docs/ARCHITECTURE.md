@@ -37,6 +37,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Assistant | A member's plain private message goes to their own Claude Code session (Haiku, Sonnet on escalation) that reads their tasks and code and proposes changes as buttons; nothing changes until they tap; personal instances only | 0024 |
 | Linking a group | Personal vs. team is `telegram.admins`/member count, not "a group has a chat"; whoever may manage Dispatch links a group to a project from Telegram, applied without a restart; the Mini App lists and unlinks | 0023 |
 | Several groups per project | A project may be in several groups, one per chat; a task is announced in the group it was given in, else the project's first; a project's add link (`?startgroup=`) links the group it adds the bot to without asking | 0025 |
+| Verify loop | After the agent implements, Dispatch runs the project's `test` command in the sandbox, hands failures back to the building session (3 fix rounds), has a fresh read-only reviewer check the diff against the plan (1 round), and always opens the draft PR with what it found; `loop: off` skips all of it | 0033 |
 | Languages | The desktop pages speak Mongolian or English (the browser's, or the switch); the server renders the messages that reach a page per request from two bundles; the terminal and the log stay English; the Mini App speaks Mongolian | 0029 |
 | Tasks on the desktop | `dispatch ui` forwards the task pages' calls to the running bot's desk port (loopback, a per-start token in the owner-only `desk.json`); the owner sees every task in full and acts as their own member, so ADR 0020's rules for acting stand | 0030 |
 
@@ -207,7 +208,13 @@ A transition that loses a race updates 0 rows and is logged.
 
 **Reject** (by the requester only): REJECTED.
 
-**Execute run.** The run continues in the task's worktree; one the sweep removed is added back from the `dispatch/<id>` branch (fetched from origin if the clone lost it). `copyFiles` are copied in. Each must be git-ignored, otherwise setup fails, so delivery can never commit it. The agent implements the approved plan in auto mode. On success, delivery:
+**Execute run.** The run continues in the task's worktree; one the sweep removed is added back from the `dispatch/<id>` branch (fetched from origin if the clone lost it). `copyFiles` are copied in. Each must be git-ignored, otherwise setup fails, so delivery can never commit it. The agent implements the approved plan in auto mode. With the verify loop on for the project (ADR 0033), `VerifyLoop` then runs before delivery, inside the same run:
+1. If the project sets `test`, Dispatch runs it in the worktree inside the sandbox (10 min, output in `<logBase>.test-<n>.log`, a 4096-byte tail kept). A red run resumes the building session with the tail (`<logBase>.fix-<n>`) and tests again, up to `FIX_ROUNDS` = 3 fixes in all.
+2. One fresh read-only reviewer (`<logBase>.review`) gets the task, the plan and the diff from the run's start commit (cut at 60 000 characters) and answers with `review-schema.json`. Blocking findings resume the building session and the tests run again, within the fix rounds left; minor ones are only listed.
+3. The loop stops early, noting why, when the budget left is under 5% or the time left is short (12 min for a test, 5 for an agent step), or when a fix fails. A fix or review call is cancelled alone when its time (the run's remainder less a 2-minute delivery reserve) runs out. A cancel or Dispatch stopping ends the run with no delivery.
+4. Delivery follows whatever happened, and appends the Verification block to the commit body (the PR body). A reviewer that fails never blocks it. `loop: off` and `DELIVER` runs skip the loop.
+
+On success, delivery:
 1. If the agent committed anyway, its commits are folded back (`git reset --soft` to the run's start) so the run still becomes one commit and is not mistaken for "no changes".
 2. `git add --all`. If anything is staged: one commit, without hooks or signing so it behaves the same on every run. The subject is `dispatch #<id>: <title>`; the body is the agent's summary, redacted; trailers are `Requested-by` / `Approved-by`; author and committer are `delivery.authorName`/`authorEmail`.
 3. `git push origin dispatch/<id>:refs/heads/dispatch/<id>`, without hooks.
@@ -273,6 +280,7 @@ The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the
 |---|---|
 | PLAN | `--permission-mode plan --tools Read,Bash --json-schema <plan schema, compacted to one line>` |
 | EXECUTE | `--permission-mode auto --tools Read,Edit,Write,Bash --disallowedTools "Bash(git commit *)" "Bash(git push *)" "Bash(gh *)"` |
+| REVIEW | `--permission-mode plan --tools Read,Bash --json-schema <review schema, compacted to one line>` with a fresh `--session-id` (never resumed) |
 | SPLIT | `--permission-mode plan --tools "" --json-schema <topics schema> --system-prompt <one line> --no-session-persistence --disable-slash-commands --model haiku`, no session flags, run in `splits/` |
 
 `CodexAgent` passes the prompt on stdin (the final `-`) to (ADR 0026):
@@ -280,6 +288,7 @@ The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the
 | Always | `codex exec [resume <thread>] --json --ignore-user-config -c approval_policy="never" -c sandbox_mode=<mode>` + optional `-m <model>` and `-c model_reasoning_effort=<effort>`; `exec resume` has no `--sandbox`, so `-c` sets it for both. The thread a session started is kept in `<stateDir>/agent-sessions/codex/<session>` and resumed by it |
 |---|---|
 | PLAN | `sandbox_mode="read-only" --output-schema <logBase>.schema.json` (the plan schema without length and count limits) |
+| REVIEW | `sandbox_mode="read-only" --output-schema <logBase>.schema.json` with the review schema (without length and count limits) |
 | EXECUTE | `sandbox_mode="danger-full-access"` |
 
 `GeminiAgent` passes the prompt on stdin, followed by `-p <one line>` (ADR 0026):
@@ -287,6 +296,7 @@ The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the
 | Always | `gemini --output-format stream-json --skip-trust --approval-mode <mode>` + `--session-id <uuid>` on a session's first run, `--resume <uuid>` afterwards, in the same worktree (Gemini CLI keeps sessions per directory) + optional `-m <model>`, `--include-directories <attachments>` |
 |---|---|
 | PLAN | `--approval-mode default` (headless, every edit and shell command is denied) and `-p` asking for one JSON object matching the plan schema, taken from the answer even inside a ```json fence |
+| REVIEW | `--approval-mode default` and `-p` asking for the review as one JSON object matching the review schema |
 | EXECUTE | `--approval-mode yolo` |
 
 Every agent's command line is wrapped by this machine's `Sandbox` (ADR 0032), chosen once at startup from the `sandbox: auto | off` setting: `Bubblewrap` on Linux when `bwrap` runs (trial `bwrap --ro-bind / / --unshare-pid --proc /proc true`), else `NoSandbox` with its reason. `SandboxPolicies` builds the policy per run:
