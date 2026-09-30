@@ -66,10 +66,16 @@ public record Verification(Tests tests, int testRuns, boolean lastRunPassed, Str
     private String listed() {
         StringBuilder out = new StringBuilder();
         for (Review.Finding finding : findings) {
-            out.append("\n  - ").append(finding.severity()).append(' ').append(finding.file())
-                    .append(finding.line() > 0 ? ":" + finding.line() : "").append(' ').append(finding.text());
+            // As code spans: an @name or #number in a reviewer's text must not ping anyone or link an issue from the PR.
+            out.append("\n  - ").append(finding.severity()).append(' ')
+                    .append(code(finding.file() + (finding.line() > 0 ? ":" + finding.line() : ""))).append(' ')
+                    .append(code(finding.text()));
         }
         return out.toString();
+    }
+
+    private static String code(String text) {
+        return "`" + text.replace('`', '\'') + "`";
     }
 
     private static String indented(String text) {

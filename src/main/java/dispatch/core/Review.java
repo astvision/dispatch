@@ -11,6 +11,9 @@ public record Review(String verdict, List<Finding> findings) {
 
     private static final Set<String> VERDICTS = Set.of("ok", "changes");
     private static final Set<String> SEVERITIES = Set.of("blocking", "minor");
+    /** review-schema.json's maxItems and maxLength, which Codex and Gemini do not enforce. */
+    static final int MAX_FINDINGS = 20;
+    static final int MAX_TEXT = 500;
 
     public Review {
         findings = List.copyOf(findings);
@@ -45,11 +48,16 @@ public record Review(String verdict, List<Finding> findings) {
         }
         List<Finding> findings = new ArrayList<>();
         for (JsonNode item : node.path("findings")) {
+            if (findings.size() == MAX_FINDINGS) {
+                break;
+            }
             String severity = item.path("severity").asText("");
             if (!SEVERITIES.contains(severity)) {
                 throw new IllegalArgumentException("unknown severity: " + severity);
             }
-            findings.add(new Finding(severity, item.path("file").asText(""), item.path("line").asInt(0), item.path("text").asText("")));
+            String text = item.path("text").asText("");
+            findings.add(new Finding(severity, item.path("file").asText(""), item.path("line").asInt(0),
+                    text.length() > MAX_TEXT ? text.substring(0, MAX_TEXT) : text));
         }
         return new Review(verdict, findings);
     }

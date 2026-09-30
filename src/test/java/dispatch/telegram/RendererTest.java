@@ -1292,4 +1292,16 @@ class RendererTest {
         assertTrue(html.contains("🧪 ⚠️ Сүүлийн засварын дараа тест дахин ажиллаагүй"), html);
         assertFalse(html.contains("<pre>"), html);
     }
+
+    @Test
+    void aBlankTestTailShowsNoEmptyBlock() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 2, List.of());
+        payload.set("verification", Json.MAPPER.valueToTree(new Verification(Verification.Tests.FAILING, 1, "  \n",
+                Verification.ReviewState.NOT_RUN, List.of(), null, null)));
+
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload).html();
+
+        assertTrue(html.contains("🧪 ❌ Тест унасан хэвээр (1 удаа)"), html);
+        assertFalse(html.contains("<pre>"), html);
+    }
 }

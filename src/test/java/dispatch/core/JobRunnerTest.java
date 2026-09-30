@@ -447,6 +447,22 @@ class JobRunnerTest {
         assertEquals(List.of(true), startsDuringTheTest, "its start time, which Recovery matches against the live process");
     }
 
+    @Test
+    void anInterruptDuringATestStepStartsNoReviewer() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+        AtomicReference<JobResult> result = new AtomicReference<>();
+        // As TestCommand does when its thread is interrupted: the tree is ended, the run reported stopped, the flag kept.
+        Thread worker = Thread.ofVirtual().start(() -> result.set(executeWithLoop(true, (command, workdir, log, timeout, stop, started) -> {
+            Thread.currentThread().interrupt();
+            return new TestRunner.TestRun(-1, false, true, "");
+        })));
+        worker.join(Duration.ofSeconds(15));
+
+        assertEquals(FailureReason.INTERRUPTED, result.get().failureReason());
+        assertEquals(List.of(RunKind.EXECUTE), agentKindsStarted, "no reviewer after an interrupt");
+    }
+
     /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
     private JobResult executeWithLoop(boolean loop, TestRunner tests) {
         return executeWithLoop(loop, new ActiveRuns().register(TASK, 2), tests);

@@ -44,4 +44,14 @@ class ReviewTest {
         assertThrows(IllegalArgumentException.class,
                 () -> Review.parse("{\"verdict\":\"ok\",\"findings\":[{\"severity\":\"huge\",\"file\":\"a\",\"line\":1,\"text\":\"t\"}]}"));
     }
+
+    @Test
+    void anAnswerOverTheSchemasCapsIsCut() {
+        // Codex and Gemini do not enforce the schema's maxItems and maxLength, so the parser does.
+        String finding = "{\"severity\":\"minor\",\"file\":\"a\",\"line\":1,\"text\":\"" + "x".repeat(600) + "\"}";
+        Review review = Review.parse("{\"verdict\":\"changes\",\"findings\":[" + String.join(",", java.util.Collections.nCopies(25, finding)) + "]}");
+
+        assertEquals(20, review.findings().size());
+        assertEquals(500, review.findings().get(0).text().length());
+    }
 }

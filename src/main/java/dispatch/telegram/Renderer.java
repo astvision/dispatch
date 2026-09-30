@@ -760,6 +760,9 @@ public final class Renderer {
 
     /** A failing run's output under its line. */
     private String testTail(JsonNode verification) {
+        if (verification.path("testTail").asText("").isBlank()) {
+            return "";
+        }
         return "\n<pre>" + escapeWithin(lastLines(verification.path("testTail").asText(""), TEST_TAIL_LIMIT), 2 * TEST_TAIL_LIMIT) + "</pre>";
     }
 

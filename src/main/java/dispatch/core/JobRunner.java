@@ -139,7 +139,8 @@ public final class JobRunner implements Worker {
                 new VerifyLoop.Setup(job.project().test(), worktree, workspaces.runLogBase(job.taskId(), job.seq()),
                         job.reviewPrompt(), deadline, job.budgetUsd(), cost(result.agent())),
                 loopAgents(job, events, control, worktree, files, startSha),
-                () -> control.stopReason() != null);
+                // An interrupt ends a test step as stopped; the loop must not go on to the reviewer.
+                () -> control.stopReason() != null || Thread.currentThread().isInterrupted());
         // Every outcome records what the whole run cost, so the loop's calls count even when nothing is delivered.
         AgentResult spent = combined(result.agent(), verified.runs());
         if (control.stopReason() != null) {

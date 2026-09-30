@@ -27,7 +27,7 @@ class VerificationTest {
 
         assertTrue(block.contains("- Tests: failing after 4 runs"), block);
         assertTrue(block.contains("    BUILD FAILURE\n    FooTest"), block);
-        assertTrue(block.contains("- Review: 1 finding left\n  - minor src/A.java:3 rename x"), block);
+        assertTrue(block.contains("- Review: 1 finding left\n  - minor `src/A.java:3` `rename x`"), block);
         assertTrue(block.contains("- Stopped early: budget"), block);
     }
 
@@ -65,7 +65,15 @@ class VerificationTest {
         Verification v = new Verification(Verification.Tests.PASSED, 2, "ok", Verification.ReviewState.FIXED_UNREVIEWED,
                 List.of(new Review.Finding("blocking", "A.java", 1, "NPE"), new Review.Finding("minor", "B.java", 0, "name")), null, null);
 
-        assertTrue(v.block().endsWith("- Review: 1 blocking fixed, not re-reviewed\n  - blocking A.java:1 NPE\n  - minor B.java name"),
+        assertTrue(v.block().endsWith("- Review: 1 blocking fixed, not re-reviewed\n  - blocking `A.java:1` `NPE`\n  - minor `B.java` `name`"),
                 v.block());
+    }
+
+    @Test
+    void findingsInThePullRequestNeitherPingNorCrossLink() {
+        Verification v = new Verification(Verification.Tests.NOT_RUN, 0, null, Verification.ReviewState.FINDINGS,
+                List.of(new Review.Finding("minor", "src/`x`.java", 2, "ask @alice about #12 and `y`")), null, null);
+
+        assertTrue(v.block().endsWith("  - minor `src/'x'.java:2` `ask @alice about #12 and 'y'`"), v.block());
     }
 }
