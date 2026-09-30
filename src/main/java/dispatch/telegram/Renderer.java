@@ -739,14 +739,16 @@ public final class Renderer {
         String runs = String.valueOf(verification.path("testRuns").asInt());
         html.append(switch (verification.path("tests").asText()) {
             case "PASSED" -> format("verify.testsPassed", runs);
-            case "FAILING" -> format("verify.testsFailing", runs)
-                    + "\n<pre>" + escapeWithin(lastLines(verification.path("testTail").asText(""), TEST_TAIL_LIMIT), 2 * TEST_TAIL_LIMIT) + "</pre>";
+            case "FAILING" -> format("verify.testsFailing", runs) + testTail(verification);
+            case "UNVERIFIED" -> text("verify.testsUnverified")
+                    + (verification.path("lastRunPassed").asBoolean(false) ? "" : testTail(verification));
             case "NO_COMMAND" -> text("verify.noTestCommand");
             default -> text("verify.testsNotRun");
         });
         html.append('\n').append(switch (verification.path("review").asText()) {
             case "OK" -> text("verify.reviewOk");
             case "FINDINGS" -> format("verify.reviewFindings", String.valueOf(verification.path("findings").size()));
+            case "FIXED_UNREVIEWED" -> format("verify.reviewFixed", String.valueOf(blocking(verification.path("findings"))));
             case "FAILED" -> format("verify.reviewFailed", escapeWithin(verification.path("reviewError").asText(""), VERIFY_LINE_LIMIT));
             default -> text("verify.reviewNotRun");
         });
@@ -754,6 +756,21 @@ public final class Renderer {
             html.append('\n').append(format("verify.stopped", escapeWithin(verification.path("stoppedBy").asText(), VERIFY_LINE_LIMIT)));
         }
         return html.toString();
+    }
+
+    /** A failing run's output under its line. */
+    private String testTail(JsonNode verification) {
+        return "\n<pre>" + escapeWithin(lastLines(verification.path("testTail").asText(""), TEST_TAIL_LIMIT), 2 * TEST_TAIL_LIMIT) + "</pre>";
+    }
+
+    private static long blocking(JsonNode findings) {
+        long count = 0;
+        for (JsonNode finding : findings) {
+            if (finding.path("severity").asText().equals("blocking")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /** The end of the output (where the failure summary is), from a line start; "…" marks a cut. */

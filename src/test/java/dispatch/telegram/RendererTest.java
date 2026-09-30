@@ -1267,4 +1267,29 @@ class RendererTest {
         assertFalse(html.contains("noise line 0\n"), html);
         assertTrue(html.length() <= Renderer.MESSAGE_LIMIT, html);
     }
+
+    @Test
+    void testsNotRerunAfterAFixAndAFixedReviewSaySo() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 2, List.of());
+        payload.set("verification", Json.MAPPER.valueToTree(new Verification(Verification.Tests.UNVERIFIED, 1, false, "FooTest failed",
+                Verification.ReviewState.FIXED_UNREVIEWED, List.of(new Review.Finding("blocking", "A.java", 1, "NPE"),
+                        new Review.Finding("minor", "B.java", 2, "name")), null, "time")));
+
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload).html();
+
+        assertTrue(html.contains("🧪 ⚠️ Сүүлийн засварын дараа тест дахин ажиллаагүй\n<pre>FooTest failed</pre>"), html);
+        assertTrue(html.contains("🔍 🛠 1 блоклох зөвлөмжийг зассан (дахин review хийгээгүй)"), html);
+    }
+
+    @Test
+    void testsNotRerunAfterAPassingRunShowNoTail() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 2, List.of());
+        payload.set("verification", Json.MAPPER.valueToTree(new Verification(Verification.Tests.UNVERIFIED, 1, true, "BUILD SUCCESS",
+                Verification.ReviewState.NOT_RUN, List.of(), null, "time")));
+
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload).html();
+
+        assertTrue(html.contains("🧪 ⚠️ Сүүлийн засварын дараа тест дахин ажиллаагүй"), html);
+        assertFalse(html.contains("<pre>"), html);
+    }
 }

@@ -1,16 +1,16 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.testing.TestClock;
 import java.math.BigDecimal;
 import java.nio.file.Path;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -20,12 +20,21 @@ import org.junit.jupiter.api.Test;
 class VerifyLoopTest {
 
     private static final Instant NOW = Instant.parse("2026-09-30T10:00:00Z");
-    private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+    private final TestClock clock = new TestClock(NOW);
     private final Deque<Boolean> testResults = new ArrayDeque<>();
     private final List<String> calls = new ArrayList<>();
     private String reviewAnswer = "{\"verdict\":\"ok\",\"findings\":[]}";
     private AgentOutcome fixOutcome = AgentOutcome.SUCCEEDED;
     private AgentResult fixAnswer;
+    private AgentOutcome reviewOutcome = AgentOutcome.SUCCEEDED;
+    /** How long each fix takes on the loop's clock. */
+    private Duration fixTakes = Duration.ZERO;
+    /** What each fix costs. */
+    private BigDecimal fixCost = new BigDecimal("0.10");
+    /** Set by a fix when the member stops the run during it. */
+    private boolean stopAfterFix;
+    private boolean stopped;
+    private final List<BigDecimal> fixBudgets = new ArrayList<>();
 
     private final TestRunner tests = (command, dir, log, timeout, stop) -> {
         calls.add("test");
@@ -37,13 +46,16 @@ class VerifyLoopTest {
         @Override
         public AgentResult fix(String prompt, BigDecimal budgetUsd, Duration timeout) {
             calls.add("fix");
-            return fixAnswer != null ? fixAnswer : result(fixOutcome, null, new BigDecimal("0.10"));
+            fixBudgets.add(budgetUsd);
+            clock.advance(fixTakes);
+            stopped = stopAfterFix;
+            return fixAnswer != null ? fixAnswer : result(fixOutcome, null, fixCost);
         }
 
         @Override
         public AgentResult review(String prompt, BigDecimal budgetUsd, Duration timeout) {
             calls.add("review");
-            return result(AgentOutcome.SUCCEEDED, reviewAnswer, new BigDecimal("0.05"));
+            return result(reviewOutcome, reviewAnswer, new BigDecimal("0.05"));
         }
 
         @Override
@@ -55,7 +67,7 @@ class VerifyLoopTest {
     private VerifyLoop.Outcome run(String testCommand, Duration timeLeft, BigDecimal budget, BigDecimal spent) {
         VerifyLoop.Setup setup = new VerifyLoop.Setup(testCommand, Path.of("/w/7"), Path.of("/s/runs/7/2"), "Review this:",
                 NOW.plus(timeLeft), budget, spent);
-        return new VerifyLoop(tests, clock).run(setup, agents, () -> false);
+        return new VerifyLoop(tests, clock).run(setup, agents, () -> stopped);
     }
 
     private VerifyLoop.Outcome run() {
@@ -95,17 +107,114 @@ class VerifyLoopTest {
         assertEquals("FooTest failed", outcome.verification().testTail());
     }
 
+    private static final String BLOCKING_AND_MINOR = "{\"verdict\":\"changes\",\"findings\":["
+            + "{\"severity\":\"blocking\",\"file\":\"A.java\",\"line\":1,\"text\":\"NPE\"},"
+            + "{\"severity\":\"minor\",\"file\":\"B.java\",\"line\":2,\"text\":\"name\"}]}";
+    private static final List<Review.Finding> BOTH_FINDINGS = List.of(new Review.Finding("blocking", "A.java", 1, "NPE"),
+            new Review.Finding("minor", "B.java", 2, "name"));
+
     @Test
     void blockingFindingsAreFixedAndRetested() {
-        reviewAnswer = "{\"verdict\":\"changes\",\"findings\":[{\"severity\":\"blocking\",\"file\":\"A.java\",\"line\":1,\"text\":\"NPE\"},"
-                + "{\"severity\":\"minor\",\"file\":\"B.java\",\"line\":2,\"text\":\"name\"}]}";
+        reviewAnswer = BLOCKING_AND_MINOR;
 
         VerifyLoop.Outcome outcome = run();
 
         assertEquals(List.of("test", "review", "fix", "test"), calls);
-        // Only the minor finding is left: the blocking one was fixed and the tests pass again.
+        // Nothing re-reviewed the fix, so the block says so and keeps every finding the reviewer made.
+        assertEquals(Verification.ReviewState.FIXED_UNREVIEWED, outcome.verification().review());
+        assertEquals(BOTH_FINDINGS, outcome.verification().findings());
+        assertEquals(Verification.Tests.PASSED, outcome.verification().tests());
+        assertEquals(2, outcome.verification().testRuns());
+    }
+
+    @Test
+    void aReviewFixWithNoTimeLeftForTheRetestLeavesTheTestsUnverified() {
+        reviewAnswer = BLOCKING_AND_MINOR;
+        fixTakes = Duration.ofMinutes(50);
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("test", "review", "fix"), calls);
+        assertEquals(Verification.Tests.UNVERIFIED, outcome.verification().tests());
+        assertTrue(outcome.verification().lastRunPassed());
+        assertEquals(1, outcome.verification().testRuns());
+        assertEquals(Verification.ReviewState.FIXED_UNREVIEWED, outcome.verification().review());
+        assertEquals(BOTH_FINDINGS, outcome.verification().findings());
+        assertEquals("time", outcome.verification().stoppedBy());
+    }
+
+    @Test
+    void aTestFixWithNoTimeLeftForTheRetestLeavesTheTestsUnverified() {
+        testResults.add(false);
+        fixTakes = Duration.ofMinutes(50);
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("test", "fix"), calls);
+        assertEquals(Verification.Tests.UNVERIFIED, outcome.verification().tests());
+        assertFalse(outcome.verification().lastRunPassed());
+        assertEquals("time", outcome.verification().stoppedBy());
+    }
+
+    @Test
+    void aFixThatSpendsTheBudgetStillGetsItsRetest() {
+        // The budget floor gates agent calls only: the re-test runs, so its result is what the block reports.
+        testResults.addAll(List.of(false, false));
+        fixCost = new BigDecimal("8.70");
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("test", "fix", "test"), calls);
+        assertEquals(Verification.Tests.FAILING, outcome.verification().tests());
+        assertEquals(2, outcome.verification().testRuns());
+        assertEquals("budget", outcome.verification().stoppedBy());
+    }
+
+    @Test
+    void aStopDuringAFixEndsTheLoopWithTheChangeUntested() {
+        testResults.add(false);
+        stopAfterFix = true;
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("test", "fix"), calls);
+        assertEquals(Verification.Tests.UNVERIFIED, outcome.verification().tests());
+        assertEquals(Verification.ReviewState.NOT_RUN, outcome.verification().review());
+    }
+
+    @Test
+    void noBudgetMeansNoBudgetStop() {
+        testResults.addAll(List.of(false, true));
+
+        VerifyLoop.Outcome outcome = run("./mvnw -q test", Duration.ofMinutes(60), null, BigDecimal.ONE);
+
+        assertEquals(List.of("test", "fix", "test", "review"), calls);
+        assertEquals(java.util.Collections.singletonList(null), fixBudgets);
+        assertEquals(Verification.Tests.PASSED, outcome.verification().tests());
+        assertEquals(Verification.ReviewState.OK, outcome.verification().review());
+    }
+
+    @Test
+    void blockingFindingsWithNoFixesLeftAreAllListed() {
+        testResults.addAll(List.of(false, false, false, false));
+        reviewAnswer = BLOCKING_AND_MINOR;
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("test", "fix", "test", "fix", "test", "fix", "test", "review"), calls);
         assertEquals(Verification.ReviewState.FINDINGS, outcome.verification().review());
-        assertEquals(List.of(new Review.Finding("minor", "B.java", 2, "name")), outcome.verification().findings());
+        assertEquals(BOTH_FINDINGS, outcome.verification().findings());
+        assertEquals(Verification.Tests.FAILING, outcome.verification().tests());
+    }
+
+    @Test
+    void aReviewerThatFailsIsReportedWithItsError() {
+        reviewOutcome = AgentOutcome.FAILED;
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(Verification.ReviewState.FAILED, outcome.verification().review());
+        assertEquals("agent broke", outcome.verification().reviewError());
     }
 
     @Test

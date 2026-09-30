@@ -39,4 +39,33 @@ class VerificationTest {
         assertTrue(v.block().contains("- Tests: no test command configured"));
         assertTrue(v.block().contains("- Review: failed (the reviewer's answer is not JSON)"));
     }
+
+    @Test
+    void oneFailingRunIsSingular() {
+        Verification v = new Verification(Verification.Tests.FAILING, 1, "FooTest", Verification.ReviewState.NOT_RUN, List.of(), null, null);
+
+        assertTrue(v.block().contains("- Tests: failing after 1 run\n"), v.block());
+    }
+
+    @Test
+    void testsNotRerunAfterTheLastChangeSayWhatTheLastRunShowed() {
+        Verification passed = new Verification(Verification.Tests.UNVERIFIED, 1, true, "ok", Verification.ReviewState.NOT_RUN,
+                List.of(), null, "time");
+        Verification failing = new Verification(Verification.Tests.UNVERIFIED, 2, false, "FooTest", Verification.ReviewState.NOT_RUN,
+                List.of(), null, "time");
+
+        assertTrue(passed.block().contains("- Tests: not re-run after the last change (last run: pass, run 1)\n- Review"),
+                passed.block());
+        assertTrue(failing.block().contains("- Tests: not re-run after the last change (last run: failing, run 2)\n\n    FooTest"),
+                failing.block());
+    }
+
+    @Test
+    void fixedBlockingFindingsThatNobodyReReviewedAreAllListed() {
+        Verification v = new Verification(Verification.Tests.PASSED, 2, "ok", Verification.ReviewState.FIXED_UNREVIEWED,
+                List.of(new Review.Finding("blocking", "A.java", 1, "NPE"), new Review.Finding("minor", "B.java", 0, "name")), null, null);
+
+        assertTrue(v.block().endsWith("- Review: 1 blocking fixed, not re-reviewed\n  - blocking A.java:1 NPE\n  - minor B.java name"),
+                v.block());
+    }
 }

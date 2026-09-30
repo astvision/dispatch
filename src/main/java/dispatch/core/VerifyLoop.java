@@ -72,6 +72,8 @@ public final class VerifyLoop {
         private List<Review.Finding> left = List.of();
         private String reviewError;
         private String stoppedBy;
+        /** A fix succeeded after the last completed test run, so that run's result no longer describes the code. */
+        private boolean changedSinceLastTest;
 
         Pass(Setup setup, Agents agents, BooleanSupplier stop) {
             this.setup = setup;
@@ -86,7 +88,11 @@ public final class VerifyLoop {
             if (stoppedBy == null && !stop.getAsBoolean() && setup.reviewPrompt() != null) {
                 review();
             }
-            Verification verification = new Verification(testState, testRuns, tail, reviewState, left, reviewError, stoppedBy);
+            boolean lastRunPassed = testState == Verification.Tests.PASSED;
+            Verification.Tests tests = changedSinceLastTest && testRuns > 0 && setup.testCommand() != null
+                    ? Verification.Tests.UNVERIFIED : testState;
+            Verification verification = new Verification(tests, testRuns, lastRunPassed, tail, reviewState, left, reviewError,
+                    stoppedBy);
             return new Outcome(verification, List.copyOf(runs));
         }
 
@@ -111,6 +117,7 @@ public final class VerifyLoop {
                     return;
                 }
                 testState = result.passed() ? Verification.Tests.PASSED : Verification.Tests.FAILING;
+                changedSinceLastTest = false;
                 Log.info("verify.step", "step", "test", "run", testRuns, "outcome", testState);
                 if (result.passed() || fixesLeft == 0) {
                     return;
@@ -147,12 +154,13 @@ public final class VerifyLoop {
                 keepMinor(parsed);
                 return;
             }
+            // Every finding stays listed either way: nothing re-reviews a fix, so the block cannot call them resolved.
+            left = parsed.findings();
             if (fixesLeft == 0 || !fix(Prompts.reviewFindings(parsed.blocking()))) {
                 reviewState = Verification.ReviewState.FINDINGS;
-                left = parsed.findings();
                 return;
             }
-            keepMinor(parsed);
+            reviewState = Verification.ReviewState.FIXED_UNREVIEWED;
             testAndFix();
         }
 
@@ -174,6 +182,7 @@ public final class VerifyLoop {
                 stoppedBy = "fix failed: " + reason(result);
                 return false;
             }
+            changedSinceLastTest = true;
             return true;
         }
 
