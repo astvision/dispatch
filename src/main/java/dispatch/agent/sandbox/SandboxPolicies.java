@@ -27,7 +27,7 @@ public final class SandboxPolicies {
     private static final List<String> SECRETS = List.of(".ssh", ".config/gh", ".gnupg");
     private static final String GITDIR_PREFIX = "gitdir: ";
     private static final Set<RunKind> IN_WORKTREE = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW);
-    private static final List<String> GIT_CONTROL = List.of("config", "hooks", "info");
+    private static final List<String> GIT_CONTROL = List.of("config", "hooks", "info", "config.worktree");
 
     private final Path home;
     private final Path stateDir;

@@ -4,6 +4,7 @@ import dispatch.Log;
 import dispatch.OwnerOnly;
 import dispatch.config.Config;
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -159,6 +160,7 @@ public final class Workspaces {
             git.run(repo, "fetch", "origin", project.baseBranch());
             git.run(repo, "worktree", "add", "--quiet", "-b", branch, worktree.toString(),
                     "origin/" + project.baseBranch());
+            createEmptyWorktreeConfigs(worktree);
             return new PreparedWorktree(worktree, git.run(worktree, "rev-parse", "HEAD"));
         } finally {
             lock.unlock();
@@ -181,9 +183,29 @@ public final class Workspaces {
                 git.run(repo, "fetch", "origin", "refs/heads/" + branch + ":refs/heads/" + branch);
             }
             git.run(repo, "worktree", "add", "--quiet", worktree.toString(), branch);
+            createEmptyWorktreeConfigs(worktree);
             return worktree;
         } finally {
             lock.unlock();
+        }
+    }
+
+    /**
+     * The worktree's and the clone's config.worktree, empty, before any agent runs: the sandbox mounts them read-only only
+     * when they exist, and with extensions.worktreeConfig one an agent created would add push URLs or core.sshCommand to
+     * Dispatch's git. One that already has content is left for {@link Git} to refuse.
+     */
+    private void createEmptyWorktreeConfigs(Path worktree) {
+        Path admin = Path.of(git.run(worktree, "rev-parse", "--absolute-git-dir"));
+        Path common = Path.of(git.run(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+        for (Path file : List.of(admin.resolve("config.worktree"), common.resolve("config.worktree"))) {
+            try {
+                Files.createFile(file);
+            } catch (FileAlreadyExistsException e) {
+                // Kept as it is: empty is what Dispatch made, content is refused before git reads it.
+            } catch (IOException e) {
+                throw new WorkspaceException("cannot create " + file + ": " + e.getMessage(), e);
+            }
         }
     }
 

@@ -132,6 +132,41 @@ class GitTest {
         assertTrue(refused.getMessage().contains(linked.resolve(".git").toString()), refused.getMessage());
     }
 
+    @Test
+    void aWorktreeWithANonEmptyConfigWorktreeIsRefused() throws IOException {
+        // Dispatch creates it empty and the sandbox mounts it read-only; content means an agent wrote it first.
+        Path worktree = addWorktree();
+        git.run(repo, "config", "extensions.worktreeConfig", "true");
+        Path configWorktree = repo.resolve(".git/worktrees/w/config.worktree");
+        Files.writeString(configWorktree, "[remote \"origin\"]\n\tpushurl = https://evil.example/x\n");
+
+        WorkspaceException refused = assertThrows(WorkspaceException.class, () -> git.run(worktree, "status", "--porcelain"));
+
+        assertTrue(refused.getMessage().contains(configWorktree.toString()), refused.getMessage());
+    }
+
+    @Test
+    void aCloneWithANonEmptyConfigWorktreeIsRefused() throws IOException {
+        git.run(repo, "config", "extensions.worktreeConfig", "true");
+        Path configWorktree = repo.resolve(".git/config.worktree");
+        Files.writeString(configWorktree, "[core]\n\tsshCommand = evil\n");
+
+        WorkspaceException refused = assertThrows(WorkspaceException.class, () -> git.run(repo, "status", "--porcelain"));
+
+        assertTrue(refused.getMessage().contains(configWorktree.toString()), refused.getMessage());
+    }
+
+    @Test
+    void emptyConfigWorktreeFilesRun() throws IOException {
+        Path worktree = addWorktree();
+        git.run(repo, "config", "extensions.worktreeConfig", "true");
+        Files.createFile(repo.resolve(".git/worktrees/w/config.worktree"));
+        Files.createFile(repo.resolve(".git/config.worktree"));
+
+        assertEquals("w", git.run(worktree, "rev-parse", "--abbrev-ref", "HEAD"));
+        assertEquals("main", git.run(repo, "rev-parse", "--abbrev-ref", "HEAD"));
+    }
+
     private Path addWorktree() {
         git.run(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "--no-verify", "-m", "x");
         Path worktree = dir.resolve("w");

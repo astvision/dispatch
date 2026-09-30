@@ -54,7 +54,7 @@ class SandboxPoliciesTest {
         assertEquals(List.of(attachments, home.resolve(".claude/settings.json"), home.resolve(".claude/settings.local.json"),
                 home.resolve(".codex/config.toml"), home.resolve(".gemini/settings.json"), home.resolve(".gradle/init.d"),
                 home.resolve(".gradle/gradle.properties"), home.resolve(".m2/settings.xml"), worktree.resolve(".git"), common.resolve("config"), common.resolve("hooks"),
-                common.resolve("info"), common.resolve("worktrees")), policy.readOnly());
+                common.resolve("info"), common.resolve("config.worktree"), common.resolve("worktrees")), policy.readOnly());
         assertEquals(gitDir, policy.worktreeAdmin());
         assertEquals(List.of(home.resolve(".claude"), home.resolve(".claude.json"), home.resolve(".m2"),
                 home.resolve(".gradle"), home.resolve(".npm"), home.resolve(".cache")), policy.writable());
@@ -204,7 +204,7 @@ class SandboxPoliciesTest {
                 .forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of());
 
         assertTrue(policy.readOnly().containsAll(List.of(common.resolve("config"), common.resolve("hooks"), common.resolve("info"),
-                common.resolve("worktrees"))), policy.readOnly().toString());
+                common.resolve("config.worktree"), common.resolve("worktrees"))), policy.readOnly().toString());
         // Mounted back read-write over that, with its own commondir and config.worktree read-only again (Bubblewrap).
         assertEquals(gitDir, policy.worktreeAdmin());
     }

@@ -127,6 +127,7 @@ public final class Git {
             throw new WorkspaceException("refusing to run git: " + dotGit + " is a symlink");
         }
         if (Files.isDirectory(dotGit, LinkOption.NOFOLLOW_LINKS)) {
+            refuseWorktreeConfig(dotGit);
             return refuseCommondir(dotGit);
         }
         if (!Files.isRegularFile(dotGit, LinkOption.NOFOLLOW_LINKS)) {
@@ -141,6 +142,7 @@ public final class Git {
         boolean linkedWorktree = parent != null && parent.getParent() != null && parent.getFileName().toString().equals("worktrees");
         if (!linkedWorktree) {
             // A submodule or --separate-git-dir: the git dir is its own common dir.
+            refuseWorktreeConfig(gitDir);
             return refuseCommondir(gitDir);
         }
         Path adminCommondir = gitDir.resolve("commondir");
@@ -149,7 +151,24 @@ public final class Git {
                 || !commonDir.equals(realPath(gitDir.resolve(readFile(adminCommondir))))) {
             throw new WorkspaceException("refusing to run git: " + adminCommondir + " redirects the repository");
         }
+        refuseWorktreeConfig(gitDir);
         return refuseCommondir(commonDir);
+    }
+
+    /**
+     * Dispatch creates config.worktree empty and the sandbox mounts it read-only; content means an agent wrote it first,
+     * and with extensions.worktreeConfig it would add push URLs or core.sshCommand. Refused whether or not the extension
+     * is on: without it the file is inert, so only a leftover file is refused needlessly.
+     */
+    private static void refuseWorktreeConfig(Path gitDir) {
+        Path configWorktree = gitDir.resolve("config.worktree");
+        try {
+            if (Files.isSymbolicLink(configWorktree) || (Files.exists(configWorktree) && Files.size(configWorktree) > 0)) {
+                throw new WorkspaceException("refusing to run git: " + configWorktree + " is not the empty file Dispatch made");
+            }
+        } catch (IOException e) {
+            throw new WorkspaceException("refusing to run git: cannot read " + configWorktree + ": " + e.getMessage(), e);
+        }
     }
 
     /** @return the real path of {@code commonDir} */

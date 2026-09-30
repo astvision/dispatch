@@ -163,6 +163,22 @@ class WorkspacesTest {
     }
 
     @Test
+    void anAddedOrRecreatedWorktreeGetsEmptyConfigWorktreeFilesForTheSandboxToMountReadOnly() throws IOException {
+        // With extensions.worktreeConfig a config.worktree an agent creates would add push URLs or core.sshCommand.
+        Path common = stateDir.resolve("repos/alm/.git");
+        Workspaces.PreparedWorktree worktree = workspaces.createWorktree(project(List.of()), 44, Config.defaultBranch(44));
+
+        assertEquals(0, Files.size(common.resolve("worktrees/44/config.worktree")));
+        assertEquals(0, Files.size(common.resolve("config.worktree")));
+
+        workspaces.removeWorktree(project(List.of()), 44);
+        workspaces.recreateWorktree(project(List.of()), 44, Config.defaultBranch(44));
+
+        assertEquals(0, Files.size(common.resolve("worktrees/44/config.worktree")));
+        assertTrue(Files.isDirectory(worktree.path()));
+    }
+
+    @Test
     void existingWorktreeIsNeverReused() {
         workspaces.createWorktree(project(List.of()), 10, Config.defaultBranch(10));
 
