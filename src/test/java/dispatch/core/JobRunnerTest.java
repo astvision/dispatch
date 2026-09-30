@@ -66,6 +66,10 @@ class JobRunnerTest {
     /** When set, a fix (a resumed EXECUTE) runs until it is cancelled or its thread interrupted. */
     private volatile boolean fixesHang;
     private final java.util.concurrent.CountDownLatch fixStarted = new java.util.concurrent.CountDownLatch(1);
+    /** The prompts the verify loop's reviewers were started with. */
+    private final List<String> reviewPrompts = new CopyOnWriteArrayList<>();
+    /** Runs in the task's worktree between the planning run and the execution, as an earlier run's delivery would. */
+    private java.util.function.Consumer<Path> beforeExecute = worktree -> { };
     private Recorder events;
     private ActiveRuns.ActiveRun control;
     private Agent claude;
@@ -374,6 +378,28 @@ class JobRunnerTest {
         assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
     }
 
+    @Test
+    void aFollowUpsReviewerSeesTheWholeTasksChange() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+        // The task's first execution was delivered: its change is a commit on the branch this follow-up continues.
+        beforeExecute = worktree -> {
+            try {
+                Files.writeString(worktree.resolve("EARLIER.md"), "the first execution's change\n");
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            GitFixture.sh(worktree, "git", "add", "EARLIER.md");
+            GitFixture.sh(worktree, "git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "first");
+        };
+
+        executeWithLoop(true, (command, workdir, log, timeout, stop) -> new TestRunner.TestRun(0, false, false, "BUILD SUCCESS"));
+
+        assertEquals(1, reviewPrompts.size());
+        assertTrue(reviewPrompts.get(0).contains("the first execution's change"), reviewPrompts.get(0));
+        assertTrue(reviewPrompts.get(0).contains("fixed by the scripted agent"), reviewPrompts.get(0));
+    }
+
     /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
     private JobResult executeWithLoop(boolean loop, TestRunner tests) {
         return executeWithLoop(loop, new ActiveRuns().register(TASK, 2), tests);
@@ -387,6 +413,7 @@ class JobRunnerTest {
     private JobResult executeWithLoop(boolean loop, ActiveRuns.ActiveRun execution, TestRunner tests, Clock clock,
                                       Duration timeout, Duration deliveryReserve) {
         runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
+        beforeExecute.accept(Path.of(events.worktree));
         agentKindsStarted.clear();
         JobRunner looping = new JobRunner(workspaces, delivery, Map.of("claude-code", new ScriptedAgent()),
                 Redactor.patternsOnly(), (fileRef, target) -> {
@@ -416,6 +443,9 @@ class JobRunnerTest {
         @Override
         public RunHandle start(RunRequest request) {
             agentKindsStarted.add(request.kind());
+            if (request.kind() == RunKind.REVIEW) {
+                reviewPrompts.add(request.prompt());
+            }
             if (fixesHang && request.kind() == RunKind.EXECUTE && request.resume()) {
                 return hanging();
             }

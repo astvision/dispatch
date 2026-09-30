@@ -174,9 +174,12 @@ public final class JobRunner implements Worker {
 
             @Override
             public String diff() {
+                // The whole task's change since its branch started, so a follow-up's reviewer sees what it builds on;
+                // a job from before the worktree recorded its base has only this run's start.
+                String since = job.baseSha() != null ? job.baseSha() : startSha;
                 // The reviewer gets told why instead of a diff; a failure here never stops the delivery.
                 try {
-                    return delivery.diff(worktree, startSha);
+                    return delivery.diff(worktree, since);
                 } catch (RuntimeException e) {
                     return "(the diff could not be read: " + e.getMessage() + ")";
                 }

@@ -33,7 +33,7 @@ public final class VerifyLoop {
         /** Starts a fresh read-only reviewer. */
         AgentResult review(String prompt, BigDecimal budgetUsd, Duration timeout);
 
-        /** The change since the run's start commit, as git shows it. */
+        /** The task's change since its branch started (the run's start when that is unknown), as git shows it. */
         String diff();
     }
 
