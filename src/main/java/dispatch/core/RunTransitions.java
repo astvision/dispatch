@@ -109,6 +109,15 @@ public final class RunTransitions {
     /** @param verification what the verify loop found; null for a run without the loop */
     public void completed(long taskId, int seq, AgentResult result, String summary, List<String> files, String prUrl,
             Verification verification) {
+        completed(taskId, seq, result, summary, files, prUrl, verification, null);
+    }
+
+    /**
+     * @param head the commit the delivery left the task's branch at, which the next run must find it at; null when the worker
+     *             did not say (one from before the branch guard), which checks nothing from now on
+     */
+    public void completed(long taskId, int seq, AgentResult result, String summary, List<String> files, String prUrl,
+            Verification verification, String head) {
         db.transaction(tx -> {
             Instant now = clock.instant();
             Task task = task(tx, taskId);
@@ -116,6 +125,8 @@ public final class RunTransitions {
             if (!finishRun(tx, run, RunStatus.SUCCEEDED, null, null, result, summary, now)) {
                 return;
             }
+            // Where the branch is, whatever became of the task meanwhile.
+            Tasks.recordHead(tx, taskId, head, now);
             if (!Tasks.completed(tx, taskId, prUrl, now)) {
                 ignoredResult(tx, task, seq);
                 return;
@@ -145,6 +156,20 @@ public final class RunTransitions {
 
     /** @param result null when no agent result exists (setup failure, interrupted before the agent reported) */
     public void failed(long taskId, int seq, FailureReason reason, String detail, AgentResult result) {
+        failed(taskId, seq, reason, detail, result, false, null);
+    }
+
+    /**
+     * A failed delivery, which may have left the task's branch at Dispatch's own commit.
+     *
+     * @param head where the task's branch is now, as for {@link #completed}
+     */
+    public void deliveryFailed(long taskId, int seq, String detail, AgentResult result, String head) {
+        failed(taskId, seq, FailureReason.DELIVERY, detail, result, true, head);
+    }
+
+    private void failed(long taskId, int seq, FailureReason reason, String detail, AgentResult result, boolean recordHead,
+                        String head) {
         String shortDetail = truncate(detail);
         db.transaction(tx -> {
             Instant now = clock.instant();
@@ -154,6 +179,9 @@ public final class RunTransitions {
             String output = result == null ? null : result.summary();
             if (!finishRun(tx, run, RunStatus.FAILED, reason, shortDetail, result, output, now)) {
                 return;
+            }
+            if (recordHead) {
+                Tasks.recordHead(tx, taskId, head, now);
             }
             if (!Tasks.failed(tx, taskId, reason, shortDetail, now)) {
                 ignoredResult(tx, task, seq);

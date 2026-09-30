@@ -144,7 +144,16 @@ public final class Coordinator {
         return new Job(task.id(), run.seq(), run.kind(), on, task.baseBranch(), task.baseSha(),
                 task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
-                trailers(task, run.kind()), deliverySummary, Config.branchFor(branchPrefix, task.id()), reviewPrompt);
+                trailers(task, run.kind()), deliverySummary, Config.branchFor(branchPrefix, task.id()), reviewPrompt,
+                expectedHead(task.id(), run.kind()));
+    }
+
+    /** Null for a PLAN job, which neither builds on the branch nor pushes it, so an older worker still reads it. */
+    private String expectedHead(long taskId, RunKind kind) {
+        if (kind == RunKind.PLAN) {
+            return null;
+        }
+        return db.transactionReturning(tx -> Tasks.expectedHead(tx, taskId));
     }
 
     /** What this run adds to the approved plan; the approval's (and its retry's) instruction is the plan itself, so none. */
@@ -205,8 +214,13 @@ public final class Coordinator {
     private void apply(Job job, JobResult result) {
         switch (result.outcome()) {
             case CANCELLED -> transitions.cancelled(job.taskId(), job.seq(), result.agent());
-            case FAILED -> transitions.failed(job.taskId(), job.seq(), result.failureReason(), result.failureDetail(),
-                    result.agent());
+            case FAILED -> {
+                if (result.failureReason() == FailureReason.DELIVERY) {
+                    transitions.deliveryFailed(job.taskId(), job.seq(), result.failureDetail(), result.agent(), result.head());
+                } else {
+                    transitions.failed(job.taskId(), job.seq(), result.failureReason(), result.failureDetail(), result.agent());
+                }
+            }
             case SUCCEEDED -> succeeded(job, result);
         }
     }
@@ -215,9 +229,9 @@ public final class Coordinator {
         switch (job.kind()) {
             case PLAN -> finishPlan(job.taskId(), job.seq(), result.agent());
             case EXECUTE -> transitions.completed(job.taskId(), job.seq(), result.agent(), result.agent().summary(), result.files(),
-                    result.prUrl(), result.verification());
+                    result.prUrl(), result.verification(), result.head());
             case DELIVER -> transitions.completed(job.taskId(), job.seq(), null, job.deliverySummary(), result.files(),
-                    result.prUrl());
+                    result.prUrl(), null, result.head());
             case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a task's run");
         }
     }

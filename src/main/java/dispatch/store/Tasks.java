@@ -207,8 +207,20 @@ public final class Tasks {
         tx.update("UPDATE task SET build_session_id = ?, updated_at = ? WHERE id = ?", buildSessionId, now, id);
     }
 
+    /** The new worktree's branch starts at {@code baseSha}, which is where the next execution must find it. */
     public static void recordWorktree(Tx tx, long id, String worktree, String baseSha, Instant now) {
-        tx.update("UPDATE task SET worktree = ?, base_sha = ?, updated_at = ? WHERE id = ?", worktree, baseSha, now, id);
+        tx.update("UPDATE task SET worktree = ?, base_sha = ?, head_sha = ?, updated_at = ? WHERE id = ?", worktree, baseSha,
+                baseSha, now, id);
+    }
+
+    /** The commit Dispatch last left the task's branch at; null when unknown, and then nothing is checked. */
+    public static String expectedHead(Tx tx, long id) {
+        return tx.one("SELECT head_sha FROM task WHERE id = ?", row -> row.string("head_sha"), id).orElse(null);
+    }
+
+    /** @param head where a delivery left the task's branch; null when the worker did not say, which ends the check */
+    public static void recordHead(Tx tx, long id, String head, Instant now) {
+        tx.update("UPDATE task SET head_sha = ?, updated_at = ? WHERE id = ?", head, now, id);
     }
 
     /** The computer that made this task's worktree: every later run of the task goes back to it. */

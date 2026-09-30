@@ -299,6 +299,55 @@ class CoordinatorTest {
         assertFalse(json.contains("\"loop\""), json);
     }
 
+    @Test
+    void theBranchsExpectedHeadStartsAtItsBaseAndFollowsEachDeliveryDispatchMade() {
+        long id = queue("Fix the login timeout");
+        coordinator(projects(List.of(ALM)), (job, events, control) -> {
+            given.set(job);
+            events.worktreeCreated("/w/" + id, "base000");
+            return JobResult.succeeded(agentResult(PLAN_JSON));
+        }).execute(claim());
+        assertNull(given.get().expectedHead(), "a PLAN job checks nothing");
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
+
+        coordinator(projects(List.of(ALM)), executes(JobResult.failed(FailureReason.DELIVERY, "git push failed", agentResult(null))
+                .withHead("commit1"))).execute(claim());
+        assertEquals("base000", given.get().expectedHead(), "the first execution builds on the branch's start");
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Retry(id)));
+
+        coordinator(projects(List.of(ALM)), remember(JobResult.delivered(null, List.of("README.md"),
+                "https://github.com/acme/alm/pull/9").withHead("commit2"))).execute(claim());
+        assertEquals(RunKind.DELIVER, given.get().kind());
+        assertEquals("commit1", given.get().expectedHead(), "the failed push left Dispatch's own commit on the branch");
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.FollowUp(id, "Also log the timeout", new Origin("telegram:100/followup"))));
+
+        coordinator(projects(List.of(ALM)), remember(JobResult.failed(FailureReason.SETUP, "the task has no worktree", null)))
+                .execute(claim());
+        assertEquals("commit2", given.get().expectedHead(), "a follow-up builds on the delivered commit");
+        assertEquals("commit2", row("SELECT head_sha FROM task WHERE id = ?", id).get("head_sha"),
+                "a run that never reached its delivery leaves the branch where it was");
+    }
+
+    @Test
+    void aDeliveryFromAWorkerThatDoesNotReportTheHeadEndsTheGuardForThatTask() {
+        long id = queue("Fix the login timeout");
+        coordinator(projects(List.of(ALM)), (job, events, control) -> {
+            events.worktreeCreated("/w/" + id, "base000");
+            return JobResult.succeeded(agentResult(PLAN_JSON));
+        }).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
+
+        // A worker from before the guard: its branch moved to a commit this machine never hears of.
+        coordinator(projects(List.of(ALM)), executes(JobResult.delivered(agentResult(null), List.of("README.md"),
+                "https://github.com/acme/alm/pull/9"))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.FollowUp(id, "Also log the timeout", new Origin("telegram:100/followup"))));
+        coordinator(projects(List.of(ALM)), remember(JobResult.succeeded(agentResult(null)))).execute(claim());
+
+        assertNull(given.get().expectedHead(), "an unknown head is not checked, rather than refusing every later run");
+    }
+
     private static Config.Project loopProject(String loop) {
         return new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm", "main", "claude-code", null,
                 "high", List.of(".env"), null, new Config.PhaseSettings("opus", null), new Config.PhaseSettings(null, "low"),
@@ -323,6 +372,15 @@ class CoordinatorTest {
         return new Coordinator(db, projects, new RunTransitions(db, clock, () -> { }), activeRuns,
                 project -> new Config.RunLimits(Duration.ofMinutes(30), new BigDecimal("2")),
                 project -> new Config.RunLimits(Duration.ofMinutes(60), new BigDecimal("10")), worker, () -> { }, branchPrefix);
+    }
+
+    /** As {@link #remember}, for an execution whose agent started, which a follow-up requires. */
+    private Worker executes(JobResult result) {
+        return (job, events, control) -> {
+            given.set(job);
+            events.agentStarted(null, null);
+            return result;
+        };
     }
 
     private Worker remember(JobResult result) {
