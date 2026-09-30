@@ -10,6 +10,15 @@ export function fieldsOf(project: ManagedProject): ProjectFields {
     plan: project.plan, execute: project.execute };
 }
 
+/** ConfigLoader.PROJECT_KEY: a name or alias is what a task names the project by, and Telegram links carry it, so Latin only. */
+const PROJECT_KEY = /^(?!\.{1,2}$)[A-Za-z0-9._-]+$/;
+
+/** Whether {@code value} can be a project's name or alias; empty counts as fine, required-ness is checked apart. */
+export function isProjectKey(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === "" || PROJECT_KEY.test(trimmed);
+}
+
 interface Props {
   initial: ProjectFields;
   /** The agent an existing project runs on; undefined when adding, where the config's agent is used. */
@@ -56,12 +65,15 @@ export default function ProjectForm({ initial, agent: initialAgent, nameEditable
     ...(initialAgent !== undefined && agent !== initialAgent ? { agent } : {}),
   }, group);
   const agentEfforts = effortsFor(t, agent);
+  const nameValid = isProjectKey(project.name);
+  const aliasValid = isProjectKey(project.alias ?? "");
 
   return (
     <Form layout="vertical" onFinish={submit}>
       <Group title="projects.where">
         {nameEditable && (
-          <Form.Item label={t("projects.name")} htmlFor="project-name">
+          <Form.Item label={t("projects.name")} htmlFor="project-name" validateStatus={nameValid ? undefined : "error"}
+                     help={nameValid ? undefined : t("projects.keyInvalid")}>
             <Input id="project-name" value={project.name} onChange={(e) => set({ name: e.target.value })} />
           </Form.Item>
         )}
@@ -74,7 +86,8 @@ export default function ProjectForm({ initial, agent: initialAgent, nameEditable
         <Form.Item label={t("projects.baseBranch")} htmlFor="project-base" extra={t("projects.baseBranchHelp")}>
           <Input id="project-base" className="mono" value={project.baseBranch} onChange={(e) => set({ baseBranch: e.target.value })} />
         </Form.Item>
-        <Form.Item label={t("projects.alias")} htmlFor="project-alias" extra={t("projects.aliasHelp")}>
+        <Form.Item label={t("projects.alias")} htmlFor="project-alias" extra={t("projects.aliasHelp")}
+                   validateStatus={aliasValid ? undefined : "error"} help={aliasValid ? undefined : t("projects.keyInvalid")}>
           <Input id="project-alias" value={project.alias ?? ""} onChange={(e) => set({ alias: e.target.value })} />
         </Form.Item>
       </Group>
@@ -121,7 +134,7 @@ export default function ProjectForm({ initial, agent: initialAgent, nameEditable
         </Form.Item>
       </Group>
       <Space>
-        <Button type="primary" htmlType="submit" loading={busy} disabled={!project.name.trim() || !project.baseBranch.trim()}>
+        <Button type="primary" htmlType="submit" loading={busy} disabled={!project.name.trim() || !project.baseBranch.trim() || !nameValid || !aliasValid}>
           {submitLabel}
         </Button>
         <Button onClick={onCancel}>{t("common.cancel")}</Button>

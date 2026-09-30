@@ -1,5 +1,5 @@
 import { Alert, Button, Result, Spin } from "antd";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, getConfig, listProjects, listTasks, type ConfigView, type ProjectSummary } from "../api";
 
 const asApiError = (e: unknown) => (e instanceof ApiError ? e : new ApiError("unknown", String(e)));
@@ -58,6 +58,11 @@ export function MiniManaged({ config, loadError, saveError, reload, children }: 
   reload: () => Promise<void>;
   children: (config: ConfigView) => ReactNode;
 }) {
+  const errorRef = useRef<HTMLDivElement>(null);
+  // The save button sits at the bottom of a long form, so an error shown up here would go unseen without the scroll.
+  useEffect(() => {
+    if (saveError) errorRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  }, [saveError]);
   if (loadError) {
     return <Result status="warning" title="Тохиргоог уншиж чадсангүй" subTitle={loadError.message}
                    extra={<Button onClick={() => void reload()}>Дахин оролдох</Button>} />;
@@ -66,8 +71,8 @@ export function MiniManaged({ config, loadError, saveError, reload, children }: 
   return (
     <>
       {saveError && (
-        <Alert type="error" showIcon message={saveError.message} style={{ marginTop: 12 }}
-               action={saveError.code === "changed" && <Button onClick={() => void reload()}>Дахин унших</Button>} />
+        <div ref={errorRef}><Alert type="error" showIcon message={saveError.message} style={{ marginTop: 12 }}
+               action={saveError.code === "changed" && <Button onClick={() => void reload()}>Дахин унших</Button>} /></div>
       )}
       {children(config)}
     </>

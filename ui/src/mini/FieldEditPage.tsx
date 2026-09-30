@@ -2,7 +2,7 @@ import { Button, Input, Result, Typography } from "antd";
 import { useState } from "react";
 import { editProject, type ManagedProject, type PhaseChoice, type ProjectFields } from "../api";
 import { useT } from "../i18n/i18n";
-import { fieldsOf } from "../manage/ProjectForm";
+import { fieldsOf, isProjectKey } from "../manage/ProjectForm";
 import { useManagedConfig } from "../manage/useManagedConfig";
 import { AGENTS, agentLabel, effortsFor, models, phaseEfforts, phaseModels, withCurrent } from "../options";
 import { MiniManaged } from "./data";
@@ -22,23 +22,27 @@ const TITLES: Record<Field, string> = {
 type Save = (change: Partial<ProjectFields>) => Promise<boolean>;
 
 /** A text setting: type it, then Save goes back to the project. */
-function TextField({ id, initial, hint, required, busy, onSave }: {
+function TextField({ id, initial, hint, required, busy, invalid, onSave }: {
   id: string;
   initial: string;
   hint: string;
   required: boolean;
   busy: boolean;
+  /** Why the typed value cannot be saved, or null when it can. */
+  invalid?: (value: string) => string | null;
   onSave: (value: string) => void;
 }) {
   const [value, setValue] = useState(initial);
   const trimmed = value.trim();
+  const error = invalid?.(trimmed) ?? null;
   return (
     <form onSubmit={(event) => { event.preventDefault(); onSave(trimmed); }}>
       <Input id={id} aria-label={hint} size="large" value={value} onChange={(event) => setValue(event.target.value)}
-             style={{ marginTop: 16 }} />
+             status={error ? "error" : undefined} style={{ marginTop: 16 }} />
+      {error && <Typography.Paragraph type="danger" style={{ margin: "8px 4px 0" }}>{error}</Typography.Paragraph>}
       <Typography.Paragraph type="secondary" style={{ margin: "8px 4px 16px" }}>{hint}</Typography.Paragraph>
       <Button type="primary" htmlType="submit" size="large" block loading={busy}
-              disabled={(required && trimmed === "") || trimmed === initial}>
+              disabled={(required && trimmed === "") || trimmed === initial || error !== null}>
         Хадгалах
       </Button>
     </form>
@@ -92,7 +96,8 @@ function Editor({ project, field, busy, save, back }: {
                         onSave={(value) => void saveThenBack({ baseBranch: value })} />;
     case "alias":
       return <TextField id="field-alias" initial={project.alias ?? ""} required={false} busy={busy}
-                        hint="Даалгаварт төслийг нэрлэх богино нэр. Хоосон бол байхгүй."
+                        hint="Даалгаварт төслийг нэрлэх богино нэр: латин үсэг, цифр, '.', '_', '-'. Хоосон бол байхгүй."
+                        invalid={(value) => (isProjectKey(value) ? null : t("projects.keyInvalid"))}
                         onSave={(value) => void saveThenBack({ alias: value === "" ? null : value })} />;
     case "model":
       if (project.agent !== "claude-code") {
