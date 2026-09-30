@@ -140,7 +140,7 @@ public final class Coordinator {
                     String effort, long timeoutMillis, BigDecimal budgetUsd, List<Attachment> attachments,
                     String deliverySummary, String reviewPrompt) {
         Job.Project on = new Job.Project(project.name(), project.repo(), project.path(), project.baseBranch(), project.agent(),
-                project.copyFiles(), project.test(), project.loopOn());
+                project.copyFiles(), project.test(), project.loopOn() ? Boolean.TRUE : null);
         return new Job(task.id(), run.seq(), run.kind(), on, task.baseBranch(), task.baseSha(),
                 task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),

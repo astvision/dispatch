@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
@@ -279,6 +280,15 @@ class CoordinatorTest {
 
         assertNull(job.reviewPrompt());
         assertFalse(job.project().loopOn());
+    }
+
+    @Test
+    void aLoopOffExecutionJobAddsNothingAnOlderWorkerWouldRejectToItsJson() {
+        String json = Json.write(approvedExecutionJob(ALM));
+
+        assertFalse(json.contains("\"loop\""), json);
+        assertFalse(json.contains("\"test\""), json);
+        assertFalse(json.contains("\"reviewPrompt\""), json);
     }
 
     private static Config.Project loopProject(String loop) {
