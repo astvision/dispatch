@@ -281,6 +281,17 @@ class RendererTest {
     }
 
     @Test
+    void theContextAddedByRepliesIsCountedOnThePrompt() {
+        String short_ = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm", "crm"), "crm", "OPEN", null).put("view", "DEFAULT").put("additions", 2)).html();
+        String detail = renderer.render(OutboxKind.DRAFT_PROMPT,
+                draftPayload(List.of("alm", "crm"), "crm", "OPEN", null).put("view", "DETAIL").put("additions", 1)).html();
+
+        assertTrue(short_.endsWith("Төсөл: <b>crm</b> · 🟢\n📎 Нэмэлт: 2"), short_);
+        assertTrue(detail.contains("📎 Нэмэлт: 1"), detail);
+    }
+
+    @Test
     void withOneProjectTheDetailViewOffersNoProjectButtons() {
         Renderer.Rendered single = renderer.render(OutboxKind.DRAFT_PROMPT,
                 draftPayload(List.of("life"), "life", "OPEN", null).put("view", "DETAIL"));

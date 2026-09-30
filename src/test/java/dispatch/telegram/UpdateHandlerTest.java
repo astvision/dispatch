@@ -246,6 +246,49 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void repliesToAnOpenDraftsPromptAddTheirTextAndFilesToItAndRedrawThePrompt() {
+        handler.handle(message(530, 30, 300, "Sara", 300L, "private", "Add make help", null));
+        draftPromptSentAs("telegram:300/900");
+
+        handler.handle(message(531, 31, 300, "Sara", 300L, "private", "Also list the targets", botMessage(900)));
+        JsonNode photo = message(532, 32, 300, "Sara", 300L, "private", "", botMessage(900));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) photo.get("message")).remove("text");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) photo.get("message")).put("caption", "Like this one")
+                .putArray("photo").add(Json.read("{\"file_id\":\"shot\",\"width\":1280,\"height\":853,\"file_size\":90000}"));
+        handler.handle(photo);
+        JsonNode document = message(533, 33, 300, "Sara", 300L, "private", "", botMessage(900));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) document.get("message")).remove("text");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) document.get("message"))
+                .set("document", Json.read("{\"file_id\":\"doc\",\"file_name\":\"targets.txt\",\"file_size\":300}"));
+        handler.handle(document);
+
+        assertEquals("1", row("SELECT count(*) AS n FROM draft").get("n"), "context, not new drafts");
+        assertEquals("Add make help\n\nНэмэлт мэдээлэл:\nAlso list the targets\n\nLike this one", row("SELECT description FROM draft").get("description"));
+        assertEquals("1-photo.jpg,2-targets.txt", row("SELECT group_concat(name) AS names FROM attachment WHERE draft_id = 1").get("names"),
+                "numbered on from the draft's files, so none collide");
+        JsonNode redrawn = Json.read(row("SELECT payload FROM outbox WHERE kind = 'DRAFT_PROMPT' AND edit_ref = 'telegram:300/900' "
+                + "ORDER BY id DESC LIMIT 1").get("payload"));
+        assertEquals(3, redrawn.get("additions").asInt());
+        assertEquals("Add make help", redrawn.get("title").asText());
+
+        handler.handle(privateCallback(534, 300, "Sara", "draft:1:send:x"));
+        assertTrue(row("SELECT description FROM task").get("description").endsWith("Like this one"));
+        assertEquals("2", row("SELECT count(*) AS n FROM attachment WHERE task_id IS NOT NULL").get("n"));
+    }
+
+    @Test
+    void aReplyToADraftThatIsNoLongerOpenKeepsItsOldMeaning() {
+        handler.handle(message(535, 35, 300, "Sara", 300L, "private", "Add make help", null));
+        draftPromptSentAs("telegram:300/901");
+        handler.handle(privateCallback(536, 300, "Sara", "draft:1:send:x"));
+
+        handler.handle(message(537, 37, 300, "Sara", 300L, "private", "Rename the report", botMessage(901)));
+
+        assertEquals("Add make help", row("SELECT description FROM task").get("description"));
+        assertEquals("Rename the report", row("SELECT description FROM draft WHERE id = 2").get("description"), "a new task, as before");
+    }
+
+    @Test
     void theBinClosesADraftThatIsNotATaskAndRedrawsItsPrompt() throws Exception {
         handler.handle(message(516, 17, 100, "Bold", 100L, "private", "Is this a task, or are you doing it yourself?", null));
         long draftId = Long.parseLong(row("SELECT id FROM draft").get("id"));
@@ -2498,6 +2541,11 @@ class UpdateHandlerTest {
     }
 
     /** As the outbox sender records it once Telegram accepted the plan message. */
+    private void draftPromptSentAs(String sentRef) {
+        long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'DRAFT_PROMPT'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, sentRef, clock.instant()));
+    }
+
     private void planMessageSentAs(long messageId) {
         long outboxId = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'PLAN_READY'").get("id"));
         db.transaction(tx -> Outbox.markSent(tx, outboxId, 1, "telegram:" + GROUP + "/" + messageId, clock.instant()));

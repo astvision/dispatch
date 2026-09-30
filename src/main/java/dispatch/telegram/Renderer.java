@@ -324,7 +324,8 @@ public final class Renderer {
         payload.path("skippedFiles").forEach(file -> skipped.add(escape(file.asText())));
         String tooLarge = skipped.isEmpty() ? "" : "\n\n" + format("draft.filesTooLarge", String.join(", ", skipped));
         String priority = payload.path("priority").asText("LOW");
-        String chosen = project == null ? text("draft.chooseProject") : format("draft.projectPriority", project, PRIORITY_ICONS.get(priority));
+        String chosen = (project == null ? text("draft.chooseProject") : format("draft.projectPriority", project, PRIORITY_ICONS.get(priority)))
+                + (payload.path("additions").asInt() > 0 ? "\n" + format("draft.additions", payload.path("additions").asInt()) : "");
         // A payload from before the views has none: one with its project gets the short view.
         if (project != null && !payload.path("view").asText().equals("DETAIL")) {
             return draftShortView(payload, header + "\n" + title + "\n" + chosen + note + tooLarge);

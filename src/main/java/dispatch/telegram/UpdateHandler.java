@@ -33,6 +33,7 @@ import dispatch.domain.Phase;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Task;
+import dispatch.store.Attachments;
 import dispatch.store.Conversations;
 import dispatch.store.Database;
 import dispatch.store.Kv;
@@ -320,6 +321,9 @@ public final class UpdateHandler {
             return;
         }
         if (parsed.isEmpty()) {
+            if (privateChat && replyToDraft(tx, message, who)) {
+                return;
+            }
             if (privateChat && repliesTo(tx, message, OutboxKind.TASK_PROMPT)) {
                 // An answer to /help's ✍️ prompt: a task by explicit intent, as /task's text is, never an assistant turn.
                 tasks.draft(tx, who, null, text(message), origin, attachments(message));
@@ -677,6 +681,25 @@ public final class UpdateHandler {
         }
         String repliedRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
         return Outbox.findSent(tx, repliedRef).filter(sent -> sent.kind() == kind).isPresent();
+    }
+
+    /**
+     * A reply to the prompt of the writer's own open draft adds its text and files to that draft; false for any other
+     * message, including a reply to a draft given or closed since, which keeps its old meaning.
+     */
+    private boolean replyToDraft(Tx tx, JsonNode message, Requester who) {
+        JsonNode repliedTo = message.path("reply_to_message");
+        if (!repliedTo.has("message_id")) {
+            return false;
+        }
+        String promptRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
+        Optional<Outbox.Sent> sent = Outbox.findSent(tx, promptRef).filter(found -> found.kind() == OutboxKind.DRAFT_PROMPT);
+        if (sent.isEmpty()) {
+            return false;
+        }
+        long draftId = Json.read(sent.get().payload()).path("draftId").asLong();
+        int filesBefore = Attachments.forDraft(tx, draftId).size();
+        return tasks.addContext(tx, who, draftId, text(message), attachments(filesBefore, message), promptRef);
     }
 
     /**
@@ -1519,6 +1542,11 @@ public final class UpdateHandler {
 
     /** The photos (each at its largest size) and documents of {@code messages}, numbered in order. */
     static List<Attachment> attachments(JsonNode... messages) {
+        return attachments(0, messages);
+    }
+
+    /** As {@link #attachments(JsonNode...)}, numbered on after {@code before} files the task already has. */
+    private static List<Attachment> attachments(int before, JsonNode... messages) {
         List<Attachment> found = new ArrayList<>();
         for (JsonNode message : messages) {
             JsonNode largest = null;
@@ -1528,12 +1556,13 @@ public final class UpdateHandler {
                 }
             }
             if (largest != null && largest.has("file_id")) {
-                found.add(new Attachment(largest.get("file_id").asText(), Attachment.safeName(found.size() + 1, "photo.jpg"), bytes(largest)));
+                found.add(new Attachment(largest.get("file_id").asText(), Attachment.safeName(before + found.size() + 1, "photo.jpg"),
+                        bytes(largest)));
             }
             JsonNode document = message.path("document");
             if (document.has("file_id")) {
                 found.add(new Attachment(document.get("file_id").asText(),
-                        Attachment.safeName(found.size() + 1, document.path("file_name").asText("file")), bytes(document)));
+                        Attachment.safeName(before + found.size() + 1, document.path("file_name").asText("file")), bytes(document)));
             }
         }
         return found;

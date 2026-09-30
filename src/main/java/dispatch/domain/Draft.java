@@ -17,6 +17,7 @@ import java.util.List;
  * @param sourceRef someone's message in a group this draft was given in reply to (G-1b, G-1c); null otherwise
  * @param priority  the priority chosen on the prompt; LOW until one is
  * @param detail    the prompt shows its detail view, with every project and priority to choose from
+ * @param additions how many replies to the prompt added context to it
  */
 public record Draft(
         long id,
@@ -37,5 +38,6 @@ public record Draft(
         Instant updatedAt,
         String sourceRef,
         Priority priority,
-        boolean detail) {
+        boolean detail,
+        int additions) {
 }

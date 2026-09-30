@@ -19,7 +19,7 @@ public final class Drafts {
 
     private static final String COLUMNS = """
             id, requester_ref, requester_name, chat_ref, origin_ref, description, project, status, task_id, prompt_ref, split_state,
-            topics, parent_id, part, created_at, updated_at, source_ref, priority, detail""";
+            topics, parent_id, part, created_at, updated_at, source_ref, priority, detail, additions""";
 
     private Drafts() {
     }
@@ -78,6 +78,12 @@ public final class Drafts {
     public static boolean chooseProject(Tx tx, long id, String project, Instant now) {
         return tx.update("UPDATE draft SET project = ?, updated_at = ? WHERE id = ? AND status = ?",
                 project, now, id, DraftStatus.OPEN) == 1;
+    }
+
+    /** A reply's context: the description with it, and one more addition; false when the draft is no longer open. */
+    public static boolean addContext(Tx tx, long id, String description, Instant now) {
+        return tx.update("UPDATE draft SET description = ?, additions = additions + 1, updated_at = ? WHERE id = ? AND status = ?",
+                description, now, id, DraftStatus.OPEN) == 1;
     }
 
     public static boolean choosePriority(Tx tx, long id, Priority priority, Instant now) {
@@ -162,7 +168,8 @@ public final class Drafts {
                 row.instant("updated_at"),
                 row.string("source_ref"),
                 Objects.requireNonNullElse(row.enumValue("priority", Priority.class), Priority.LOW),
-                row.intValue("detail") == 1);
+                row.intValue("detail") == 1,
+                row.intValue("additions"));
     }
 
     private static List<String> topics(String json) {

@@ -58,6 +58,8 @@ public final class TaskService {
     private static final int TITLE_LENGTH = 80;
     private static final int HISTORY_SIZE = 10;
     private static final int INSTRUCTION_LENGTH = 200;
+    /** Heads what replies to a draft's prompt added to its description; its agent reads the description as the task. */
+    static final String CONTEXT_HEADING = "Нэмэлт мэдээлэл:";
 
     private final Groups groups;
     private final Projects projects;
@@ -239,6 +241,36 @@ public final class TaskService {
         return give(tx, who, found.get(), priority);
     }
 
+    /**
+     * A writer's reply to their open draft's prompt adds context: its text goes under the description's
+     * {@value #CONTEXT_HEADING} section, one paragraph per reply, and its files join the draft's. The prompt is redrawn with
+     * the count. False when the reply is not this, so it keeps its old meaning: the draft is someone else's or no longer
+     * open, or the reply has neither text nor files.
+     *
+     * @param files     the reply's files, numbered on from the draft's so none collide
+     * @param promptRef the prompt replied to
+     */
+    public boolean addContext(Tx tx, Requester who, long draftId, String text, List<Attachment> files, String promptRef) {
+        Optional<Draft> found = Drafts.find(tx, draftId);
+        String added = text == null ? "" : text.strip();
+        if (refusal(found, who).isPresent() || (added.isEmpty() && files.isEmpty())) {
+            return false;
+        }
+        Instant now = clock.instant();
+        Draft draft = found.get();
+        String description = draft.description();
+        if (!added.isEmpty()) {
+            boolean first = !description.contains("\n\n" + CONTEXT_HEADING + "\n");
+            description = description + "\n\n" + (first ? CONTEXT_HEADING + "\n" : "") + added;
+        }
+        Drafts.addContext(tx, draftId, description, now);
+        Attachments.addToDraft(tx, draftId, files);
+        Outbox.enqueueEdit(tx, null, OutboxKind.DRAFT_PROMPT, draft.chatRef(), promptRef, draftPayload(tx, draftId).orElseThrow(), now);
+        tx.afterCommit(wakeOutbox);
+        tx.afterCommit(() -> Log.info("draft.context_added", "draft", draftId, "files", files.size()));
+        return true;
+    }
+
     /** A priority in the detail view: chosen for ✅ to give the task with, never giving it itself. */
     public DraftChoice pickPriority(Tx tx, Requester who, long draftId, Priority priority) {
         Optional<DraftChoice> refused = refusal(Drafts.find(tx, draftId), who);
@@ -295,6 +327,7 @@ public final class TaskService {
                     : Tasks.find(tx, draft.taskId()).map(task -> task.priority().name()).orElse(null));
             // With no project there is nothing for the short view to send: the detail view asks for one.
             payload.put("view", draft.detail() || draft.project() == null ? "DETAIL" : "DEFAULT");
+            payload.put("additions", draft.additions());
             payload.put("split", draft.splitState() == null ? null : draft.splitState().name());
             ArrayNode skipped = payload.putArray("skippedFiles");
             Attachments.forDraft(tx, draftId).stream().filter(Attachment::tooLarge).forEach(file -> skipped.add(file.name()));

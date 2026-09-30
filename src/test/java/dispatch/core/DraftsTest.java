@@ -1,12 +1,14 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.config.Config;
+import dispatch.domain.Attachment;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.store.Database;
@@ -222,6 +224,28 @@ class DraftsTest {
     }
 
     @Test
+    void contextIsAddedToAnOpenDraftByItsWriterOnly() {
+        long draftId = draft(SARA, "Add make help", "telegram:300/50");
+
+        assertTrue(addContext(SARA, draftId, " List the targets ", List.of()));
+        assertTrue(addContext(SARA, draftId, "", List.of(new Attachment("f", "1-photo.jpg", 10L))));
+        assertFalse(addContext(BOLD, draftId, "Mine too", List.of()));
+        assertFalse(addContext(SARA, draftId, " ", List.of()),
+                "nothing to add");
+
+        assertEquals("Add make help\n\nНэмэлт мэдээлэл:\nList the targets", row("SELECT description FROM draft").get("description"));
+        assertEquals(2, payload(draftId).get("additions").asInt());
+        assertEquals("1-photo.jpg", row("SELECT name FROM attachment WHERE draft_id = ?", draftId).get("name"));
+        Map<String, String> redraw = row("SELECT * FROM outbox WHERE edit_ref = 'telegram:300/950' ORDER BY id DESC LIMIT 1");
+        assertEquals("DRAFT_PROMPT", redraw.get("kind"));
+        assertEquals("telegram:300", redraw.get("chat_ref"));
+
+        db.transaction(tx -> tasks.send(tx, SARA, draftId));
+        assertFalse(addContext(SARA, draftId, "Too late", List.of()));
+        assertEquals("Add make help\n\nНэмэлт мэдээлэл:\nList the targets", row("SELECT description FROM task").get("description"));
+    }
+
+    @Test
     void withTopicsOnEachGivenTaskGetsItsOwnTopicInTheWritersPrivateChat() {
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, schedulerWakes::incrementAndGet, () -> { }, true, draftId -> { }, false);
         long draftId = draft(SARA, "Add make help", "telegram:300/20");
@@ -349,6 +373,10 @@ class DraftsTest {
         long draftId = draft(who, text, originRef);
         db.transaction(tx -> tasks.chooseProject(tx, who, draftId, project));
         assertEquals(DraftChoice.CREATED, db.transactionReturning(tx -> tasks.send(tx, who, draftId)));
+    }
+
+    private boolean addContext(Requester who, long draftId, String text, List<Attachment> files) {
+        return db.transactionReturning(tx -> tasks.addContext(tx, who, draftId, text, files, "telegram:300/950"));
     }
 
     private JsonNode payload(long draftId) {
