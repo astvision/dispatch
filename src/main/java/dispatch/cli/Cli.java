@@ -14,7 +14,7 @@ import java.util.Set;
 public final class Cli {
 
     private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group", "log-file",
-            "port", "agent", "instance");
+            "port", "agent", "instance", "idle-minutes");
     private static final List<String> SERVICE_ACTIONS = List.of("install", "start", "stop", "status", "uninstall");
     private static final Set<String> SWITCHES = Set.of("force", "no-browser", "advanced");
 
@@ -146,8 +146,9 @@ public final class Cli {
                   project add FOLDER [--name NAME] [--alias ALIAS] [--base BRANCH] [--model MODEL]
                            [--effort low|medium|high|xhigh|max] [--group GROUP] [--agent claude-code|codex|gemini]
                            add a git clone on this machine as a project
-                  ui [--port 7878] [--no-browser]
-                           manage Dispatch in your browser; on a server: ssh -L 7878:localhost:7878 SERVER
+                  ui [--port 7878] [--no-browser] [--idle-minutes N]
+                           manage Dispatch in your browser; on a server: ssh -L 7878:localhost:7878 SERVER;
+                           --idle-minutes stops it after N minutes unused
                   worker init
                            set your computer up for your team's bot: pair it, map its
                            projects to your clones, and keep it running in the background

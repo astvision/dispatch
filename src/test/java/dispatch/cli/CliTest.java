@@ -84,6 +84,14 @@ class CliTest {
     }
 
     @Test
+    void uiStopsAfterIdleMinutesOnlyWhenAsked() {
+        assertEquals(30, ((Cli.Ui) parse("ui", "--no-browser", "--idle-minutes", "30")).idleMinutes(),
+                "what the bot starts it with for the Mini App (ADR 0018)");
+        assertEquals(0, ((Cli.Ui) parse("ui")).idleMinutes(), "by hand it runs until Ctrl+C");
+        assertTrue(assertThrows(CliException.class, () -> parse("ui", "--idle-minutes", "-1")).getMessage().contains("--idle-minutes"));
+    }
+
+    @Test
     void uiRefusesAPortThatIsNotOne() {
         CliException e = assertThrows(CliException.class, () -> parse("ui", "--port", "70000"));
         assertTrue(e.getMessage().contains("--port"), e.getMessage());
