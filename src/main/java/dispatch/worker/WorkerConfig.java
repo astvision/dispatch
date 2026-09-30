@@ -1,5 +1,6 @@
 package dispatch.worker;
 
+import dispatch.agent.sandbox.SandboxSetting;
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -21,9 +22,18 @@ import java.util.Map;
  * @param projects          project name to what this computer knows about it; a project that is missing here cannot run
  * @param codexCommand      the member's own Codex CLI, for projects that run on codex; null when this computer has none
  * @param geminiCommand     the member's own Gemini CLI, likewise (ADR 0026)
+ * @param sandbox           whether this computer's agents run in a sandbox when one is available
  */
 public record WorkerConfig(String team, String name, int maxConcurrentRuns, String claudeCommand, String ghCommand,
-                           Path stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand) {
+                           Path stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand,
+                           SandboxSetting sandbox) {
+
+    /** A computer whose sandbox is left to detection, as every worker was before the setting existed. */
+    public WorkerConfig(String team, String name, int maxConcurrentRuns, String claudeCommand, String ghCommand,
+                        Path stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand) {
+        this(team, name, maxConcurrentRuns, claudeCommand, ghCommand, stateDir, projects, codexCommand, geminiCommand,
+                SandboxSetting.AUTO);
+    }
 
     public WorkerConfig {
         projects = Map.copyOf(projects);

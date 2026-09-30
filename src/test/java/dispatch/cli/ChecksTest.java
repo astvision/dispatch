@@ -1,5 +1,7 @@
 package dispatch.cli;
 
+import dispatch.agent.sandbox.Bubblewrap;
+import dispatch.agent.sandbox.NoSandbox;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -426,5 +428,17 @@ class ChecksTest {
 
     private static java.util.List<String> lines(java.util.List<Checks.Finding> findings) {
         return findings.stream().map(ChecksTest::line).toList();
+    }
+
+    @Test
+    void sandboxFindingSaysWhichOrWhyNone() {
+        Checks.Finding ok = Checks.sandbox(new Bubblewrap("/usr/bin/bwrap"));
+        assertEquals(Checks.Level.OK, ok.level());
+        assertEquals("sandbox", ok.area());
+        assertEquals("sandbox: bubblewrap", ok.message().english());
+
+        Checks.Finding none = Checks.sandbox(new NoSandbox("bubblewrap (bwrap) is not installed"));
+        assertEquals(Checks.Level.WARN, none.level());
+        assertTrue(none.message().english().contains("bubblewrap (bwrap) is not installed"), none.message().english());
     }
 }

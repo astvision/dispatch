@@ -1,5 +1,8 @@
 package dispatch.cli;
 
+import dispatch.agent.sandbox.Probe;
+import dispatch.agent.sandbox.Sandbox;
+import dispatch.agent.sandbox.Sandboxes;
 import dispatch.Json;
 import dispatch.OwnerOnly;
 import dispatch.Redactor;
@@ -92,6 +95,8 @@ public final class Checks {
         checkBot(run, config.secrets().telegramBotToken());
         boolean team = config.workers() != null;
         config.agents().forEach((name, agent) -> checkAgent(run, name, agent.command(), configFile, team));
+        Finding sandbox = sandbox(Sandboxes.detect(config.sandbox(), Probe.system(prepared.environment())));
+        run.add(sandbox.level(), sandbox.area(), sandbox.message());
         Workspaces workspaces = new Workspaces(config.stateDir(), new Git("git", null, COMMAND_TIMEOUT));
         config.projects().forEach(project -> checkProject(run, project, workspaces));
         checkStateDir(run, config.stateDir());
@@ -105,6 +110,13 @@ public final class Checks {
         checkMiniApp(run, config.miniApp());
         checkOtherInstances(run, configFile, config, processEnvironment);
         return run.findings;
+    }
+
+    /** Which sandbox this machine's agents run in; never a failure, since runs go ahead without one (spec). */
+    public static Finding sandbox(Sandbox sandbox) {
+        return sandbox.unavailableReason() == null
+                ? new Finding(Level.OK, "sandbox", Text.of("check.sandbox", sandbox.name()))
+                : new Finding(Level.WARN, "sandbox", Text.of("check.sandboxNone", sandbox.unavailableReason()));
     }
 
     public static boolean failed(List<Finding> findings) {

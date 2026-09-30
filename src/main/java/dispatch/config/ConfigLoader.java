@@ -1,5 +1,6 @@
 package dispatch.config;
 
+import dispatch.agent.sandbox.SandboxSetting;
 import dispatch.Text;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -16,6 +17,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -81,6 +83,11 @@ public final class ConfigLoader {
             errors.add(Text.of("config.branchPrefix", raw.branchPrefix()));
         }
 
+        Optional<SandboxSetting> sandbox = SandboxSetting.fromConfig(raw.sandbox());
+        if (sandbox.isEmpty()) {
+            errors.add(Text.of("config.sandbox", raw.sandbox()));
+        }
+
         String token = env.get("TELEGRAM_BOT_TOKEN");
         if (isBlank(token)) {
             errors.add(Text.of("config.telegramBot"));
@@ -91,7 +98,8 @@ public final class ConfigLoader {
             throw new ConfigException(Text.of("config.invalid", file, Text.joined("\n  - ", errors)));
         }
         return new Config(raw.team(), stateDir, telegram, raw.scheduler(), worktrees, raw.limits(), Map.copyOf(agents),
-                projects, delivery, workers, miniApp, raw.branchPrefix(), new Config.Secrets(token, ghToken));
+                projects, delivery, workers, miniApp, raw.branchPrefix(), new Config.Secrets(token, ghToken),
+                sandbox.orElseThrow());
     }
 
     private static ConfigFile read(Path file) {
@@ -466,6 +474,7 @@ public final class ConfigLoader {
             List<Config.Project> projects,
             Config.Workers workers,
             Config.MiniApp miniApp,
-            String branchPrefix) {
+            String branchPrefix,
+            String sandbox) {
     }
 }

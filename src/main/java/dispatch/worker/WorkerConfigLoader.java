@@ -1,5 +1,6 @@
 package dispatch.worker;
 
+import dispatch.agent.sandbox.SandboxSetting;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
@@ -12,6 +13,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /** Reads worker.yaml and fails with every problem listed, as the team machine's loader does. */
@@ -32,7 +34,7 @@ public final class WorkerConfigLoader {
 
     /** The YAML file's shape; the key is never in it — it lives in worker.env. */
     record WorkerFile(String team, String name, Integer maxConcurrentRuns, String claudeCommand, String ghCommand,
-                      String stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand) {
+                      String stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand, String sandbox) {
 
         record Project(String path, String model, String effort) {
         }
@@ -70,12 +72,17 @@ public final class WorkerConfigLoader {
             }
             projects.put(name, new WorkerConfig.Project(project.path(), project.model(), project.effort()));
         });
+        Optional<SandboxSetting> sandbox = SandboxSetting.fromConfig(raw.sandbox());
+        if (sandbox.isEmpty()) {
+            errors.add("sandbox: auto or off, not " + raw.sandbox());
+        }
         if (!errors.isEmpty()) {
             throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));
         }
         return new WorkerConfig(raw.team(), raw.name(), concurrent,
                 raw.claudeCommand() == null ? "claude" : raw.claudeCommand(),
-                raw.ghCommand() == null ? "gh" : raw.ghCommand(), stateDir, projects, raw.codexCommand(), raw.geminiCommand());
+                raw.ghCommand() == null ? "gh" : raw.ghCommand(), stateDir, projects, raw.codexCommand(), raw.geminiCommand(),
+                sandbox.orElseThrow());
     }
 
     private static WorkerFile read(Path file) {

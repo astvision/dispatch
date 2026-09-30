@@ -2,6 +2,10 @@ package dispatch;
 
 import dispatch.agent.Agent;
 import dispatch.agent.Agents;
+import dispatch.agent.sandbox.Confinements;
+import dispatch.agent.sandbox.Probe;
+import dispatch.agent.sandbox.Sandbox;
+import dispatch.agent.sandbox.Sandboxes;
 import dispatch.config.Config;
 import dispatch.config.GroupWriter;
 import dispatch.config.MemberWriter;
@@ -133,7 +137,15 @@ public final class App {
         Splitter[] splitter = new Splitter[1];
         Map<String, String> agentCommands = new java.util.LinkedHashMap<>();
         config.agents().forEach((type, agent) -> agentCommands.put(type, agent.command()));
-        Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir);
+        Sandbox sandbox = Sandboxes.detect(config.sandbox(), Probe.system(environment));
+        if (sandbox.unavailableReason() == null) {
+            Log.info("sandbox.selected", "name", sandbox.name());
+        } else {
+            Log.warn("sandbox.unavailable", "reason", sandbox.unavailableReason());
+        }
+        List<Path> clones = config.projects().stream().map(Config.Project::path).filter(java.util.Objects::nonNull).map(Path::of).toList();
+        Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir,
+                Confinements.of(sandbox, stateDir, configFile, clones));
         // Splitting and the assistant need Claude Code (ADR 0013, A-1); without it they are simply not offered (ADR 0026).
         Agent claude = agents.get("claude-code");
         WorkerKeys workerKeys = null;

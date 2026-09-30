@@ -1,5 +1,6 @@
 package dispatch.config;
 
+import dispatch.agent.sandbox.SandboxSetting;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -690,4 +691,19 @@ class ConfigLoaderTest {
                 baseBranch: develop
                 agent: claude-code
             """;
+
+    @Test
+    void sandboxIsAutoUnlessTurnedOff() throws Exception {
+        assertEquals(SandboxSetting.AUTO, ConfigLoader.load(write(VALID), ENV).sandbox());
+        assertEquals(SandboxSetting.OFF, ConfigLoader.load(write(VALID + "sandbox: off\n"), ENV).sandbox());
+    }
+
+    @Test
+    void anUnknownSandboxSettingIsRefused() throws Exception {
+        Path file = write(VALID + "sandbox: on\n");
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(file, ENV));
+
+        assertTrue(error.getMessage().contains("sandbox: auto or off, not on"), error.getMessage());
+    }
 }
