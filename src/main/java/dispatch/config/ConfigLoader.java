@@ -74,7 +74,11 @@ public final class ConfigLoader {
         validateInstanceLimits(raw.limits(), errors);
         Map<String, Config.Agent> agents = raw.agents() == null ? Map.of() : raw.agents();
         validateAgents(agents, errors);
-        List<Config.Project> projects = validateProjects(raw.projects(), agents, errors);
+        String loop = raw.loop() == null ? "on" : raw.loop();
+        if (!loop.equals("on") && !loop.equals("off")) {
+            errors.add(Text.of("config.loop", "loop", raw.loop()));
+        }
+        List<Config.Project> projects = validateProjects(raw.projects(), agents, loop, errors);
         Config.Telegram telegram = validateTelegram(raw.telegram(), projects, errors);
         Config.Delivery delivery = validateDelivery(raw.delivery(), errors);
         Config.Workers workers = validateWorkers(raw.workers(), telegram, errors);
@@ -359,7 +363,7 @@ public final class ConfigLoader {
     }
 
     private static List<Config.Project> validateProjects(List<Config.Project> projects, Map<String, Config.Agent> agents,
-                                                         List<Text> errors) {
+                                                         String instanceLoop, List<Text> errors) {
         if (projects == null || projects.isEmpty()) {
             errors.add(Text.of("config.projectsAtLeast"));
             return List.of();
@@ -411,9 +415,16 @@ public final class ConfigLoader {
             if (project.limits() != null && project.limits().execute() != null) {
                 validateLimitValues(at + ".limits.execute", project.limits().execute(), errors);
             }
+            String projectLoop = project.loop() == null ? instanceLoop : project.loop();
+            if (!projectLoop.equals("on") && !projectLoop.equals("off")) {
+                errors.add(Text.of("config.loop", at + ".loop", project.loop()));
+            }
+            if (project.test() != null && project.test().isBlank()) {
+                errors.add(Text.of("config.testBlank", at + ".test"));
+            }
             normalized.add(new Config.Project(project.name(), project.alias(), project.repo(), project.path(), project.baseBranch(),
                     project.agent(), project.model(), project.effort(), List.copyOf(copyFiles), project.limits(), project.plan(),
-                    project.execute()));
+                    project.execute(), project.test(), projectLoop));
         }
         return List.copyOf(normalized);
     }
@@ -475,6 +486,7 @@ public final class ConfigLoader {
             Config.Workers workers,
             Config.MiniApp miniApp,
             String branchPrefix,
-            String sandbox) {
+            String sandbox,
+            String loop) {
     }
 }

@@ -54,6 +54,45 @@ class ConfigLoaderTest {
     Path dir;
 
     @Test
+    void loopIsOnByDefaultAndAProjectMayTurnItOff() throws Exception {
+        Config on = ConfigLoader.load(write(VALID), ENV);
+        assertTrue(on.projects().getFirst().loopOn());
+        assertNull(on.projects().getFirst().test());
+
+        Config off = ConfigLoader.load(write("loop: off\n" + VALID), ENV);
+        assertFalse(off.projects().getFirst().loopOn());
+    }
+
+    @Test
+    void aProjectsLoopAndTestOverrideTheInstance() throws Exception {
+        String yaml = "loop: off\n" + VALID.replace("- name: autoland-management\n",
+                "- name: autoland-management\n    loop: on\n    test: \"./mvnw -q test\"\n");
+
+        Config.Project project = ConfigLoader.load(write(yaml), ENV).projects().getFirst();
+
+        assertTrue(project.loopOn());
+        assertEquals("./mvnw -q test", project.test());
+    }
+
+    @Test
+    void anUnknownLoopValueIsRefused() throws Exception {
+        Path file = write("loop: sometimes\n" + VALID);
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(file, ENV));
+
+        assertTrue(error.getMessage().contains("loop: on or off, not sometimes"), error.getMessage());
+    }
+
+    @Test
+    void aBlankTestCommandIsRefused() throws Exception {
+        Path file = write(VALID.replace("- name: autoland-management\n", "- name: autoland-management\n    test: \"  \"\n"));
+
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(file, ENV));
+
+        assertTrue(error.getMessage().contains("test: a command line, not blank"), error.getMessage());
+    }
+
+    @Test
     void loadsValidConfigResolvingStateDirSecretsAndProjectLimits() throws IOException {
         Config config = ConfigLoader.load(write(VALID), ENV);
 
