@@ -18,6 +18,7 @@ public final class SandboxPolicies {
     private static final List<String> CACHES = List.of(".m2", ".gradle", ".npm", ".cache");
     private static final List<String> SECRETS = List.of(".ssh", ".config/gh", ".gnupg");
     private static final String GITDIR_PREFIX = "gitdir: ";
+    private static final List<String> GIT_CONTROL = List.of("config", "hooks", "info");
 
     private final Path home;
     private final Path stateDir;
@@ -68,12 +69,20 @@ public final class SandboxPolicies {
                 .flatMap(paths -> paths)
                 .filter(Files::isDirectory)
                 .toList();
-        Path gitCommonDir = gitCommonDir(workdir);
-        if (gitCommonDir != null) {
-            // Mounted after the workdir, so the agent cannot point the next run's mounts somewhere else.
-            readOnly.add(workdir.resolve(".git"));
+        GitLink git = gitLink(workdir);
+        if (git == null) {
+            return new SandboxPolicy(workdir, null, readOnly, writable, hidden);
         }
-        return new SandboxPolicy(workdir, gitCommonDir, readOnly, writable, hidden);
+        // Mounted after the workdir and the git dir: the agent cannot point the next run's mounts somewhere else, nor
+        // plant config (core.fsmonitor, filters, remotes) or hooks that Dispatch's own git runs outside the sandbox.
+        readOnly.add(workdir.resolve(".git"));
+        GIT_CONTROL.forEach(name -> readOnly.add(git.commonDir().resolve(name)));
+        if (git.worktreeAdmin() != null) {
+            // commondir says where this worktree's config is; config.worktree is its own config.
+            readOnly.add(git.worktreeAdmin().resolve("config.worktree"));
+            readOnly.add(git.worktreeAdmin().resolve("commondir"));
+        }
+        return new SandboxPolicy(workdir, git.commonDir(), readOnly, writable, hidden);
     }
 
     /**
@@ -99,6 +108,15 @@ public final class SandboxPolicies {
      * {@code <stateDir>/repos/<name>/.git}: anything else would be mounted read-write over the hidden directories.
      */
     Path gitCommonDir(Path workdir) {
+        GitLink git = gitLink(workdir);
+        return git == null ? null : git.commonDir();
+    }
+
+    /** @param worktreeAdmin {@code <commonDir>/worktrees/<name>} for a linked worktree, else null */
+    private record GitLink(Path commonDir, Path worktreeAdmin) {
+    }
+
+    private GitLink gitLink(Path workdir) {
         Path dotGit = workdir.resolve(".git");
         if (!Files.isRegularFile(dotGit)) {
             return null;
@@ -116,7 +134,11 @@ public final class SandboxPolicies {
         Path parent = gitDir.getParent();
         boolean linkedWorktree = parent != null && parent.getFileName() != null
                 && parent.getFileName().toString().equals("worktrees");
-        return allowedGitDir(dotGit, linkedWorktree ? parent.getParent() : gitDir);
+        if (!linkedWorktree) {
+            return new GitLink(allowedGitDir(dotGit, gitDir), null);
+        }
+        Path commonDir = allowedGitDir(dotGit, parent.getParent());
+        return new GitLink(commonDir, commonDir.resolve("worktrees").resolve(gitDir.getFileName()));
     }
 
     /** The real path of {@code commonDir}, so a symlink swapped in after this check cannot redirect the mount. */

@@ -21,6 +21,11 @@ public final class Git {
     /** Reads GH_TOKEN at call time so the token never appears in a command line (visible to `ps`). */
     private static final String CREDENTIAL_HELPER =
             "credential.helper=!f() { echo username=x-access-token; echo \"password=$GH_TOKEN\"; }; f";
+    /**
+     * Agents write to the clones this git runs in; hooks (post-commit runs even with --no-verify) and an fsmonitor
+     * planted there would otherwise run here, outside the sandbox, with GH_TOKEN in the environment.
+     */
+    private static final List<String> IGNORE_PLANTED_CODE = List.of("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false");
     private static final ExecutorService OUTPUT_READERS = Executors.newVirtualThreadPerTaskExecutor();
 
     private final String command;
@@ -56,6 +61,7 @@ public final class Git {
     public Result execute(Path dir, String... args) {
         List<String> commandLine = new ArrayList<>();
         commandLine.add(command);
+        commandLine.addAll(IGNORE_PLANTED_CODE);
         if (ghToken != null) {
             commandLine.addAll(List.of("-c", "credential.helper=", "-c", CREDENTIAL_HELPER));
         }
