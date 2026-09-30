@@ -50,7 +50,9 @@ Dispatch lets people in a Telegram group make an AI coding agent run commands on
 token that gives a single browser a session and then stops working, and restarting `dispatch ui` ends every session.
 Requests with another Host (DNS rebinding) or, for changes, another Origin are refused. The bot token never reaches the
 browser. Whoever has the link or a session acts as you, with what you may do in a shell: don't paste the link where
-others see it, and stop `dispatch ui` when you are done. Setup's folder browser lists folder names on the machine that runs Dispatch and says which are git clones; it never shows a file's contents. The Logs page shows the service log with Dispatch's secrets and common token formats masked. A save keeps the previous config as `dispatch.yaml.bak`, with the config's own permissions.
+others see it, and stop `dispatch ui` when you are done. An admin may also get a link from the Mini App (ADR 0018, amended): the bot asks
+the `dispatch ui` on its computer for one with the key in the owner-only `ui.json`, or starts one that stops after 30
+idle minutes; such a link works once, within five minutes, and only in a browser on that computer. Setup's folder browser lists folder names on the machine that runs Dispatch and says which are git clones; it never shows a file's contents. The Logs page shows the service log with Dispatch's secrets and common token formats masked. A save keeps the previous config as `dispatch.yaml.bak`, with the config's own permissions.
 
 ### The desk port
 

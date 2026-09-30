@@ -200,6 +200,10 @@ dispatch ui --no-browser                 # and open the link it prints on your c
 The tunnel's local and remote ports must match (as above): the page only accepts requests for its own port. The page
 listens only on the machine it runs on. Anyone with its link can act as you, like a shell: see SECURITY.md.
 
+With Telegram on the computer the bot runs on, an admin can also tap **Вэб UI нээх** on the Mini App's home screen: it
+opens the page in your browser, already signed in, and on Linux starts `dispatch ui` for you when none is running (it
+stops after 30 minutes unused; `dispatch ui --idle-minutes N` does the same by hand).
+
 ### Manage it from Telegram
 
 The same pages open inside Telegram: tap **Удирдах**, the chat's menu button left of the input field (the commands are
