@@ -25,15 +25,28 @@ public final class Instances {
     }
 
     /**
-     * The state dirs and clones of the other instances on this computer, which an agent of {@code ownConfigFile}'s
+     * The config dirs, state dirs and clones of the other instances on this computer, which an agent of {@code ownConfigFile}'s
      * process must not see. Never throws: discovery must not block startup, so a failure hides fewer paths and is logged.
      */
     public static List<Path> othersPrivate(Path ownConfigFile, Map<String, String> processEnvironment) {
+        return othersPrivate(Locations.current(), ownConfigFile, processEnvironment);
+    }
+
+    static List<Path> othersPrivate(Locations defaults, Path ownConfigFile, Map<String, String> processEnvironment) {
         try {
             Path own = ownConfigFile.toAbsolutePath().normalize();
             List<Path> hidden = new ArrayList<>();
-            for (Found other : discover(Locations.current(), processEnvironment)) {
-                if (other.config() == null || other.configFile().toAbsolutePath().normalize().equals(own)) {
+            for (Found other : discover(defaults, processEnvironment)) {
+                Path otherFile = other.configFile().toAbsolutePath().normalize();
+                if (otherFile.equals(own)) {
+                    continue;
+                }
+                // Its .env holds its bot token, whether or not its config loads.
+                if (!hidden.contains(otherFile.getParent())) {
+                    hidden.add(otherFile.getParent());
+                }
+                if (other.config() == null) {
+                    dispatch.Log.warn("sandbox.instance_unreadable", "config", otherFile, "error", other.error());
                     continue;
                 }
                 hidden.add(other.config().stateDir());
