@@ -96,6 +96,32 @@ class GitTest {
         assertEquals("main", git.run(repo, "rev-parse", "--abbrev-ref", "HEAD"));
     }
 
+    @Test
+    void aCommondirPlantedAfterTheCheckIsIgnored() throws IOException {
+        // Another task's agent can plant it between the check and git's start; git must still read the clone's own config.
+        git.run(repo, "remote", "add", "origin", "https://good.example/x");
+        Git racing = racingGit(repo.resolve(".git/commondir"), agentsGitDir());
+
+        assertEquals("https://good.example/x", racing.run(repo, "config", "remote.origin.url"));
+    }
+
+    @Test
+    void anAdminCommondirRewrittenAfterTheCheckIsIgnored() throws IOException {
+        git.run(repo, "remote", "add", "origin", "https://good.example/x");
+        Path worktree = addWorktree();
+        Git racing = racingGit(repo.resolve(".git/worktrees/w/commondir"), agentsGitDir());
+
+        assertEquals("https://good.example/x", racing.run(worktree, "config", "remote.origin.url"));
+    }
+
+    /** A git that plants {@code redirect} into {@code commondir} after Dispatch's check, just before git starts. */
+    private Git racingGit(Path commondir, Path redirect) throws IOException {
+        Path script = dir.resolve("racing-git.sh");
+        Files.writeString(script, "#!/bin/sh\necho '" + redirect + "' > '" + commondir + "'\nexec git \"$@\"\n");
+        script.toFile().setExecutable(true);
+        return new Git(script.toString(), null, Duration.ofSeconds(30));
+    }
+
     private Path addWorktree() {
         git.run(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "--no-verify", "-m", "x");
         Path worktree = dir.resolve("w");

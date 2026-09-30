@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -61,7 +62,7 @@ public final class Git {
 
     /** Runs git and returns whatever happened, for commands whose exit code is an answer (e.g. check-ignore). */
     public Result execute(Path dir, String... args) {
-        refuseRedirected(dir);
+        Path commonDir = verifiedCommonDir(dir);
         List<String> commandLine = new ArrayList<>();
         commandLine.add(command);
         commandLine.addAll(IGNORE_PLANTED_CODE);
@@ -69,7 +70,9 @@ public final class Git {
             commandLine.addAll(List.of("-c", "credential.helper=", "-c", CREDENTIAL_HELPER));
         }
         commandLine.addAll(Arrays.asList(args));
-        return runProcess(commandLine, dir, ghToken, timeout, describe(args));
+        // Pinned for the child: a commondir an agent plants after the check above is then never read.
+        Map<String, String> environment = commonDir == null ? Map.of() : Map.of("GIT_COMMON_DIR", commonDir.toString());
+        return runProcess(commandLine, dir, ghToken, environment, timeout, describe(args));
     }
 
     /**
@@ -77,7 +80,13 @@ public final class Git {
      * is killed. Throws {@link WorkspaceException} when the command cannot start or times out.
      */
     public static Result runProcess(List<String> commandLine, Path dir, String ghToken, Duration timeout, String description) {
+        return runProcess(commandLine, dir, ghToken, Map.of(), timeout, description);
+    }
+
+    private static Result runProcess(List<String> commandLine, Path dir, String ghToken, Map<String, String> environment,
+                                     Duration timeout, String description) {
         ProcessBuilder builder = new ProcessBuilder(commandLine).directory(dir.toFile());
+        builder.environment().putAll(environment);
         builder.environment().put("GIT_TERMINAL_PROMPT", "0");
         if (ghToken != null) {
             builder.environment().put("GH_TOKEN", ghToken);
@@ -108,15 +117,16 @@ public final class Git {
      * Agents write to the clone's git dir. A {@code commondir} file there, or a linked worktree's admin {@code commondir}
      * naming anything but its own clone, would make this git read a config the agent wrote (remote URL, credential
      * helper, core.sshCommand) with GH_TOKEN in the environment. A dir without .git (a clone's parent) has nothing to check.
+     *
+     * @return the real path of the repository's common dir, for GIT_COMMON_DIR; null when {@code dir} has no .git
      */
-    static void refuseRedirected(Path dir) {
+    static Path verifiedCommonDir(Path dir) {
         Path dotGit = dir.resolve(".git");
         if (Files.isDirectory(dotGit, LinkOption.NOFOLLOW_LINKS)) {
-            refuseCommondir(dotGit);
-            return;
+            return refuseCommondir(dotGit);
         }
         if (!Files.isRegularFile(dotGit, LinkOption.NOFOLLOW_LINKS)) {
-            return;
+            return null;
         }
         String line = readFile(dotGit);
         if (!line.startsWith("gitdir: ")) {
@@ -127,8 +137,7 @@ public final class Git {
         boolean linkedWorktree = parent != null && parent.getParent() != null && parent.getFileName().toString().equals("worktrees");
         if (!linkedWorktree) {
             // A submodule or --separate-git-dir: the git dir is its own common dir.
-            refuseCommondir(gitDir);
-            return;
+            return refuseCommondir(gitDir);
         }
         Path adminCommondir = gitDir.resolve("commondir");
         Path commonDir = realPath(parent.getParent());
@@ -136,14 +145,20 @@ public final class Git {
                 || !commonDir.equals(realPath(gitDir.resolve(readFile(adminCommondir))))) {
             throw new WorkspaceException("refusing to run git: " + adminCommondir + " redirects the repository");
         }
-        refuseCommondir(parent.getParent());
+        return refuseCommondir(commonDir);
     }
 
-    private static void refuseCommondir(Path commonDir) {
-        Path commondir = commonDir.resolve("commondir");
+    /** @return the real path of {@code commonDir} */
+    private static Path refuseCommondir(Path commonDir) {
+        Path real = realPath(commonDir);
+        if (real == null) {
+            throw new WorkspaceException("refusing to run git: " + commonDir + " does not exist");
+        }
+        Path commondir = real.resolve("commondir");
         if (Files.exists(commondir, LinkOption.NOFOLLOW_LINKS)) {
             throw new WorkspaceException("refusing to run git: " + commondir + " redirects the repository");
         }
+        return real;
     }
 
     private static String readFile(Path file) {
