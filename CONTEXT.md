@@ -28,6 +28,10 @@ _Avoid_: Repo, service, workspace
 A piece of development work on one project that a member explicitly gives Dispatch in their private chat with the bot, with a priority. One message can give several tasks when the member splits it into parts.
 _Avoid_: Job, ticket, request
 
+**Draft**:
+A member's message waiting to become a task: it has a project and a priority (low unless changed) and becomes the task when they send it. Their replies to its prompt add context to it until then.
+_Avoid_: Addition (that is a group reply to a task's message), pending task
+
 **Headline**:
 What a member may see of someone else's task: who gave it, its project, title, priority, state and pull request link, never its plan, the agent's actions or its cost (ADR 0020).
 _Avoid_: Summary, preview
