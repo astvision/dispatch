@@ -70,6 +70,10 @@ class JobRunnerTest {
     private final List<String> reviewPrompts = new CopyOnWriteArrayList<>();
     /** Runs in the task's worktree between the planning run and the execution, as an earlier run's delivery would. */
     private java.util.function.Consumer<Path> beforeExecute = worktree -> { };
+    /** Runs in the task's worktree while the scripted EXECUTE agent works, as another task's agent could at that moment. */
+    private java.util.function.Consumer<Path> duringExecute = worktree -> { };
+    /** Whether {@link #executeWithLoop} sends the planned commit as the branch's expected head, as a guarded team machine does. */
+    private boolean guarded;
     private Recorder events;
     /** What the execution run with the verify loop recorded. */
     private final Recorder loopEvents = new Recorder();
@@ -463,6 +467,123 @@ class JobRunnerTest {
         assertEquals(List.of(RunKind.EXECUTE), agentKindsStarted, "no reviewer after an interrupt");
     }
 
+    @Test
+    void aBranchMovedBeforeItsExecutionFailsAsSetupWithoutStartingTheAgentOrPushing() {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        guarded = true;
+        AtomicReference<String> foreign = new AtomicReference<>();
+        // Another task's agent, which can write the clone's refs, points this task's branch at a commit it built.
+        beforeExecute = worktree -> foreign.set(moveBranchToForeignCommit(worktree));
+
+        JobResult result = executeWithLoop(false, (command, workdir, log, timeout, stop, started) -> {
+            throw new AssertionError("loop off");
+        });
+
+        assertEquals(JobResult.Outcome.FAILED, result.outcome());
+        assertEquals(FailureReason.SETUP, result.failureReason());
+        assertTrue(result.failureDetail().contains("dispatch/" + TASK), result.failureDetail());
+        assertTrue(result.failureDetail().contains(events.baseSha), result.failureDetail());
+        assertTrue(result.failureDetail().contains(foreign.get()), result.failureDetail());
+        assertEquals(List.of(), agentKindsStarted, "no agent builds on a moved branch");
+        assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
+    }
+
+    @Test
+    void aBranchMovedDuringTheRunFailsAsDeliveryAndPushesNothing() {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        guarded = true;
+        AtomicReference<String> foreign = new AtomicReference<>();
+        duringExecute = worktree -> foreign.set(moveBranchToForeignCommit(worktree));
+
+        JobResult result = executeWithLoop(false, (command, workdir, log, timeout, stop, started) -> {
+            throw new AssertionError("loop off");
+        });
+
+        assertEquals(FailureReason.DELIVERY, result.failureReason());
+        assertTrue(result.failureDetail().contains(foreign.get()), result.failureDetail());
+        assertEquals(List.of(RunKind.EXECUTE), agentKindsStarted);
+        assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
+        assertEquals(events.baseSha, result.head(), "the branch's expected commit stays the one Dispatch left it at");
+    }
+
+    @Test
+    void anUnmovedBranchDeliversAndReportsTheCommitItIsNowAt() {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        guarded = true;
+
+        JobResult result = executeWithLoop(false, (command, workdir, log, timeout, stop, started) -> {
+            throw new AssertionError("loop off");
+        });
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome());
+        assertEquals(origin("rev-parse", "refs/heads/dispatch/" + TASK), result.head());
+    }
+
+    @Test
+    void aJobWithoutAnExpectedHeadIsNotCheckedAsBeforeTheGuard() {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        beforeExecute = this::moveBranchToForeignCommit;
+
+        JobResult result = executeWithLoop(false, (command, workdir, log, timeout, stop, started) -> {
+            throw new AssertionError("loop off");
+        });
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), "an older team machine's job runs as it did");
+        assertNull(result.head(), "nothing an older team machine would reject");
+    }
+
+    @Test
+    void aPushThatFailsAfterTheCommitReportsTheCommitSoTheRetryDeliversIt() {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        guarded = true;
+        String url = GitFixture.sh(repos.repo("alm"), "git", "remote", "get-url", "origin");
+        beforeExecute = worktree -> GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin",
+                dir.resolve("missing.git").toString());
+        JobResult failed = executeWithLoop(false, (command, workdir, log, timeout, stop, started) -> {
+            throw new AssertionError("loop off");
+        });
+        assertEquals(FailureReason.DELIVERY, failed.failureReason());
+        String committed = GitFixture.sh(Path.of(events.worktree), "git", "rev-parse", "refs/heads/dispatch/" + TASK);
+        assertEquals(committed, failed.head(), "Dispatch's own unpushed commit is where the branch now is");
+        GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin", url);
+
+        JobResult retried = runner.run(deliverJob(failed.head()), new Recorder(), new ActiveRuns().register(TASK, 3));
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, retried.outcome(), String.valueOf(retried.failureDetail()));
+        assertEquals(origin("rev-parse", "refs/heads/dispatch/" + TASK), retried.head());
+    }
+
+    @Test
+    void aDeliveryRetryOnAMovedBranchFailsAndPushesNothing() throws Exception {
+        runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
+        Path worktree = Path.of(events.worktree);
+        Files.writeString(worktree.resolve("README.md"), "v2\n");
+        String foreign = moveBranchToForeignCommit(worktree);
+
+        JobResult result = runner.run(deliverJob(events.baseSha), new Recorder(), new ActiveRuns().register(TASK, 3));
+
+        assertEquals(FailureReason.DELIVERY, result.failureReason());
+        assertTrue(result.failureDetail().contains(foreign), result.failureDetail());
+        assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
+        assertEquals(events.baseSha, result.head());
+    }
+
+    /** A DELIVER job for the planned task, expecting its branch at {@code expectedHead}. */
+    private Job deliverJob(String expectedHead) {
+        return new Job(TASK, 3, RunKind.DELIVER, project(List.of()), "main", events.baseSha, events.worktree, null, null,
+                false, null, null, null, 0L, null, List.of(), "dispatch #7: Fix the login timeout",
+                List.of("Requested-by: Bold", "Approved-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30", null, null,
+                expectedHead);
+    }
+
+    /** Points the task's branch at a commit on top of it that Dispatch never made, as another task's agent could; returns it. */
+    private String moveBranchToForeignCommit(Path worktree) {
+        String foreign = GitFixture.sh(worktree, "git", "-c", "user.name=B", "-c", "user.email=b@example.com", "commit-tree",
+                "HEAD^{tree}", "-p", "HEAD", "-m", "task B's work");
+        GitFixture.sh(worktree, "git", "update-ref", "refs/heads/dispatch/" + TASK, foreign);
+        return foreign;
+    }
+
     /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
     private JobResult executeWithLoop(boolean loop, TestRunner tests) {
         return executeWithLoop(loop, new ActiveRuns().register(TASK, 2), tests);
@@ -487,7 +608,7 @@ class JobRunnerTest {
         Job job = new Job(TASK, 2, RunKind.EXECUTE, project, "main", events.baseSha, events.worktree, null, SESSION, false,
                 "Implement the approved plan", null, null, timeout.toMillis(), new BigDecimal("10"), List.of(),
                 "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null,
-                loop ? "Review this:" : null);
+                loop ? "Review this:" : null, guarded ? events.baseSha : null);
         return looping.run(job, loopEvents, execution);
     }
 
@@ -517,6 +638,7 @@ class JobRunnerTest {
                 return claude.start(request);
             }
             if (request.kind() == RunKind.EXECUTE) {
+                duringExecute.accept(request.workdir());
                 try {
                     Files.writeString(request.workdir().resolve("README.md"), "fixed by the scripted agent\n",
                             java.nio.file.StandardOpenOption.APPEND);

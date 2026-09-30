@@ -229,7 +229,7 @@ public final class WorkerLoop implements Runnable {
         return Optional.of(new Job(job.taskId(), job.seq(), job.kind(), project, job.baseBranch(), job.baseSha(),
                 job.worktree(), job.prUrl(), job.sessionId(), job.resume(), job.prompt(), model, effort,
                 job.timeoutMillis(), job.budgetUsd(), job.attachments(), job.commitSubject(), job.commitTrailers(),
-                job.deliverySummary(), job.branch(), job.reviewPrompt()));
+                job.deliverySummary(), job.branch(), job.reviewPrompt(), job.expectedHead()));
     }
 
     /**

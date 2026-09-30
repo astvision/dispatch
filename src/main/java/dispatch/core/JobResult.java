@@ -15,6 +15,9 @@ import java.util.List;
  * @param failureReason null unless the outcome is FAILED
  * @param failureDetail null unless the outcome is FAILED
  * @param verification  what the verify loop found before the delivery; null when the loop did not run
+ * @param head          the commit the task's branch is at once this run delivered or failed to (Dispatch's own commit even
+ *                      when the push after it failed), which the store expects next; null when the job carried no
+ *                      {@link Job#expectedHead}, so an older team machine never sees the field
  */
 public record JobResult(
         Outcome outcome,
@@ -23,7 +26,8 @@ public record JobResult(
         String prUrl,
         FailureReason failureReason,
         String failureDetail,
-        @JsonInclude(JsonInclude.Include.NON_NULL) Verification verification) {
+        @JsonInclude(JsonInclude.Include.NON_NULL) Verification verification,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String head) {
 
     public enum Outcome {
         SUCCEEDED,
@@ -35,10 +39,21 @@ public record JobResult(
         files = files == null ? List.of() : List.copyOf(files);
     }
 
+    /** Without the branch guard: no head. */
+    public JobResult(Outcome outcome, AgentResult agent, List<String> files, String prUrl, FailureReason failureReason,
+                     String failureDetail, Verification verification) {
+        this(outcome, agent, files, prUrl, failureReason, failureDetail, verification, null);
+    }
+
     /** Without the verify loop: no verification. */
     public JobResult(Outcome outcome, AgentResult agent, List<String> files, String prUrl, FailureReason failureReason,
                      String failureDetail) {
-        this(outcome, agent, files, prUrl, failureReason, failureDetail, null);
+        this(outcome, agent, files, prUrl, failureReason, failureDetail, null, null);
+    }
+
+    /** This result with the branch's head after the delivery; see {@code head}. */
+    public JobResult withHead(String head) {
+        return new JobResult(outcome, agent, files, prUrl, failureReason, failureDetail, verification, head);
     }
 
     /** An agent that finished its work; a planning run's plan is in {@code agent.structuredOutput()}. */

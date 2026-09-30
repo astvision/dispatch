@@ -22,6 +22,24 @@ public final class Delivery {
     public record Result(List<String> files, String commitSha, String prUrl) {
     }
 
+    /**
+     * The delivery failed after its commit: the task's branch is now at {@code commitSha}, Dispatch's own commit, which a
+     * DELIVER retry must find it at.
+     */
+    public static final class CommittedException extends WorkspaceException {
+
+        private final String commitSha;
+
+        CommittedException(WorkspaceException cause, String commitSha) {
+            super(cause.getMessage(), cause);
+            this.commitSha = commitSha;
+        }
+
+        public String commitSha() {
+            return commitSha;
+        }
+    }
+
     private final Git git;
     private final Gh gh;
     private final String authorName;
@@ -37,6 +55,11 @@ public final class Delivery {
     /** The commit a run starts from; {@link #deliver} commits everything since then. */
     public String head(Path worktree) {
         return git.run(worktree, "rev-parse", "HEAD");
+    }
+
+    /** The commit the task's branch itself is at; the worktree's HEAD follows it only while it is checked out there. */
+    public String branchHead(Path worktree, String branch) {
+        return git.run(worktree, "rev-parse", "--verify", "refs/heads/" + branch);
     }
 
     /** The change since {@code startSha}, new files included, for the verify loop's reviewer. */
@@ -63,10 +86,15 @@ public final class Delivery {
         commit(worktree, commit);
         String commitSha = head(worktree);
 
-        push(worktree, branch);
-        String prUrl = existingPrUrl != null
-                ? existingPrUrl
-                : gh.createDraftPullRequest(worktree, baseBranch, branch, commit.subject(), commit.body());
+        String prUrl;
+        try {
+            push(worktree, branch);
+            prUrl = existingPrUrl != null
+                    ? existingPrUrl
+                    : gh.createDraftPullRequest(worktree, baseBranch, branch, commit.subject(), commit.body());
+        } catch (WorkspaceException e) {
+            throw new CommittedException(e, commitSha);
+        }
         Log.info("delivery.done", "task", taskId, "commit", commitSha, "files", files.size(), "pr", prUrl);
         return new Result(files, commitSha, prUrl);
     }
@@ -93,13 +121,18 @@ public final class Delivery {
         if (head.equals(baseSha)) {
             return new Result(List.of(), null, existingPrUrl);
         }
-        if (!head.equals(pushed)) {
-            requireOpen(worktree, existingPrUrl);
-            push(worktree, branch);
+        String prUrl;
+        try {
+            if (!head.equals(pushed)) {
+                requireOpen(worktree, existingPrUrl);
+                push(worktree, branch);
+            }
+            prUrl = existingPrUrl != null
+                    ? existingPrUrl
+                    : gh.createDraftPullRequest(worktree, baseBranch, branch, commit.subject(), commit.body());
+        } catch (WorkspaceException e) {
+            throw new CommittedException(e, head);
         }
-        String prUrl = existingPrUrl != null
-                ? existingPrUrl
-                : gh.createDraftPullRequest(worktree, baseBranch, branch, commit.subject(), commit.body());
         List<String> files = git.run(worktree, "diff", "--name-only", baseSha, head).lines().filter(line -> !line.isBlank()).toList();
         Log.info("delivery.redone", "task", taskId, "commit", head, "files", files.size(), "pr", prUrl);
         return new Result(files, head, prUrl);

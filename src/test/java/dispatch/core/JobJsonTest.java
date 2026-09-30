@@ -162,4 +162,27 @@ class JobJsonTest {
         assertNull(read.reviewPrompt());
         assertFalse(Json.write(old).contains("\"loop\""), "an older worker must still read a job without the loop");
     }
+
+    @Test
+    void aJobWithAnExpectedHeadAndAResultWithAHeadSurviveJsonUnchanged() throws Exception {
+        Job job = new Job(7, 3, RunKind.DELIVER,
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),
+                "main", "6f3030a", "/w/7", null, null, false, null, null, null, 0L, null, List.of(), "s", List.of(), "summary",
+                null, null, "9c1e2d4");
+        JobResult result = JobResult.failed(FailureReason.DELIVERY, "git push failed", null).withHead("b7a0f11");
+
+        assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
+        assertEquals(result, Json.MAPPER.readValue(Json.write(result), JobResult.class));
+    }
+
+    @Test
+    void withNothingToCheckNeitherSideSendsAFieldTheOtherVersionWouldReject() throws Exception {
+        Job plan = new Job(7, 1, RunKind.PLAN, new Job.Project("alm", "r", null, "main", "claude-code", List.of()), "main",
+                null, null, null, null, false, "p", null, null, 1000, BigDecimal.ONE, List.of(), "s", List.of(), null);
+        JobResult delivered = JobResult.delivered(null, List.of("README.md"), "https://github.com/acme/alm/pull/9");
+
+        assertFalse(Json.write(plan).contains("\"expectedHead\""), "an older worker must still read a PLAN job");
+        assertFalse(Json.write(delivered).contains("\"head\""), "an older team machine must still read the result");
+        assertNull(Json.MAPPER.readValue(Json.write(plan), Job.class).expectedHead(), "an older team machine's job checks nothing");
+    }
 }

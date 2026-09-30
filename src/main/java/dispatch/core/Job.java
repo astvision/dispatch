@@ -32,6 +32,9 @@ import java.util.UUID;
  * @param branch          the task's branch, set by the team machine that made this job; null uses {@link Config#defaultBranch}
  *                        so an older worker that never heard of it (before M: several instances) still parses the job
  * @param reviewPrompt    the reviewer's prompt without the diff; null unless an EXECUTE job with the verify loop on
+ * @param expectedHead    EXECUTE and DELIVER only: the commit Dispatch last left the task's branch at, which the run must find
+ *                        it at before it builds on or pushes it; null when there is nothing to check (a PLAN job, a task from
+ *                        before the guard, an older team machine), and then nothing is checked
  */
 public record Job(
         long taskId,
@@ -54,11 +57,21 @@ public record Job(
         List<String> commitTrailers,
         String deliverySummary,
         @JsonInclude(JsonInclude.Include.NON_NULL) String branch,
-        @JsonInclude(JsonInclude.Include.NON_NULL) String reviewPrompt) {
+        @JsonInclude(JsonInclude.Include.NON_NULL) String reviewPrompt,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String expectedHead) {
 
     public Job {
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         commitTrailers = commitTrailers == null ? List.of() : List.copyOf(commitTrailers);
+    }
+
+    /** Before the branch guard: no expected head, so nothing is checked. */
+    public Job(long taskId, int seq, RunKind kind, Project project, String baseBranch, String baseSha, String worktree,
+            String prUrl, UUID sessionId, boolean resume, String prompt, String model, String effort, long timeoutMillis,
+            BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
+            String deliverySummary, String branch, String reviewPrompt) {
+        this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
+                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch, reviewPrompt, null);
     }
 
     /** Before the verify loop: no review prompt. */
@@ -67,7 +80,7 @@ public record Job(
             BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
             String deliverySummary, String branch) {
         this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
-                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch, null);
+                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch, null, null);
     }
 
     /** Before {@code branch} existed: an older worker's job, always the default branch. */
@@ -76,7 +89,7 @@ public record Job(
             BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
             String deliverySummary) {
         this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
-                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, null, null);
+                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, null, null, null);
     }
 
     /** The task's branch: the team's prefix when it sent one, else dispatch/<task>. */

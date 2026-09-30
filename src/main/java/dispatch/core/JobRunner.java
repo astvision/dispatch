@@ -123,6 +123,10 @@ public final class JobRunner implements Worker {
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
+        String moved = branchMoved(job, worktree, job.expectedHead(), FailureReason.SETUP);
+        if (moved != null) {
+            return JobResult.failed(FailureReason.SETUP, moved, null);
+        }
         if (control.stopReason() != null) {
             return stopped(job, control.stopReason(), null);
         }
@@ -223,15 +227,60 @@ public final class JobRunner implements Worker {
     private JobResult deliver(Job job, Path worktree, String startSha, AgentResult result, Verification verification) {
         String summary = verification == null ? result.summary()
                 : (result.summary() == null ? "" : result.summary()) + "\n\n" + verification.block();
+        // The failed run's summary is what a DELIVER retry commits, so it carries the block the commit would have had.
+        AgentResult kept = withSummary(result, summary);
+        // Against where this run started: a move during the run, by any agent, is caught too.
+        String moved = branchMoved(job, worktree, job.expectedHead() == null ? null : startSha, FailureReason.DELIVERY);
+        if (moved != null) {
+            return guarded(job, JobResult.failed(FailureReason.DELIVERY, moved, kept), job.expectedHead());
+        }
         Delivery.Result delivered;
         try {
             delivered = delivery.deliver(worktree, job.taskId(), job.branchName(), job.baseBranch(), startSha,
                     commit(job, summary), job.prUrl());
         } catch (WorkspaceException e) {
-            // The failed run's summary is what a DELIVER retry commits, so it carries the block the commit would have had.
-            return JobResult.failed(FailureReason.DELIVERY, e.getMessage(), withSummary(result, summary));
+            return guarded(job, JobResult.failed(FailureReason.DELIVERY, e.getMessage(), kept), headAfter(e, startSha));
         }
-        return JobResult.delivered(result, delivered.files(), delivered.prUrl(), verification);
+        return guarded(job, JobResult.delivered(result, delivered.files(), delivered.prUrl(), verification),
+                delivered.commitSha() != null ? delivered.commitSha() : startSha);
+    }
+
+    /**
+     * Null when the task's branch, and the worktree's HEAD on it, are at {@code expected}; otherwise why the run must neither
+     * build on it nor push it. Another task's agent can move any branch of the clone they share, and this run's own agent
+     * may not move it either: Dispatch owns the task's branch (ADR 0032).
+     *
+     * @param expected null checks nothing: a job from before the guard
+     */
+    private String branchMoved(Job job, Path worktree, String expected, FailureReason reason) {
+        if (expected == null) {
+            return null;
+        }
+        String branch = job.branchName();
+        String found;
+        try {
+            String branchHead = delivery.branchHead(worktree, branch);
+            found = branchHead.equals(expected) ? delivery.head(worktree) : branchHead;
+        } catch (WorkspaceException e) {
+            found = "(unreadable: " + e.getMessage() + ")";
+        }
+        if (found.equals(expected)) {
+            return null;
+        }
+        Log.warn("task.branch_moved", "task", job.taskId(), "run", job.seq(), "branch", branch, "expected", expected,
+                "found", found, "reason", reason);
+        return "branch " + branch + " moved to " + found + " but Dispatch left it at " + expected
+                + "; another run may have moved it, so nothing was built on it or pushed";
+    }
+
+    /** The branch's head once a delivery failed: Dispatch's own commit when it got that far, else where it started. */
+    private static String headAfter(WorkspaceException e, String start) {
+        return e instanceof Delivery.CommittedException committed ? committed.commitSha() : start;
+    }
+
+    /** {@code result} with the branch's head, only for a job that carried an expected head: an older team machine rejects the field. */
+    private static JobResult guarded(Job job, JobResult result, String head) {
+        return job.expectedHead() == null ? result : result.withHead(head);
     }
 
     private static AgentResult withSummary(AgentResult result, String summary) {
@@ -251,14 +300,20 @@ public final class JobRunner implements Worker {
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
+        String moved = branchMoved(job, worktree, job.expectedHead(), FailureReason.DELIVERY);
+        if (moved != null) {
+            return guarded(job, JobResult.failed(FailureReason.DELIVERY, moved, null), job.expectedHead());
+        }
         Delivery.Result delivered;
         try {
             delivered = delivery.redeliver(worktree, job.taskId(), job.branchName(), job.baseBranch(), job.baseSha(),
                     commit(job, job.deliverySummary()), job.prUrl());
         } catch (WorkspaceException e) {
-            return JobResult.failed(FailureReason.DELIVERY, e.getMessage(), null);
+            return guarded(job, JobResult.failed(FailureReason.DELIVERY, e.getMessage(), null), headAfter(e, job.expectedHead()));
         }
-        return JobResult.delivered(null, delivered.files(), delivered.prUrl());
+        // Nothing to deliver at all leaves the branch where it started.
+        return guarded(job, JobResult.delivered(null, delivered.files(), delivered.prUrl()),
+                delivered.commitSha() != null ? delivered.commitSha() : job.baseSha());
     }
 
     /** The task's delivery commit: the job's subject and trailers, and the summary with secrets masked as its body. */
