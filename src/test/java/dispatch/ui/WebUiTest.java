@@ -83,13 +83,16 @@ class WebUiTest {
 
     @Test
     void itRunsOutsideTheBotsOwnUnitWithTheBotsPathAndStopsWhenUnused() {
-        List<String> team = WebUi.systemdCommand("/usr/bin/java", Path.of("/opt/d.jar"), Path.of("/c/team.yaml"), "team", "/usr/bin");
-        List<String> own = WebUi.systemdCommand("/usr/bin/java", Path.of("/opt/d.jar"), Path.of("/c/dispatch.yaml"), null, null);
+        // Paths as this OS prints them: the command itself only ever runs on Linux.
+        Path jar = Path.of("/opt/d.jar");
+        Path config = Path.of("/c/dispatch.yaml");
+        List<String> team = WebUi.systemdCommand("/usr/bin/java", jar, Path.of("/c/team.yaml"), "team", "/usr/bin");
+        List<String> own = WebUi.systemdCommand("/usr/bin/java", jar, config, null, null);
 
         assertEquals(List.of("systemd-run", "--user", "--collect", "--quiet", "--unit=dispatch-ui-team", "--setenv=PATH=/usr/bin",
-                "/usr/bin/java", "-jar", "/opt/d.jar", "ui", "--no-browser", "--idle-minutes", "30", "--instance", "team"), team);
+                "/usr/bin/java", "-jar", jar.toString(), "ui", "--no-browser", "--idle-minutes", "30", "--instance", "team"), team);
         assertEquals(List.of("--unit=dispatch-ui"), own.subList(4, 5));
-        assertEquals(List.of("--config", "/c/dispatch.yaml"), own.subList(own.size() - 2, own.size()));
+        assertEquals(List.of("--config", config.toString()), own.subList(own.size() - 2, own.size()));
     }
 
     private WebUi webUi(List<String> command, Duration wait) {
