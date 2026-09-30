@@ -5,6 +5,7 @@ import dispatch.agent.RunRequest;
 import dispatch.domain.RunKind;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -64,11 +65,12 @@ public final class SandboxPolicies {
         agentStateInHome.forEach(entry -> writable.add(home.resolve(entry)));
         CACHES.forEach(cache -> writable.add(home.resolve(cache)));
         List<Path> readOnly = new ArrayList<>(request.readOnlyDirs());
-        // The run's own log dir, where Codex's --output-schema is written, is under the hidden state dir. A split logs
-        // into its workdir, which is already there: mounting it read-only would cover the writable workdir.
-        Path logDir = request.logBase().toAbsolutePath().normalize().getParent();
-        if (!workdir.startsWith(logDir)) {
-            readOnly.add(logDir);
+        // Codex reads its --output-schema from beside the run's log, under the hidden state dir. Only that file: the log
+        // dir holds other runs' logs, and for the assistant every member's conversations. A regular file outside the
+        // workdir only, so an agent-planted symlink cannot mount anything it names.
+        Path schema = Path.of(request.logBase().toAbsolutePath().normalize() + ".schema.json");
+        if (!schema.startsWith(workdir) && Files.isRegularFile(schema, LinkOption.NOFOLLOW_LINKS)) {
+            readOnly.add(schema);
         }
         CODE_IN_WRITABLE.forEach(entry -> readOnly.add(home.resolve(entry)));
         if (request.kind() == RunKind.ASSISTANT) {

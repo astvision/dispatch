@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -209,26 +210,33 @@ class SandboxPoliciesTest {
     }
 
     @Test
-    void theRunsOwnLogDirIsReadable() throws IOException {
-        // Codex reads its --output-schema from beside the run's log, under the hidden state dir.
+    void onlyTheRunsOwnSchemaFileIsReadableNotItsLogDir() throws IOException {
+        // Codex reads its --output-schema from beside the run's log, under the hidden state dir; the other runs' logs stay hidden.
         Path worktree = Files.createDirectories(stateDir.resolve("worktrees/7"));
-        RunRequest request = new RunRequest(RunKind.PLAN, worktree, "prompt", UUID.randomUUID(), false, List.of(), null, null, null,
-                stateDir.resolve("runs/7/1"));
+        Path logBase = stateDir.resolve("runs/7/1");
+        Files.createDirectories(logBase.getParent());
+        Files.writeString(Path.of(logBase + ".schema.json"), "{}");
+        RunRequest request = new RunRequest(RunKind.REVIEW, worktree, "prompt", UUID.randomUUID(), false, List.of(), null, null, null,
+                logBase);
 
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, List.of(".codex"));
 
-        assertTrue(policy.readOnly().contains(stateDir.resolve("runs/7")), policy.readOnly().toString());
+        assertTrue(policy.readOnly().contains(Path.of(logBase + ".schema.json")), policy.readOnly().toString());
+        assertFalse(policy.readOnly().contains(stateDir.resolve("runs/7")), policy.readOnly().toString());
     }
 
     @Test
-    void aLogDirThatIsTheWorkdirStaysWritable() throws IOException {
-        // A split logs into its own workdir.
-        Path splits = Files.createDirectories(stateDir.resolve("splits"));
+    void anAssistantRunSeesNothingOfTheAssistantLogs() throws IOException {
+        // Every member's conversations are logged there; AssistantHome keeps them out of the assistant home for this reason.
+        Path assistantHome = Files.createDirectories(stateDir.resolve("assistant"));
+        Path logs = Files.createDirectories(stateDir.resolve("assistant-logs"));
+        RunRequest request = new RunRequest(RunKind.ASSISTANT, assistantHome, "prompt", UUID.randomUUID(), false, List.of(), null, null,
+                null, logs.resolve("42-1"));
 
-        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
-                .forRun(request(RunKind.SPLIT, splits, List.of()), List.of());
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, List.of(".claude"));
 
-        assertFalse(policy.readOnly().contains(splits), policy.readOnly().toString());
+        assertTrue(Stream.concat(policy.readOnly().stream(), policy.writable().stream()).noneMatch(path -> path.startsWith(logs)),
+                policy.readOnly() + " " + policy.writable());
     }
 
     @Test
