@@ -23,7 +23,10 @@ and the agent and build-tool config that runs code (`~/.claude/settings.json` an
 `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.gradle/init.d`, `~/.gradle/gradle.properties`,
 `~/.m2/settings.xml`). Dispatch's own git, which runs with `GH_TOKEN`, also ignores hooks and `core.fsmonitor`, and
 refuses to run in a redirected repository: a clone whose git dir holds a `commondir` file, or a worktree whose admin
-`commondir` names anything but its own clone, fails the task instead of reading a config an agent wrote. Of the run's
+`commondir` names anything but its own clone, a `.git` that is a symlink, or a `config.worktree` with content (Dispatch
+creates each one empty when it adds a worktree, so the sandbox always mounts it read-only), fails the task instead of
+reading a config an agent wrote. Each command then runs with `GIT_COMMON_DIR` set to the common dir just verified, so a
+`commondir` another task's agent plants after the check is never read. Of the run's
 logs only Codex's `<log>.schema.json` is visible, never the log dir, so an assistant turn cannot read other members'
 logged conversations.
 
@@ -46,6 +49,8 @@ container, slower builds on macOS and Windows).
   `docker` group), abstract-namespace sockets (X11, some D-Bus buses) since the network namespace is shared, and the
   `mcpServers` in `~/.claude.json`, which stays writable because Claude Code writes it.
 - A poisoned build cache is possible, since caches are writable; accepted on a developer's own machine.
+- Agents cannot run `git worktree` (add, remove, prune) inside the sandbox: the clone's `worktrees` dir is read-only
+  apart from the run's own admin dir.
 - A worker reports the sandbox with each result, and a team machine from before this version refuses such a result:
   upgrade the team machine before its workers.
 - macOS gets its own sandbox (Seatbelt) only once someone can run it on a Mac.

@@ -76,7 +76,7 @@ and otherwise do not change.
 | the config dirs, state dirs and configured clones of every other Dispatch instance on the computer (`Instances.othersPrivate`), so one instance's agent cannot read another's `dispatch.db` | hidden (empty tmpfs) |
 | `$XDG_RUNTIME_DIR` from the agent's environment, else `/run/user/<uid>`: systemd `--user`, ssh-agent, gpg-agent and Secret Service sockets | hidden (empty tmpfs) |
 | the run's own `<logBase>.schema.json` (Codex's `--output-schema`) when it is a regular file outside the workdir; never the log dir, which for the assistant holds every member's conversations | read-only |
-| the worktree's `.git` file; the git common dir's `config`, `hooks`, `info` and `worktrees` (every worktree's admin dir) | read-only over the read-write git dir and workdir |
+| the worktree's `.git` file; the git common dir's `config`, `hooks`, `info`, `config.worktree` and `worktrees` (every worktree's admin dir; agents cannot run `git worktree` in the sandbox) | read-only over the read-write git dir and workdir |
 | for a linked worktree, its own admin dir `<common>/worktrees/<name>` | read-write over the read-only `worktrees` |
 | that admin dir's `config.worktree` and `commondir` | read-only over it |
 | `~/.claude/settings.json`, `~/.claude/settings.local.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.gradle/init.d`, `~/.gradle/gradle.properties`, `~/.m2/settings.xml` | read-only over the writable agent and cache dirs |
@@ -87,7 +87,10 @@ The worktree's `.git` file is agent-writable between runs, so the git dir it nam
 passes `-c core.hooksPath=/dev/null -c core.fsmonitor=false` to every command, since it runs with `GH_TOKEN` in clones
 agents wrote to. Before every command it also refuses a redirected repository (`WorkspaceException`, so the task fails
 as setup or delivery): a `commondir` file in the clone's git dir, or, in a linked worktree, an admin `commondir` that is
-missing or does not resolve (real path) to the clone's own git dir.
+missing or does not resolve (real path) to the clone's own git dir; a `.git` that is a symlink; a `config.worktree`
+(the worktree's or the clone's) with content. It then runs git with `GIT_COMMON_DIR` set to the verified common dir, so
+a `commondir` planted between the check and git's start is not read. `Workspaces` creates both `config.worktree` files
+empty when it adds or recreates a worktree, so the sandbox's `--ro-bind-try` always covers them.
 
 Discovering the other instances failing only logs WARN `sandbox.instances_not_discovered`; the run goes on. A hidden path that is not a directory is skipped, since bwrap cannot mount over it on a read-only root. Network is open. Build caches are writable by choice: an injected prompt could poison a shared cache, which is accepted
 on a developer's own machine in exchange for builds that work as they do outside the sandbox.
