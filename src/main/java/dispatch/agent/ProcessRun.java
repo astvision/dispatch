@@ -2,6 +2,7 @@ package dispatch.agent;
 
 import dispatch.Log;
 import dispatch.ProcessTrees;
+import dispatch.agent.sandbox.Confinement;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -35,27 +36,33 @@ public final class ProcessRun implements RunHandle {
     private final AtomicBoolean cancelRequested = new AtomicBoolean();
     private final Thread stdoutReader;
     private final Instant processStart;
+    private final SandboxUse sandbox;
 
-    private ProcessRun(Process process, OutputParser parser, Path stdoutLog, Path stderrLog, Duration cancelGrace) {
+    private ProcessRun(Process process, OutputParser parser, Path stdoutLog, Path stderrLog, Duration cancelGrace,
+                       SandboxUse sandbox) {
         this.process = process;
         this.parser = parser;
         this.stderrLog = stderrLog;
         this.cancelGrace = cancelGrace;
+        this.sandbox = sandbox;
         // Read now: the OS stops reporting it once the process has exited.
         this.processStart = process.toHandle().info().startInstant().orElse(null);
         this.stdoutReader = Thread.ofVirtual().name("agent-stdout-" + process.pid()).start(() -> copyStdout(stdoutLog));
     }
 
     /**
-     * Starts {@code commandLine} in the run's workdir with {@code environment} plus the run's own variables, minus Dispatch's
+     * Starts {@code commandLine}, inside {@code confinement}'s sandbox, in the run's workdir with {@code environment} plus the run's own variables, minus Dispatch's
      * secrets, and writes {@code prompt} to its stdin. The run's raw output goes to {@code <logBase>.jsonl} and
      * {@code <logBase>.stderr}.
      *
-     * @param agent names the agent in the log, e.g. "codex"
+     * @param agent            names the agent in the log, e.g. "codex"
+     * @param agentStateInHome the agent's own files relative to home, which its sandbox leaves writable
      */
     public static ProcessRun start(String agent, List<String> commandLine, RunRequest request, Map<String, String> environment,
-                                   String prompt, OutputParser parser, Duration cancelGrace) {
-        ProcessBuilder builder = new ProcessBuilder(commandLine).directory(request.workdir().toFile());
+                                   String prompt, OutputParser parser, Duration cancelGrace, Confinement confinement,
+                                   List<String> agentStateInHome) {
+        List<String> confined = confinement.wrap(commandLine, request, agentStateInHome);
+        ProcessBuilder builder = new ProcessBuilder(confined).directory(request.workdir().toFile());
         builder.environment().clear();
         builder.environment().putAll(environment);
         builder.environment().putAll(request.environment());
@@ -68,12 +75,13 @@ public final class ProcessRun implements RunHandle {
             builder.redirectError(stderrLog.toFile());
             process = builder.start();
         } catch (IOException e) {
-            throw new AgentStartException("cannot start " + commandLine.getFirst() + ": " + e.getMessage(), e);
+            throw new AgentStartException("cannot start " + confined.getFirst() + ": " + e.getMessage(), e);
         }
         Log.info("agent.started", "agent", agent, "pid", process.pid(), "kind", request.kind(),
-                "workdir", request.workdir(), "resume", request.resume());
+                "workdir", request.workdir(), "resume", request.resume(),
+                "sandbox", confinement.sandbox().name());
         // Before the prompt: until it has read the prompt, the agent cannot have exited, so its start time is still known.
-        ProcessRun run = new ProcessRun(process, parser, stdoutLog, stderrLog, cancelGrace);
+        ProcessRun run = new ProcessRun(process, parser, stdoutLog, stderrLog, cancelGrace, confinement.use());
         writePrompt(process, prompt);
         return run;
     }
@@ -92,7 +100,7 @@ public final class ProcessRun implements RunHandle {
     public AgentResult await() throws InterruptedException {
         int exitCode = process.waitFor();
         stdoutReader.join();
-        return parser.result(exitCode, stderrTail());
+        return parser.result(exitCode, stderrTail()).withSandbox(sandbox);
     }
 
     @Override
