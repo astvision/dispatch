@@ -91,8 +91,14 @@ class BubblewrapSandboxTest {
                 .forRun(new RunRequest(RunKind.PLAN, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
                         worktree.resolve("run")), List.of());
         Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", "sleep 300 & sleep 300"), policy)).start();
-        Thread.sleep(500);
-        List<ProcessHandle> tree = process.toHandle().descendants().toList();
+        // bwrap, sh and both sleeps start asynchronously; an empty tree would make the assertions below vacuous.
+        List<ProcessHandle> tree = List.of();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (tree.size() < 2 && System.nanoTime() < deadline) {
+            Thread.sleep(50);
+            tree = process.toHandle().descendants().toList();
+        }
+        assertTrue(tree.size() >= 2, "the sandboxed tree never started: " + tree);
 
         dispatch.ProcessTrees.terminate(process.toHandle(), java.time.Duration.ofSeconds(2));
 
