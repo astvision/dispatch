@@ -3,7 +3,8 @@
 Amends ADR 0009, which left an OS sandbox as the next hardening step.
 
 Every agent process Dispatch starts, for a plan, an execution, a split or an assistant turn, runs inside bubblewrap on
-Linux. The whole root is read-only; the run's worktree, its clone's git dir, the agent's own state (`~/.claude`,
+Linux. The whole root is read-only; the run's worktree, its clone's git dir (plans, executions and reviews only: a
+split or an assistant turn never gets a repository, whatever its workdir holds), the agent's own state (`~/.claude`,
 `~/.claude.json`, `~/.codex`, `~/.gemini`) and the build caches (`~/.m2`, `~/.gradle`, `~/.npm`, `~/.cache`) are
 writable; `/tmp` is fresh per run. `~/.ssh`, `~/.config/gh`, `~/.gnupg`, Dispatch's config directory (which holds every
 instance's secrets file), this instance's state directory and every configured clone are hidden behind an empty
@@ -16,10 +17,15 @@ sandbox. The network stays open. Permission modes and deny rules are unchanged: 
 
 Whatever an agent can write that later runs outside the sandbox is mounted back read-only: the worktree's `.git` file
 (which names the git dir the next run mounts; it must name a configured clone's `.git` or `<stateDir>/repos/<name>/.git`,
-or the run is refused), the clone's `config`, `hooks` and `info` and the worktree's `config.worktree` and `commondir`,
+or the run is refused), the clone's `config`, `hooks` and `info`, the admin dirs of the clone's other worktrees
+(`<common>/worktrees`, with only the run's own mounted back writable) and its own `config.worktree` and `commondir`,
 and the agent and build-tool config that runs code (`~/.claude/settings.json` and `settings.local.json`,
 `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.gradle/init.d`, `~/.gradle/gradle.properties`,
-`~/.m2/settings.xml`). Dispatch's own git, which runs with `GH_TOKEN`, also ignores hooks and `core.fsmonitor`.
+`~/.m2/settings.xml`). Dispatch's own git, which runs with `GH_TOKEN`, also ignores hooks and `core.fsmonitor`, and
+refuses to run in a redirected repository: a clone whose git dir holds a `commondir` file, or a worktree whose admin
+`commondir` names anything but its own clone, fails the task instead of reading a config an agent wrote. Of the run's
+logs only Codex's `<log>.schema.json` is visible, never the log dir, so an assistant turn cannot read other members'
+logged conversations.
 
 A machine that cannot sandbox (no bwrap, user namespaces blocked, macOS, Windows, or `sandbox: off`) runs its agents as
 before. It says so in `dispatch check`, at startup, and under every plan and result of such a run, so an unsandboxed run

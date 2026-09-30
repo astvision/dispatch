@@ -46,7 +46,7 @@ public interface Sandbox {
     List<String> wrap(List<String> commandLine, SandboxPolicy policy);
 }
 
-public record SandboxPolicy(Path workdir, Path gitCommonDir, List<Path> readOnly,
+public record SandboxPolicy(Path workdir, Path gitCommonDir, Path worktreeAdmin, List<Path> readOnly,
                             List<Path> writable, List<Path> hidden) {}
 ```
 
@@ -65,7 +65,7 @@ and otherwise do not change.
 |---|---|
 | `/` (system, toolchains) | read-only |
 | the run's workdir (`worktrees/<task>`, `splits/…`, the assistant's directory) | read-write |
-| the clone's git common dir (from the worktree's `.git` file) | read-write |
+| plan, execute and review runs only: the clone's git common dir (from the worktree's `.git` file); a split or assistant run never gets one, whatever its workdir holds | read-write |
 | the agent's state: Claude `~/.claude`, `~/.claude.json`; Codex `~/.codex`; Gemini `~/.gemini` | read-write |
 | build caches: `~/.m2`, `~/.gradle`, `~/.npm`, `~/.cache` | read-write |
 | `/tmp` | a fresh tmpfs per run |
@@ -75,15 +75,19 @@ and otherwise do not change.
 | `~/.ssh`, `~/.config/gh`, `~/.gnupg`, Dispatch's config dir (as built, the whole `~/.config/dispatch`, which holds every instance's secrets file), Dispatch's state dir, every configured project's clone | hidden (empty tmpfs) |
 | the config dirs, state dirs and configured clones of every other Dispatch instance on the computer (`Instances.othersPrivate`), so one instance's agent cannot read another's `dispatch.db` | hidden (empty tmpfs) |
 | `$XDG_RUNTIME_DIR` from the agent's environment, else `/run/user/<uid>`: systemd `--user`, ssh-agent, gpg-agent and Secret Service sockets | hidden (empty tmpfs) |
-| the run's own log dir (Codex's `--output-schema`), unless it is the workdir or holds it | read-only |
-| the worktree's `.git` file; the git common dir's `config`, `hooks`, `info`; for a linked worktree its `config.worktree` and `commondir` | read-only over the read-write git dir and workdir |
+| the run's own `<logBase>.schema.json` (Codex's `--output-schema`) when it is a regular file outside the workdir; never the log dir, which for the assistant holds every member's conversations | read-only |
+| the worktree's `.git` file; the git common dir's `config`, `hooks`, `info` and `worktrees` (every worktree's admin dir) | read-only over the read-write git dir and workdir |
+| for a linked worktree, its own admin dir `<common>/worktrees/<name>` | read-write over the read-only `worktrees` |
+| that admin dir's `config.worktree` and `commondir` | read-only over it |
 | `~/.claude/settings.json`, `~/.claude/settings.local.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.gradle/init.d`, `~/.gradle/gradle.properties`, `~/.m2/settings.xml` | read-only over the writable agent and cache dirs |
 
 The worktree's `.git` file is agent-writable between runs, so the git dir it names must be a configured clone's `.git` or
 `<stateDir>/repos/<name>/.git` (compared by real path); anything else fails the run with `AgentStartException`.
 `~/.claude.json` stays writable because Claude Code writes it, so its `mcpServers` are not protected. Dispatch's own git
 passes `-c core.hooksPath=/dev/null -c core.fsmonitor=false` to every command, since it runs with `GH_TOKEN` in clones
-agents wrote to.
+agents wrote to. Before every command it also refuses a redirected repository (`WorkspaceException`, so the task fails
+as setup or delivery): a `commondir` file in the clone's git dir, or, in a linked worktree, an admin `commondir` that is
+missing or does not resolve (real path) to the clone's own git dir.
 
 Discovering the other instances failing only logs WARN `sandbox.instances_not_discovered`; the run goes on. A hidden path that is not a directory is skipped, since bwrap cannot mount over it on a read-only root. Network is open. Build caches are writable by choice: an injected prompt could poison a shared cache, which is accepted
 on a developer's own machine in exchange for builds that work as they do outside the sandbox.
@@ -97,7 +101,9 @@ bwrap --die-with-parent --unshare-pid --unshare-ipc --new-session
       --bind <workdir> <workdir>              # then mount back what the run needs
       --bind <gitCommonDir> <gitCommonDir>
       --bind-try <writable>…                  # optional: a missing ~/.gemini is not an error
-      --ro-bind-try <readOnly>…               # last: read-only over the read-write mounts above
+      --ro-bind-try <readOnly>…               # read-only over the read-write mounts above
+      --bind <worktreeAdmin> <worktreeAdmin>  # the run's own admin dir, writable over the read-only worktrees/
+      --ro-bind-try <worktreeAdmin>/config.worktree …  --ro-bind-try <worktreeAdmin>/commondir …   # read-only again
       --chdir <workdir>
       -- <commandLine>
 ```

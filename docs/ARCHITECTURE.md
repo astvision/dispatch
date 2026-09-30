@@ -304,15 +304,16 @@ Every agent's command line is wrapped by this machine's `Sandbox` (ADR 0032), ch
 | Path | Access |
 |---|---|
 | `/` (system, toolchains) | read-only |
-| the run's workdir, the clone's git common dir | read-write |
+| the run's workdir; for plan, execute and review runs the clone's git common dir (split and assistant runs never get one) | read-write |
 | the agent's state (`~/.claude`, `~/.claude.json`; `~/.codex`; `~/.gemini`), build caches (`~/.m2`, `~/.gradle`, `~/.npm`, `~/.cache`) | read-write |
 | `/tmp` | a fresh tmpfs per run |
 | `request.readOnlyDirs()` (attachments) | read-only |
 | assistant only: `dispatch.db`, `-wal`, `-shm` / `assistant-bin` | read-write / read-only |
-| the run's own log dir (Codex's `--output-schema`); the worktree's `.git` file; the git common dir's `config`, `hooks`, `info` and the worktree's `config.worktree`, `commondir`; `~/.claude/settings.json`, `~/.claude/settings.local.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.gradle/init.d`, `~/.gradle/gradle.properties`, `~/.m2/settings.xml` | read-only, mounted after the read-write paths they sit in |
+| the run's own `<logBase>.schema.json` (Codex's `--output-schema`), never its log dir; the worktree's `.git` file; the git common dir's `config`, `hooks`, `info`, `worktrees`; `~/.claude/settings.json`, `~/.claude/settings.local.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.gradle/init.d`, `~/.gradle/gradle.properties`, `~/.m2/settings.xml` | read-only, mounted after the read-write paths they sit in |
+| the run's own worktree admin dir `<common>/worktrees/<name>` / its `config.worktree`, `commondir` | read-write over `worktrees` / read-only over that |
 | `~/.ssh`, `~/.config/gh`, `~/.gnupg`, `$XDG_RUNTIME_DIR` (else `/run/user/<uid>`), Dispatch's config dir, this instance's state dir, every configured clone, and the config dirs, state dirs and clones of every other Dispatch instance on the computer (`Instances.othersPrivate`) | hidden (empty tmpfs) |
 
-A worktree's `.git` file must name a configured clone's `.git` or `<stateDir>/repos/<name>/.git`, or the run fails to start. bwrap also runs with `--unshare-ipc`. Dispatch's own git (`Git`) passes `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, since it runs with `GH_TOKEN` in clones agents wrote to.
+A worktree's `.git` file must name a configured clone's `.git` or `<stateDir>/repos/<name>/.git`, or the run fails to start. bwrap also runs with `--unshare-ipc`. Dispatch's own git (`Git`) passes `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, since it runs with `GH_TOKEN` in clones agents wrote to, and refuses (`WorkspaceException`) a clone whose git dir holds a `commondir` file or a worktree whose admin `commondir` does not resolve to its own clone.
 
 The network is open. bwrap is the process Dispatch records and terminates (`--die-with-parent`), so cancelling and orphan detection are unchanged. The result's `AgentResult` carries a `SandboxUse` (name and, if none, the reason); a plan or result of an unsandboxed run gets a ⚠️ line, and the run stores it (`run.sandbox`).
 
