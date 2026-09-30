@@ -63,6 +63,9 @@ class JobRunnerTest {
     /** What the verify loop's tests start: each kind answered here is a canned result, the rest go to fake claude. */
     private final Map<RunKind, AgentResult> answers = new EnumMap<>(RunKind.class);
     private final List<RunKind> agentKindsStarted = new CopyOnWriteArrayList<>();
+    /** When set, a fix (a resumed EXECUTE) runs until it is cancelled or its thread interrupted. */
+    private volatile boolean fixesHang;
+    private final java.util.concurrent.CountDownLatch fixStarted = new java.util.concurrent.CountDownLatch(1);
     private Recorder events;
     private ActiveRuns.ActiveRun control;
     private Agent claude;
@@ -321,23 +324,71 @@ class JobRunnerTest {
         assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
     }
 
+    @Test
+    void aFixThatOutlastsItsTimeEndsOnlyThatCallAndTheRunStillDelivers() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        fixesHang = true;
+        // A stopped clock leaves the whole 13 min every time the loop asks; all but 1 s is held back, so the fix gets 1 s.
+        Duration timeout = Duration.ofMinutes(13);
+        Clock stopped = Clock.fixed(Instant.parse("2026-09-30T10:00:00Z"), java.time.ZoneOffset.UTC);
+
+        JobResult result = executeWithLoop(true, new ActiveRuns().register(TASK, 2),
+                (command, workdir, log, limit, stop) -> new TestRunner.TestRun(1, false, false, "FooTest failed"),
+                stopped, timeout, timeout.minusSeconds(1));
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome());
+        assertEquals(FakeGh.PR_URL, result.prUrl());
+        assertEquals("fix failed: timed out after 1s", result.verification().stoppedBy());
+        assertTrue(lastCommitBody().contains("Stopped early: fix failed: timed out after 1s"), lastCommitBody());
+    }
+
+    @Test
+    void anInterruptDuringALoopCallFailsTheRunWithoutDelivering() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        fixesHang = true;
+        AtomicReference<JobResult> result = new AtomicReference<>();
+        AtomicReference<Boolean> stillInterrupted = new AtomicReference<>();
+        Thread worker = Thread.ofVirtual().start(() -> {
+            result.set(executeWithLoop(true,
+                    (command, workdir, log, limit, stop) -> new TestRunner.TestRun(1, false, false, "FooTest failed")));
+            stillInterrupted.set(Thread.currentThread().isInterrupted());
+        });
+        assertTrue(fixStarted.await(15, java.util.concurrent.TimeUnit.SECONDS), "the fix never started");
+
+        worker.interrupt();
+        worker.join(Duration.ofSeconds(15));
+
+        assertFalse(worker.isAlive());
+        assertEquals(JobResult.Outcome.FAILED, result.get().outcome());
+        assertEquals(FailureReason.INTERRUPTED, result.get().failureReason());
+        assertEquals("run thread was interrupted", result.get().failureDetail());
+        assertNull(result.get().prUrl());
+        assertTrue(stillInterrupted.get(), "the interrupt is kept for whoever sent it");
+        assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
+    }
+
     /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
     private JobResult executeWithLoop(boolean loop, TestRunner tests) {
         return executeWithLoop(loop, new ActiveRuns().register(TASK, 2), tests);
     }
 
     private JobResult executeWithLoop(boolean loop, ActiveRuns.ActiveRun execution, TestRunner tests) {
+        // An hour and a budget of 10: room for every step the loop may take.
+        return executeWithLoop(loop, execution, tests, Clock.systemUTC(), Duration.ofHours(1), JobRunner.DELIVERY_RESERVE);
+    }
+
+    private JobResult executeWithLoop(boolean loop, ActiveRuns.ActiveRun execution, TestRunner tests, Clock clock,
+                                      Duration timeout, Duration deliveryReserve) {
         runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
         agentKindsStarted.clear();
         JobRunner looping = new JobRunner(workspaces, delivery, Map.of("claude-code", new ScriptedAgent()),
                 Redactor.patternsOnly(), (fileRef, target) -> {
                     throw new IllegalStateException("file " + fileRef + " is gone");
-                }, tests, Clock.systemUTC());
+                }, tests, clock, deliveryReserve);
         Job.Project project = new Job.Project("alm", repos.origin.toString(), null, "main", "claude-code", List.of(),
                 "./mvnw -q test", loop);
-        // An hour and a budget of 10: room for every step the loop may take.
         Job job = new Job(TASK, 2, RunKind.EXECUTE, project, "main", events.baseSha, events.worktree, null, SESSION, false,
-                "Implement the approved plan", null, null, Duration.ofHours(1).toMillis(), new BigDecimal("10"), List.of(),
+                "Implement the approved plan", null, null, timeout.toMillis(), new BigDecimal("10"), List.of(),
                 "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null,
                 loop ? "Review this:" : null);
         return looping.run(job, new Recorder(), execution);
@@ -358,6 +409,9 @@ class JobRunnerTest {
         @Override
         public RunHandle start(RunRequest request) {
             agentKindsStarted.add(request.kind());
+            if (fixesHang && request.kind() == RunKind.EXECUTE && request.resume()) {
+                return hanging();
+            }
             AgentResult answer = answers.get(request.kind());
             if (answer == null) {
                 return claude.start(request);
@@ -384,6 +438,34 @@ class JobRunnerTest {
                 @Override
                 public void cancel() {
                     // Already finished: there is nothing to stop.
+                }
+
+                @Override
+                public AgentActivity activity() {
+                    return new AgentActivity(0, null);
+                }
+            };
+        }
+
+        /** An agent that works until it is cancelled, when it reports like a killed process. */
+        private RunHandle hanging() {
+            java.util.concurrent.CountDownLatch cancelled = new java.util.concurrent.CountDownLatch(1);
+            fixStarted.countDown();
+            return new RunHandle() {
+                @Override
+                public ProcessHandle process() {
+                    return ProcessHandle.current();
+                }
+
+                @Override
+                public AgentResult await() throws InterruptedException {
+                    cancelled.await();
+                    return new AgentResult(AgentOutcome.FAILED, 143, null, null, null, null, null, List.of(), "killed", null, null);
+                }
+
+                @Override
+                public void cancel() {
+                    cancelled.countDown();
                 }
 
                 @Override

@@ -37,6 +37,9 @@ import java.util.UUID;
  */
 public final class JobRunner implements Worker {
 
+    /** Kept back from each verify-loop agent call's time, so the run can still deliver after a call that timed out. */
+    static final Duration DELIVERY_RESERVE = Duration.ofMinutes(2);
+
     private final Workspaces workspaces;
     private final Delivery delivery;
     private final Map<String, Agent> agents;
@@ -44,6 +47,7 @@ public final class JobRunner implements Worker {
     private final AttachmentSource attachmentSource;
     private final TestRunner tests;
     private final Clock clock;
+    private final Duration deliveryReserve;
 
     /** Without a sandbox for the verify loop's test command; for tests and callers that never run the loop. */
     public JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
@@ -59,6 +63,12 @@ public final class JobRunner implements Worker {
      */
     public JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
                      AttachmentSource attachmentSource, TestRunner tests, Clock clock) {
+        this(workspaces, delivery, agents, redactor, attachmentSource, tests, clock, DELIVERY_RESERVE);
+    }
+
+    /** @param deliveryReserve see {@link #DELIVERY_RESERVE}; a test shortens it so a loop call times out in seconds */
+    JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
+              AttachmentSource attachmentSource, TestRunner tests, Clock clock, Duration deliveryReserve) {
         this.workspaces = workspaces;
         this.delivery = delivery;
         this.agents = Map.copyOf(agents);
@@ -66,6 +76,7 @@ public final class JobRunner implements Worker {
         this.attachmentSource = attachmentSource;
         this.tests = tests;
         this.clock = clock;
+        this.deliveryReserve = deliveryReserve;
     }
 
     @Override
@@ -131,6 +142,10 @@ public final class JobRunner implements Worker {
                 () -> control.stopReason() != null);
         if (control.stopReason() != null) {
             return stopped(job, control.stopReason(), result.agent());
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            // Dispatch is going down under this run; the flag stays set for whoever interrupted it.
+            return JobResult.failed(FailureReason.INTERRUPTED, "run thread was interrupted", result.agent());
         }
         return deliver(job, worktree, startSha, combined(result.agent(), verified.runs()), verified.verification());
     }
@@ -298,7 +313,7 @@ public final class JobRunner implements Worker {
 
     /** Starts the agent, waits for it under {@code timeout}, and turns how it ended into the job's result. */
     private JobResult runAgent(Job job, JobEvents events, ActiveRuns.ActiveRun control, RunRequest request, Duration timeout) {
-        Ran ran = startAndAwait(job, events, control, request, timeout);
+        Ran ran = startAndAwait(job, events, control, request, timeout, true);
         if (ran.result() == null) {
             return JobResult.failed(ran.failure(), ran.detail(), null);
         }
@@ -314,9 +329,13 @@ public final class JobRunner implements Worker {
         };
     }
 
-    /** One of the verify loop's agent calls: a run that never reported becomes a FAILED result saying why. */
+    /**
+     * One of the verify loop's agent calls: a run that never reported becomes a FAILED result saying why. Its timeout, less
+     * {@link #deliveryReserve}, ends only this call, never the run, so the run still delivers.
+     */
     private AgentResult call(Job job, JobEvents events, ActiveRuns.ActiveRun control, RunRequest request, Duration timeout) {
-        Ran ran = startAndAwait(job, events, control, request, timeout);
+        Duration limit = timeout.minus(deliveryReserve);
+        Ran ran = startAndAwait(job, events, control, request, limit.isNegative() ? Duration.ZERO : limit, false);
         if (ran.result() != null) {
             return ran.result();
         }
@@ -327,8 +346,12 @@ public final class JobRunner implements Worker {
     private record Ran(AgentResult result, FailureReason failure, String detail) {
     }
 
-    /** Starts the agent and waits for it; a watchdog stops the run as TIMEOUT once {@code timeout} has passed. */
-    private Ran startAndAwait(Job job, JobEvents events, ActiveRuns.ActiveRun control, RunRequest request, Duration timeout) {
+    /**
+     * Starts the agent and waits for it. Once {@code timeout} has passed a watchdog stops the whole run as TIMEOUT, or, when
+     * {@code stopsTheRun} is false, cancels only this agent, whose call then fails as timed out.
+     */
+    private Ran startAndAwait(Job job, JobEvents events, ActiveRuns.ActiveRun control, RunRequest request, Duration timeout,
+                              boolean stopsTheRun) {
         String type = job.project().agent();
         Agent agent = agents.get(type);
         if (agent == null) {
@@ -345,16 +368,26 @@ public final class JobRunner implements Worker {
         events.agentStarted(handle.process().pid(), handle.processStart());
         control.attach(handle);
 
+        java.util.concurrent.atomic.AtomicBoolean expired = new java.util.concurrent.atomic.AtomicBoolean();
         Thread watchdog = Thread.ofVirtual().name("run-timeout-" + job.taskId() + "." + job.seq()).start(() -> {
             try {
                 Thread.sleep(timeout);
-                control.stop(ActiveRuns.StopReason.TIMEOUT);
+                expired.set(true);
+                if (stopsTheRun) {
+                    control.stop(ActiveRuns.StopReason.TIMEOUT);
+                } else {
+                    handle.cancel();
+                }
             } catch (InterruptedException e) {
                 // The run ended before the timeout; nothing to stop.
             }
         });
         try {
-            return new Ran(handle.await(), null, null);
+            AgentResult result = handle.await();
+            if (!stopsTheRun && expired.get()) {
+                return new Ran(null, FailureReason.TIMEOUT, "timed out after " + format(timeout));
+            }
+            return new Ran(result, null, null);
         } catch (InterruptedException e) {
             handle.cancel();
             Thread.currentThread().interrupt();
