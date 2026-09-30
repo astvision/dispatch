@@ -163,12 +163,14 @@ public final class WorkerCommand {
                 Log.warn("sandbox.unavailable", "reason", sandbox.unavailableReason());
             }
             List<Path> clones = config.projects().values().stream().map(WorkerConfig.Project::path).map(Path::of).toList();
-            Map<String, Agent> agents = Agents.create(config.agentCommands(), environment, config.stateDir(),
-                    Confinements.of(sandbox, config.stateDir(), options.workerFile(), clones,
-                    dispatch.cli.Instances.othersPrivate(options.workerFile(), environment)));
+            // One confinement for the agents and the verify loop's test command, which runs in the same sandbox (ADR 0032).
+            dispatch.agent.sandbox.Confinement confinement = Confinements.of(sandbox, config.stateDir(), options.workerFile(),
+                    clones, dispatch.cli.Instances.othersPrivate(options.workerFile(), environment));
+            Map<String, Agent> agents = Agents.create(config.agentCommands(), environment, config.stateDir(), confinement);
             ActiveRuns activeRuns = new ActiveRuns();
             WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery,
-                    Redactor.fromEnvironment(environment), activeRuns);
+                    Redactor.fromEnvironment(environment), activeRuns, WorkerLoop.PROGRESS,
+                    new dispatch.core.TestCommand(confinement, environment));
             WorkerSweeper sweeper = new WorkerSweeper(config.stateDir(), workspaces, activeRuns, Clock.systemUTC());
             Thread sweeperThread = Thread.ofVirtual().name("worker-sweeper").start(sweeper);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {

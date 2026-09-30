@@ -144,9 +144,10 @@ public final class App {
             Log.warn("sandbox.unavailable", "reason", sandbox.unavailableReason());
         }
         List<Path> clones = config.projects().stream().map(Config.Project::path).filter(java.util.Objects::nonNull).map(Path::of).toList();
-        Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir,
-                Confinements.of(sandbox, stateDir, configFile, clones,
-                        dispatch.cli.Instances.othersPrivate(configFile, environment)));
+        // One confinement for the agents and the verify loop's test command, which runs in the same sandbox (ADR 0032).
+        dispatch.agent.sandbox.Confinement confinement = Confinements.of(sandbox, stateDir, configFile, clones,
+                dispatch.cli.Instances.othersPrivate(configFile, environment));
+        Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir, confinement);
         // Splitting and the assistant need Claude Code (ADR 0013, A-1); without it they are simply not offered (ADR 0026).
         Agent claude = agents.get("claude-code");
         WorkerKeys workerKeys = null;
@@ -154,7 +155,8 @@ public final class App {
         WorkerApi workerApi = null;
         if (config.workers() == null) {
             // Personal mode runs the job in this process, exactly as before.
-            worker = new JobRunner(workspaces, delivery, agents, redactor, api::downloadFile);
+            worker = new JobRunner(workspaces, delivery, agents, redactor, api::downloadFile,
+                    new dispatch.core.TestCommand(confinement, environment), clock);
         } else {
             workerKeys = new WorkerKeys(db, clock);
             // Someone taken out of the config takes their computers' access with them.

@@ -218,6 +218,18 @@ class DeliveryTest {
         assertFalse(Files.readString(worktree.resolve("fake-gh.args")).contains("github_pat_SECRET"));
     }
 
+    @Test
+    void theDiffForTheReviewerShowsEditsAndNewFiles() throws IOException {
+        Files.writeString(worktree.resolve("README.md"), "v2\n");
+        Files.writeString(worktree.resolve("Timeout.java"), "class Timeout {}\n");
+
+        String diff = delivery(null).diff(worktree, start);
+
+        assertTrue(diff.contains("+v2"), diff);
+        assertTrue(diff.contains("+++ b/Timeout.java"), diff);
+        assertTrue(diff.contains("+class Timeout {}"), diff);
+    }
+
     private Delivery delivery(String ghToken) {
         // Pushing to a local bare origin needs no token; only gh sees it here.
         return new Delivery(git, new Gh(gh.toString(), ghToken, Duration.ofSeconds(30)), "Dispatch (backend)",

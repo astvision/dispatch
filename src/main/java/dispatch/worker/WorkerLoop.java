@@ -3,14 +3,18 @@ package dispatch.worker;
 import dispatch.Log;
 import dispatch.Redactor;
 import dispatch.agent.Agent;
+import dispatch.agent.sandbox.Confinement;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Job;
 import dispatch.core.JobEvents;
 import dispatch.core.JobResult;
 import dispatch.core.JobRunner;
+import dispatch.core.TestCommand;
+import dispatch.core.TestRunner;
 import dispatch.domain.FailureReason;
 import dispatch.workspace.Delivery;
 import dispatch.workspace.Workspaces;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -59,6 +63,7 @@ public final class WorkerLoop implements Runnable {
     private final LocalAgents agents;
     private final WorkerChecks checks;
     private final Duration progressInterval;
+    private final TestRunner tests;
     private final AtomicInteger running = new AtomicInteger();
     private volatile boolean stopped;
     private Readiness cachedReadiness;
@@ -76,6 +81,14 @@ public final class WorkerLoop implements Runnable {
      */
     public WorkerLoop(WorkerConfig config, WorkerClient client, Map<String, Agent> agentsByType, Workspaces workspaces,
                       Delivery delivery, Redactor redactor, ActiveRuns activeRuns, Duration progressInterval) {
+        this(config, client, agentsByType, workspaces, delivery, redactor, activeRuns, progressInterval,
+                new TestCommand(Confinement.none("no sandbox configured")));
+    }
+
+    /** @param tests runs a project's test command for the verify loop, in this computer's sandbox */
+    public WorkerLoop(WorkerConfig config, WorkerClient client, Map<String, Agent> agentsByType, Workspaces workspaces,
+                      Delivery delivery, Redactor redactor, ActiveRuns activeRuns, Duration progressInterval, TestRunner tests) {
+        this.tests = tests;
         this.config = config;
         this.client = client;
         this.agentsByType = Map.copyOf(agentsByType);
@@ -104,7 +117,7 @@ public final class WorkerLoop implements Runnable {
     /** One runner per job, so its attachment source knows which task's files it may fetch. */
     private JobRunner runnerFor(Job job) {
         return new JobRunner(workspaces, delivery, agentsByType, redactor,
-                (fileRef, target) -> client.attachment(job.taskId(), fileRef, target));
+                (fileRef, target) -> client.attachment(job.taskId(), fileRef, target), tests, Clock.systemUTC());
     }
 
     @Override

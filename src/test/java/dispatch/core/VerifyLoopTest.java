@@ -25,6 +25,7 @@ class VerifyLoopTest {
     private final List<String> calls = new ArrayList<>();
     private String reviewAnswer = "{\"verdict\":\"ok\",\"findings\":[]}";
     private AgentOutcome fixOutcome = AgentOutcome.SUCCEEDED;
+    private AgentResult fixAnswer;
 
     private final TestRunner tests = (command, dir, log, timeout, stop) -> {
         calls.add("test");
@@ -36,7 +37,7 @@ class VerifyLoopTest {
         @Override
         public AgentResult fix(String prompt, BigDecimal budgetUsd, Duration timeout) {
             calls.add("fix");
-            return result(fixOutcome, null, new BigDecimal("0.10"));
+            return fixAnswer != null ? fixAnswer : result(fixOutcome, null, new BigDecimal("0.10"));
         }
 
         @Override
@@ -155,6 +156,16 @@ class VerifyLoopTest {
 
         assertEquals(List.of("test", "fix"), calls);
         assertTrue(outcome.verification().stoppedBy().startsWith("fix failed"), outcome.verification().stoppedBy());
+    }
+
+    @Test
+    void aFixThatFailsWithoutAnErrorSaysHowItEnded() {
+        testResults.add(false);
+        fixAnswer = new AgentResult(AgentOutcome.FAILED, 1, "s", null, null, null, null, List.of(), null, null, null);
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals("fix failed: FAILED", outcome.verification().stoppedBy());
     }
 
     private static AgentResult result(AgentOutcome outcome, String structured, BigDecimal cost) {

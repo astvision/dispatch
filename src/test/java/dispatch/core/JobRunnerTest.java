@@ -6,6 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.Redactor;
+import dispatch.agent.Agent;
+import dispatch.agent.AgentActivity;
+import dispatch.agent.AgentOutcome;
+import dispatch.agent.AgentResult;
+import dispatch.agent.RunHandle;
+import dispatch.agent.RunRequest;
 import dispatch.agent.claude.ClaudeCodeAgent;
 import dispatch.domain.FailureReason;
 import dispatch.domain.RunKind;
@@ -20,11 +26,16 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,16 +57,22 @@ class JobRunnerTest {
     Path dir;
 
     private GitFixture repos;
+    private Workspaces workspaces;
+    private Delivery delivery;
     private JobRunner runner;
+    /** What the verify loop's tests start: each kind answered here is a canned result, the rest go to fake claude. */
+    private final Map<RunKind, AgentResult> answers = new EnumMap<>(RunKind.class);
+    private final List<RunKind> agentKindsStarted = new CopyOnWriteArrayList<>();
     private Recorder events;
     private ActiveRuns.ActiveRun control;
+    private Agent claude;
 
     @BeforeEach
     void setUp() throws IOException {
         repos = GitFixture.create(dir, "alm");
         Git git = new Git("git", null, Duration.ofSeconds(30));
-        Workspaces workspaces = new Workspaces(repos.stateDir, git);
-        Delivery delivery = new Delivery(git, new Gh(FakeGh.install(dir.resolve("gh")).toString(), null, Duration.ofSeconds(30)),
+        workspaces = new Workspaces(repos.stateDir, git);
+        delivery = new Delivery(git, new Gh(FakeGh.install(dir.resolve("gh")).toString(), null, Duration.ofSeconds(30)),
                 "Dispatch (backend)", "dispatch-backend@example.com");
         ClaudeCodeAgent agent = new ClaudeCodeAgent(FakeClaude.install(Files.createDirectories(dir.resolve("bin"))).toString(),
                 FakeClaude.environment(), Duration.ofSeconds(1));
@@ -63,6 +80,7 @@ class JobRunnerTest {
                 (fileRef, target) -> {
                     throw new IllegalStateException("file " + fileRef + " is gone");
                 });
+        claude = agent;
         events = new Recorder();
         control = new ActiveRuns().register(TASK, 1);
     }
@@ -239,6 +257,141 @@ class JobRunnerTest {
         assertEquals(FailureReason.DELIVERY, result.failureReason());
         assertTrue(result.failureDetail().contains("git push"), result.failureDetail());
         assertTrue(result.agent().summary().contains("AUTH_TIMEOUT_SECONDS"), "the summary is kept, so a retry delivers it");
+    }
+
+    @Test
+    void loopOnRunsTheTestsAndTheReviewerAndPutsTheVerificationOnTheCommit() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+        List<String> testCommands = new CopyOnWriteArrayList<>();
+
+        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop) -> {
+            testCommands.add(command);
+            return new TestRunner.TestRun(0, false, false, "BUILD SUCCESS");
+        });
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome());
+        assertEquals(List.of("./mvnw -q test"), testCommands);
+        assertEquals(Verification.Tests.PASSED, result.verification().tests());
+        assertEquals(Verification.ReviewState.OK, result.verification().review());
+        assertEquals(List.of(RunKind.EXECUTE, RunKind.REVIEW), agentKindsStarted);
+        assertTrue(lastCommitBody().contains("Verification\n- Tests: pass (run 1)"), lastCommitBody());
+    }
+
+    @Test
+    void loopOffIsTodaysPath() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+
+        JobResult result = executeWithLoop(false, (command, workdir, log, timeout, stop) -> {
+            throw new AssertionError("loop off never runs the tests");
+        });
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome());
+        assertNull(result.verification());
+        assertEquals(List.of(RunKind.EXECUTE), agentKindsStarted);
+        assertFalse(lastCommitBody().contains("Verification"), lastCommitBody());
+    }
+
+    @Test
+    void theLoopsAgentCallsAddUpInTheRunsCost() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+        Deque<Integer> exitCodes = new ArrayDeque<>(List.of(1, 0));
+
+        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop) ->
+                new TestRunner.TestRun(exitCodes.pop(), false, false, "FooTest failed"));
+
+        assertEquals(List.of(RunKind.EXECUTE, RunKind.EXECUTE, RunKind.REVIEW), agentKindsStarted);
+        assertEquals(new BigDecimal("2.20"), result.agent().costUsd());
+    }
+
+    @Test
+    void cancelDuringTheLoopDeliversNothing() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        ActiveRuns.ActiveRun execution = new ActiveRuns().register(TASK, 2);
+
+        JobResult result = executeWithLoop(true, execution, (command, workdir, log, timeout, stop) -> {
+            execution.stop(ActiveRuns.StopReason.CANCELLED);
+            return new TestRunner.TestRun(-1, false, true, "");
+        });
+
+        assertEquals(JobResult.Outcome.CANCELLED, result.outcome());
+        assertNull(result.prUrl());
+        assertEquals(List.of(RunKind.EXECUTE), agentKindsStarted, "no reviewer after a cancel");
+        assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
+    }
+
+    /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
+    private JobResult executeWithLoop(boolean loop, TestRunner tests) {
+        return executeWithLoop(loop, new ActiveRuns().register(TASK, 2), tests);
+    }
+
+    private JobResult executeWithLoop(boolean loop, ActiveRuns.ActiveRun execution, TestRunner tests) {
+        runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
+        agentKindsStarted.clear();
+        JobRunner looping = new JobRunner(workspaces, delivery, Map.of("claude-code", new ScriptedAgent()),
+                Redactor.patternsOnly(), (fileRef, target) -> {
+                    throw new IllegalStateException("file " + fileRef + " is gone");
+                }, tests, Clock.systemUTC());
+        Job.Project project = new Job.Project("alm", repos.origin.toString(), null, "main", "claude-code", List.of(),
+                "./mvnw -q test", loop);
+        // An hour and a budget of 10: room for every step the loop may take.
+        Job job = new Job(TASK, 2, RunKind.EXECUTE, project, "main", events.baseSha, events.worktree, null, SESSION, false,
+                "Implement the approved plan", null, null, Duration.ofHours(1).toMillis(), new BigDecimal("10"), List.of(),
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null,
+                loop ? "Review this:" : null);
+        return looping.run(job, new Recorder(), execution);
+    }
+
+    private String lastCommitBody() {
+        return GitFixture.sh(Path.of(events.worktree), "git", "log", "-1", "--format=%B");
+    }
+
+    private static AgentResult answer(String structuredOutput, String costUsd) {
+        return new AgentResult(AgentOutcome.SUCCEEDED, 0, SESSION.toString(), structuredOutput, "Raised AUTH_TIMEOUT_SECONDS to 30",
+                new BigDecimal(costUsd), 1, List.of(), null, null, null);
+    }
+
+    /** Records each kind it starts; answers the kinds in {@link #answers} itself (an EXECUTE edits README.md), the rest via fake claude. */
+    private final class ScriptedAgent implements Agent {
+
+        @Override
+        public RunHandle start(RunRequest request) {
+            agentKindsStarted.add(request.kind());
+            AgentResult answer = answers.get(request.kind());
+            if (answer == null) {
+                return claude.start(request);
+            }
+            if (request.kind() == RunKind.EXECUTE) {
+                try {
+                    Files.writeString(request.workdir().resolve("README.md"), "fixed by the scripted agent\n",
+                            java.nio.file.StandardOpenOption.APPEND);
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            }
+            return new RunHandle() {
+                @Override
+                public ProcessHandle process() {
+                    return ProcessHandle.current();
+                }
+
+                @Override
+                public AgentResult await() {
+                    return answer;
+                }
+
+                @Override
+                public void cancel() {
+                    // Already finished: there is nothing to stop.
+                }
+
+                @Override
+                public AgentActivity activity() {
+                    return new AgentActivity(0, null);
+                }
+            };
+        }
     }
 
     private String origin(String... args) {

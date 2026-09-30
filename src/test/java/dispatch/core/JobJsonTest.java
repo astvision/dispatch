@@ -33,6 +33,15 @@ class JobJsonTest {
     }
 
     @Test
+    void aResultWithItsVerificationSurvivesJsonUnchanged() throws Exception {
+        JobResult result = JobResult.delivered(null, List.of("A.java"), "https://github.com/acme/alm/pull/9",
+                new Verification(Verification.Tests.FAILING, 4, "FooTest", Verification.ReviewState.FINDINGS,
+                        List.of(new Review.Finding("minor", "A.java", 3, "name")), null, "budget"));
+
+        assertEquals(result, Json.MAPPER.readValue(Json.write(result), JobResult.class));
+    }
+
+    @Test
     void aDeliveryJobSurvivesJsonUnchanged() throws Exception {
         Job job = new Job(7, 3, RunKind.DELIVER,
                 new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),

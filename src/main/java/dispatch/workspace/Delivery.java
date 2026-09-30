@@ -39,6 +39,13 @@ public final class Delivery {
         return git.run(worktree, "rev-parse", "HEAD");
     }
 
+    /** The change since {@code startSha}, new files included, for the verify loop's reviewer. */
+    public String diff(Path worktree, String startSha) {
+        // Marks new files as intended so git diff shows them; delivery adds everything anyway.
+        git.run(worktree, "add", "--intent-to-add", "--all");
+        return git.run(worktree, "diff", startSha);
+    }
+
     /** @param existingPrUrl the task's pull request from an earlier delivery, null if none */
     public Result deliver(Path worktree, long taskId, String branch, String baseBranch, String startSha, Commit commit,
                           String existingPrUrl) {

@@ -4,23 +4,31 @@ import dispatch.Log;
 import dispatch.OwnerOnly;
 import dispatch.Redactor;
 import dispatch.agent.Agent;
+import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.agent.AgentStartException;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
+import dispatch.agent.sandbox.Confinement;
 import dispatch.config.Config;
 import dispatch.domain.Attachment;
 import dispatch.domain.FailureReason;
+import dispatch.domain.RunKind;
 import dispatch.workspace.Delivery;
 import dispatch.workspace.WorkspaceException;
 import dispatch.workspace.Workspaces;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * The machine work of one run, in this process: the worktree, the task's files, the agent under its timeout, and its
@@ -34,18 +42,30 @@ public final class JobRunner implements Worker {
     private final Map<String, Agent> agents;
     private final Redactor redactor;
     private final AttachmentSource attachmentSource;
+    private final TestRunner tests;
+    private final Clock clock;
+
+    /** Without a sandbox for the verify loop's test command; for tests and callers that never run the loop. */
+    public JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
+                     AttachmentSource attachmentSource) {
+        this(workspaces, delivery, agents, redactor, attachmentSource,
+                new TestCommand(Confinement.none("no sandbox configured")), Clock.systemUTC());
+    }
 
     /**
      * @param redactor         masks secrets in the agent's summary before it becomes a commit message and pull request
      * @param attachmentSource downloads the files sent with a task
+     * @param tests            runs the project's test command for the verify loop
      */
     public JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
-                     AttachmentSource attachmentSource) {
+                     AttachmentSource attachmentSource, TestRunner tests, Clock clock) {
         this.workspaces = workspaces;
         this.delivery = delivery;
         this.agents = Map.copyOf(agents);
         this.redactor = redactor;
         this.attachmentSource = attachmentSource;
+        this.tests = tests;
+        this.clock = clock;
     }
 
     @Override
@@ -73,7 +93,7 @@ public final class JobRunner implements Worker {
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
-        return runAgent(job, events, control, request(job, worktree, files));
+        return runAgent(job, events, control, request(job, worktree, files), Duration.ofMillis(job.timeoutMillis()));
     }
 
     private JobResult implement(Job job, JobEvents events, ActiveRuns.ActiveRun control) {
@@ -95,22 +115,95 @@ public final class JobRunner implements Worker {
         if (control.stopReason() != null) {
             return stopped(job, control.stopReason(), null);
         }
-        JobResult result = runAgent(job, events, control, request(job, worktree, files));
+        // The whole run's time: the loop's tests and agent calls share what the implementation left.
+        Instant deadline = clock.instant().plusMillis(job.timeoutMillis());
+        JobResult result = runAgent(job, events, control, request(job, worktree, files), Duration.ofMillis(job.timeoutMillis()));
         if (result.outcome() != JobResult.Outcome.SUCCEEDED) {
             return result;
         }
-        return deliver(job, worktree, startSha, result.agent());
+        if (!job.project().loopOn()) {
+            return deliver(job, worktree, startSha, result.agent(), null);
+        }
+        VerifyLoop.Outcome verified = new VerifyLoop(tests, clock).run(
+                new VerifyLoop.Setup(job.project().test(), worktree, workspaces.runLogBase(job.taskId(), job.seq()),
+                        job.reviewPrompt(), deadline, job.budgetUsd(), cost(result.agent())),
+                loopAgents(job, events, control, worktree, files, startSha),
+                () -> control.stopReason() != null);
+        if (control.stopReason() != null) {
+            return stopped(job, control.stopReason(), result.agent());
+        }
+        return deliver(job, worktree, startSha, combined(result.agent(), verified.runs()), verified.verification());
     }
 
-    private JobResult deliver(Job job, Path worktree, String startSha, AgentResult result) {
+    /** The verify loop's agent calls: fixes resume the building session, the reviewer is a fresh read-only one. */
+    private VerifyLoop.Agents loopAgents(Job job, JobEvents events, ActiveRuns.ActiveRun control, Path worktree, TaskFiles files,
+                                         String startSha) {
+        Path logBase = workspaces.runLogBase(job.taskId(), job.seq());
+        return new VerifyLoop.Agents() {
+            private int fixes;
+
+            @Override
+            public AgentResult fix(String prompt, BigDecimal budgetUsd, Duration timeout) {
+                fixes++;
+                return call(job, events, control, new RunRequest(RunKind.EXECUTE, worktree, prompt, job.sessionId(), true,
+                        files.dirs(), budgetUsd, job.model(), job.effort(), Path.of(logBase + ".fix-" + fixes)), timeout);
+            }
+
+            @Override
+            public AgentResult review(String prompt, BigDecimal budgetUsd, Duration timeout) {
+                return call(job, events, control, new RunRequest(RunKind.REVIEW, worktree, prompt, UUID.randomUUID(), false,
+                        files.dirs(), budgetUsd, job.model(), job.effort(), Path.of(logBase + ".review")), timeout);
+            }
+
+            @Override
+            public String diff() {
+                // The reviewer gets told why instead of a diff; a failure here never stops the delivery.
+                try {
+                    return delivery.diff(worktree, startSha);
+                } catch (RuntimeException e) {
+                    return "(the diff could not be read: " + e.getMessage() + ")";
+                }
+            }
+        };
+    }
+
+    /** The implementation's result with the loop's cost, turns and denials added in; the rest is the implementation's. */
+    private static AgentResult combined(AgentResult implemented, List<AgentResult> loop) {
+        BigDecimal cost = implemented.costUsd();
+        Integer turns = implemented.turns();
+        List<String> denials = new ArrayList<>(implemented.denials() == null ? List.of() : implemented.denials());
+        for (AgentResult run : loop) {
+            if (run.costUsd() != null) {
+                cost = cost == null ? run.costUsd() : cost.add(run.costUsd());
+            }
+            if (run.turns() != null) {
+                turns = turns == null ? run.turns() : turns + run.turns();
+            }
+            if (run.denials() != null) {
+                denials.addAll(run.denials());
+            }
+        }
+        return new AgentResult(implemented.outcome(), implemented.exitCode(), implemented.sessionId(),
+                implemented.structuredOutput(), implemented.summary(), cost, turns, denials, implemented.error(),
+                implemented.model(), implemented.requestedModel(), implemented.sandbox());
+    }
+
+    private static BigDecimal cost(AgentResult result) {
+        return result.costUsd() == null ? BigDecimal.ZERO : result.costUsd();
+    }
+
+    /** @param verification what the verify loop found, written under the summary; null when the loop did not run */
+    private JobResult deliver(Job job, Path worktree, String startSha, AgentResult result, Verification verification) {
+        String summary = verification == null ? result.summary()
+                : (result.summary() == null ? "" : result.summary()) + "\n\n" + verification.block();
         Delivery.Result delivered;
         try {
             delivered = delivery.deliver(worktree, job.taskId(), job.branchName(), job.baseBranch(), startSha,
-                    commit(job, result.summary()), job.prUrl());
+                    commit(job, summary), job.prUrl());
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.DELIVERY, e.getMessage(), result);
         }
-        return JobResult.delivered(result, delivered.files(), delivered.prUrl());
+        return JobResult.delivered(result, delivered.files(), delivered.prUrl(), verification);
     }
 
     /** Delivers a failed delivery's work again, without the agent: the commit body is that run's summary. */
@@ -203,43 +296,13 @@ public final class JobRunner implements Worker {
         return new TaskFiles(List.of(dir), Prompts.attachments(dir, files));
     }
 
-    /** Starts the agent, waits for it under the job's timeout, and turns how it ended into the job's result. */
-    private JobResult runAgent(Job job, JobEvents events, ActiveRuns.ActiveRun control, RunRequest request) {
-        String type = job.project().agent();
-        Agent agent = agents.get(type);
-        if (agent == null) {
-            // A member's computer need not have every agent the team's projects use (ADR 0026).
-            return JobResult.failed(FailureReason.AGENT, "the project runs on " + type + ", which is not configured on this "
-                    + "computer; add it under agents (or " + type.replace("-code", "") + "Command in worker.yaml) and restart", null);
+    /** Starts the agent, waits for it under {@code timeout}, and turns how it ended into the job's result. */
+    private JobResult runAgent(Job job, JobEvents events, ActiveRuns.ActiveRun control, RunRequest request, Duration timeout) {
+        Ran ran = startAndAwait(job, events, control, request, timeout);
+        if (ran.result() == null) {
+            return JobResult.failed(ran.failure(), ran.detail(), null);
         }
-        RunHandle handle;
-        try {
-            handle = agent.start(request);
-        } catch (AgentStartException e) {
-            return JobResult.failed(FailureReason.AGENT, e.getMessage(), null);
-        }
-        events.agentStarted(handle.process().pid(), handle.processStart());
-        control.attach(handle);
-
-        Duration timeout = Duration.ofMillis(job.timeoutMillis());
-        Thread watchdog = Thread.ofVirtual().name("run-timeout-" + job.taskId() + "." + job.seq()).start(() -> {
-            try {
-                Thread.sleep(timeout);
-                control.stop(ActiveRuns.StopReason.TIMEOUT);
-            } catch (InterruptedException e) {
-                // The run ended before the timeout; nothing to stop.
-            }
-        });
-        AgentResult result;
-        try {
-            result = handle.await();
-        } catch (InterruptedException e) {
-            handle.cancel();
-            Thread.currentThread().interrupt();
-            return JobResult.failed(FailureReason.INTERRUPTED, "run thread was interrupted", null);
-        } finally {
-            watchdog.interrupt();
-        }
+        AgentResult result = ran.result();
         ActiveRuns.StopReason stopReason = control.stopReason();
         if (stopReason != null) {
             return stopped(job, stopReason, result);
@@ -249,6 +312,56 @@ public final class JobRunner implements Worker {
             case BUDGET_EXCEEDED -> JobResult.failed(FailureReason.BUDGET, result.error(), result);
             case FAILED -> JobResult.failed(FailureReason.AGENT, result.error(), result);
         };
+    }
+
+    /** One of the verify loop's agent calls: a run that never reported becomes a FAILED result saying why. */
+    private AgentResult call(Job job, JobEvents events, ActiveRuns.ActiveRun control, RunRequest request, Duration timeout) {
+        Ran ran = startAndAwait(job, events, control, request, timeout);
+        if (ran.result() != null) {
+            return ran.result();
+        }
+        return new AgentResult(AgentOutcome.FAILED, -1, null, null, null, null, null, List.of(), ran.detail(), null, null);
+    }
+
+    /** How an agent call ended: its result, or why there is none. */
+    private record Ran(AgentResult result, FailureReason failure, String detail) {
+    }
+
+    /** Starts the agent and waits for it; a watchdog stops the run as TIMEOUT once {@code timeout} has passed. */
+    private Ran startAndAwait(Job job, JobEvents events, ActiveRuns.ActiveRun control, RunRequest request, Duration timeout) {
+        String type = job.project().agent();
+        Agent agent = agents.get(type);
+        if (agent == null) {
+            // A member's computer need not have every agent the team's projects use (ADR 0026).
+            return new Ran(null, FailureReason.AGENT, "the project runs on " + type + ", which is not configured on this "
+                    + "computer; add it under agents (or " + type.replace("-code", "") + "Command in worker.yaml) and restart");
+        }
+        RunHandle handle;
+        try {
+            handle = agent.start(request);
+        } catch (AgentStartException e) {
+            return new Ran(null, FailureReason.AGENT, e.getMessage());
+        }
+        events.agentStarted(handle.process().pid(), handle.processStart());
+        control.attach(handle);
+
+        Thread watchdog = Thread.ofVirtual().name("run-timeout-" + job.taskId() + "." + job.seq()).start(() -> {
+            try {
+                Thread.sleep(timeout);
+                control.stop(ActiveRuns.StopReason.TIMEOUT);
+            } catch (InterruptedException e) {
+                // The run ended before the timeout; nothing to stop.
+            }
+        });
+        try {
+            return new Ran(handle.await(), null, null);
+        } catch (InterruptedException e) {
+            handle.cancel();
+            Thread.currentThread().interrupt();
+            return new Ran(null, FailureReason.INTERRUPTED, "run thread was interrupted");
+        } finally {
+            watchdog.interrupt();
+        }
     }
 
     /** @param result null when the run was stopped before its agent reported */

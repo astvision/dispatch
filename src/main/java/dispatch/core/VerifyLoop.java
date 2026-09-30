@@ -129,8 +129,8 @@ public final class VerifyLoop {
             record(result);
             if (result.outcome() != AgentOutcome.SUCCEEDED) {
                 reviewState = Verification.ReviewState.FAILED;
-                reviewError = result.error();
-                Log.info("verify.step", "step", "review", "outcome", "failed", "error", result.error());
+                reviewError = reason(result);
+                Log.info("verify.step", "step", "review", "outcome", "failed", "error", reviewError);
                 return;
             }
             Review parsed;
@@ -171,7 +171,7 @@ public final class VerifyLoop {
             record(result);
             Log.info("verify.step", "step", "fix", "outcome", result.outcome());
             if (result.outcome() != AgentOutcome.SUCCEEDED) {
-                stoppedBy = "fix failed: " + result.error();
+                stoppedBy = "fix failed: " + reason(result);
                 return false;
             }
             return true;
@@ -191,6 +191,11 @@ public final class VerifyLoop {
                 return false;
             }
             return true;
+        }
+
+        /** Why an agent call failed: its error, or how it ended when it gave none. */
+        private static String reason(AgentResult result) {
+            return result.error() != null ? result.error() : result.outcome().name();
         }
 
         private void record(AgentResult result) {

@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,12 +54,14 @@ public final class TestCommand implements TestRunner {
         Process process;
         try {
             Files.createDirectories(log.getParent());
-            ProcessBuilder builder = new ProcessBuilder(confinement.wrap(shell, asRun, List.of(), environment))
+            // One copy per run: the sandbox may add to it, and concurrent runs share this TestCommand.
+            Map<String, String> runEnvironment = new HashMap<>(environment);
+            ProcessBuilder builder = new ProcessBuilder(confinement.wrap(shell, asRun, List.of(), runEnvironment))
                     .directory(dir.toFile())
                     .redirectErrorStream(true)
                     .redirectOutput(log.toFile());
             builder.environment().clear();
-            builder.environment().putAll(environment);
+            builder.environment().putAll(runEnvironment);
             process = builder.start();
         } catch (IOException | RuntimeException e) {
             return new TestRun(-1, false, false, "cannot run the test command: " + e);
