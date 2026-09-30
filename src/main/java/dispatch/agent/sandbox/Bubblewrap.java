@@ -30,9 +30,12 @@ public final class Bubblewrap implements Sandbox {
     @Override
     public List<String> wrap(List<String> commandLine, SandboxPolicy policy) {
         List<String> args = new ArrayList<>(List.of(command,
-                // The sandbox ends with Dispatch, and the agent cannot inject input into Dispatch's terminal.
+                // No --die-with-parent: its PR_SET_PDEATHSIG fires when the forking THREAD exits, and runs start from
+                // virtual threads whose carriers retire when idle, which killed every run ~30 s in. A sandbox left by a
+                // crashed Dispatch is ended by the orphan kill (recorded pid and start time) and systemd's cgroup.
+                // --new-session: the agent cannot inject input into Dispatch's terminal.
                 // --unshare-ipc: no SysV IPC or POSIX message queues shared with the owner's processes.
-                "--die-with-parent", "--unshare-pid", "--unshare-ipc", "--new-session",
+                "--unshare-pid", "--unshare-ipc", "--new-session",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"));
         for (Path hidden : policy.hidden()) {
             args.addAll(List.of("--tmpfs", hidden.toString()));

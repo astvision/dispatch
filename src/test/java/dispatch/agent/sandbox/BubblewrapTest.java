@@ -25,7 +25,7 @@ class BubblewrapTest {
         List<String> wrapped = new Bubblewrap("/usr/bin/bwrap").wrap(CLAUDE, policy);
 
         assertEquals(List.of("/usr/bin/bwrap",
-                "--die-with-parent", "--unshare-pid", "--unshare-ipc", "--new-session",
+                "--unshare-pid", "--unshare-ipc", "--new-session",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
                 "--tmpfs", "/home/ann/.ssh",
                 "--tmpfs", "/state",
@@ -56,7 +56,7 @@ class BubblewrapTest {
         List<String> wrapped = new Bubblewrap("bwrap").wrap(List.of("claude"), policy);
 
         assertEquals(List.of("bwrap",
-                "--die-with-parent", "--unshare-pid", "--unshare-ipc", "--new-session",
+                "--unshare-pid", "--unshare-ipc", "--new-session",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
                 "--bind", "/state/splits/3", "/state/splits/3",
                 "--chdir", "/state/splits/3", "--", "claude"), wrapped);

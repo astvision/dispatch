@@ -194,6 +194,35 @@ class BubblewrapSandboxTest {
         assertEquals(before, Files.readString(sibling.resolve("commondir")));
     }
 
+    @Test
+    void theSandboxOutlivesTheThreadThatStartedIt() throws Exception {
+        // Agents start from virtual threads whose carriers retire when idle; PR_SET_PDEATHSIG fires on the forking thread.
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
+                .forRun(new RunRequest(RunKind.PLAN, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
+                        worktree.resolve("run")), List.of());
+        Process[] started = new Process[1];
+        Thread starter = Thread.ofPlatform().start(() -> {
+            try {
+                started[0] = new ProcessBuilder(sandbox.wrap(List.of("sleep", "5"), policy)).start();
+                // bwrap arms PR_SET_PDEATHSIG only once running; a carrier retires ~30 s later, long after that.
+                Thread.sleep(500);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        starter.join();
+        Process process = started[0];
+        try {
+            Thread.sleep(1000);
+            assertTrue(process.isAlive(), "the sandbox ended with its starting thread, exit "
+                    + (process.isAlive() ? "" : process.exitValue()));
+        } finally {
+            process.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
+        }
+    }
+
     private static void git(Path dir, String... args) throws IOException, InterruptedException {
         List<String> command = new java.util.ArrayList<>(List.of("git"));
         command.addAll(List.of(args));

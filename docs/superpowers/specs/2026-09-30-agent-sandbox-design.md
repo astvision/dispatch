@@ -98,7 +98,7 @@ on a developer's own machine in exchange for builds that work as they do outside
 ### bubblewrap command line
 
 ```
-bwrap --die-with-parent --unshare-pid --unshare-ipc --new-session
+bwrap --unshare-pid --unshare-ipc --new-session
       --ro-bind / /  --dev /dev  --proc /proc  --tmpfs /tmp
       --tmpfs <hidden>…                       # hide first
       --bind <workdir> <workdir>              # then mount back what the run needs
@@ -115,8 +115,10 @@ The order is the point: the workdir and the git dir live under Dispatch's state 
 mounted back after the hiding. Required paths use `--bind` so a wrong one fails loudly; optional ones use `-try`.
 
 bwrap is the process Dispatch starts, records (pid and start time) and terminates. `ProcessTrees.terminate` ends the
-whole tree, and `--die-with-parent` ends the sandbox if Dispatch itself dies, so cancelling and orphan detection are
-unchanged.
+whole tree; a sandbox left behind by a crashed Dispatch is ended by the orphan kill (recorded pid and start time) and
+systemd's cgroup, so cancelling and orphan detection are unchanged. As built, bwrap runs without `--die-with-parent`:
+its `PR_SET_PDEATHSIG` fires when the forking thread exits, and runs start from virtual threads whose carriers retire when
+idle, which killed every run about 30 s in.
 
 ### Detection
 
