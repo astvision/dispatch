@@ -230,6 +230,24 @@ class DatabaseTest {
         }
     }
 
+    /** An open draft still without a project keeps its prompt on the detail view, the only one that asks for a project. */
+    @Test
+    void version30OpenDraftsWithoutAProjectShowTheDetailView() throws Exception {
+        String insert = "INSERT INTO draft (id, requester_ref, requester_name, chat_ref, origin_ref, description, project, status, "
+                + "created_at, updated_at) VALUES (%d, 'telegram:100', 'Bold', 'telegram:100', 'telegram:100/%d', 'Fix it', %s, '%s', "
+                + "'2026-09-30T10:00:00Z', '2026-09-30T10:00:00Z')";
+        Path file = databaseAtVersion(30, insert.formatted(1, 1, "NULL", "OPEN"), insert.formatted(2, 2, "'life'", "OPEN"),
+                insert.formatted(3, 3, "NULL", "EXPIRED"));
+
+        try (Database upgraded = Database.open(file)) {
+            upgraded.migrate();
+
+            assertEquals("1,0,0", upgraded.transactionReturning(tx -> tx.one(
+                    "SELECT group_concat(detail) AS d FROM (SELECT detail FROM draft ORDER BY id)",
+                    row -> row.string("d"))).orElseThrow());
+        }
+    }
+
     /** A state file as an older Dispatch left it: the first {@code version} migrations applied, then {@code inserts}. */
     private Path databaseAtVersion(int version, String... inserts) throws Exception {
         Path file = dir.resolve("v" + version + ".db");
@@ -242,7 +260,8 @@ class DatabaseTest {
                     "/db/013-attachments.sql", "/db/014-agent-started.sql", "/db/015-workers.sql", "/db/016-worker-readiness.sql",
                     "/db/017-telegram-usernames.sql", "/db/018-plan-answers.sql", "/db/019-member-prefs.sql", "/db/020-assistant.sql",
                     "/db/021-draft-discarded.sql", "/db/022-worker-capacity.sql", "/db/023-additions.sql", "/db/024-merged.sql",
-                    "/db/025-draft-source.sql", "/db/026-outbox-edit-of.sql"};
+                    "/db/025-draft-source.sql", "/db/026-outbox-edit-of.sql", "/db/027-retired-reply-kinds.sql",
+                    "/db/028-worker-agent.sql", "/db/029-run-sandbox.sql", "/db/030-task-head.sql"};
             for (int i = 0; i < version; i++) {
                 try (java.io.InputStream script = getClass().getResourceAsStream(scripts[i])) {
                     String sqlText = new String(script.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
