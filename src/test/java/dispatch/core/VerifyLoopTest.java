@@ -41,6 +41,9 @@ class VerifyLoopTest {
     /** The steps the requester skipped, by number, and whether they asked to deliver now. */
     private final java.util.Set<Integer> skipped = new java.util.HashSet<>();
     private boolean deliverNow;
+    /** The requester's ⏸ switch, and how long they take to answer on the loop's clock. */
+    private boolean pauseBeforeReview;
+    private Duration pauseTakes = Duration.ZERO;
     /** What the requester does while a step runs: "skip" or "deliver", applied to the running step's kind. */
     private final java.util.Map<String, String> duringStep = new java.util.HashMap<>();
 
@@ -119,6 +122,18 @@ class VerifyLoopTest {
         @Override
         public boolean deliverNowRequested() {
             return deliverNow;
+        }
+
+        @Override
+        public boolean pauseBeforeReview() {
+            return pauseBeforeReview;
+        }
+
+        @Override
+        public void awaitResume(Duration max) {
+            calls.add("pause");
+            clock.advance(pauseTakes);
+            tapDuring("PAUSE");
         }
     };
 
@@ -225,6 +240,45 @@ class VerifyLoopTest {
         assertEquals(List.of(), calls);
         assertEquals(VerifyLoop.DELIVERED_EARLY, outcome.verification().stoppedBy());
         assertEquals(Verification.Tests.NOT_RUN, outcome.verification().tests());
+    }
+
+    @Test
+    void aPauseBeforeTheReviewIsAStepAndTheReviewFollowsIt() {
+        pauseBeforeReview = true;
+
+        run();
+
+        assertEquals(List.of("test", "pause", "review"), calls);
+        assertEquals(List.of("TEST 1 → PASSED", "PAUSE 1 → DONE", "REVIEW 1 → OK"), steps);
+    }
+
+    @Test
+    void deliverNowWhilePausedDeliversWithoutTheReview() {
+        pauseBeforeReview = true;
+        duringStep.put("PAUSE", "deliver");
+
+        VerifyLoop.Outcome outcome = run();
+
+        assertEquals(List.of("test", "pause"), calls);
+        assertEquals(List.of("TEST 1 → PASSED", "PAUSE 1 → SKIPPED"), steps);
+        assertEquals(VerifyLoop.DELIVERED_EARLY, outcome.verification().stoppedBy());
+    }
+
+    @Test
+    void theTimeSpentPausedIsNotTakenFromTheRun() {
+        pauseBeforeReview = true;
+        pauseTakes = Duration.ofMinutes(40);
+
+        run("./mvnw -q test", Duration.ofMinutes(20), new BigDecimal("10"), new BigDecimal("1"));
+
+        assertEquals(List.of("test", "pause", "review"), calls, "20 min left before a 40 min pause still leaves time to review");
+    }
+
+    @Test
+    void noPauseWithoutTheSwitch() {
+        run();
+
+        assertFalse(calls.contains("pause"));
     }
 
     @Test

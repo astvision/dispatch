@@ -168,8 +168,9 @@ public final class TasksApi {
     }
 
     /**
-     * ⏭ {@code {"action": "skip", "step": n}} or 📦 {@code {"action": "deliverNow"}} on the requester's running execution
-     * (RM-4), answered with the run as it now stands. A tap on a step that already ended changes nothing.
+     * ⏭ {@code {"action": "skip", "step": n}}, 📦 {@code "deliverNow"}, ⏸ {@code "pause"} / {@code "unpause"} and 🔍
+     * {@code "review"} on the requester's running execution (RM-4, RM-5), answered with the run as it now stands. A tap on
+     * a step that already ended changes nothing.
      */
     ObjectNode control(Caller caller, JsonNode body) {
         long taskId = taskId(body);
@@ -182,6 +183,9 @@ public final class TasksApi {
             boolean active = switch (action) {
                 case "skip" -> tasks.skip(taskId, number(body, "step"));
                 case "deliverNow" -> tasks.deliverNow(taskId);
+                case "pause" -> tasks.pauseBeforeReview(taskId, true);
+                case "unpause" -> tasks.pauseBeforeReview(taskId, false);
+                case "review" -> tasks.resume(taskId);
                 default -> throw new ApiException(400, "invalid", Text.of("refusal.missingField", "action"));
             };
             if (!active) {

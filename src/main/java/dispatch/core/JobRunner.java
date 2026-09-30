@@ -265,6 +265,21 @@ public final class JobRunner implements Worker {
             public boolean deliverNowRequested() {
                 return control.deliverNowRequested();
             }
+
+            @Override
+            public boolean pauseBeforeReview() {
+                return control.pauseBeforeReviewRequested();
+            }
+
+            @Override
+            public void awaitResume(Duration max) {
+                try {
+                    control.awaitResume(max);
+                } catch (InterruptedException e) {
+                    // Dispatch is going down: the loop sees the flag through its stop check and delivers nothing.
+                    Thread.currentThread().interrupt();
+                }
+            }
         };
     }
 

@@ -28,6 +28,8 @@ public final class VerifyLoop {
     static final BigDecimal BUDGET_FLOOR = new BigDecimal("0.05");
     /** The Verification's stoppedBy when the requester tapped 📦 deliver now (RM-4). */
     public static final String DELIVERED_EARLY = "delivered early by the requester";
+    /** How long a run paused before its review waits for the requester before it reviews anyway (RM-5). */
+    public static final Duration PAUSE_LIMIT = Duration.ofMinutes(15);
 
     public interface Agents {
         /** Resumes the building session; a result whose outcome is not SUCCEEDED ends the loop. */
@@ -53,6 +55,12 @@ public final class VerifyLoop {
 
         /** The requester tapped 📦 deliver now (RM-4): the running step was cancelled and nothing else runs. */
         boolean deliverNowRequested();
+
+        /** The requester's ⏸ switch (RM-5): wait before the review. */
+        boolean pauseBeforeReview();
+
+        /** Returns on 🔍, 📦 or a stop, or after {@code max}; an interrupt returns with the thread's flag set. */
+        void awaitResume(Duration max);
     }
 
     /** @param budgetUsd null for no budget; @param spentUsd what the run has already cost */
@@ -92,6 +100,8 @@ public final class VerifyLoop {
         private String stoppedBy;
         /** A fix succeeded after the last completed test run, so that run's result no longer describes the code. */
         private boolean changedSinceLastTest;
+        /** How long the run waited paused: not taken from its time (RM-5). */
+        private Duration paused = Duration.ZERO;
 
         Pass(Setup setup, Agents agents, BooleanSupplier stop) {
             this.setup = setup;
@@ -108,7 +118,10 @@ public final class VerifyLoop {
                 testAndFix();
             }
             if (stoppedBy == null && !stop.getAsBoolean() && setup.reviewPrompt() != null) {
-                review();
+                pauseIfAsked();
+                if (stoppedBy == null && !stop.getAsBoolean()) {
+                    review();
+                }
             }
             boolean lastRunPassed = testState == Verification.Tests.PASSED;
             Verification.Tests tests = changedSinceLastTest && testRuns > 0 && setup.testCommand() != null
@@ -225,6 +238,25 @@ public final class VerifyLoop {
             left = parsed.minor();
         }
 
+        /** ⏸ before the review: the wait is a step of its own and its time is given back to the run (RM-5). */
+        private void pauseIfAsked() {
+            if (!agents.pauseBeforeReview()) {
+                return;
+            }
+            int step = agents.stepStarted(RunStep.Kind.PAUSE, 1);
+            Instant started = clock.instant();
+            agents.awaitResume(PAUSE_LIMIT);
+            paused = paused.plus(Duration.between(started, clock.instant()));
+            if (stop.getAsBoolean()) {
+                agents.stepEnded(step, RunStep.Outcome.STOPPED, null);
+            } else if (agents.deliverNowRequested()) {
+                agents.stepEnded(step, RunStep.Outcome.SKIPPED, null);
+                stoppedBy = DELIVERED_EARLY;
+            } else {
+                agents.stepEnded(step, RunStep.Outcome.DONE, null);
+            }
+        }
+
         /** @return true when the fix ran and succeeded, so the loop may go on */
         private boolean fix(String prompt) {
             if (!agentStepAllowed()) {
@@ -295,7 +327,7 @@ public final class VerifyLoop {
         }
 
         private Duration timeLeft() {
-            return Duration.between(clock.instant(), setup.deadline());
+            return Duration.between(clock.instant(), setup.deadline().plus(paused));
         }
 
         private String capped(String diff) {

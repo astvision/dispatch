@@ -292,13 +292,20 @@ public final class WorkerLoop implements Runnable {
         }
     }
 
-    /** The requester's ⏭ and 📦 from the team machine, applied to this computer's run, whose agent they cancel (RM-4). */
+    /**
+     * The requester's ⏭, 📦, ⏸ and 🔍 from the team machine, applied to this computer's run, whose agent ⏭ and 📦 cancel
+     * (RM-4, RM-5). The switch follows the team machine's on every reply, so turning it off there turns it off here.
+     */
     private static void steer(ActiveRuns.ActiveRun control, RemoteWorkers.Reply reply) {
         if (reply.skipStep() > 0) {
             control.skip(reply.skipStep());
         }
         if (reply.deliverNow()) {
             control.deliverNow();
+        }
+        control.pauseBeforeReview(reply.pauseBeforeReview());
+        if (reply.resume()) {
+            control.resume();
         }
     }
 

@@ -320,6 +320,32 @@ class TasksApiTest {
     }
 
     @Test
+    void thePauseSwitchHoldsUntilTheReviewAndAPausedRunSaysWhenItGoesOn() {
+        long taskId = executing(ALI);
+        ActiveRuns.ActiveRun active = activeRuns.register(taskId, 2);
+        transitions.stepStarted(taskId, 2, 1, RunStep.Kind.IMPLEMENT, 1);
+
+        JsonNode switched = api.control(ALI_CALLER, Json.object().put("taskId", taskId).put("action", "pause")).path("controls");
+        assertTrue(active.pauseBeforeReviewRequested());
+        assertTrue(switched.path("pauseBeforeReview").asBoolean());
+        assertTrue(switched.path("canPause").asBoolean());
+
+        transitions.stepEnded(taskId, 2, 1, RunStep.Outcome.DONE, null);
+        transitions.stepStarted(taskId, 2, 2, RunStep.Kind.PAUSE, 1);
+        active.stepStarted(2, RunStep.Kind.PAUSE);
+        JsonNode paused = api.run(ALI_CALLER, Json.object().put("taskId", taskId)).path("controls");
+        assertTrue(paused.path("paused").asBoolean());
+        assertFalse(paused.path("canPause").asBoolean(), "the review is reached");
+        assertTrue(paused.path("deliverNow").asBoolean(), "📦 is the other way out of a pause");
+        assertTrue(paused.path("pauseEndsAt").isTextual());
+
+        JsonNode resumed = api.control(ALI_CALLER, Json.object().put("taskId", taskId).put("action", "review")).path("controls");
+        assertTrue(active.resumeRequested());
+        assertFalse(resumed.path("paused").asBoolean());
+        activeRuns.unregister(active);
+    }
+
+    @Test
     void aFinishedTaskCannotBeSteered() {
         long taskId = finished(ALI);
 

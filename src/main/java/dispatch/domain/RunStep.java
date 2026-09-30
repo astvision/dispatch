@@ -3,8 +3,8 @@ package dispatch.domain;
 import java.time.Instant;
 
 /**
- * One step of a run as the run monitor shows it: the implementation, a test run, a fix, the review or the delivery of an
- * execution, or a planning run's one agent call.
+ * One step of a run as the run monitor shows it: the implementation, a test run, a fix, a pause before the review, the
+ * review or the delivery of an execution, or a planning run's one agent call.
  *
  * @param n        the step's 1-based place in its run
  * @param round    which test run, fix or review this is, from 1; 1 for the others
@@ -14,7 +14,8 @@ import java.time.Instant;
  */
 public record RunStep(int n, Kind kind, int round, Instant startedAt, Instant endedAt, Outcome outcome, String detail) {
 
-    public enum Kind { PLAN, IMPLEMENT, TEST, FIX, REVIEW, DELIVER }
+    /** PAUSE: the loop waits before its review for the requester's choice (RM-5). */
+    public enum Kind { PLAN, IMPLEMENT, TEST, FIX, PAUSE, REVIEW, DELIVER }
 
     /**
      * DONE: an agent call or the delivery finished. PASSED and FAILED: a test run, or FAILED for a call that did not
