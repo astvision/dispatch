@@ -274,6 +274,8 @@ class TasksApiTest {
         assertEquals("DONE", step.path("outcome").asText());
         assertTrue(step.path("startedAt").isTextual() && step.path("endedAt").isTextual(), step.toString());
         assertTrue(run.path("now").isTextual(), "the page's clock follows the server's");
+        assertEquals("dispatch teleport " + taskId, run.path("teleport").path("command").asText());
+        assertEquals("NO_WORKTREE", run.path("teleport").path("reason").asText(), "this test's task never made a worktree");
         assertEquals("403 not_yours", refused(() -> api.run(BOLD_CALLER, Json.object().put("taskId", taskId))),
                 "even an admin watches nobody else's run");
         assertEquals("404 not_found", refused(() -> api.run(STRANGER, Json.object().put("taskId", taskId))));

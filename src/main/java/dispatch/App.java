@@ -402,7 +402,7 @@ public final class App {
         }
         try {
             List<String> privateCommands = new java.util.ArrayList<>(
-                    List.of("task", "status", "history", "stats", "cancel", "retry", "worker"));
+                    List.of("task", "status", "history", "stats", "cancel", "retry", "teleport", "worker"));
             if (miniApp) {
                 privateCommands.add("manage");
             }

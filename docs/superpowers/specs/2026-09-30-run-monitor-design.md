@@ -1,6 +1,7 @@
 # Run monitor (RM): watch and steer an execution from the Mini App
 
-Status: approved design, 2026-09-30 (the clickable mockup ZB approved: https://claude.ai/artifact/V58JmXWanX7FgkC643u1pe).
+Status: approved design, 2026-09-30 (the clickable mockup ZB approved: https://claude.ai/artifact/V58JmXWanX7FgkC643u1pe); built
+2026-10-01, with the changes listed under "As built".
 Builds on the verify loop (ADR 0033).
 
 ## Goal
@@ -137,3 +138,19 @@ The English commit block and the Mongolian `verify.*` texts say these plainly.
 6. **Teleport.** `dispatch teleport`, `/teleport`, and the Mini App line.
 
 Each slice is built test-first, on its own branch or commits, and deployed only from a build that contains `origin/main`.
+
+## As built
+
+- **The controls live only on the run's `ActiveRun`.** They are not stored as columns on `run`: a restart interrupts the run
+  anyway, and the team machine already keeps an `ActiveRun` for each worker's run, so its progress reply can carry them.
+- **The pause is a step of its own (`PAUSE`).** Migration 033 rebuilds `run_step` for it. The monitor shows it with its
+  time, and a team worker reports it like any other step, so no extra progress field is needed.
+- **Skipping a test does not count as a test run.** The Verification says `Tests: skipped by the requester`.
+  Deliver-now always ends as `stopped: delivered early by the requester`, including when it is tapped while paused.
+- **The monitor shows a run's cost only once the run has ended, and no budget.** A running Claude call reports no cost
+  until it finishes.
+- **Teleport for a worker's task has no new worker endpoint.** The team machine gives the line to paste (`cd '<worktree>'
+  && claude --resume <session>`) and names the computer that holds the session.
+- **The Mini App offers teleport while paused and after the run.** Telegram's `/teleport N` answers at any time, with the
+  reason when it cannot yet.
+

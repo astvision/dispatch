@@ -1,6 +1,7 @@
 package dispatch;
 
 import dispatch.cli.AskCommand;
+import dispatch.cli.TeleportCommand;
 import dispatch.cli.CheckCommand;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
@@ -74,6 +75,7 @@ public final class Main {
                         .run(init, System.getenv()));
             }
             case Cli.Ask ask -> System.exit(AskCommand.run(ask, System.getenv(), System.out));
+            case Cli.Teleport teleport -> System.exit(TeleportCommand.run(teleport, System.getenv()));
             case Cli.WorkerPair pair -> System.exit(new WorkerCommand(System.out).pair(pair));
             case Cli.WorkerRun worker -> {
                 redirect(worker.logFile());

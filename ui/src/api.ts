@@ -458,6 +458,13 @@ export interface RunView {
   steps: RunStepView[];
   /** While it runs on the bot's own computer or a worker: the agent's tool calls so far and the latest one. */
   activity?: { steps: number; lastAction: string | null };
+  /** How to go on with the task's agent session in a terminal (RM-6); reason says why not yet, when it cannot. */
+  teleport?: {
+    command: string;
+    line: string | null;
+    reason: "RUNNING" | "NOT_CLAUDE" | "ON_WORKER" | "NO_WORKTREE" | "NO_TASK" | null;
+    worker: string | null;
+  };
   /** While an execution runs: ⏭ on the running test, fix or review (its step number), and 📦 deliver now. */
   controls?: {
     skip: number | null;

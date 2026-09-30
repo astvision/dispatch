@@ -74,7 +74,8 @@ public final class UpdateHandler {
     private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
             OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
     private static final Set<String> COMMANDS =
-            Set.of("task", "status", "history", "stats", "cancel", "retry", "worker", "manage", "new", "projects", "help", "start");
+            Set.of("task", "status", "history", "stats", "cancel", "retry", "teleport", "worker", "manage", "new", "projects", "help",
+                    "start");
     /** What Telegram accepts as a deep link's start parameter. */
     private static final java.util.regex.Pattern START_PARAMETER = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,64}");
     private static final Duration UNKNOWN_NOTICE_INTERVAL = Duration.ofHours(24);
@@ -399,6 +400,13 @@ public final class UpdateHandler {
                 TaskCommand retry = new TaskCommand.Retry(id.get());
                 reply(tx, who, retry, commands.run(tx, who, retry), origin, chatRef);
             }
+            case "teleport" -> {
+                if (!privateChat) {
+                    privateOnly(tx, chatRef, origin);
+                    return;
+                }
+                teleport(tx, who, command.args(), origin, chatRef);
+            }
             case "worker" -> {
                 if (!privateChat) {
                     privateOnly(tx, chatRef, origin);
@@ -667,6 +675,23 @@ public final class UpdateHandler {
             }
         });
         return rest.toString().strip();
+    }
+
+    /**
+     * /teleport N: the command that continues task N's agent session in a terminal, or why it cannot yet (RM-6). The task's
+     * requester alone, since the answer names its worktree and session; anyone else's task is answered as not found.
+     */
+    private void teleport(Tx tx, Requester who, String args, String origin, String chatRef) {
+        Optional<Long> id = taskId(args);
+        if (id.isEmpty()) {
+            enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "teleport"));
+            return;
+        }
+        if (access.of(tx, who.ref(), id.get()).sight() != TaskAccess.Sight.FULL) {
+            enqueue(tx, OutboxKind.TASK_NOT_FOUND, chatRef, origin, Json.object().put("taskId", id.get()));
+            return;
+        }
+        enqueue(tx, OutboxKind.TELEPORT, chatRef, origin, tasks.teleportPayload(tx, id.get()));
     }
 
     private void privateOnly(Tx tx, String chatRef, String origin) {

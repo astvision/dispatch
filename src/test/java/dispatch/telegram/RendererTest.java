@@ -133,6 +133,20 @@ class RendererTest {
     }
 
     @Test
+    void teleportGivesTheCommandOrSaysWhyNot() {
+        ObjectNode ready = Json.object().put("taskId", 15).put("command", "dispatch teleport 15")
+                .put("line", "cd '/w/15' && claude --resume f21d").putNull("reason");
+        String html = renderer.render(OutboxKind.TELEPORT, ready).html();
+        assertTrue(html.contains("<code>dispatch teleport 15</code>"), html);
+        assertTrue(html.contains("<code>cd '/w/15' &amp;&amp; claude --resume f21d</code>"), html);
+
+        String running = renderer.render(OutboxKind.TELEPORT, ready.deepCopy().put("reason", "RUNNING")).html();
+        assertTrue(running.contains("/cancel"), running);
+        String worker = renderer.render(OutboxKind.TELEPORT, ready.deepCopy().put("reason", "ON_WORKER").put("worker", "ann-laptop")).html();
+        assertTrue(worker.contains("ann-laptop") && worker.contains("claude --resume f21d"), worker);
+    }
+
+    @Test
     void theEditPromptAsksForAForcedReply() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_EDIT_PROMPT, Json.object().put("taskId", 42).put("planSeq", 1));
 
@@ -1327,6 +1341,8 @@ class RendererTest {
             case PLAN_QUESTION -> questionPayload("Which environments?", List.of("staging", "prod"));
             case PLAN_ANSWER_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1).put("index", 2);
             case PLAN_EDIT_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1);
+            case TELEPORT -> Json.object().put("taskId", 1).put("command", "dispatch teleport 1").put("line", "cd '/w/1' && claude --resume x")
+                    .putNull("reason");
         };
     }
 
