@@ -21,16 +21,24 @@ public final class SandboxPolicies {
     private final Path home;
     private final Path stateDir;
     private final List<Path> dispatchPrivate;
+    private final List<Path> clones;
 
     /**
      * @param home            the user's home, which the agent's state and caches are relative to
      * @param stateDir        this instance's or worker's state dir; its state file is the assistant's to read
      * @param dispatchPrivate Dispatch's config dir, state dir and every configured project's clone
+     * @param clones          the configured clones whose .git a worktree may point at, besides {@code <stateDir>/repos/*}
      */
-    public SandboxPolicies(Path home, Path stateDir, List<Path> dispatchPrivate) {
+    public SandboxPolicies(Path home, Path stateDir, List<Path> dispatchPrivate, List<Path> clones) {
         this.home = home;
         this.stateDir = stateDir;
         this.dispatchPrivate = List.copyOf(dispatchPrivate);
+        this.clones = List.copyOf(clones);
+    }
+
+    /** No configured clones: only worktrees of Dispatch's own {@code <stateDir>/repos/*} get their git dir. */
+    public SandboxPolicies(Path home, Path stateDir, List<Path> dispatchPrivate) {
+        this(home, stateDir, dispatchPrivate, List.of());
     }
 
     /** @param agentStateInHome the agent's own files, relative to home, e.g. ".claude" and ".claude.json" */
@@ -50,14 +58,21 @@ public final class SandboxPolicies {
         List<Path> hidden = Stream.concat(SECRETS.stream().map(home::resolve), dispatchPrivate.stream())
                 .filter(Files::isDirectory)
                 .toList();
-        return new SandboxPolicy(workdir, gitCommonDir(workdir), readOnly, writable, hidden);
+        Path gitCommonDir = gitCommonDir(workdir);
+        if (gitCommonDir != null) {
+            // Mounted after the workdir, so the agent cannot point the next run's mounts somewhere else.
+            readOnly.add(workdir.resolve(".git"));
+        }
+        return new SandboxPolicy(workdir, gitCommonDir, readOnly, writable, hidden);
     }
 
     /**
      * A worktree's .git is a file naming {@code <common>/worktrees/<name>}; git needs the common dir to read objects
      * and update the index. Null when the workdir is not a worktree (a split, the assistant) or holds its own .git.
+     * The file lives in the agent-writable workdir, so the common dir it names must be a configured clone's .git or
+     * {@code <stateDir>/repos/<name>/.git}: anything else would be mounted read-write over the hidden directories.
      */
-    static Path gitCommonDir(Path workdir) {
+    Path gitCommonDir(Path workdir) {
         Path dotGit = workdir.resolve(".git");
         if (!Files.isRegularFile(dotGit)) {
             return null;
@@ -73,7 +88,30 @@ public final class SandboxPolicies {
         }
         Path gitDir = workdir.resolve(line.substring(GITDIR_PREFIX.length())).normalize();
         Path parent = gitDir.getParent();
-        boolean linkedWorktree = parent != null && parent.getFileName().toString().equals("worktrees");
-        return linkedWorktree ? parent.getParent() : gitDir;
+        boolean linkedWorktree = parent != null && parent.getFileName() != null
+                && parent.getFileName().toString().equals("worktrees");
+        return allowedGitDir(dotGit, linkedWorktree ? parent.getParent() : gitDir);
+    }
+
+    /** The real path of {@code commonDir}, so a symlink swapped in after this check cannot redirect the mount. */
+    private Path allowedGitDir(Path dotGit, Path commonDir) {
+        Path real = realPath(commonDir);
+        boolean stateRepo = real != null && real.getFileName() != null && real.getFileName().toString().equals(".git")
+                && real.getParent() != null && real.getParent().getParent() != null
+                && real.getParent().getParent().equals(realPath(stateDir.resolve("repos")));
+        boolean configuredClone = real != null && clones.stream().anyMatch(clone -> real.equals(realPath(clone.resolve(".git"))));
+        if (!stateRepo && !configuredClone) {
+            throw new AgentStartException(dotGit + " names " + commonDir
+                    + ", which is not the .git of a configured clone or of " + stateDir.resolve("repos") + "/*; refused", null);
+        }
+        return real;
+    }
+
+    private static Path realPath(Path path) {
+        try {
+            return path.toRealPath();
+        } catch (IOException e) {
+            return null;
+        }
     }
 }

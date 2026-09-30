@@ -106,6 +106,22 @@ class BubblewrapSandboxTest {
         tree.forEach(child -> assertFalse(child.isAlive(), "left running: " + child.pid()));
     }
 
+    @Test
+    void theAgentCannotRewriteItsWorktreesGitFile() throws Exception {
+        // A rewritten .git would decide what the next run in this worktree mounts read-write.
+        String before = Files.readString(worktree.resolve(".git"));
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
+                        worktree.resolve("run")), List.of());
+
+        Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", "echo 'gitdir: " + home + "' > .git"), policy))
+                .directory(worktree.toFile()).redirectErrorStream(true).start();
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS));
+
+        assertTrue(process.exitValue() != 0, "the write succeeded");
+        assertEquals(before, Files.readString(worktree.resolve(".git")));
+    }
+
     private static void git(Path dir, String... args) throws IOException, InterruptedException {
         List<String> command = new java.util.ArrayList<>(List.of("git"));
         command.addAll(List.of(args));

@@ -22,6 +22,7 @@ public final class Confinements {
         dispatchPrivate.add(stateDir.toAbsolutePath());
         projectClones.forEach(clone -> dispatchPrivate.add(clone.toAbsolutePath()));
         dispatchPrivate.addAll(otherInstancesPrivate);
-        return new Confinement(sandbox, new SandboxPolicies(Path.of(System.getProperty("user.home")), stateDir.toAbsolutePath(), dispatchPrivate));
+        return new Confinement(sandbox, new SandboxPolicies(Path.of(System.getProperty("user.home")), stateDir.toAbsolutePath(), dispatchPrivate,
+                projectClones.stream().map(Path::toAbsolutePath).toList()));
     }
 }

@@ -1,5 +1,6 @@
 package dispatch.agent.sandbox;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.agent.RunRequest;
@@ -33,5 +34,19 @@ class ConfinementsTest {
         for (Path expected : List.of(configDir, state, clone, siblingState, siblingClone)) {
             assertTrue(hidden.contains(expected.toAbsolutePath()), expected + " in " + hidden);
         }
+    }
+
+    @Test
+    void aWorktreeOfAConfiguredCloneGetsItsGitDir() throws Exception {
+        Path clone = Files.createDirectories(root.resolve("clone"));
+        Path gitDir = Files.createDirectories(clone.resolve(".git/worktrees/1"));
+        Path worktree = Files.createDirectory(root.resolve("work"));
+        Files.writeString(worktree.resolve(".git"), "gitdir: " + gitDir);
+
+        Confinement confinement = Confinements.of(new Bubblewrap("bwrap"), root.resolve("state"), root.resolve("dispatch.yaml"),
+                List.of(clone), List.of());
+
+        assertEquals(clone.resolve(".git").toRealPath(), confinement.policies().forRun(new RunRequest(RunKind.EXECUTE, worktree,
+                "prompt", UUID.randomUUID(), false, List.of(), null, null, null, worktree.resolve("run")), List.of()).gitCommonDir());
     }
 }
