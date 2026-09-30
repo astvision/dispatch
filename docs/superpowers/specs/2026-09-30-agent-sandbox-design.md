@@ -73,7 +73,17 @@ and otherwise do not change.
 | the assistant only: `dispatch.db`, `-wal`, `-shm` | read-write |
 | the assistant only: `assistant-bin` | read-only |
 | `~/.ssh`, `~/.config/gh`, `~/.gnupg`, Dispatch's config dir (as built, the whole `~/.config/dispatch`, which holds every instance's secrets file), Dispatch's state dir, every configured project's clone | hidden (empty tmpfs) |
-| the state dirs and configured clones of every other Dispatch instance on the computer (`Instances.othersPrivate`), so one instance's agent cannot read another's `dispatch.db` | hidden (empty tmpfs) |
+| the config dirs, state dirs and configured clones of every other Dispatch instance on the computer (`Instances.othersPrivate`), so one instance's agent cannot read another's `dispatch.db` | hidden (empty tmpfs) |
+| `$XDG_RUNTIME_DIR` from the agent's environment, else `/run/user/<uid>`: systemd `--user`, ssh-agent, gpg-agent and Secret Service sockets | hidden (empty tmpfs) |
+| the run's own log dir (Codex's `--output-schema`), unless it is the workdir or holds it | read-only |
+| the worktree's `.git` file; the git common dir's `config`, `hooks`, `info`; for a linked worktree its `config.worktree` and `commondir` | read-only over the read-write git dir and workdir |
+| `~/.claude/settings.json`, `~/.claude/settings.local.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.gradle/init.d`, `~/.gradle/gradle.properties`, `~/.m2/settings.xml` | read-only over the writable agent and cache dirs |
+
+The worktree's `.git` file is agent-writable between runs, so the git dir it names must be a configured clone's `.git` or
+`<stateDir>/repos/<name>/.git` (compared by real path); anything else fails the run with `AgentStartException`.
+`~/.claude.json` stays writable because Claude Code writes it, so its `mcpServers` are not protected. Dispatch's own git
+passes `-c core.hooksPath=/dev/null -c core.fsmonitor=false` to every command, since it runs with `GH_TOKEN` in clones
+agents wrote to.
 
 Discovering the other instances failing only logs WARN `sandbox.instances_not_discovered`; the run goes on. A hidden path that is not a directory is skipped, since bwrap cannot mount over it on a read-only root. Network is open. Build caches are writable by choice: an injected prompt could poison a shared cache, which is accepted
 on a developer's own machine in exchange for builds that work as they do outside the sandbox.
@@ -81,13 +91,13 @@ on a developer's own machine in exchange for builds that work as they do outside
 ### bubblewrap command line
 
 ```
-bwrap --die-with-parent --unshare-pid --new-session
+bwrap --die-with-parent --unshare-pid --unshare-ipc --new-session
       --ro-bind / /  --dev /dev  --proc /proc  --tmpfs /tmp
       --tmpfs <hidden>…                       # hide first
       --bind <workdir> <workdir>              # then mount back what the run needs
       --bind <gitCommonDir> <gitCommonDir>
       --bind-try <writable>…                  # optional: a missing ~/.gemini is not an error
-      --ro-bind-try <readOnly>…
+      --ro-bind-try <readOnly>…               # last: read-only over the read-write mounts above
       --chdir <workdir>
       -- <commandLine>
 ```
@@ -123,8 +133,8 @@ processes (split, assistant).
 
 - `dispatch check`: `sandbox: bubblewrap ✓` or `sandbox: none ⚠️ <reason>` (a warning, never a failure).
 - Startup log: `sandbox.selected name=bubblewrap` or `sandbox.unavailable reason=…` (WARN).
-- Each run stores the sandbox it ran in (`runs.sandbox`, migration 029; `NULL` for runs before it). A remote worker
-  reports it in `JobResult`.
+- Each run stores the sandbox it ran in (`run.sandbox`, migration 029; `NULL` for runs before it). A remote worker
+  reports it in the result's `AgentResult`.
 - A plan or result of a run with sandbox `none` carries a ⚠️ line, "not sandboxed: <reason>", in the same place as the
   model-mismatch line: in Telegram (Mongolian). The Mini App and `dispatch ui` show neither line yet.
 
@@ -152,7 +162,7 @@ write `$HOME/x`, and a cancel ends it and its children. GitHub's Ubuntu 24 runne
 As built, no CI step installs bubblewrap or sets `kernel.apparmor_restrict_unprivileged_userns=0` (awaiting the owner's
 decision), so `BubblewrapSandboxTest` skips itself with its reason there; it runs on a machine with a working bwrap.
 
-Live check: one real task on the personal bot, plan and execution, with `runs.sandbox = bubblewrap`.
+Live check: one real task on the personal bot, plan and execution, with `run.sandbox = bubblewrap`.
 
 ## Documentation
 
