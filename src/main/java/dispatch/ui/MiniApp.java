@@ -54,6 +54,14 @@ public final class MiniApp {
     public static Optional<UiServer> start(Config config, Path configFile, String instance, Database db, TaskService tasks, Groups groups,
                                            String botUsername, String botPhoto, Function<String, BotApi> bots,
                                            Map<String, String> environment, Clock clock, String resourceRoot) throws IOException {
+        return start(config, configFile, instance, db, tasks, groups, botUsername, botPhoto, bots, environment, clock, resourceRoot,
+                WebUi.forThisMachine(config.stateDir(), configFile, instance, environment));
+    }
+
+    /** @param webUi what "Вэб UI нээх" opens; tests give one that starts nothing */
+    static Optional<UiServer> start(Config config, Path configFile, String instance, Database db, TaskService tasks, Groups groups,
+                                    String botUsername, String botPhoto, Function<String, BotApi> bots,
+                                    Map<String, String> environment, Clock clock, String resourceRoot, WebUi webUi) throws IOException {
         Config.MiniApp miniApp = config.miniApp();
         if (!UiServer.hasUi(resourceRoot)) {
             Log.warn("miniapp.no_pages", "detail", "this build bundles no web UI, so the Mini App is not served; "
@@ -68,6 +76,13 @@ public final class MiniApp {
         Map<String, BiFunction<Caller, JsonNode, Object>> post = new HashMap<>(management.post(true));
         post.putAll(new TasksApi(db, tasks, groups).routes());
         post.put("/api/me/prefs", (caller, body) -> setPrefs(caller, body, db, clock));
+        // The web UI acts as the owner in a shell (ADR 0018), so only an admin may be handed a way in.
+        post.put("/api/webui/open", (caller, body) -> {
+            if (!caller.admin()) {
+                throw new ApiException(403, "not_admin", UiRoutes.NOT_ADMIN);
+            }
+            return Map.of("url", webUi.open());
+        });
         Map<String, Function<Caller, Object>> get = new HashMap<>(management.get(true));
         get.put("/api/me", caller -> me(caller, botUsername, botPhoto));
         get.put("/api/me/prefs", caller -> prefs(caller, db));

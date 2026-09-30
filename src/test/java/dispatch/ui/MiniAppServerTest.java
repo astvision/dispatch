@@ -162,6 +162,23 @@ class MiniAppServerTest {
         assertEquals(200, adminManaging.statusCode(), adminManaging.body());
     }
 
+    /** ADR 0018, amended: an admin on this computer is handed a fresh link to the web UI; a member never is. */
+    @Test
+    void onlyAnAdminIsHandedALinkToTheWebUi() throws Exception {
+        Path stateDir = ConfigLoader.load(configFile, Map.of("TELEGRAM_BOT_TOKEN", TOKEN)).stateDir();
+        try (UiServer webUi = UiServer.start(0, "/ui-test", port -> new UiAuth(port, "k"), Map.of(), Map.of())) {
+            new UiFile(webUi.port(), "k", "test").write(stateDir);
+
+            HttpResponse<String> member = post("/api/webui/open", initData(200));
+            HttpResponse<String> admin = post("/api/webui/open", initData(100));
+
+            assertEquals(403, member.statusCode());
+            assertTrue(member.body().contains("\"error\":\"not_admin\""), member.body());
+            assertEquals(200, admin.statusCode(), admin.body());
+            assertTrue(admin.body().contains("\"url\":\"http://127.0.0.1:" + webUi.port() + "/?t="), admin.body());
+        }
+    }
+
     /** The Mini App runs inside the bot: an unlink applies to the running groups, where dispatch ui needs a restart. */
     @Test
     void anUnlinkHereAppliesToTheRunningBotWithoutARestart() throws Exception {
