@@ -3,8 +3,10 @@ package dispatch.agent.sandbox;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dispatch.agent.AgentStartException;
 import dispatch.agent.RunRequest;
 import dispatch.domain.RunKind;
 import java.io.IOException;
@@ -46,7 +48,7 @@ class SandboxPoliciesTest {
 
         assertEquals(worktree, policy.workdir());
         assertEquals(stateDir.resolve("repos/alm/.git"), policy.gitCommonDir());
-        assertEquals(List.of(attachments), policy.readOnly());
+        assertEquals(List.of(attachments, worktree.resolve(".git")), policy.readOnly());
         assertEquals(List.of(home.resolve(".claude"), home.resolve(".claude.json"), home.resolve(".m2"),
                 home.resolve(".gradle"), home.resolve(".npm"), home.resolve(".cache")), policy.writable());
         assertEquals(List.of(home.resolve(".ssh"), home.resolve(".config/gh"), configDir, stateDir), policy.hidden());
@@ -70,7 +72,7 @@ class SandboxPoliciesTest {
         Path gitDir = Files.createDirectories(clone.resolve(".git/worktrees/9"));
         Path worktree = Files.createDirectories(stateDir.resolve("worktrees/9"));
         Files.writeString(worktree.resolve(".git"), "gitdir: " + gitDir);
-        SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir, clone));
+        SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir, clone), List.of(clone));
 
         SandboxPolicy policy = policies.forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of(".claude"));
 
@@ -84,12 +86,56 @@ class SandboxPoliciesTest {
         Files.createDirectories(stateDir.resolve("repos/alm/.git/worktrees/4"));
         Files.writeString(worktree.resolve(".git"), "gitdir: ../../repos/alm/.git/worktrees/4");
 
-        assertEquals(stateDir.resolve("repos/alm/.git"), SandboxPolicies.gitCommonDir(worktree));
+        assertEquals(stateDir.resolve("repos/alm/.git"), new SandboxPolicies(home, stateDir, List.of()).gitCommonDir(worktree));
     }
 
     @Test
     void aSplitHasNoGitDir() {
-        assertNull(SandboxPolicies.gitCommonDir(stateDir));
+        assertNull(new SandboxPolicies(home, stateDir, List.of()).gitCommonDir(stateDir));
+    }
+
+    @Test
+    void aWorktreeGitFilePointingAtHomeIsRefused() throws IOException {
+        // The agent can rewrite its worktree's .git between runs; home must never come back read-write.
+        Path worktree = Files.createDirectories(stateDir.resolve("worktrees/7"));
+        Files.writeString(worktree.resolve(".git"), "gitdir: " + home);
+
+        AgentStartException refused = assertThrows(AgentStartException.class, () ->
+                new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of()));
+
+        assertTrue(refused.getMessage().contains(worktree.resolve(".git").toString()), refused.getMessage());
+        assertTrue(refused.getMessage().contains(home.toString()), refused.getMessage());
+    }
+
+    @Test
+    void aWorktreeGitFilePointingAtAnUnconfiguredRepositoryIsRefused() throws IOException {
+        Path other = Files.createDirectories(home.resolve("code/other/.git/worktrees/7"));
+        Path worktree = Files.createDirectories(stateDir.resolve("worktrees/7"));
+        Files.writeString(worktree.resolve(".git"), "gitdir: " + other);
+        SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(stateDir), List.of(home.resolve("code/alm")));
+
+        assertThrows(AgentStartException.class, () -> policies.forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of()));
+    }
+
+    @Test
+    void aGitdirAtTheRootIsRefusedNotAnError() throws IOException {
+        Path worktree = Files.createDirectories(stateDir.resolve("worktrees/7"));
+        Files.writeString(worktree.resolve(".git"), "gitdir: /x");
+
+        assertThrows(AgentStartException.class, () ->
+                new SandboxPolicies(home, stateDir, List.of()).forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of()));
+    }
+
+    @Test
+    void theWorktreesGitFileIsMountedBackReadOnly() throws IOException {
+        Path gitDir = Files.createDirectories(stateDir.resolve("repos/alm/.git/worktrees/7"));
+        Path worktree = Files.createDirectories(stateDir.resolve("worktrees/7"));
+        Files.writeString(worktree.resolve(".git"), "gitdir: " + gitDir + "\n");
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of());
+
+        assertTrue(policy.readOnly().contains(worktree.resolve(".git")), policy.readOnly().toString());
     }
 
     @Test
