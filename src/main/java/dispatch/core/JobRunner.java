@@ -14,6 +14,7 @@ import dispatch.config.Config;
 import dispatch.domain.Attachment;
 import dispatch.domain.FailureReason;
 import dispatch.domain.RunKind;
+import dispatch.domain.RunStep;
 import dispatch.workspace.Delivery;
 import dispatch.workspace.WorkspaceException;
 import dispatch.workspace.Workspaces;
@@ -81,15 +82,48 @@ public final class JobRunner implements Worker {
 
     @Override
     public JobResult run(Job job, JobEvents events, ActiveRuns.ActiveRun control) {
+        Steps steps = new Steps(events);
         return switch (job.kind()) {
-            case PLAN -> plan(job, events, control);
-            case EXECUTE -> implement(job, events, control);
-            case DELIVER -> deliverAgain(job, control);
+            case PLAN -> plan(job, events, control, steps);
+            case EXECUTE -> implement(job, events, control, steps);
+            case DELIVER -> steps.around(RunStep.Kind.DELIVER, () -> deliverAgain(job, control));
             case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a task's run");
         };
     }
 
-    private JobResult plan(Job job, JobEvents events, ActiveRuns.ActiveRun control) {
+    /** Numbers a run's steps from 1 and reports each as it starts and ends (RM-1). */
+    private static final class Steps {
+        private final JobEvents events;
+        private int count;
+
+        Steps(JobEvents events) {
+            this.events = events;
+        }
+
+        int started(RunStep.Kind kind, int round) {
+            events.stepStarted(++count, kind, round);
+            return count;
+        }
+
+        void ended(int step, RunStep.Outcome outcome, String detail) {
+            events.stepEnded(step, outcome, detail);
+        }
+
+        /** One whole-job step: how the job's result ended is how the step ended. */
+        JobResult around(RunStep.Kind kind, java.util.function.Supplier<JobResult> work) {
+            int step = started(kind, 1);
+            JobResult result = work.get();
+            switch (result.outcome()) {
+                case SUCCEEDED -> ended(step, RunStep.Outcome.DONE, null);
+                case CANCELLED -> ended(step, RunStep.Outcome.STOPPED, null);
+                case FAILED -> ended(step, result.failureReason() == FailureReason.INTERRUPTED ? RunStep.Outcome.STOPPED
+                        : RunStep.Outcome.FAILED, result.failureDetail() == null ? null : StepDetail.error(result.failureDetail()));
+            }
+            return result;
+        }
+    }
+
+    private JobResult plan(Job job, JobEvents events, ActiveRuns.ActiveRun control, Steps steps) {
         if (control.stopReason() != null) {
             return stopped(job, control.stopReason(), null);
         }
@@ -104,10 +138,11 @@ public final class JobRunner implements Worker {
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
-        return runAgent(job, events, control, request(job, worktree, files), Duration.ofMillis(job.timeoutMillis()));
+        return steps.around(RunStep.Kind.PLAN,
+                () -> runAgent(job, events, control, request(job, worktree, files), Duration.ofMillis(job.timeoutMillis())));
     }
 
-    private JobResult implement(Job job, JobEvents events, ActiveRuns.ActiveRun control) {
+    private JobResult implement(Job job, JobEvents events, ActiveRuns.ActiveRun control, Steps steps) {
         if (control.stopReason() != null) {
             return stopped(job, control.stopReason(), null);
         }
@@ -141,17 +176,18 @@ public final class JobRunner implements Worker {
         }
         // The whole run's time: the loop's tests and agent calls share what the implementation left.
         Instant deadline = clock.instant().plusMillis(job.timeoutMillis());
-        JobResult result = runAgent(job, events, control, request(job, worktree, files), Duration.ofMillis(job.timeoutMillis()));
+        JobResult result = steps.around(RunStep.Kind.IMPLEMENT,
+                () -> runAgent(job, events, control, request(job, worktree, files), Duration.ofMillis(job.timeoutMillis())));
         if (result.outcome() != JobResult.Outcome.SUCCEEDED) {
             return result;
         }
         if (!job.project().loopOn()) {
-            return deliver(job, worktree, startSha, result.agent(), null);
+            return steps.around(RunStep.Kind.DELIVER, () -> deliver(job, worktree, startSha, result.agent(), null));
         }
         VerifyLoop.Outcome verified = new VerifyLoop(tests, clock).run(
                 new VerifyLoop.Setup(job.project().test(), worktree, workspaces.runLogBase(job.taskId(), job.seq()),
                         job.reviewPrompt(), deadline, job.budgetUsd(), cost(result.agent())),
-                loopAgents(job, events, control, worktree, files, startSha),
+                loopAgents(job, events, control, worktree, files, startSha, steps),
                 // An interrupt ends a test step as stopped; the loop must not go on to the reviewer.
                 () -> control.stopReason() != null || Thread.currentThread().isInterrupted());
         // Every outcome records what the whole run cost, so the loop's calls count even when nothing is delivered.
@@ -163,12 +199,12 @@ public final class JobRunner implements Worker {
             // Dispatch is going down under this run; the flag stays set for whoever interrupted it.
             return JobResult.failed(FailureReason.INTERRUPTED, "run thread was interrupted", spent);
         }
-        return deliver(job, worktree, startSha, spent, verified.verification());
+        return steps.around(RunStep.Kind.DELIVER, () -> deliver(job, worktree, startSha, spent, verified.verification()));
     }
 
     /** The verify loop's agent calls: fixes resume the building session, the reviewer is a fresh read-only one. */
     private VerifyLoop.Agents loopAgents(Job job, JobEvents events, ActiveRuns.ActiveRun control, Path worktree, TaskFiles files,
-                                         String startSha) {
+                                         String startSha, Steps steps) {
         Path logBase = workspaces.runLogBase(job.taskId(), job.seq());
         return new VerifyLoop.Agents() {
             private int fixes;
@@ -203,6 +239,16 @@ public final class JobRunner implements Worker {
             public void testStarted(ProcessHandle process) {
                 // The pid Recovery kills after a crash is the test tree's while it runs, as for each agent call.
                 events.agentStarted(process.pid(), process.info().startInstant().orElse(null));
+            }
+
+            @Override
+            public int stepStarted(RunStep.Kind kind, int round) {
+                return steps.started(kind, round);
+            }
+
+            @Override
+            public void stepEnded(int step, RunStep.Outcome outcome, String detail) {
+                steps.ended(step, outcome, detail);
             }
         };
     }

@@ -12,10 +12,12 @@ import dispatch.domain.Phase;
 import dispatch.domain.Plan;
 import dispatch.domain.Run;
 import dispatch.domain.RunStatus;
+import dispatch.domain.RunStep;
 import dispatch.domain.Task;
 import dispatch.store.Database;
 import dispatch.store.Events;
 import dispatch.store.Outbox;
+import dispatch.store.RunSteps;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
@@ -62,6 +64,15 @@ public final class RunTransitions {
     /** @param pid null when the agent runs on a member's own computer */
     public void agentStarted(long taskId, int seq, Long pid, Instant processStart) {
         db.transaction(tx -> Runs.recordAgentStarted(tx, taskId, seq, clock.instant(), pid, processStart));
+    }
+
+    /** RM-1: a step of the run began; stamped with this machine's clock. */
+    public void stepStarted(long taskId, int seq, int n, RunStep.Kind kind, int round) {
+        db.transaction(tx -> RunSteps.started(tx, taskId, seq, n, kind, round, clock.instant()));
+    }
+
+    public void stepEnded(long taskId, int seq, int n, RunStep.Outcome outcome, String detail) {
+        db.transaction(tx -> RunSteps.ended(tx, taskId, seq, n, outcome, detail, clock.instant()));
     }
 
     public void planSucceeded(long taskId, int seq, Plan plan, AgentResult result) {

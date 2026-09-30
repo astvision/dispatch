@@ -3,6 +3,7 @@ package dispatch.core;
 import dispatch.Log;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.domain.RunStep;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -38,6 +39,12 @@ public final class VerifyLoop {
 
         /** The test command's process started: recorded like an agent's, so an orphan kill after a crash finds it. */
         void testStarted(ProcessHandle process);
+
+        /** A step began (RM-1): its number in the run, for {@link #stepEnded}. */
+        int stepStarted(RunStep.Kind kind, int round);
+
+        /** @param detail {@link StepDetail}'s JSON, or null */
+        void stepEnded(int step, RunStep.Outcome outcome, String detail);
     }
 
     /** @param budgetUsd null for no budget; @param spentUsd what the run has already cost */
@@ -113,13 +120,17 @@ public final class VerifyLoop {
                     return;
                 }
                 Path log = Path.of(setup.logBase() + ".test-" + (testRuns + 1) + ".log");
+                int step = agents.stepStarted(RunStep.Kind.TEST, testRuns + 1);
                 TestRunner.TestRun result = tests.run(setup.testCommand(), setup.worktree(), log, TEST_TIMEOUT, stop,
                         agents::testStarted);
                 testRuns++;
                 tail = result.tail();
                 if (result.stopped()) {
+                    agents.stepEnded(step, RunStep.Outcome.STOPPED, null);
                     return;
                 }
+                agents.stepEnded(step, result.passed() ? RunStep.Outcome.PASSED : RunStep.Outcome.FAILED,
+                        result.passed() ? null : StepDetail.tail(tail));
                 testState = result.passed() ? Verification.Tests.PASSED : Verification.Tests.FAILING;
                 changedSinceLastTest = false;
                 Log.info("verify.step", "step", "test", "run", testRuns, "outcome", testState);
@@ -136,11 +147,13 @@ public final class VerifyLoop {
             if (!agentStepAllowed()) {
                 return;
             }
+            int step = agents.stepStarted(RunStep.Kind.REVIEW, 1);
             AgentResult result = agents.review(setup.reviewPrompt() + "\n" + capped(agents.diff()), budgetLeft(), timeLeft());
             record(result);
             if (result.outcome() != AgentOutcome.SUCCEEDED) {
                 reviewState = Verification.ReviewState.FAILED;
                 reviewError = reason(result);
+                agents.stepEnded(step, RunStep.Outcome.FAILED, StepDetail.error(reviewError));
                 Log.info("verify.step", "step", "review", "outcome", "failed", "error", reviewError);
                 return;
             }
@@ -150,9 +163,12 @@ public final class VerifyLoop {
             } catch (IllegalArgumentException e) {
                 reviewState = Verification.ReviewState.FAILED;
                 reviewError = e.getMessage();
+                agents.stepEnded(step, RunStep.Outcome.FAILED, StepDetail.error(reviewError));
                 Log.info("verify.step", "step", "review", "outcome", "unusable answer", "error", e.getMessage());
                 return;
             }
+            agents.stepEnded(step, parsed.findings().isEmpty() ? RunStep.Outcome.OK : RunStep.Outcome.FINDINGS,
+                    parsed.findings().isEmpty() ? null : StepDetail.findings(parsed.findings()));
             Log.info("verify.step", "step", "review", "outcome", parsed.verdict(), "blocking", parsed.blocking().size());
             if (parsed.blocking().isEmpty()) {
                 keepMinor(parsed);
@@ -179,13 +195,16 @@ public final class VerifyLoop {
                 return false;
             }
             fixesLeft--;
+            int step = agents.stepStarted(RunStep.Kind.FIX, FIX_ROUNDS - fixesLeft);
             AgentResult result = agents.fix(prompt, budgetLeft(), timeLeft());
             record(result);
             Log.info("verify.step", "step", "fix", "outcome", result.outcome());
             if (result.outcome() != AgentOutcome.SUCCEEDED) {
                 stoppedBy = "fix failed: " + reason(result);
+                agents.stepEnded(step, RunStep.Outcome.FAILED, StepDetail.error(reason(result)));
                 return false;
             }
+            agents.stepEnded(step, RunStep.Outcome.DONE, null);
             changedSinceLastTest = true;
             return true;
         }

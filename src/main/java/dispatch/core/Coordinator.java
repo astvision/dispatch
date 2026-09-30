@@ -11,6 +11,7 @@ import dispatch.domain.Plan;
 import dispatch.domain.Run;
 import dispatch.domain.RunCause;
 import dispatch.domain.RunKind;
+import dispatch.domain.RunStep;
 import dispatch.domain.Task;
 import dispatch.store.Attachments;
 import dispatch.store.Database;
@@ -89,6 +90,16 @@ public final class Coordinator {
             @Override
             public void agentStarted(Long pid, Instant processStart) {
                 transitions.agentStarted(claimed.taskId(), claimed.seq(), pid, processStart);
+            }
+
+            @Override
+            public void stepStarted(int n, RunStep.Kind kind, int round) {
+                transitions.stepStarted(claimed.taskId(), claimed.seq(), n, kind, round);
+            }
+
+            @Override
+            public void stepEnded(int n, RunStep.Outcome outcome, String detail) {
+                transitions.stepEnded(claimed.taskId(), claimed.seq(), n, outcome, detail);
             }
         };
     }

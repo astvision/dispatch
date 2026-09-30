@@ -17,7 +17,9 @@ import dispatch.domain.Plan;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
+import dispatch.domain.RunStep;
 import dispatch.store.Database;
+import dispatch.store.RunSteps;
 import dispatch.store.Runs;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
@@ -130,6 +132,24 @@ class CoordinatorTest {
         Map<String, String> run = row("SELECT pid, agent_started_at FROM run WHERE task_id = ?", id);
         assertEquals("4242", run.get("pid"));
         assertNotNull(run.get("agent_started_at"));
+    }
+
+    @Test
+    void theRunsStepsAreStoredAsTheyStartAndEnd() {
+        long id = queue("Fix the login timeout");
+        Worker worker = (job, events, control) -> {
+            events.stepStarted(1, RunStep.Kind.PLAN, 1);
+            assertEquals(1, db.transactionReturning(tx -> RunSteps.of(tx, id, 1)).size(), "the step shows while it runs");
+            events.stepEnded(1, RunStep.Outcome.DONE, null);
+            return JobResult.succeeded(agentResult(PLAN_JSON));
+        };
+
+        coordinator(projects(List.of(ALM)), worker).execute(claim());
+
+        RunStep step = db.transactionReturning(tx -> RunSteps.of(tx, id, 1)).getFirst();
+        assertEquals(RunStep.Kind.PLAN, step.kind());
+        assertEquals(RunStep.Outcome.DONE, step.outcome());
+        assertNotNull(step.endedAt());
     }
 
     @Test
