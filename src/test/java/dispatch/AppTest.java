@@ -100,7 +100,8 @@ class AppTest {
         assertTrue(announced.get("text").asText().contains("Bold"), announced.toString());
         JsonNode plan = awaitMessageContaining("The user reports that login");
         assertEquals(100, plan.get("chat_id").asLong(), "the plan goes to the requester privately");
-        assertEquals("reject:1:1", plan.get("reply_markup").get("inline_keyboard").get(0).get(1).get("callback_data").asText());
+        assertEquals("approve:1:1", plan.at("/reply_markup/inline_keyboard/0/0/callback_data").asText());
+        assertEquals("success", plan.at("/reply_markup/inline_keyboard/0/0/style").asText(), "Start is the green button");
 
         telegram.pushUpdate(privateCallback(20, 100, "Bold", "reject:1:1", awaitSentMessageId("PLAN_READY")));
 

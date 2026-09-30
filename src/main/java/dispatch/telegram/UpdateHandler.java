@@ -703,15 +703,105 @@ public final class UpdateHandler {
             // Not one of the bot's messages: another reply, such as an addition to a task given in a group, may still apply.
             return false;
         }
-        if (sent.get().kind() != OutboxKind.PLAN_READY) {
-            String kind = sent.get().kind().name();
-            tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind));
+        OutboxKind kind = sent.get().kind();
+        if (kind != OutboxKind.PLAN_READY && kind != OutboxKind.PLAN_EDIT_PROMPT) {
+            tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind.name()));
             return false;
         }
-        int planSeq = Json.read(sent.get().payload()).path("planSeq").asInt();
-        TaskCommand correct = new TaskCommand.Correct(sent.get().taskId(), OptionalInt.of(planSeq), text(message));
-        reply(tx, who, correct, commands.run(tx, who, correct), origin, chatRef);
+        JsonNode payload = Json.read(sent.get().payload());
+        // A reply to ✏️'s prompt corrects the plan the prompt was asked under.
+        String planRef = kind == OutboxKind.PLAN_READY ? repliedRef : payload.path("planRef").asText();
+        TaskCommand correct = new TaskCommand.Correct(sent.get().taskId(), OptionalInt.of(payload.path("planSeq").asInt()), text(message));
+        CommandResult result = commands.run(tx, who, correct);
+        if (result instanceof CommandResult.Done) {
+            showCorrected(tx, planRef, text(message));
+        }
+        reply(tx, who, correct, result, origin, chatRef);
         return true;
+    }
+
+    /**
+     * A plan's ▶️ ❓ ✏️ 📄 row. The views redraw the plan in place for anyone who can see it; a decision's alternative corrects
+     * the plan as a reply would, in words the agent reads; ✏️ asks for that reply as a forced one.
+     */
+    private void onPlanButton(Tx tx, JsonNode callback, Requester who, Callback button) {
+        String callbackId = callback.path("id").asText();
+        JsonNode message = callback.path("message");
+        long chatId = message.path("chat").path("id").asLong();
+        String planRef = Refs.message(chatId, message.path("message_id").asLong(), null);
+        Optional<ObjectNode> plan = Outbox.findSent(tx, planRef)
+                .filter(sent -> sent.kind() == OutboxKind.PLAN_READY)
+                .map(sent -> (ObjectNode) Json.read(redactor.redact(sent.payload())));
+        if (plan.isEmpty()) {
+            answer(tx, callbackId, "callback.unknown");
+            return;
+        }
+        switch (button) {
+            case Callback.PlanView view -> {
+                answer(tx, callbackId, "callback.done");
+                redrawPlan(tx, planRef, plan.get().put("view", switch (view.view()) {
+                    case SUMMARY -> "summary";
+                    case DETAILS -> "details";
+                    case DECISIONS -> "decisions";
+                }));
+            }
+            case Callback.Decide decide -> {
+                JsonNode decision = plan.get().path("plan").path("decisions").path(decide.decision() - 1);
+                JsonNode alternative = decision.path("alternatives").path(decide.alternative());
+                if (!alternative.isTextual()) {
+                    answer(tx, callbackId, "callback.unknown");
+                    return;
+                }
+                String question = decision.path("text").asText();
+                String correction = renderer.format("plan.decisionCorrection", question, decision.path("chosen").asText(), alternative.asText());
+                CommandResult result = commands.run(tx, who, new TaskCommand.Correct(decide.taskId(), OptionalInt.of(decide.planSeq()), correction));
+                notice(tx, callbackId, result, "callback.decided");
+                if (result instanceof CommandResult.Done) {
+                    showCorrected(tx, planRef, question + " → " + alternative.asText());
+                }
+            }
+            case Callback.EditPlan edit -> {
+                // Any text stands in for the words not written yet: the check says only whether this plan may be corrected now.
+                Optional<CommandResult.Refused> refused =
+                        commands.check(tx, who, new TaskCommand.Correct(edit.taskId(), OptionalInt.of(edit.planSeq()), "✏️"));
+                if (refused.isPresent()) {
+                    notice(tx, callbackId, refused.get(), "callback.editPlan");
+                    return;
+                }
+                Outbox.enqueue(tx, edit.taskId(), OutboxKind.PLAN_EDIT_PROMPT, Refs.chat(chatId), planRef,
+                        Json.object().put("taskId", edit.taskId()).put("planSeq", edit.planSeq()).put("planRef", planRef),
+                        clock.instant());
+                tx.afterCommit(wakeOutbox);
+                answer(tx, callbackId, "callback.editPlan");
+            }
+            default -> throw new IllegalArgumentException("not a plan button: " + button);
+        }
+    }
+
+    /** The corrected plan's message says what it was corrected with, and loses its buttons while the agent plans again. */
+    private void showCorrected(Tx tx, String planRef, String correction) {
+        Outbox.findSent(tx, planRef).filter(sent -> sent.kind() == OutboxKind.PLAN_READY).ifPresent(sent -> redrawPlan(tx, planRef,
+                ((ObjectNode) Json.read(redactor.redact(sent.payload()))).put("view", "updating").put("correction", correction)));
+    }
+
+    private void redrawPlan(Tx tx, String planRef, ObjectNode payload) {
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.PLAN_READY, payload);
+        if (redrawn.document() != null) {
+            // Sent as a file, which has no views to switch between.
+            return;
+        }
+        long chatId = Refs.chatId(planRef);
+        long messageId = Refs.messageId(planRef);
+        tx.afterCommit(() -> bestEffort("editMessageText", () -> {
+            try {
+                api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard());
+            } catch (TelegramException e) {
+                // A view pressed twice: nothing to change, nothing to report.
+                if (!String.valueOf(e.getMessage()).contains("message is not modified")) {
+                    throw e;
+                }
+            }
+        }));
     }
 
     /**
@@ -792,6 +882,7 @@ public final class UpdateHandler {
             case Callback.JoinChoice join -> onJoinButton(tx, callback, who, join);
             case Callback.Stats stats -> onStatsButton(tx, callback, stats);
             case Callback.Help help -> onHelpButton(tx, callback, help.page());
+            case Callback.PlanView _, Callback.Decide _, Callback.EditPlan _ -> onPlanButton(tx, callback, who, parsed.get());
         }
     }
 
@@ -808,7 +899,8 @@ public final class UpdateHandler {
             case Callback.Merge _ -> merges != null && privateChat;
             case Callback.AssistantAction _ -> assistantActions != null && privateChat;
             case Callback.Approve _, Callback.Reject _, Callback.StatusPriority _, Callback.Draft _, Callback.Answer _,
-                 Callback.WriteAnswer _, Callback.JoinChoice _, Callback.Stats _ -> servedChat;
+                 Callback.WriteAnswer _, Callback.JoinChoice _, Callback.Stats _, Callback.PlanView _, Callback.Decide _,
+                 Callback.EditPlan _ -> servedChat;
         };
     }
 

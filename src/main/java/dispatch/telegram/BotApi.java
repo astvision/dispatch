@@ -361,6 +361,9 @@ public final class BotApi {
             ArrayNode row = keyboard.addArray();
             for (Renderer.Button button : buttons) {
                 ObjectNode entry = row.addObject().put("text", button.text());
+                if (button.style() != null) {
+                    entry.put("style", button.style());
+                }
                 if (button.webAppUrl() != null) {
                     entry.putObject("web_app").put("url", button.webAppUrl());
                 } else if (button.url() != null) {

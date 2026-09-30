@@ -211,6 +211,49 @@ public sealed interface Callback {
         }
     }
 
+    /** A plan's own buttons that redraw it in place: its summary, its full details, or its decisions to change. */
+    record PlanView(long taskId, int planSeq, View view) implements Callback {
+        @Override
+        public String data() {
+            return fit("pv:" + taskId + ":" + planSeq + ":" + view.wire);
+        }
+    }
+
+    enum View {
+        SUMMARY("s"), DETAILS("d"), DECISIONS("c");
+
+        private final String wire;
+
+        View(String wire) {
+            this.wire = wire;
+        }
+
+        static View of(String wire) {
+            for (View view : values()) {
+                if (view.wire.equals(wire)) {
+                    return view;
+                }
+            }
+            throw new IllegalArgumentException("no plan view " + wire);
+        }
+    }
+
+    /** Another answer to decision {@code decision} (1-based) of a plan: its alternative at {@code alternative} (0-based). */
+    record Decide(long taskId, int planSeq, int decision, int alternative) implements Callback {
+        @Override
+        public String data() {
+            return fit("pd:" + taskId + ":" + planSeq + ":" + decision + ":" + alternative);
+        }
+    }
+
+    /** ✏️ under a plan: the requester writes their correction as a forced reply. */
+    record EditPlan(long taskId, int planSeq) implements Callback {
+        @Override
+        public String data() {
+            return fit("pe:" + taskId + ":" + planSeq);
+        }
+    }
+
     /** The button {@code data} names, or empty for anything malformed or unknown: an old or forged button. Never throws. */
     static Optional<Callback> parse(String data) {
         if (data == null) {
@@ -247,6 +290,10 @@ public sealed interface Callback {
             case "link" -> parts.length == 3 ? link(number(parts[1]), parts[2]) : null;
             case "join" -> parts.length == 3 ? join(number(parts[1]), parts[2]) : null;
             case "help" -> parts.length == 2 ? new Help(parts[1]) : null;
+            case "pv" -> parts.length == 4 ? new PlanView(number(parts[1]), (int) number(parts[2]), View.of(parts[3])) : null;
+            case "pd" -> parts.length == 5
+                    ? new Decide(number(parts[1]), (int) number(parts[2]), (int) number(parts[3]), (int) number(parts[4])) : null;
+            case "pe" -> parts.length == 3 ? new EditPlan(number(parts[1]), (int) number(parts[2])) : null;
             default -> null;
         };
     }

@@ -28,8 +28,9 @@ class RendererTest {
     private final Renderer renderer = new Renderer(messages, clock, "dispatch_backend_bot");
 
     @Test
-    void planIsRenderedWithEscapedContentNumberedStepsCostDurationAndApproveAndRejectButtons() {
+    void planSummaryShowsTheUnderstandingStepCountDecisionsAndCostWithAWideStartButton() {
         ObjectNode payload = planPayload(List.of("Read <auth.timeout> & default to 60s", "Add AuthClientTimeoutTest"), List.of());
+        decision(payload, "Which <timeout>?", "the login one", "every call");
 
         Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, payload);
 
@@ -38,14 +39,69 @@ class RendererTest {
         assertTrue(html.contains("#42"), html);
         assertTrue(html.contains("autoland-management"), html);
         assertTrue(html.contains("Login times out after 30s &amp; users retry"), html);
-        assertTrue(html.contains("1. Read &lt;auth.timeout&gt; &amp; default to 60s"), html);
-        assertTrue(html.contains("2. Add AuthClientTimeoutTest"), html);
+        assertTrue(html.contains("🛠 2 алхам"), html);
+        assertTrue(html.contains("⚠️ Which &lt;timeout&gt;? → <i>the login one</i>"), html);
+        assertFalse(html.contains("Read &lt;auth.timeout&gt;"), "steps wait behind Details: " + html);
+        assertFalse(html.contains("AuthClient.java:14"), "findings wait behind Details: " + html);
         assertTrue(html.contains("$0.17"), html);
         assertTrue(html.contains("1 мин 50 сек"), html);
-        assertFalse(html.contains(messages.getString("plan.questions")), html);
-        assertTrue(html.contains(messages.getString("plan.replyHint")), html);
-        assertEquals(List.of(List.of(new Renderer.Button(messages.getString("button.approve"), "approve:42:1"),
-                new Renderer.Button(messages.getString("button.reject"), "reject:42:1"))), rendered.keyboard());
+        assertEquals(List.of(
+                List.of(Renderer.Button.primary(messages.getString("button.start"), "approve:42:1")),
+                List.of(new Renderer.Button("❓ Шийдвэр (1)", "pv:42:1:c"), new Renderer.Button(messages.getString("button.edit"), "pe:42:1"),
+                        new Renderer.Button(messages.getString("button.details"), "pv:42:1:d"))), rendered.keyboard());
+    }
+
+    @Test
+    void planWithoutDecisionsHasNoDecisionsButton() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, planPayload(List.of("Do it"), List.of()));
+
+        assertEquals(List.of("pe:42:1", "pv:42:1:d"), rendered.keyboard().get(1).stream().map(Renderer.Button::data).toList());
+    }
+
+    @Test
+    void planDetailsFoldStepsAndFindingsAndOfferCollapseAndReject() {
+        ObjectNode payload = planPayload(List.of("Read <auth.timeout>", "Add a test"), List.of()).put("view", "details");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, payload);
+
+        String html = rendered.html();
+        assertTrue(html.contains("<blockquote expandable>🛠 <b>Төлөвлөгөө (2)</b>\n1. Read &lt;auth.timeout&gt;\n2. Add a test</blockquote>"), html);
+        assertTrue(html.contains("<blockquote expandable>🔎 <b>Олдсон зүйлс (1)</b>\n• AuthClient.java:14 hard-codes 30s</blockquote>"), html);
+        assertTrue(html.contains("• Slower error page"), html);
+        assertEquals(List.of(
+                List.of(Renderer.Button.primary(messages.getString("button.start"), "approve:42:1")),
+                List.of(new Renderer.Button(messages.getString("button.edit"), "pe:42:1"),
+                        new Renderer.Button(messages.getString("button.collapse"), "pv:42:1:s")),
+                List.of(new Renderer.Button(messages.getString("button.reject"), "reject:42:1"))), rendered.keyboard());
+    }
+
+    @Test
+    void planDecisionsListWhatWasChosenWithAButtonPerAlternative() {
+        ObjectNode payload = planPayload(List.of("Do it"), List.of()).put("view", "decisions");
+        decision(payload, "Which parent?", "the direct one", "the ministry");
+        decision(payload, "Where?", "under the name", "own column", "tooltip");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, payload);
+
+        assertTrue(rendered.html().contains("<b>1.</b> Which parent?\n   ✔️ <i>the direct one</i>"), rendered.html());
+        assertTrue(rendered.html().contains("<b>2.</b> Where?\n   ✔️ <i>under the name</i>"), rendered.html());
+        assertEquals(List.of(
+                List.of(Renderer.Button.primary(messages.getString("button.start"), "approve:42:1")),
+                List.of(new Renderer.Button("1 · the ministry", "pd:42:1:1:0")),
+                List.of(new Renderer.Button("2 · own column", "pd:42:1:2:0")),
+                List.of(new Renderer.Button("2 · tooltip", "pd:42:1:2:1")),
+                List.of(new Renderer.Button(messages.getString("button.back"), "pv:42:1:s"))), rendered.keyboard());
+    }
+
+    @Test
+    void aPlanBeingCorrectedShowsTheCorrectionAndNoButtons() {
+        ObjectNode payload = planPayload(List.of("Do it"), List.of()).put("view", "updating").put("correction", "Also <mobile>");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, payload);
+
+        assertTrue(rendered.html().contains("🔄"), rendered.html());
+        assertTrue(rendered.html().contains("<i>Also &lt;mobile&gt;</i>"), rendered.html());
+        assertEquals(List.of(), rendered.keyboard());
     }
 
     @Test
@@ -56,8 +112,17 @@ class RendererTest {
         assertTrue(rendered.html().contains(messages.getString("plan.questions")), rendered.html());
         assertTrue(rendered.html().contains("1. Which environment reads auth.timeout?"), rendered.html());
         assertTrue(rendered.html().contains(messages.getString("plan.questionsHint")), rendered.html());
-        assertEquals(List.of(List.of(new Renderer.Button(messages.getString("button.reject"), "reject:42:1"))), rendered.keyboard(),
-                "no Approve while questions are open; answers come as replies");
+        assertEquals(List.of(List.of(new Renderer.Button(messages.getString("button.edit"), "pe:42:1"),
+                        new Renderer.Button(messages.getString("button.details"), "pv:42:1:d"))), rendered.keyboard(),
+                "no Start while questions are open; answers come as replies");
+    }
+
+    @Test
+    void theEditPromptAsksForAForcedReply() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_EDIT_PROMPT, Json.object().put("taskId", 42).put("planSeq", 1));
+
+        assertTrue(rendered.html().contains("#42"), rendered.html());
+        assertEquals("#42-д юу өөрчлөх вэ?", rendered.forceReply());
     }
 
     @Test
@@ -1010,6 +1075,13 @@ class RendererTest {
         assertTrue(html.contains("Доорх асуултуудад товчоор хариулна уу, эсвэл энэ мессежид хариулж засвар өгнө үү."), html);
     }
 
+    private static void decision(ObjectNode payload, String text, String chosen, String... alternatives) {
+        ArrayNode alternativesJson = payload.with("plan").withArray("decisions").addObject().put("text", text).put("chosen", chosen).putArray("alternatives");
+        for (String alternative : alternatives) {
+            alternativesJson.add(alternative);
+        }
+    }
+
     private static ObjectNode questionPayload(String text, List<String> options) {
         ObjectNode payload = Json.object().put("taskId", 42).put("planSeq", 1).put("index", 1).put("total", 2).put("text", text);
         options.forEach(payload.putArray("options")::add);
@@ -1203,6 +1275,7 @@ class RendererTest {
             case WORKER_BLOCKED -> Json.object().put("taskId", 1).put("code", "claude").put("detail", "gone");
             case PLAN_QUESTION -> questionPayload("Which environments?", List.of("staging", "prod"));
             case PLAN_ANSWER_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1).put("index", 2);
+            case PLAN_EDIT_PROMPT -> Json.object().put("taskId", 1).put("planSeq", 1);
         };
     }
 

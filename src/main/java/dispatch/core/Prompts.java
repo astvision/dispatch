@@ -11,7 +11,8 @@ final class Prompts {
 
     /**
      * The language rule is explicit on purpose: a recorded run given "the same language as the task" answered an English
-     * task in Dutch. Questions are kept for what cannot be assumed, because a plan with open questions cannot be approved.
+     * task in Dutch. Questions are kept for what cannot be assumed, because a plan with open questions cannot be approved;
+     * an assumption is a decision, which the requester can change with a tap without holding the plan up.
      * Plan mode also tells the agent to save its plan to a file, and recorded runs then wrote each plan twice.
      */
     private static final String PLAN_FORMAT = """
@@ -20,11 +21,15 @@ final class Prompts {
             - understanding: what the task asks for, in your own words
             - findings: relevant facts from the code; for a bug, its root cause
             - steps: the concrete changes you would make, in order
-            - risks: what could break or needs attention, including every assumption you made
+            - risks: what could break or needs attention
             - questions: only questions whose wrong answer would make the change wrong or harmful; otherwise make a \
-            reasonable assumption, list it under risks, and leave questions empty. Each question has its text and \
+            reasonable choice, list it under decisions, and leave questions empty. Each question has its text and \
             options: 2 to 4 short likely answers the requester can pick with one tap, each at most 40 characters, in \
             the same language as the question
+            - decisions: every choice you made yourself that the requester might want otherwise, such as what an \
+            ambiguous word means or where something is shown. Each has its text (a short question), chosen (what the \
+            plan assumes) and alternatives (1 to 3 other answers), each answer at most 40 characters, in the same \
+            language as the question. The requester approves with your choices or taps another one
 
             Be brief and exact: short sentences, one fact each, no filler or restating. Say only what you found in the \
             code; mark a guess as a guess.

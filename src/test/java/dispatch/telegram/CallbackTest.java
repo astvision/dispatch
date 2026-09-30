@@ -41,6 +41,11 @@ class CallbackTest {
         GOLDEN.put(new Callback.Stats("all", "people"), "stats:all:people");
         GOLDEN.put(new Callback.Stats("month", "group:backend"), "stats:month:group:backend");
         GOLDEN.put(new Callback.Help("status"), "help:status");
+        GOLDEN.put(new Callback.PlanView(42, 3, Callback.View.SUMMARY), "pv:42:3:s");
+        GOLDEN.put(new Callback.PlanView(42, 3, Callback.View.DETAILS), "pv:42:3:d");
+        GOLDEN.put(new Callback.PlanView(42, 3, Callback.View.DECISIONS), "pv:42:3:c");
+        GOLDEN.put(new Callback.Decide(42, 3, 1, 2), "pd:42:3:1:2");
+        GOLDEN.put(new Callback.EditPlan(42, 3), "pe:42:3");
     }
 
     @Test
@@ -81,7 +86,8 @@ class CallbackTest {
                 "draft:1:split:ASK", "draft:1:split:maybe", "draft:1:other:x", "draft:1::x", "draft:1:p:a:b", "q:1:1:1",
                 "q:1:1:1:x", "q:x:1:1:0", "q:1:1:1:0:0", "as:", "as:x", "ad:1:2", "merge:", "merge:x", "link:1", "link:x:1",
                 "link:1:x", "link:1: -", "join:1", "join:x:backend", "join:1:", "help", "help:", "help:a:b", "stats:week",
-                "stats", "Approve:1:1", " approve:1:1", null}) {
+                "stats", "Approve:1:1", " approve:1:1", "pv:1:1", "pv:1:1:x", "pv:1:1:S", "pd:1:1:1", "pd:1:1:1:x",
+                "pe:1", "pe:1:x", null}) {
             assertEquals(Optional.empty(), Callback.parse(data), String.valueOf(data));
         }
     }

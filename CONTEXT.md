@@ -48,8 +48,12 @@ _Avoid_: Agent (that runs tasks), chatbot, AI
 A change the assistant suggests — a new task, an answer to a plan's question, approve, reject, cancel, retry or a follow-up — shown as a button. It happens only when the member taps it, once, and not at all if the task has moved on.
 _Avoid_: Action, suggestion, command
 
+**Decision**:
+A choice the agent made on its own in a plan, such as what an ambiguous word means, with one to three alternatives. Unlike a plan's question it never holds approval up: approving takes the agent's choice, and tapping an alternative is a correction.
+_Avoid_: Assumption, question (that blocks approval)
+
 **Correction**:
-The requester's reply to a plan asking for changes. It produces a revised plan.
+The requester's reply to a plan asking for changes, their ✏️ reply, or a decision's alternative they tapped. It produces a revised plan.
 _Avoid_: Feedback, comment
 
 **Follow-up**:
