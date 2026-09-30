@@ -33,11 +33,15 @@ tasks of a project share one clone: task B's agent can point `refs/heads/dispatc
 worktree, whose HEAD follows that branch, silently sits on B's commit. Dispatch therefore keeps, in the task row
 (`head_sha`), the commit it last left each task's branch at: the base once the first planning run made the worktree, then
 each delivery's commit, including one a failed push left behind. Every EXECUTE and DELIVER job carries it
-(`expectedHead`), and the run refuses a branch found anywhere else: before an execution's agent starts (the run fails as
-`SETUP`), and right before delivery commits, against where the run started, so a move during the run is caught too (the
-run fails as `DELIVERY`). Nothing is built on or pushed, the requester is told which branch moved where, and
-`task.branch_moved` is logged. A task's own agent moving its branch (a commit, a `git reset`) is refused the same way:
-Dispatch owns the branch. Of the run's
+(`expectedHead`). An execution whose branch is found anywhere else before its agent starts is refused (`SETUP`,
+naming the branch, the expected and the found commit, logged as `task.branch_moved`): nothing is built on a commit
+Dispatch did not make, and the check anchors the commit the run starts from. A move during the run, by another task's
+agent or by the task's own agent committing, cannot reach the run's worktree files or index, which only its own agent
+writes, so delivery folds it back (`git reset --soft` to the run's start, as for an agent's own commits) and the
+delivery commit sits on that start and holds only the run's change; the move is logged as `task.branch_moved`. Delivery
+refuses only a worktree whose HEAD left the branch (detached, or naming another branch), since its commit would land
+where the push never looks (`DELIVERY`, nothing pushed). A DELIVER retry resets to what origin has, or to the base, so it
+recovers a moved branch the same way. Of the run's
 logs only Codex's `<log>.schema.json` is visible, never the log dir, so an assistant turn cannot read other members'
 logged conversations.
 
@@ -62,14 +66,13 @@ container, slower builds on macOS and Windows).
 - A poisoned build cache is possible, since caches are writable; accepted on a developer's own machine.
 - Agents cannot run `git worktree` (add, remove, prune) inside the sandbox: the clone's `worktrees` dir is read-only
   apart from the run's own admin dir.
-- The guard refuses a moved branch; it does not stop the move. A task whose branch was moved stays refused (retries
-  too) until someone points the branch back at the commit named in the failure, or gives the work as a new task. A
-  move in the instant between the check and delivery's commit is not caught; the commit's tree is still the run's own
-  worktree. A task from before the guard, or one a worker from before it delivered, has no known head and is not
-  checked, and an older worker cannot read an EXECUTE or DELIVER job that carries the head: upgrade workers with the
-  team machine.
+- The guard does not stop the move. A branch moved before an execution keeps that task refused until someone points
+  the branch back at the commit named in the failure, or retries it (a DELIVER retry rebuilds from origin or the base)
+  or gives the work as a new task. A task from before the guard, or one a worker from before it delivered, has no known
+  head and is not checked, and an older worker cannot read an EXECUTE or DELIVER job that carries the head: upgrade the
+  team machine and its workers together.
 - A worker reports the sandbox with each result, and a team machine from before this version refuses such a result:
-  upgrade the team machine before its workers.
+  upgrade the team machine and its workers together.
 - macOS gets its own sandbox (Seatbelt) only once someone can run it on a Mac.
 - GitHub's Ubuntu 24 runners block unprivileged user namespaces, so the Linux CI job installs bubblewrap and sets
   `kernel.apparmor_restrict_unprivileged_userns=0` on its throwaway runner; the real-bwrap tests run on every push.
