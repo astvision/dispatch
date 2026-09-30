@@ -94,17 +94,24 @@ class BubblewrapSandboxTest {
         Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", "sleep 300 & sleep 300"), policy)).start();
         // bwrap, sh and both sleeps start asynchronously; an empty tree would make the assertions below vacuous.
         List<ProcessHandle> tree = List.of();
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (tree.size() < 2 && System.nanoTime() < deadline) {
-            Thread.sleep(50);
-            tree = process.toHandle().descendants().toList();
+        try {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (tree.size() < 2 && System.nanoTime() < deadline) {
+                Thread.sleep(50);
+                tree = process.toHandle().descendants().toList();
+            }
+            assertTrue(tree.size() >= 2, "the sandboxed tree never started: " + tree);
+
+            dispatch.ProcessTrees.terminate(process.toHandle(), java.time.Duration.ofSeconds(2));
+
+            assertTrue(process.waitFor(10, TimeUnit.SECONDS));
+            tree.forEach(child -> assertFalse(child.isAlive(), "left running: " + child.pid()));
+        } finally {
+            // A failed assertion must not leave sleep 300 behind: nothing else ends the sandbox with the test.
+            tree.forEach(ProcessHandle::destroyForcibly);
+            process.toHandle().descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
         }
-        assertTrue(tree.size() >= 2, "the sandboxed tree never started: " + tree);
-
-        dispatch.ProcessTrees.terminate(process.toHandle(), java.time.Duration.ofSeconds(2));
-
-        assertTrue(process.waitFor(10, TimeUnit.SECONDS));
-        tree.forEach(child -> assertFalse(child.isAlive(), "left running: " + child.pid()));
     }
 
     @Test
