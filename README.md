@@ -50,6 +50,7 @@ flowchart LR
 ## ⚡ 3 алхамаар эхлэх
 
 **Хэрэгтэй:** Java 25+, git, `gh auth login`, мөн нэвтэрсэн агент: [Claude Code](https://claude.ai/code) (`claude`), [Codex](https://github.com/openai/codex) (`codex login`) эсвэл [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`). ✂️ салгах, туслах нь зөвхөн Claude Code дээр.
+Linux: агентыг sandbox-д ажиллуулахын тулд `bubblewrap` суулгана уу (`sandbox: off` унтраана).
 
 **1️⃣ Суулгах**
 

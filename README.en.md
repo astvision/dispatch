@@ -32,7 +32,7 @@ With the web UI (needs Node):
 
 Dispatch runs on your own machine, with a bot for just you or one your team shares (ADR 0014–0016). It runs as you: the agent can read what you can, and whoever controls the bot's admin accounts or its token can make it act as you.
 
-**You need** Java 25 or later, git, an agent CLI logged in — Claude Code (run `claude` once), Codex (`codex login`) or Gemini CLI (run `gemini` once) — and the GitHub CLI logged in with `gh auth login` for pull requests. ✂️ splitting and the assistant run on Claude Code only, and are not offered without it.
+**You need** Java 25 or later, git, an agent CLI logged in — Claude Code (run `claude` once), Codex (`codex login`) or Gemini CLI (run `gemini` once) — and the GitHub CLI logged in with `gh auth login` for pull requests. ✂️ splitting and the assistant run on Claude Code only, and are not offered without it. Linux: install `bubblewrap` so agents run sandboxed (`sandbox: off` turns it off).
 
 **1. Install** with one command. It downloads the latest release and puts `dispatch` on your PATH, and builds Dispatch
 from source instead when run from a checkout, when `DISPATCH_FROM_SOURCE=1` is set, when `DISPATCH_REF` names a branch
