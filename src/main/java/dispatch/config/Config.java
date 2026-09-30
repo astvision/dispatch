@@ -200,7 +200,21 @@ public record Config(
             List<String> copyFiles,
             Limits limits,
             PhaseSettings plan,
-            PhaseSettings execute) {
+            PhaseSettings execute,
+            /** Run by Dispatch in the worktree after each execution (verify loop); null for no test step. */
+            String test,
+            /** "on" or "off" once loaded: the project's own setting, else the instance's (spec: verify loop). */
+            String loop) {
+
+        /** A project as it was before the verify loop: no test command, loop unresolved. */
+        public Project(String name, String alias, String repo, String path, String baseBranch, String agent, String model,
+                       String effort, List<String> copyFiles, Limits limits, PhaseSettings plan, PhaseSettings execute) {
+            this(name, alias, repo, path, baseBranch, agent, model, effort, copyFiles, limits, plan, execute, null, null);
+        }
+
+        public boolean loopOn() {
+            return "on".equals(loop);
+        }
 
         public String planModel() {
             return plan == null || plan.model() == null ? model : plan.model();
