@@ -54,4 +54,16 @@ class ReviewTest {
         assertEquals(20, review.findings().size());
         assertEquals(500, review.findings().get(0).text().length());
     }
+
+    @Test
+    void aBlockingFindingAfterTwentyMinorOnesSurvivesTheCut() {
+        String minor = "{\"severity\":\"minor\",\"file\":\"a\",\"line\":1,\"text\":\"nit\"}";
+        String blocking = "{\"severity\":\"blocking\",\"file\":\"b\",\"line\":2,\"text\":\"bug\"}";
+        Review review = Review.parse("{\"verdict\":\"changes\",\"findings\":["
+                + String.join(",", java.util.Collections.nCopies(21, minor)) + "," + blocking + "]}");
+
+        assertEquals(20, review.findings().size());
+        assertEquals(1, review.blocking().size());
+        assertEquals("bug", review.blocking().get(0).text());
+    }
 }

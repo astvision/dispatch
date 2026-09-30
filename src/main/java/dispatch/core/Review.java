@@ -3,6 +3,7 @@ package dispatch.core;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 
@@ -48,9 +49,6 @@ public record Review(String verdict, List<Finding> findings) {
         }
         List<Finding> findings = new ArrayList<>();
         for (JsonNode item : node.path("findings")) {
-            if (findings.size() == MAX_FINDINGS) {
-                break;
-            }
             String severity = item.path("severity").asText("");
             if (!SEVERITIES.contains(severity)) {
                 throw new IllegalArgumentException("unknown severity: " + severity);
@@ -59,7 +57,12 @@ public record Review(String verdict, List<Finding> findings) {
             findings.add(new Finding(severity, item.path("file").asText(""), item.path("line").asInt(0),
                     text.length() > MAX_TEXT ? text.substring(0, MAX_TEXT) : text));
         }
-        return new Review(verdict, findings);
+        // Blocking first (stable sort), so the cut never drops a blocking finding for a minor one.
+        List<Finding> ordered = findings.stream()
+                .sorted(Comparator.comparing((Finding finding) -> !finding.severity().equals("blocking")))
+                .limit(MAX_FINDINGS)
+                .toList();
+        return new Review(verdict, ordered);
     }
 
     private static String unfenced(String answer) {
