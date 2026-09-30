@@ -217,6 +217,22 @@ class DraftsTest {
                 "the project named with the task still comes first");
     }
 
+    /** A group's draft must not be sent, with one tap, to a project of another group the member happened to use last. */
+    @Test
+    void aDraftGivenInAGroupTakesTheLatestProjectOnlyFromThatGroupsOwn() {
+        TaskService.GroupOrigin backend = new TaskService.GroupOrigin(BACKEND, "Bold", null);
+        give(BOLD, "life", "Add make help", "telegram:100/60");
+
+        db.transaction(tx -> tasks.draft(tx, BOLD, null, "Fix login timeout", BACKEND + "/61", List.of(), backend));
+        long other = Long.parseLong(row("SELECT id FROM draft WHERE origin_ref = ?", BACKEND + "/61").get("id"));
+        assertNull(row("SELECT project FROM draft WHERE id = ?", other).get("project"), "life is mobile's, not backend's");
+        assertEquals("DETAIL", payload(other).get("view").asText());
+
+        give(BOLD, "crm", "Rename the report", "telegram:100/62");
+        db.transaction(tx -> tasks.draft(tx, BOLD, null, "Drop old logs", BACKEND + "/63", List.of(), backend));
+        assertEquals("crm", row("SELECT project FROM draft WHERE origin_ref = ?", BACKEND + "/63").get("project"));
+    }
+
     @Test
     void contextIsAddedToAnOpenDraftByItsWriterOnly() {
         long draftId = draft(SARA, "Add make help", "telegram:300/50");
