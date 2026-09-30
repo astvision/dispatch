@@ -12,6 +12,7 @@ import dispatch.core.JobRunner;
 import dispatch.core.TestCommand;
 import dispatch.core.TestRunner;
 import dispatch.domain.FailureReason;
+import dispatch.domain.RunStep;
 import dispatch.workspace.Delivery;
 import dispatch.workspace.Workspaces;
 import java.time.Clock;
@@ -20,6 +21,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -192,8 +194,10 @@ public final class WorkerLoop implements Runnable {
                         "project " + job.project().name() + " is not set up on your computer: run dispatch worker init", null));
                 return;
             }
-            ticker = Thread.ofVirtual().name("worker-progress-" + job.taskId()).start(() -> tick(job, control));
-            report(job, runnerFor(job).run(local.get(), events(job), control));
+            // The run's steps as the monitor shows them (RM-2): sent whole, so a lost post is made good by the next.
+            List<RunStep> steps = new CopyOnWriteArrayList<>();
+            ticker = Thread.ofVirtual().name("worker-progress-" + job.taskId()).start(() -> tick(job, control, steps));
+            report(job, runnerFor(job).run(local.get(), events(job, steps), control));
         } catch (RuntimeException e) {
             Log.error("worker.run_failed", e, "task", job.taskId(), "run", job.seq());
             report(job, JobResult.failed(FailureReason.INTERNAL, "the worker broke: " + e.getMessage(), null));
@@ -239,7 +243,7 @@ public final class WorkerLoop implements Runnable {
      * {@link ActiveRuns#stopAll}, while {@link #carry}'s {@code finally} still calls {@link LocalAgents#forget} — orphaning
      * the agent from both this run's cancel path and the next start's {@link LocalAgents#killOrphans}.
      */
-    private JobEvents events(Job job) {
+    private JobEvents events(Job job, List<RunStep> steps) {
         return new JobEvents() {
 
             @Override
@@ -262,17 +266,45 @@ public final class WorkerLoop implements Runnable {
                     Log.warn("worker.progress_failed", "task", job.taskId(), "error", e.getMessage());
                 }
             }
+
+            @Override
+            public void stepStarted(int n, RunStep.Kind kind, int round) {
+                steps.add(new RunStep(n, kind, round, Instant.now(), null, null, null));
+                sendSteps(job, steps);
+            }
+
+            @Override
+            public void stepEnded(int n, RunStep.Outcome outcome, String detail) {
+                RunStep started = steps.get(n - 1);
+                steps.set(n - 1, new RunStep(n, started.kind(), started.round(), started.startedAt(), Instant.now(), outcome, detail));
+                sendSteps(job, steps);
+            }
         };
     }
 
+    /** Best-effort, like the ticker, which sends the same list again within {@link #progressInterval}. */
+    private void sendSteps(Job job, List<RunStep> steps) {
+        try {
+            client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, false, null, null, reported(steps)));
+        } catch (RuntimeException e) {
+            Log.warn("worker.progress_failed", "task", job.taskId(), "error", e.getMessage());
+        }
+    }
+
+    /** Null before the first step, so the post says nothing about steps rather than that there are none. */
+    private static List<RemoteWorkers.Step> reported(List<RunStep> steps) {
+        return steps.isEmpty() ? null : steps.stream().map(RemoteWorkers.Step::of).toList();
+    }
+
     /** Every {@link #progressInterval}: what the agent is doing, and whatever the team machine answers about a cancel. */
-    private void tick(Job job, ActiveRuns.ActiveRun control) {
+    private void tick(Job job, ActiveRuns.ActiveRun control, List<RunStep> steps) {
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 Thread.sleep(progressInterval);
                 var activity = activeRuns.activity(job.taskId());
                 boolean cancel = client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, false,
-                        activity.map(a -> a.steps()).orElse(null), activity.map(a -> a.lastAction()).orElse(null)));
+                        activity.map(a -> a.steps()).orElse(null), activity.map(a -> a.lastAction()).orElse(null),
+                        reported(steps)));
                 if (cancel) {
                     control.stop(ActiveRuns.StopReason.CANCELLED);
                     return;

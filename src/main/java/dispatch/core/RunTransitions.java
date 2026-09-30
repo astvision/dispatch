@@ -75,6 +75,11 @@ public final class RunTransitions {
         db.transaction(tx -> RunSteps.ended(tx, taskId, seq, n, outcome, detail, clock.instant()));
     }
 
+    /** RM-2: a team worker's steps, whole, with the worker's own times. */
+    public void stepsReported(long taskId, int seq, List<RunStep> steps) {
+        db.transaction(tx -> RunSteps.replace(tx, taskId, seq, steps));
+    }
+
     public void planSucceeded(long taskId, int seq, Plan plan, AgentResult result) {
         db.transaction(tx -> {
             Instant now = clock.instant();

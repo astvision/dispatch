@@ -7,6 +7,7 @@ import dispatch.core.Job;
 import dispatch.core.JobEvents;
 import dispatch.core.JobResult;
 import dispatch.core.Worker;
+import dispatch.domain.RunStep;
 import dispatch.domain.FailureReason;
 import dispatch.store.Database;
 import dispatch.store.Tasks;
@@ -316,6 +317,10 @@ public final class RemoteWorkers implements Worker {
             // No pid: that process runs on the member's computer and this machine kills only its own orphans.
             fireEffect(offer, () -> offer.events.agentStarted(null, null));
         }
+        if (progress.loopSteps() != null) {
+            List<RunStep> steps = progress.loopSteps().stream().map(Step::toRunStep).toList();
+            fireEffect(offer, () -> offer.events.stepsReported(steps));
+        }
         return cancelled;
     }
 
@@ -350,7 +355,41 @@ public final class RemoteWorkers implements Worker {
      *                 but the run itself may be absent
      */
     public record Progress(long taskId, int seq, String worktree, String baseSha, boolean agentStarted, Integer steps,
-                           String lastAction) {
+                           String lastAction,
+                           @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+                           List<Step> loopSteps) {
+
+        public Progress(long taskId, int seq, String worktree, String baseSha, boolean agentStarted, Integer steps,
+                        String lastAction) {
+            this(taskId, seq, worktree, baseSha, agentStarted, steps, lastAction, null);
+        }
+    }
+
+    /**
+     * A run's step as a worker reports it (RM-2): the whole list travels on each progress, times as ISO-8601 text on the
+     * worker's clock. An older team machine ignores the field.
+     */
+    public record Step(int n, String kind, int round, String startedAt, String endedAt, String outcome, String detail) {
+
+        public static Step of(RunStep step) {
+            return new Step(step.n(), step.kind().name(), step.round(), step.startedAt().toString(),
+                    step.endedAt() == null ? null : step.endedAt().toString(),
+                    step.outcome() == null ? null : step.outcome().name(), step.detail());
+        }
+
+        /** Throws IllegalArgumentException for a step no Dispatch would send. */
+        public RunStep toRunStep() {
+            if (n < 1 || round < 1) {
+                throw new IllegalArgumentException("step " + n + " round " + round + ": both count from 1");
+            }
+            try {
+                return new RunStep(n, RunStep.Kind.valueOf(kind), round, java.time.Instant.parse(startedAt),
+                        endedAt == null ? null : java.time.Instant.parse(endedAt),
+                        outcome == null ? null : RunStep.Outcome.valueOf(outcome), detail);
+            } catch (java.time.DateTimeException | NullPointerException e) {
+                throw new IllegalArgumentException("step " + n + ": " + e.getMessage(), e);
+            }
+        }
     }
 
     public void result(Workers.Paired worker, long taskId, int seq, JobResult result) {

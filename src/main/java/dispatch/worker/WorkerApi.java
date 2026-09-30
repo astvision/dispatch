@@ -31,9 +31,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -293,7 +295,7 @@ public final class WorkerApi implements AutoCloseable {
                 boolean cancel = workers.progress(worker, new RemoteWorkers.Progress(
                         requiredLong(body, "taskId"), requiredInt(body, "seq"),
                         text(body, "worktree"), text(body, "baseSha"), body.path("agentStarted").asBoolean(false),
-                        optionalInt(body, "steps"), text(body, "lastAction")));
+                        optionalInt(body, "steps"), text(body, "lastAction"), loopSteps(body)));
                 json(exchange, 200, Json.write(Json.object().put("cancel", cancel)));
             }
             case RESULT -> {
@@ -340,6 +342,37 @@ public final class WorkerApi implements AutoCloseable {
         }
         exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
         send(exchange, 200, bytes);
+    }
+
+    /** A run has a handful of steps; more is not a run Dispatch made. */
+    static final int MAX_STEPS = 64;
+    /** A step's detail holds at most a test tail or 20 findings; the cap keeps a post bounded. */
+    static final int MAX_STEP_DETAIL = 32_768;
+
+    /** Null when the worker sent none: an older worker reports no steps (RM-2). */
+    private static List<RemoteWorkers.Step> loopSteps(JsonNode body) {
+        JsonNode list = body.get("loopSteps");
+        if (list == null || list.isNull()) {
+            return null;
+        }
+        if (!list.isArray() || list.size() > MAX_STEPS) {
+            throw new ApiException(400, "invalid", Text.raw("loopSteps: a list of at most " + MAX_STEPS + " steps"));
+        }
+        List<RemoteWorkers.Step> steps = new ArrayList<>();
+        for (JsonNode item : list) {
+            RemoteWorkers.Step step;
+            try {
+                step = Json.MAPPER.treeToValue(item, RemoteWorkers.Step.class);
+                step.toRunStep();
+            } catch (JsonProcessingException | IllegalArgumentException e) {
+                throw new ApiException(400, "invalid", Text.raw("loopSteps: not a step: " + e.getMessage()));
+            }
+            if (step.detail() != null && step.detail().length() > MAX_STEP_DETAIL) {
+                throw new ApiException(400, "invalid", Text.raw("loopSteps: a detail longer than " + MAX_STEP_DETAIL));
+            }
+            steps.add(step);
+        }
+        return steps;
     }
 
     /** Empty when the worker sent none: an older worker keeps working and counts as ready. */

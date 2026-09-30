@@ -101,6 +101,11 @@ public final class Coordinator {
             public void stepEnded(int n, RunStep.Outcome outcome, String detail) {
                 transitions.stepEnded(claimed.taskId(), claimed.seq(), n, outcome, detail);
             }
+
+            @Override
+            public void stepsReported(List<RunStep> steps) {
+                transitions.stepsReported(claimed.taskId(), claimed.seq(), steps);
+            }
         };
     }
 
