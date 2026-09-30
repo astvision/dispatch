@@ -119,13 +119,22 @@ public final class JobRunner implements Worker {
             files = attachments(job);
             // Local-only files (e.g. .env) the build and tests need; never part of planning runs.
             workspaces.copyFiles(config(job.project()), worktree);
-            startSha = delivery.head(worktree);
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
         String moved = branchMoved(job, worktree, job.expectedHead());
         if (moved != null) {
             return JobResult.failed(FailureReason.SETUP, moved, null);
+        }
+        if (job.expectedHead() != null) {
+            // The store's commit, not a read of HEAD: a branch moved and restored around that read cannot become the fold base.
+            startSha = job.expectedHead();
+        } else {
+            try {
+                startSha = delivery.head(worktree);
+            } catch (WorkspaceException e) {
+                return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
+            }
         }
         if (control.stopReason() != null) {
             return stopped(job, control.stopReason(), null);

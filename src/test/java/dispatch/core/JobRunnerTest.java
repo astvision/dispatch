@@ -501,7 +501,8 @@ class JobRunnerTest {
                 }).outcome()));
 
         String branch = "refs/heads/dispatch/" + TASK;
-        assertEquals(events.baseSha, origin("rev-parse", branch + "^"), "the delivery commit sits on the run's start");
+        assertEquals(events.baseSha, origin("rev-parse", branch + "^"),
+                "the delivery commit sits on the job's expected head, the run's start");
         assertEquals("README.md", origin("diff-tree", "--no-commit-id", "--name-only", "-r", branch),
                 "none of the foreign commit's files");
         assertTrue(logged.contains("event=task.branch_moved"), logged);
