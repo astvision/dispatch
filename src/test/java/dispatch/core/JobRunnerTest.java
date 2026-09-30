@@ -292,6 +292,17 @@ class JobRunnerTest {
     }
 
     @Test
+    void anExecutionReportsItsImplementationTestReviewAndDeliveryAsSteps() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+
+        executeWithLoop(true, (command, workdir, log, timeout, stop, started) -> new TestRunner.TestRun(0, false, false, "ok"));
+
+        assertEquals(List.of("1 PLAN 1 → DONE"), events.steps, "a planning run is one step");
+        assertEquals(List.of("1 IMPLEMENT 1 → DONE", "2 TEST 1 → PASSED", "3 REVIEW 1 → OK", "4 DELIVER 1 → DONE"), loopEvents.steps);
+    }
+
+    @Test
     void loopOffIsTodaysPath() throws Exception {
         answers.put(RunKind.EXECUTE, answer(null, "1.00"));
 
@@ -844,6 +855,19 @@ class JobRunnerTest {
         public void agentStarted(Long pid, Instant processStart) {
             this.pid = pid == null ? 0 : pid;
             this.processStart = processStart;
+        }
+
+        /** "n KIND round → OUTCOME", as each step started and ended. */
+        private final List<String> steps = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void stepStarted(int n, dispatch.domain.RunStep.Kind kind, int round) {
+            steps.add(n + " " + kind + " " + round);
+        }
+
+        @Override
+        public void stepEnded(int n, dispatch.domain.RunStep.Outcome outcome, String detail) {
+            steps.set(n - 1, steps.get(n - 1) + " → " + outcome);
         }
     }
 }

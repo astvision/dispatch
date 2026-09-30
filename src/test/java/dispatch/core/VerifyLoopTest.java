@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.domain.RunStep;
 import dispatch.testing.TestClock;
 import java.math.BigDecimal;
 import java.nio.file.Path;
@@ -35,6 +36,8 @@ class VerifyLoopTest {
     private boolean stopAfterFix;
     private boolean stopped;
     private final List<BigDecimal> fixBudgets = new ArrayList<>();
+    /** Each step as the loop reported it: "TEST 1 → FAILED {detail}". */
+    private final List<String> steps = new ArrayList<>();
 
     private final TestRunner tests = (command, dir, log, timeout, stop, started) -> {
         calls.add("test");
@@ -67,6 +70,17 @@ class VerifyLoopTest {
         public void testStarted(ProcessHandle process) {
             // the loop's tests start no process
         }
+
+        @Override
+        public int stepStarted(RunStep.Kind kind, int round) {
+            steps.add(kind + " " + round);
+            return steps.size();
+        }
+
+        @Override
+        public void stepEnded(int step, RunStep.Outcome outcome, String detail) {
+            steps.set(step - 1, steps.get(step - 1) + " → " + outcome + (detail == null ? "" : " " + detail));
+        }
     };
 
     private VerifyLoop.Outcome run(String testCommand, Duration timeLeft, BigDecimal budget, BigDecimal spent) {
@@ -77,6 +91,45 @@ class VerifyLoopTest {
 
     private VerifyLoop.Outcome run() {
         return run("./mvnw -q test", Duration.ofMinutes(60), new BigDecimal("10"), new BigDecimal("1"));
+    }
+
+    @Test
+    void everyTestFixAndReviewIsAStepWithHowItEnded() {
+        testResults.addAll(List.of(false, true, true));
+        reviewAnswer = BLOCKING_AND_MINOR;
+
+        run();
+
+        assertEquals(List.of(
+                "TEST 1 → FAILED {\"tail\":\"FooTest failed\"}",
+                "FIX 1 → DONE",
+                "TEST 2 → PASSED",
+                "REVIEW 1 → FINDINGS {\"findings\":[{\"severity\":\"blocking\",\"file\":\"A.java\",\"line\":1,\"text\":\"NPE\"},"
+                        + "{\"severity\":\"minor\",\"file\":\"B.java\",\"line\":2,\"text\":\"name\"}]}",
+                "FIX 2 → DONE",
+                "TEST 3 → PASSED"), steps);
+    }
+
+    @Test
+    void aCleanReviewIsOkAndAFailedOneSaysWhy() {
+        run();
+        assertEquals(List.of("TEST 1 → PASSED", "REVIEW 1 → OK"), steps);
+
+        steps.clear();
+        calls.clear();
+        reviewOutcome = AgentOutcome.FAILED;
+        run();
+        assertEquals("REVIEW 1 → FAILED {\"error\":\"agent broke\"}", steps.get(1));
+    }
+
+    @Test
+    void aFailedFixEndsItsStepWithTheError() {
+        testResults.add(false);
+        fixOutcome = AgentOutcome.FAILED;
+
+        run();
+
+        assertEquals("FIX 1 → FAILED {\"error\":\"agent broke\"}", steps.get(1));
     }
 
     @Test
