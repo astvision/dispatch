@@ -2,6 +2,7 @@ package dispatch.config;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import dispatch.agent.sandbox.SandboxSetting;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -25,7 +26,16 @@ public record Config(
         MiniApp miniApp,
         /** Task branches are {@code <branchPrefix>/<task>}; null uses "dispatch" (M: several instances on one computer). */
         String branchPrefix,
-        Secrets secrets) {
+        Secrets secrets,
+        SandboxSetting sandbox) {
+
+    /** An instance whose sandbox is left to detection, as every config was before the setting existed. */
+    public Config(String team, Path stateDir, Telegram telegram, Scheduler scheduler, Worktrees worktrees, Limits limits,
+                  Map<String, Agent> agents, List<Project> projects, Delivery delivery, Workers workers, MiniApp miniApp,
+                  String branchPrefix, Secrets secrets) {
+        this(team, stateDir, telegram, scheduler, worktrees, limits, agents, projects, delivery, workers, miniApp,
+                branchPrefix, secrets, SandboxSetting.AUTO);
+    }
 
     public boolean isTeam() {
         return isTeam(telegram);

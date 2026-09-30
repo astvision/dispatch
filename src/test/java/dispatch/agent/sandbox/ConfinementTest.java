@@ -1,5 +1,6 @@
 package dispatch.agent.sandbox;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dispatch.agent.RunRequest;
@@ -38,5 +39,11 @@ class ConfinementTest {
     private static RunRequest request(Path workdir) {
         return new RunRequest(RunKind.PLAN, workdir, "prompt", UUID.randomUUID(), false, List.of(), null, null, null,
                 workdir.resolve("run"));
+    }
+
+    @Test
+    void anIsolatingSandboxWithoutPoliciesIsRefusedAtConstruction() {
+        assertThrows(NullPointerException.class, () -> new Confinement(new Bubblewrap("bwrap"), null));
+        Confinement.none("x");
     }
 }

@@ -1,5 +1,6 @@
 package dispatch.worker;
 
+import dispatch.agent.sandbox.SandboxSetting;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -108,5 +109,27 @@ class WorkerConfigLoaderTest {
         Path file = dir.resolve("worker.yaml");
         Files.writeString(file, yaml);
         return file;
+    }
+
+    private static final String MINIMAL_WORKER = """
+            team: https://team.example.com
+            name: ann-laptop
+            claudeCommand: /usr/local/bin/claude
+            projects: {}
+            """;
+
+    @Test
+    void workerSandboxIsAutoUnlessTurnedOff() throws Exception {
+        assertEquals(SandboxSetting.AUTO, WorkerConfigLoader.load(write(MINIMAL_WORKER)).sandbox());
+        assertEquals(SandboxSetting.OFF, WorkerConfigLoader.load(write(MINIMAL_WORKER + "sandbox: off\n")).sandbox());
+    }
+
+    @Test
+    void anUnknownWorkerSandboxSettingIsRefused() throws Exception {
+        Path file = write(MINIMAL_WORKER + "sandbox: on\n");
+
+        ConfigException error = assertThrows(ConfigException.class, () -> WorkerConfigLoader.load(file));
+
+        assertTrue(error.getMessage().contains("sandbox: auto or off, not on"), error.getMessage());
     }
 }

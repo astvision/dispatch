@@ -5,6 +5,10 @@ import dispatch.OwnerOnly;
 import dispatch.Redactor;
 import dispatch.agent.Agent;
 import dispatch.agent.Agents;
+import dispatch.agent.sandbox.Confinements;
+import dispatch.agent.sandbox.Probe;
+import dispatch.agent.sandbox.Sandbox;
+import dispatch.agent.sandbox.Sandboxes;
 import dispatch.cli.Cli;
 import dispatch.cli.CliException;
 import dispatch.cli.SecretsFile;
@@ -29,6 +33,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** dispatch worker pair and dispatch worker run. */
@@ -151,7 +156,15 @@ public final class WorkerCommand {
             }
             Delivery delivery = new Delivery(git, new Gh(config.ghCommand(), environment.get("GH_TOKEN"), Duration.ofMinutes(2)),
                     setup.authorName(), setup.authorEmail());
-            Map<String, Agent> agents = Agents.create(config.agentCommands(), environment, config.stateDir());
+            Sandbox sandbox = Sandboxes.detect(config.sandbox(), Probe.system(environment));
+            if (sandbox.unavailableReason() == null) {
+                Log.info("sandbox.selected", "name", sandbox.name());
+            } else {
+                Log.warn("sandbox.unavailable", "reason", sandbox.unavailableReason());
+            }
+            List<Path> clones = config.projects().values().stream().map(WorkerConfig.Project::path).map(Path::of).toList();
+            Map<String, Agent> agents = Agents.create(config.agentCommands(), environment, config.stateDir(),
+                    Confinements.of(sandbox, config.stateDir(), options.workerFile(), clones));
             ActiveRuns activeRuns = new ActiveRuns();
             WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery,
                     Redactor.fromEnvironment(environment), activeRuns);
