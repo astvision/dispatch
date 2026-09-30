@@ -289,9 +289,9 @@ public final class RemoteWorkers implements Worker {
     /** What the worker is doing; renews the lease and answers whether the member cancelled the task. */
     /**
      * What the team machine answers a progress with: a cancel, and the requester's ⏭ (the step's number, 0 for none) and
-     * 📦 (RM-4). A worker older than the controls reads only {@code cancel}.
+     * 📦 (RM-4), their ⏸ switch and 🔍 (RM-5). A worker older than the controls reads only {@code cancel}.
      */
-    public record Reply(boolean cancel, int skipStep, boolean deliverNow) {
+    public record Reply(boolean cancel, int skipStep, boolean deliverNow, boolean pauseBeforeReview, boolean resume) {
     }
 
     public Reply progress(Workers.Paired worker, Progress progress) {
@@ -314,7 +314,7 @@ public final class RemoteWorkers implements Worker {
                 offer.control.reportActivity(new AgentActivity(progress.steps(), progress.lastAction()));
             }
             reply = new Reply(offer.control.stopReason() == ActiveRuns.StopReason.CANCELLED, offer.control.skippedStep(),
-                    offer.control.deliverNowRequested());
+                    offer.control.deliverNowRequested(), offer.control.pauseBeforeReviewRequested(), offer.control.resumeRequested());
         }
         // Reserved under the lock above so two overlapping posts can each fire at most once; written outside it so a
         // slow DB write never blocks every other worker's next/progress/result.

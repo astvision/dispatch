@@ -68,16 +68,17 @@ describe("the run monitor", () => {
   });
 
   it("skips the running step and delivers now with one tap each", async () => {
-    const steerable: RunView = { ...running, controls: { skip: 3, deliverNow: true, deliverNowRequested: false } };
+    const idle = { pauseBeforeReview: false, canPause: false, paused: false, pauseEndsAt: null };
+    const steerable: RunView = { ...running, controls: { skip: 3, deliverNow: true, deliverNowRequested: false, ...idle } };
     vi.mocked(api.getTaskRun).mockResolvedValue(steerable);
-    vi.mocked(api.steerRun).mockResolvedValue({ ...steerable, controls: { skip: null, deliverNow: true, deliverNowRequested: false } });
+    vi.mocked(api.steerRun).mockResolvedValue({ ...steerable, controls: { skip: null, deliverNow: true, deliverNowRequested: false, ...idle } });
 
     render(<RunMonitor taskId={15} live />);
     fireEvent.click(await screen.findByRole("button", { name: "⏭ Засвар 1/3-г алгасах" }));
 
     await waitFor(() => expect(api.steerRun).toHaveBeenCalledWith(15, { action: "skip", step: 3 }));
     await waitFor(() => expect(screen.queryByRole("button", { name: /алгасах/ })).not.toBeInTheDocument());
-    vi.mocked(api.steerRun).mockResolvedValue({ ...steerable, controls: { skip: null, deliverNow: false, deliverNowRequested: true } });
+    vi.mocked(api.steerRun).mockResolvedValue({ ...steerable, controls: { skip: null, deliverNow: false, deliverNowRequested: true, ...idle } });
     fireEvent.click(screen.getByRole("button", { name: "📦 Одоо хүргэх" }));
 
     await waitFor(() => expect(api.steerRun).toHaveBeenCalledWith(15, { action: "deliverNow" }));
@@ -91,5 +92,28 @@ describe("the run monitor", () => {
 
     expect(await screen.findByText("Хэрэгжүүлэлт")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("switches the pause on and, once paused, reviews or delivers with the time it goes on by itself", async () => {
+    const controls = { skip: null, deliverNow: false, deliverNowRequested: false, pauseBeforeReview: false, canPause: true, paused: false,
+      pauseEndsAt: null };
+    vi.mocked(api.getTaskRun).mockResolvedValue({ ...running, controls });
+    vi.mocked(api.steerRun).mockResolvedValue({ ...running, controls: { ...controls, pauseBeforeReview: true } });
+
+    render(<RunMonitor taskId={15} live />);
+    fireEvent.click(await screen.findByRole("switch"));
+    await waitFor(() => expect(api.steerRun).toHaveBeenCalledWith(15, { action: "pause" }));
+
+    vi.mocked(api.steerRun).mockResolvedValue({
+      ...running,
+      steps: [...running.steps.slice(0, 2), { n: 3, kind: "PAUSE", round: 1, startedAt: "2026-09-30T10:05:00Z", endedAt: null, outcome: null }],
+      controls: { ...controls, canPause: false, paused: true, deliverNow: true, pauseEndsAt: "2026-09-30T10:20:00Z" },
+    });
+    fireEvent.click(screen.getByRole("switch"));
+    expect(await screen.findByText("Тест дууссан. Review хийх үү?")).toBeInTheDocument();
+    expect(screen.getByText("12:30"), "15 min from the pause, on the server's clock").toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "🔍 Review хийх" }));
+
+    await waitFor(() => expect(api.steerRun).toHaveBeenCalledWith(15, { action: "review" }));
   });
 });

@@ -242,18 +242,21 @@ class RemoteWorkersTest {
     }
 
     @Test
-    void aSkipAndADeliverNowReachTheWorkerThroughItsNextProgress() throws Exception {
+    void theRequestersControlsReachTheWorkerThroughItsNextProgress() throws Exception {
         long id = queue(BOLD, "Fix the login timeout");
         Workers.Paired ann = pair(BOLD, "ann-laptop");
         Thread run = coordinate();
         remote.next(ann).orElseThrow();
         RemoteWorkers.Progress tick = new RemoteWorkers.Progress(id, 1, null, null, false, 3, "Bash: ls");
-        assertEquals(new RemoteWorkers.Reply(false, 0, false), remote.progress(ann, tick));
+        assertEquals(new RemoteWorkers.Reply(false, 0, false, false, false), remote.progress(ann, tick));
 
+        activeRuns.run(id).orElseThrow().pauseBeforeReview(true);
+        assertEquals(new RemoteWorkers.Reply(false, 0, false, true, false), remote.progress(ann, tick));
+        activeRuns.run(id).orElseThrow().resume();
         assertTrue(activeRuns.skip(id, 3));
-        assertEquals(new RemoteWorkers.Reply(false, 3, false), remote.progress(ann, tick));
+        assertEquals(new RemoteWorkers.Reply(false, 3, false, true, true), remote.progress(ann, tick));
         assertTrue(activeRuns.deliverNow(id));
-        assertEquals(new RemoteWorkers.Reply(false, 3, true), remote.progress(ann, tick));
+        assertEquals(new RemoteWorkers.Reply(false, 3, true, true, true), remote.progress(ann, tick));
 
         remote.result(ann, id, 1, JobResult.succeeded(agentResult()));
         assertTrue(run.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");

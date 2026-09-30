@@ -36,6 +36,40 @@ class ActiveRunsTest {
     }
 
     @Test
+    void aPauseWaitsForResumeDeliverNowOrAStopAndOtherwiseForItsLimit() throws Exception {
+        for (java.util.function.Consumer<ActiveRuns.ActiveRun> tap : java.util.List.<java.util.function.Consumer<ActiveRuns.ActiveRun>>of(
+                ActiveRuns.ActiveRun::resume, ActiveRuns.ActiveRun::deliverNow, run -> run.stop(ActiveRuns.StopReason.CANCELLED))) {
+            ActiveRuns.ActiveRun run = new ActiveRuns().register(1, 1);
+            Thread.ofVirtual().start(() -> {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                tap.accept(run);
+            });
+
+            long started = System.nanoTime();
+            run.awaitResume(java.time.Duration.ofSeconds(30));
+
+            assertTrue(System.nanoTime() - started < java.time.Duration.ofSeconds(10).toNanos(), "the tap ended the wait");
+        }
+        long started = System.nanoTime();
+        new ActiveRuns().register(1, 1).awaitResume(java.time.Duration.ofMillis(100));
+        assertTrue(System.nanoTime() - started >= java.time.Duration.ofMillis(100).toNanos(), "no tap: the whole limit");
+    }
+
+    @Test
+    void thePauseSwitchIsTheRequestersUntilChanged() {
+        ActiveRuns.ActiveRun run = activeRuns.register(1, 1);
+
+        run.pauseBeforeReview(true);
+        assertTrue(run.pauseBeforeReviewRequested());
+        run.pauseBeforeReview(false);
+        assertEquals(false, run.pauseBeforeReviewRequested());
+    }
+
+    @Test
     void firstStopReasonWins() {
         ActiveRuns.ActiveRun run = activeRuns.register(1, 1);
         CountingHandle handle = new CountingHandle();

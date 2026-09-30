@@ -140,11 +140,12 @@ public class WorkerClient {
     }
 
     /** @return true when the member cancelled the task and the agent must stop */
-    /** A team machine older than the controls (RM-4) answers with {@code cancel} alone: no skip, no deliver now. */
+    /** A team machine older than the controls (RM-4, RM-5) answers with {@code cancel} alone: none of them. */
     public RemoteWorkers.Reply progress(RemoteWorkers.Progress progress) {
         JsonNode answer = call(WorkerApi.PROGRESS, Json.write(progress), CALL_TIMEOUT);
         return new RemoteWorkers.Reply(answer.get("cancel").asBoolean(), answer.path("skipStep").asInt(0),
-                answer.path("deliverNow").asBoolean(false));
+                answer.path("deliverNow").asBoolean(false), answer.path("pauseBeforeReview").asBoolean(false),
+                answer.path("resume").asBoolean(false));
     }
 
     public void result(long taskId, int seq, JobResult result) {

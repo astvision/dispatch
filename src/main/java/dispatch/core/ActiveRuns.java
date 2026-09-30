@@ -112,6 +112,9 @@ public final class ActiveRuns {
         /** The highest step the requester skipped (RM-4): a tap only ever names the step it saw running. */
         private int skippedStep;
         private boolean deliverNow;
+        /** ⏸: wait before the review for the requester (RM-5); resume is their 🔍, or the wait's own limit. */
+        private boolean pauseBeforeReview;
+        private boolean resume;
 
         private ActiveRun(long taskId, int seq) {
             this.taskId = taskId;
@@ -147,6 +150,7 @@ public final class ActiveRuns {
                 return false;
             }
             stopReason = reason;
+            notifyAll();
             if (handle != null) {
                 handle.cancel();
             }
@@ -191,6 +195,37 @@ public final class ActiveRuns {
         public synchronized void deliverNow() {
             deliverNow = true;
             cancelIfSkippable(currentStep);
+            notifyAll();
+        }
+
+        public synchronized void pauseBeforeReview(boolean on) {
+            pauseBeforeReview = on;
+        }
+
+        public synchronized boolean pauseBeforeReviewRequested() {
+            return pauseBeforeReview;
+        }
+
+        /** 🔍 on a paused run: the review starts now. */
+        public synchronized void resume() {
+            resume = true;
+            notifyAll();
+        }
+
+        public synchronized boolean resumeRequested() {
+            return resume;
+        }
+
+        /** Waits until 🔍, 📦 or a stop, or at most {@code max}: the loop then reviews unless it was told otherwise. */
+        public synchronized void awaitResume(Duration max) throws InterruptedException {
+            long deadline = System.nanoTime() + max.toNanos();
+            while (!resume && !deliverNow && stopReason == null) {
+                long left = deadline - System.nanoTime();
+                if (left <= 0) {
+                    return;
+                }
+                wait(Math.max(1, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(left)));
+            }
         }
 
         public synchronized boolean deliverNowRequested() {

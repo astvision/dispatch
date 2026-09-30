@@ -798,14 +798,35 @@ public final class TaskService {
         RunStep current = steps.isEmpty() || steps.getLast().outcome() != null ? null : steps.getLast();
         boolean loopStep = current != null && (current.kind() == RunStep.Kind.TEST || current.kind() == RunStep.Kind.FIX
                 || current.kind() == RunStep.Kind.REVIEW);
+        boolean paused = current != null && current.kind() == RunStep.Kind.PAUSE;
         ObjectNode controls = payload.putObject("controls");
         if (loopStep && !active.skipRequested(current.n())) {
             controls.put("skip", current.n());
         } else {
             controls.putNull("skip");
         }
-        controls.put("deliverNow", loopStep && !active.deliverNowRequested());
+        controls.put("deliverNow", (loopStep || paused) && !active.deliverNowRequested());
         controls.put("deliverNowRequested", active.deliverNowRequested());
+        // ⏸ can be switched until the review is reached; while paused, 🔍 and the time it goes on by itself (RM-5).
+        boolean reviewReached = steps.stream().anyMatch(step -> step.kind() == RunStep.Kind.PAUSE || step.kind() == RunStep.Kind.REVIEW);
+        controls.put("pauseBeforeReview", active.pauseBeforeReviewRequested());
+        controls.put("canPause", !reviewReached && !active.deliverNowRequested());
+        controls.put("paused", paused && !active.resumeRequested() && !active.deliverNowRequested());
+        controls.put("pauseEndsAt", paused ? current.startedAt().plus(VerifyLoop.PAUSE_LIMIT).toString() : null);
+    }
+
+    /** ⏸ on or off for the task's running execution (RM-5); false when no run of the task is active here. */
+    public boolean pauseBeforeReview(long taskId, boolean on) {
+        Optional<ActiveRuns.ActiveRun> run = activeRuns.run(taskId);
+        run.ifPresent(active -> active.pauseBeforeReview(on));
+        return run.isPresent();
+    }
+
+    /** 🔍 on a paused run: the review starts now (RM-5); false when no run of the task is active here. */
+    public boolean resume(long taskId) {
+        Optional<ActiveRuns.ActiveRun> run = activeRuns.run(taskId);
+        run.ifPresent(ActiveRuns.ActiveRun::resume);
+        return run.isPresent();
     }
 
     /** ⏭ on the task's running step (RM-4); false when no run of the task is active here. */

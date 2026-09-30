@@ -297,7 +297,8 @@ public final class WorkerApi implements AutoCloseable {
                         text(body, "worktree"), text(body, "baseSha"), body.path("agentStarted").asBoolean(false),
                         optionalInt(body, "steps"), text(body, "lastAction"), loopSteps(body)));
                 json(exchange, 200, Json.write(Json.object().put("cancel", reply.cancel()).put("skipStep", reply.skipStep())
-                        .put("deliverNow", reply.deliverNow())));
+                        .put("deliverNow", reply.deliverNow()).put("pauseBeforeReview", reply.pauseBeforeReview())
+                        .put("resume", reply.resume())));
             }
             case RESULT -> {
                 JobResult result = readJobResult(required(body, "result"));

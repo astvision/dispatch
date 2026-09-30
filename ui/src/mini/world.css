@@ -148,3 +148,10 @@
 .run-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .run-controls .choice { flex: 1 1 140px; text-align: center; }
 .run-controls p { flex-basis: 100%; margin: 0; }
+.run-pause { display: grid; gap: 8px; margin-top: 10px; padding: 12px; border: 1px solid var(--button); border-radius: 10px; }
+.run-pause p { margin: 0; font-size: 14px; line-height: 1.45; }
+.run-pause .choice { text-align: center; }
+.run-switch { flex-basis: 100%; display: flex; align-items: center; gap: 12px; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 15px; cursor: pointer; }
+.run-switch span { flex: 1; }
+.run-switch small { display: block; font-size: 12.5px; color: var(--hint-ink); }
+.run-switch input { width: 20px; height: 20px; accent-color: var(--button); }

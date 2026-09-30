@@ -431,7 +431,7 @@ export interface TaskDetail {
 /** One step of a run (RM): the implementation, a test run, a fix, the review, the delivery, or a plan run's one call. */
 export interface RunStepView {
   n: number;
-  kind: "PLAN" | "IMPLEMENT" | "TEST" | "FIX" | "REVIEW" | "DELIVER";
+  kind: "PLAN" | "IMPLEMENT" | "TEST" | "FIX" | "PAUSE" | "REVIEW" | "DELIVER";
   round: number;
   startedAt: string;
   endedAt: string | null;
@@ -459,7 +459,16 @@ export interface RunView {
   /** While it runs on the bot's own computer or a worker: the agent's tool calls so far and the latest one. */
   activity?: { steps: number; lastAction: string | null };
   /** While an execution runs: ⏭ on the running test, fix or review (its step number), and 📦 deliver now. */
-  controls?: { skip: number | null; deliverNow: boolean; deliverNowRequested: boolean };
+  controls?: {
+    skip: number | null;
+    deliverNow: boolean;
+    deliverNowRequested: boolean;
+    /** ⏸ before the review: the switch, whether it can still be changed, and a paused run's automatic go-on time. */
+    pauseBeforeReview: boolean;
+    canPause: boolean;
+    paused: boolean;
+    pauseEndsAt: string | null;
+  };
 }
 
 /** One answer to a question: an offered option's index, the requester's own words, or "you decide". */
@@ -479,7 +488,8 @@ export const cancelTask = (taskId: number) => post<{ result: string }>("/api/tas
 export const retryTask = (taskId: number) => post<{ result: string }>("/api/tasks/retry", { taskId });
 export const getTaskDetail = (taskId: number, signal?: AbortSignal) => post<TaskDetail>("/api/tasks/detail", { taskId }, signal);
 export const getTaskRun = (taskId: number, signal?: AbortSignal) => post<RunView>("/api/tasks/run", { taskId }, signal);
-export const steerRun = (taskId: number, control: { action: "skip"; step: number } | { action: "deliverNow" }) =>
+export type RunControl = { action: "skip"; step: number } | { action: "deliverNow" | "pause" | "unpause" | "review" };
+export const steerRun = (taskId: number, control: RunControl) =>
   post<RunView>("/api/tasks/run/control", { taskId, ...control });
 export const answerQuestion = (taskId: number, planSeq: number, index: number, answer: Answer) =>
   post<TaskDetail & { result: string }>("/api/tasks/answer", { taskId, planSeq, index, ...answer });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ApiError, getTaskRun, steerRun, type RunStepView, type RunView } from "../api";
+import { ApiError, getTaskRun, steerRun, type RunControl, type RunStepView, type RunView } from "../api";
 import { clock } from "./tickets";
 
 /** How often a live run is asked again; a team worker's own progress comes every 10 s, so its steps may lag that much. */
@@ -11,12 +11,19 @@ const ICONS: Record<NonNullable<RunStepView["outcome"]>, string> = {
   DONE: "✅", PASSED: "✅", OK: "✅", FAILED: "❌", FINDINGS: "⚠️", SKIPPED: "⏭", STOPPED: "⛔",
 };
 
+/** Time left as m:ss, rounded up: a countdown shows 0:01 until it is done. */
+function countdown(ms: number): string {
+  const seconds = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 function label(step: RunStepView): string {
   switch (step.kind) {
     case "PLAN": return "Төлөвлөлт";
     case "IMPLEMENT": return "Хэрэгжүүлэлт";
     case "TEST": return `Тест ${step.round}`;
     case "FIX": return `Засвар ${step.round}/${FIX_ROUNDS}`;
+    case "PAUSE": return "Review-ийн өмнө зогссон";
     case "REVIEW": return "Review";
     case "DELIVER": return "Хүргэх";
   }
@@ -36,7 +43,7 @@ export default function RunMonitor({ taskId, live }: { taskId: number; live: boo
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
 
-  const steer = async (control: Parameters<typeof steerRun>[1]) => {
+  const steer = async (control: RunControl) => {
     setBusy(true);
     setRefusal(null);
     try {
@@ -82,22 +89,39 @@ export default function RunMonitor({ taskId, live }: { taskId: number; live: boo
         ))}
       </ol>
       {run.costUsd && <p className="run-cost num">${run.costUsd}</p>}
-      {live && run.controls && <Controls run={run} busy={busy} onSteer={(control) => void steer(control)} />}
+      {live && run.controls && <Controls run={run} now={now} busy={busy} onSteer={(control) => void steer(control)} />}
       {refusal && <p className="sheet-error" role="alert">{refusal}</p>}
       {failed && <p className="quiet">Холболт тасарсан, дахин оролдож байна…</p>}
     </section>
   );
 }
 
-/** ⏭ the running test, fix or review, and 📦 deliver now; what the server offers is what shows (RM-4). */
-function Controls({ run, busy, onSteer }: {
+/**
+ * ⏭ the running test, fix or review, 📦 deliver now, and ⏸ before the review with its paused box: what the server offers
+ * is what shows (RM-4, RM-5).
+ */
+function Controls({ run, now, busy, onSteer }: {
   run: RunView;
+  now: number;
   busy: boolean;
-  onSteer: (control: Parameters<typeof steerRun>[1]) => void;
+  onSteer: (control: RunControl) => void;
 }) {
   const controls = run.controls!;
   const skippable = run.steps.find((step) => step.n === controls.skip);
-  if (!skippable && !controls.deliverNow && !controls.deliverNowRequested) return null;
+  if (controls.paused) {
+    const left = controls.pauseEndsAt ? countdown(Date.parse(controls.pauseEndsAt) - now) : "";
+    return (
+      <div className="run-pause">
+        <p><b>Тест дууссан. Review хийх үү?</b><br />Хариу өгөхгүй бол <span className="num">{left}</span>-ын дараа review өөрөө эхэлнэ.</p>
+        <button type="button" className="ticket-go" style={{ marginTop: 0 }} disabled={busy} onClick={() => onSteer({ action: "review" })}>
+          🔍 Review хийх
+        </button>
+        <button type="button" className="choice" disabled={busy} onClick={() => onSteer({ action: "deliverNow" })}>
+          📦 Review-гүй хүргэх
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="run-controls">
       {skippable && (
@@ -111,6 +135,13 @@ function Controls({ run, busy, onSteer }: {
         </button>
       )}
       {controls.deliverNowRequested && <p className="quiet">📦 Хүргэхээр зогсоож байна…</p>}
+      {controls.canPause && (
+        <label className="run-switch">
+          <span>⏸ Review-ийн өмнө зогсоох<small>Тест дууссаны дараа таны шийдвэрийг хүлээнэ</small></span>
+          <input type="checkbox" role="switch" checked={controls.pauseBeforeReview} disabled={busy}
+                 onChange={(event) => onSteer({ action: event.target.checked ? "pause" : "unpause" })} />
+        </label>
+      )}
     </div>
   );
 }
