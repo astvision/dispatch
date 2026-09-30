@@ -145,7 +145,8 @@ public final class App {
         }
         List<Path> clones = config.projects().stream().map(Config.Project::path).filter(java.util.Objects::nonNull).map(Path::of).toList();
         Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir,
-                Confinements.of(sandbox, stateDir, configFile, clones));
+                Confinements.of(sandbox, stateDir, configFile, clones,
+                        dispatch.cli.Instances.othersPrivate(configFile, environment)));
         // Splitting and the assistant need Claude Code (ADR 0013, A-1); without it they are simply not offered (ADR 0026).
         Agent claude = agents.get("claude-code");
         WorkerKeys workerKeys = null;
