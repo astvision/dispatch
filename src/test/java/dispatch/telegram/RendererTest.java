@@ -17,6 +17,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.ResourceBundle;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 
 class RendererTest {
@@ -1249,5 +1251,20 @@ class RendererTest {
         String html = renderer.render(OutboxKind.TASK_COMPLETED, completedPayload("https://github.com/acme/alm/pull/7", 2, List.of())).html();
 
         assertFalse(html.contains("🧪"), html);
+    }
+
+    @Test
+    void aLongTestTailShowsItsEnd() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 2, List.of());
+        String tail = IntStream.range(0, 300).mapToObj(n -> "noise line " + n + "\n").collect(Collectors.joining())
+                + "Tests run: 12, Failures: 1";
+        payload.set("verification", Json.MAPPER.valueToTree(new Verification(Verification.Tests.FAILING, 2, tail,
+                Verification.ReviewState.OK, List.of(), null, null)));
+
+        String html = renderer.render(OutboxKind.TASK_COMPLETED, payload).html();
+
+        assertTrue(html.contains("Tests run: 12, Failures: 1"), html);
+        assertFalse(html.contains("noise line 0\n"), html);
+        assertTrue(html.length() <= Renderer.MESSAGE_LIMIT, html);
     }
 }

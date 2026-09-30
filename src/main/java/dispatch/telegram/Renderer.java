@@ -740,7 +740,7 @@ public final class Renderer {
         html.append(switch (verification.path("tests").asText()) {
             case "PASSED" -> format("verify.testsPassed", runs);
             case "FAILING" -> format("verify.testsFailing", runs)
-                    + "\n<pre>" + escapeWithin(verification.path("testTail").asText(""), TEST_TAIL_LIMIT) + "</pre>";
+                    + "\n<pre>" + escapeWithin(lastLines(verification.path("testTail").asText(""), TEST_TAIL_LIMIT), 2 * TEST_TAIL_LIMIT) + "</pre>";
             case "NO_COMMAND" -> text("verify.noTestCommand");
             default -> text("verify.testsNotRun");
         });
@@ -754,6 +754,16 @@ public final class Renderer {
             html.append('\n').append(format("verify.stopped", escapeWithin(verification.path("stoppedBy").asText(), VERIFY_LINE_LIMIT)));
         }
         return html.toString();
+    }
+
+    /** The end of the output (where the failure summary is), from a line start; "…" marks a cut. */
+    private static String lastLines(String tail, int limit) {
+        if (tail.length() <= limit) {
+            return tail;
+        }
+        int from = tail.length() - limit;
+        int newline = tail.indexOf('\n', from);
+        return "…\n" + tail.substring(newline < 0 ? from : newline + 1);
     }
 
     private Rendered status(JsonNode payload) {
