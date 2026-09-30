@@ -140,14 +140,16 @@ public final class JobRunner implements Worker {
                         job.reviewPrompt(), deadline, job.budgetUsd(), cost(result.agent())),
                 loopAgents(job, events, control, worktree, files, startSha),
                 () -> control.stopReason() != null);
+        // Every outcome records what the whole run cost, so the loop's calls count even when nothing is delivered.
+        AgentResult spent = combined(result.agent(), verified.runs());
         if (control.stopReason() != null) {
-            return stopped(job, control.stopReason(), result.agent());
+            return stopped(job, control.stopReason(), spent);
         }
         if (Thread.currentThread().isInterrupted()) {
             // Dispatch is going down under this run; the flag stays set for whoever interrupted it.
-            return JobResult.failed(FailureReason.INTERRUPTED, "run thread was interrupted", result.agent());
+            return JobResult.failed(FailureReason.INTERRUPTED, "run thread was interrupted", spent);
         }
-        return deliver(job, worktree, startSha, combined(result.agent(), verified.runs()), verified.verification());
+        return deliver(job, worktree, startSha, spent, verified.verification());
     }
 
     /** The verify loop's agent calls: fixes resume the building session, the reviewer is a fresh read-only one. */

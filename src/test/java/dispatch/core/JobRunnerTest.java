@@ -311,16 +311,23 @@ class JobRunnerTest {
     @Test
     void cancelDuringTheLoopDeliversNothing() throws Exception {
         answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
         ActiveRuns.ActiveRun execution = new ActiveRuns().register(TASK, 2);
+        java.util.concurrent.atomic.AtomicInteger testRuns = new java.util.concurrent.atomic.AtomicInteger();
 
+        // The first test run fails and a fix runs; the member cancels during the second.
         JobResult result = executeWithLoop(true, execution, (command, workdir, log, timeout, stop) -> {
+            if (testRuns.incrementAndGet() == 1) {
+                return new TestRunner.TestRun(1, false, false, "FooTest failed");
+            }
             execution.stop(ActiveRuns.StopReason.CANCELLED);
             return new TestRunner.TestRun(-1, false, true, "");
         });
 
         assertEquals(JobResult.Outcome.CANCELLED, result.outcome());
         assertNull(result.prUrl());
-        assertEquals(List.of(RunKind.EXECUTE), agentKindsStarted, "no reviewer after a cancel");
+        assertEquals(List.of(RunKind.EXECUTE, RunKind.EXECUTE), agentKindsStarted, "no reviewer after a cancel");
+        assertEquals(new BigDecimal("2.00"), result.agent().costUsd(), "the fix's cost counts though nothing was delivered");
         assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
     }
 
