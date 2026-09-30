@@ -26,6 +26,7 @@ import dispatch.domain.Plan;
 import dispatch.domain.PlanQuestion;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
+import dispatch.domain.RunStep;
 import dispatch.store.Database;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
@@ -253,6 +254,39 @@ class TasksApiTest {
             assertEquals("not_yours", refused.code(), route);
         }
         assertEquals(404, assertThrows(ApiException.class, () -> api.detail(STRANGER, Json.object().put("taskId", taskId))).status());
+    }
+
+    @Test
+    void theRequesterWatchesTheLatestRunsStepsAndNobodyElseDoes() {
+        long taskId = planned(ALI, twoQuestions());
+        transitions.stepStarted(taskId, 1, 1, RunStep.Kind.PLAN, 1);
+        transitions.stepEnded(taskId, 1, 1, RunStep.Outcome.DONE, null);
+
+        JsonNode run = api.run(ALI_CALLER, Json.object().put("taskId", taskId));
+
+        assertEquals(1, run.path("seq").asInt());
+        assertEquals("PLAN", run.path("kind").asText());
+        assertEquals("SUCCEEDED", run.path("status").asText());
+        assertEquals("0.1", run.path("costUsd").asText());
+        JsonNode step = run.path("steps").get(0);
+        assertEquals("PLAN", step.path("kind").asText());
+        assertEquals("DONE", step.path("outcome").asText());
+        assertTrue(step.path("startedAt").isTextual() && step.path("endedAt").isTextual(), step.toString());
+        assertTrue(run.path("now").isTextual(), "the page's clock follows the server's");
+        assertEquals("403 not_yours", refused(() -> api.run(BOLD_CALLER, Json.object().put("taskId", taskId))),
+                "even an admin watches nobody else's run");
+        assertEquals("404 not_found", refused(() -> api.run(STRANGER, Json.object().put("taskId", taskId))));
+    }
+
+    @Test
+    void aStepsDetailIsJsonThePageReads() {
+        long taskId = planned(ALI, twoQuestions());
+        transitions.stepStarted(taskId, 1, 1, RunStep.Kind.TEST, 1);
+        transitions.stepEnded(taskId, 1, 1, RunStep.Outcome.FAILED, "{\"tail\":\"FooTest failed\"}");
+
+        JsonNode step = api.run(ALI_CALLER, Json.object().put("taskId", taskId)).path("steps").get(0);
+
+        assertEquals("FooTest failed", step.path("detail").path("tail").asText());
     }
 
     @Test

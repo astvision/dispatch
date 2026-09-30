@@ -5,6 +5,7 @@ import {
   type TaskRow,
 } from "../api";
 import { haptic, useTelegramBackButton } from "./backButton";
+import RunMonitor from "./RunMonitor";
 import { clock, clockStart, stateOf } from "./tickets";
 
 export type Decision = "answered" | "approved" | "rejected" | "corrected" | "followedUp";
@@ -103,6 +104,7 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
         <Head task={task} time={clock(clockStart(task), now)} />
         <h2 id="sheet-title" ref={heading} tabIndex={-1}>{task.title}</h2>
 
+        {(task.state === "running" || task.state === "finished") && <RunMonitor taskId={task.taskId} live={task.state === "running"} />}
         {!detail && !error && <p className="quiet" aria-busy="true" style={{ marginTop: 16 }}>Уншиж байна…</p>}
         {plan && (
           <>

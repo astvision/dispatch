@@ -19,6 +19,7 @@ import dispatch.domain.Requester;
 import dispatch.domain.Run;
 import dispatch.domain.RunCause;
 import dispatch.domain.RunStatus;
+import dispatch.domain.RunStep;
 import dispatch.domain.SplitState;
 import dispatch.domain.Task;
 import dispatch.store.Attachments;
@@ -27,6 +28,7 @@ import dispatch.store.Drafts;
 import dispatch.store.MemberPrefs;
 import dispatch.store.Outbox;
 import dispatch.store.PlanAnswers;
+import dispatch.store.RunSteps;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
@@ -753,6 +755,37 @@ public final class TaskService {
             }
         }
         payload.put("costUsd", total == null ? null : total.toPlainString());
+        return Optional.of(payload);
+    }
+
+    /**
+     * The task's latest run step by step, as the run monitor shows it (RM-3): its kind and status, each step with its times,
+     * outcome and detail, and while it runs here the agent's latest action; empty when the task has no run. It does not
+     * check who asks: the caller shows it to the requester alone.
+     */
+    public Optional<ObjectNode> runPayload(Tx tx, long taskId) {
+        Optional<Run> latest = Runs.latest(tx, taskId);
+        if (latest.isEmpty()) {
+            return Optional.empty();
+        }
+        Run run = latest.get();
+        ObjectNode payload = Json.object().put("taskId", taskId).put("seq", run.seq()).put("kind", run.kind().name())
+                .put("status", run.status().name()).put("startedAt", text(run.startedAt())).put("finishedAt", text(run.finishedAt()))
+                .put("costUsd", run.costUsd() == null ? null : run.costUsd().toPlainString())
+                .put("now", clock.instant().toString());
+        ArrayNode steps = payload.putArray("steps");
+        for (RunStep step : RunSteps.of(tx, taskId, run.seq())) {
+            ObjectNode item = steps.addObject().put("n", step.n()).put("kind", step.kind().name()).put("round", step.round())
+                    .put("startedAt", step.startedAt().toString()).put("endedAt", text(step.endedAt()))
+                    .put("outcome", step.outcome() == null ? null : step.outcome().name());
+            if (step.detail() != null) {
+                item.set("detail", Json.read(step.detail()));
+            }
+        }
+        if (run.status() == RunStatus.RUNNING) {
+            activeRuns.activity(taskId).ifPresent(activity ->
+                    payload.putObject("activity").put("steps", activity.steps()).put("lastAction", activity.lastAction()));
+        }
         return Optional.of(payload);
     }
 
