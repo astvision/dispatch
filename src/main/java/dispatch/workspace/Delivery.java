@@ -62,6 +62,12 @@ public final class Delivery {
         return git.run(worktree, "rev-parse", "--verify", "refs/heads/" + branch);
     }
 
+    /** The ref the worktree's HEAD names, e.g. {@code refs/heads/dispatch/7}; null when HEAD is detached. */
+    public String checkedOutRef(Path worktree) {
+        Git.Result result = git.execute(worktree, "symbolic-ref", "-q", "HEAD");
+        return result.exitCode() == 0 ? result.stdout().strip() : null;
+    }
+
     /** The change since {@code startSha}, new files included, for the verify loop's reviewer. */
     public String diff(Path worktree, String startSha) {
         // Marks new files as intended so git diff shows them; delivery adds everything anyway.

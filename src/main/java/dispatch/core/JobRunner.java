@@ -123,7 +123,7 @@ public final class JobRunner implements Worker {
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
-        String moved = branchMoved(job, worktree, job.expectedHead(), FailureReason.SETUP);
+        String moved = branchMoved(job, worktree, job.expectedHead());
         if (moved != null) {
             return JobResult.failed(FailureReason.SETUP, moved, null);
         }
@@ -229,10 +229,9 @@ public final class JobRunner implements Worker {
                 : (result.summary() == null ? "" : result.summary()) + "\n\n" + verification.block();
         // The failed run's summary is what a DELIVER retry commits, so it carries the block the commit would have had.
         AgentResult kept = withSummary(result, summary);
-        // Against where this run started: a move during the run, by any agent, is caught too.
-        String moved = branchMoved(job, worktree, job.expectedHead() == null ? null : startSha, FailureReason.DELIVERY);
-        if (moved != null) {
-            return guarded(job, JobResult.failed(FailureReason.DELIVERY, moved, kept), job.expectedHead());
+        String offBranch = offBranch(job, worktree, startSha);
+        if (offBranch != null) {
+            return guarded(job, JobResult.failed(FailureReason.DELIVERY, offBranch, kept), job.expectedHead());
         }
         Delivery.Result delivered;
         try {
@@ -246,13 +245,13 @@ public final class JobRunner implements Worker {
     }
 
     /**
-     * Null when the task's branch, and the worktree's HEAD on it, are at {@code expected}; otherwise why the run must neither
-     * build on it nor push it. Another task's agent can move any branch of the clone they share, and this run's own agent
-     * may not move it either: Dispatch owns the task's branch (ADR 0032).
+     * Null when the task's branch, and the worktree's HEAD on it, are at {@code expected}; otherwise why the run must not
+     * build on it. Another task's agent can move any branch of the clone they share (ADR 0032); checked before the agent
+     * starts, it anchors the commit the delivery folds back to.
      *
      * @param expected null checks nothing: a job from before the guard
      */
-    private String branchMoved(Job job, Path worktree, String expected, FailureReason reason) {
+    private String branchMoved(Job job, Path worktree, String expected) {
         if (expected == null) {
             return null;
         }
@@ -268,9 +267,42 @@ public final class JobRunner implements Worker {
             return null;
         }
         Log.warn("task.branch_moved", "task", job.taskId(), "run", job.seq(), "branch", branch, "expected", expected,
-                "found", found, "reason", reason);
+                "found", found);
         return "branch " + branch + " moved to " + found + " but Dispatch left it at " + expected
                 + "; another run may have moved it, so nothing was built on it or pushed";
+    }
+
+    /**
+     * Null when the worktree is still on the task's branch, which is all delivery needs: a branch moved during the run, by
+     * another task's agent or by this one's committing, is folded back to {@code start}, since the move never touched this
+     * worktree's index or files, so the delivery commit sits on {@code start} and holds only this run's change. A HEAD
+     * detached or pointed at another branch would commit where the push never looks, so that is refused.
+     *
+     * @param start where the delivery resets the branch to; only logged
+     */
+    private String offBranch(Job job, Path worktree, String start) {
+        if (job.expectedHead() == null) {
+            return null;
+        }
+        String branch = job.branchName();
+        String checkedOut;
+        String branchHead;
+        try {
+            checkedOut = delivery.checkedOutRef(worktree);
+            branchHead = delivery.branchHead(worktree, branch);
+        } catch (WorkspaceException e) {
+            return "cannot read branch " + branch + ": " + e.getMessage() + "; nothing was pushed";
+        }
+        if (!("refs/heads/" + branch).equals(checkedOut)) {
+            Log.warn("task.branch_moved", "task", job.taskId(), "run", job.seq(), "branch", branch, "head", checkedOut);
+            return "the worktree left branch " + branch + " (HEAD is " + (checkedOut == null ? "detached" : checkedOut)
+                    + "), so nothing was pushed";
+        }
+        if (!branchHead.equals(start)) {
+            Log.warn("task.branch_moved", "task", job.taskId(), "run", job.seq(), "branch", branch, "expected", start,
+                    "found", branchHead);
+        }
+        return null;
     }
 
     /** The branch's head once a delivery failed: Dispatch's own commit when it got that far, else where it started. */
@@ -300,9 +332,10 @@ public final class JobRunner implements Worker {
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
-        String moved = branchMoved(job, worktree, job.expectedHead(), FailureReason.DELIVERY);
-        if (moved != null) {
-            return guarded(job, JobResult.failed(FailureReason.DELIVERY, moved, null), job.expectedHead());
+        // redeliver resets to what origin has, or to the base: a moved branch is recovered from there.
+        String offBranch = offBranch(job, worktree, job.expectedHead());
+        if (offBranch != null) {
+            return guarded(job, JobResult.failed(FailureReason.DELIVERY, offBranch, null), job.expectedHead());
         }
         Delivery.Result delivered;
         try {

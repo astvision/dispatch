@@ -489,20 +489,76 @@ class JobRunnerTest {
     }
 
     @Test
-    void aBranchMovedDuringTheRunFailsAsDeliveryAndPushesNothing() {
+    void aBranchMovedDuringTheRunIsFoldedBackAndOnlyThisRunsChangeIsDelivered() {
         answers.put(RunKind.EXECUTE, answer(null, "1.00"));
         guarded = true;
         AtomicReference<String> foreign = new AtomicReference<>();
         duringExecute = worktree -> foreign.set(moveBranchToForeignCommit(worktree));
+
+        String logged = capturingLog(() -> assertEquals(JobResult.Outcome.SUCCEEDED, executeWithLoop(false,
+                (command, workdir, log, timeout, stop, started) -> {
+                    throw new AssertionError("loop off");
+                }).outcome()));
+
+        String branch = "refs/heads/dispatch/" + TASK;
+        assertEquals(events.baseSha, origin("rev-parse", branch + "^"), "the delivery commit sits on the run's start");
+        assertEquals("README.md", origin("diff-tree", "--no-commit-id", "--name-only", "-r", branch),
+                "none of the foreign commit's files");
+        assertTrue(logged.contains("event=task.branch_moved"), logged);
+        assertTrue(logged.contains("found=" + foreign.get()), logged);
+    }
+
+    @Test
+    void anAgentsOwnCommitIsFoldedIntoTheOneDeliveryCommit() {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        guarded = true;
+        duringExecute = worktree -> {
+            try {
+                Files.writeString(worktree.resolve("AGENT.md"), "committed by the agent\n");
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            GitFixture.sh(worktree, "git", "add", "AGENT.md");
+            GitFixture.sh(worktree, "git", "-c", "user.name=Agent", "-c", "user.email=agent@example.com", "commit", "--quiet",
+                    "-m", "the agent's own commit");
+        };
+
+        JobResult result = executeWithLoop(false, (command, workdir, log, timeout, stop, started) -> {
+            throw new AssertionError("loop off");
+        });
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), String.valueOf(result.failureDetail()));
+        String branch = "refs/heads/dispatch/" + TASK;
+        assertEquals(events.baseSha, origin("rev-parse", branch + "^"), "one commit on the run's start");
+        assertEquals("AGENT.md\nREADME.md", origin("diff-tree", "--no-commit-id", "--name-only", "-r", branch));
+        assertEquals(origin("rev-parse", branch), result.head());
+    }
+
+    @Test
+    void aWorktreeDetachedFromItsBranchDuringTheRunFailsAsDeliveryAndPushesNothing() {
+        assertDeliveryRefusedWhenDuringTheRun(worktree -> GitFixture.sh(worktree, "git", "checkout", "--quiet", "--detach"));
+    }
+
+    @Test
+    void aWorktreeSwitchedToAnotherBranchDuringTheRunFailsAsDeliveryAndPushesNothing() {
+        assertDeliveryRefusedWhenDuringTheRun(worktree -> {
+            GitFixture.sh(worktree, "git", "branch", "dispatch/99");
+            GitFixture.sh(worktree, "git", "symbolic-ref", "HEAD", "refs/heads/dispatch/99");
+        });
+    }
+
+    private void assertDeliveryRefusedWhenDuringTheRun(java.util.function.Consumer<Path> move) {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        guarded = true;
+        duringExecute = move;
 
         JobResult result = executeWithLoop(false, (command, workdir, log, timeout, stop, started) -> {
             throw new AssertionError("loop off");
         });
 
         assertEquals(FailureReason.DELIVERY, result.failureReason());
-        assertTrue(result.failureDetail().contains(foreign.get()), result.failureDetail());
-        assertEquals(List.of(RunKind.EXECUTE), agentKindsStarted);
-        assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
+        assertTrue(result.failureDetail().contains("dispatch/" + TASK), result.failureDetail());
+        assertEquals("", origin("branch", "--list", "dispatch/*"), "nothing was pushed");
         assertEquals(events.baseSha, result.head(), "the branch's expected commit stays the one Dispatch left it at");
     }
 
@@ -554,18 +610,21 @@ class JobRunnerTest {
     }
 
     @Test
-    void aDeliveryRetryOnAMovedBranchFailsAndPushesNothing() throws Exception {
+    void aDeliveryRetryOnAMovedBranchDeliversFromTheTrustedBase() throws Exception {
         runner.run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null), events, control);
         Path worktree = Path.of(events.worktree);
         Files.writeString(worktree.resolve("README.md"), "v2\n");
-        String foreign = moveBranchToForeignCommit(worktree);
+        Files.delete(worktree.resolve("fake-claude.prompt"));
+        moveBranchToForeignCommit(worktree);
 
         JobResult result = runner.run(deliverJob(events.baseSha), new Recorder(), new ActiveRuns().register(TASK, 3));
 
-        assertEquals(FailureReason.DELIVERY, result.failureReason());
-        assertTrue(result.failureDetail().contains(foreign), result.failureDetail());
-        assertEquals("", origin("branch", "--list", "dispatch/" + TASK), "nothing was pushed");
-        assertEquals(events.baseSha, result.head());
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), String.valueOf(result.failureDetail()));
+        String branch = "refs/heads/dispatch/" + TASK;
+        assertEquals(events.baseSha, origin("rev-parse", branch + "^"));
+        assertEquals("README.md", origin("diff-tree", "--no-commit-id", "--name-only", "-r", branch),
+                "none of the foreign commit's files");
+        assertEquals(origin("rev-parse", branch), result.head());
     }
 
     /** A DELIVER job for the planned task, expecting its branch at {@code expectedHead}. */
@@ -576,12 +635,35 @@ class JobRunnerTest {
                 expectedHead);
     }
 
-    /** Points the task's branch at a commit on top of it that Dispatch never made, as another task's agent could; returns it. */
+    /**
+     * Points the task's branch at a commit on top of it that Dispatch never made, adding FOREIGN.md, as another task's agent
+     * could: through the clone's refs, never touching this worktree's index or files. Returns the commit.
+     */
     private String moveBranchToForeignCommit(Path worktree) {
+        String tree = GitFixture.sh(worktree, "sh", "-c", """
+                export GIT_INDEX_FILE="$(mktemp -u)"
+                git read-tree HEAD
+                git update-index --add --cacheinfo "100644,$(echo foreign | git hash-object -w --stdin),FOREIGN.md"
+                git write-tree
+                rm -f "$GIT_INDEX_FILE"
+                """);
         String foreign = GitFixture.sh(worktree, "git", "-c", "user.name=B", "-c", "user.email=b@example.com", "commit-tree",
-                "HEAD^{tree}", "-p", "HEAD", "-m", "task B's work");
+                tree, "-p", "HEAD", "-m", "task B's work");
         GitFixture.sh(worktree, "git", "update-ref", "refs/heads/dispatch/" + TASK, foreign);
         return foreign;
+    }
+
+    /** What {@code action} logged; Log writes to stdout. */
+    private static String capturingLog(Runnable action) {
+        java.io.PrintStream original = System.out;
+        java.io.ByteArrayOutputStream logged = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(logged, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            action.run();
+        } finally {
+            System.setOut(original);
+        }
+        return logged.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
