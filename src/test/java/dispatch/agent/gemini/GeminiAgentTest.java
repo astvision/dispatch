@@ -102,4 +102,14 @@ class GeminiAgentTest {
         int at = args.indexOf(flag);
         return at < 0 || at + 1 >= args.size() ? null : args.get(at + 1);
     }
+
+    @Test
+    void aReviewRunCannotWriteAndIsToldTheReviewSchema() throws Exception {
+        agent.start(new RunRequest(RunKind.REVIEW, workdir, "Review this change", SESSION, false, List.of(),
+                new BigDecimal("2"), null, null, dir.resolve("runs/1/1.review"))).await();
+
+        List<String> args = args();
+        assertEquals("default", after(args, "--approval-mode"));
+        assertTrue(after(args, "-p").contains("\"verdict\""), after(args, "-p"));
+    }
 }

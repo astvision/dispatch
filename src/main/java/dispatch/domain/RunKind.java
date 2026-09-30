@@ -10,5 +10,7 @@ public enum RunKind {
     /** Proposes how to split a draft's message into tasks (ADR 0013); belongs to no task and is never stored as a run. */
     SPLIT,
     /** One turn of a member's conversation with the bot's assistant (A-1); belongs to no task and is never stored as a run. */
-    ASSISTANT
+    ASSISTANT,
+    /** The verify loop's reviewer inside an execution run; never a task's run of its own. */
+    REVIEW
 }

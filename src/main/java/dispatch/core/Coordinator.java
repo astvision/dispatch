@@ -110,7 +110,7 @@ public final class Coordinator {
             case PLAN -> planJob(task, run, project.get());
             case EXECUTE -> executeJob(task, run, project.get());
             case DELIVER -> deliverJob(task, run, project.get());
-            case SPLIT, ASSISTANT -> throw new IllegalStateException(run.kind() + " is never a task's run");
+            case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(run.kind() + " is never a task's run");
         });
     }
 
@@ -217,7 +217,7 @@ public final class Coordinator {
             case EXECUTE -> transitions.completed(job.taskId(), job.seq(), result.agent(), result.files(), result.prUrl());
             case DELIVER -> transitions.completed(job.taskId(), job.seq(), null, job.deliverySummary(), result.files(),
                     result.prUrl());
-            case SPLIT, ASSISTANT -> throw new IllegalStateException(job.kind() + " is never a task's run");
+            case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a task's run");
         }
     }
 

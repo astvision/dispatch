@@ -322,4 +322,20 @@ class ClaudeCodeAgentTest {
         }
         return args.get(index + 1);
     }
+
+    @Test
+    void reviewRunReadsOnlyInAFreshSessionAndAnswersWithTheReviewSchema() throws Exception {
+        UUID reviewSession = UUID.randomUUID();
+        RunRequest request = new RunRequest(RunKind.REVIEW, workdir, "Review this change", reviewSession, false, List.of(),
+                new BigDecimal("1"), "sonnet", null, dir.resolve("runs/1/1.review"));
+
+        agent.start(request).await();
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertTrue(args.containsAll(List.of("--permission-mode", "plan")), args.toString());
+        assertEquals("Read,Bash", args.get(args.indexOf("--tools") + 1));
+        assertEquals(dispatch.agent.Schemas.REVIEW, args.get(args.indexOf("--json-schema") + 1));
+        assertEquals(reviewSession.toString(), args.get(args.indexOf("--session-id") + 1));
+        assertFalse(args.contains("--resume"));
+    }
 }

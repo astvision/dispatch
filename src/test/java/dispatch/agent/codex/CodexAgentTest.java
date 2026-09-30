@@ -133,4 +133,15 @@ class CodexAgentTest {
         }
         return null;
     }
+
+    @Test
+    void aReviewRunIsReadOnlyAndAnswersInTheReviewSchema() throws Exception {
+        agent.start(request(RunKind.REVIEW, "Review this change", false, null, null)).await();
+
+        List<String> args = args();
+        assertEquals("sandbox_mode=\"read-only\"", valueAfter(args, "sandbox_mode"));
+        String schema = Files.readString(Path.of(args.get(args.indexOf("--output-schema") + 1)));
+        assertEquals(dispatch.agent.Schemas.withoutLimits(dispatch.agent.Schemas.REVIEW), schema);
+        assertTrue(schema.contains("\"verdict\""), schema);
+    }
 }

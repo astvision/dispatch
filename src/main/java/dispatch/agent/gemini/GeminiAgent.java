@@ -5,6 +5,7 @@ import dispatch.agent.ProcessRun;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.Schemas;
+import dispatch.domain.RunKind;
 import dispatch.agent.sandbox.Confinement;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -22,6 +23,8 @@ import java.util.Map;
 public final class GeminiAgent implements Agent {
 
     /** Appended to the prompt on stdin (Gemini CLI puts -p after it): the plan's shape, as other agents get it by flag. */
+    private static final String REVIEW_ANSWER = "Answer with the review only: one JSON object, with no other text, that matches "
+            + "this JSON Schema: " + Schemas.REVIEW;
     private static final String PLAN_ANSWER = "Answer with the plan only: one JSON object, with no other text, that matches "
             + "this JSON Schema: " + Schemas.PLAN;
     private static final String EXECUTE_ANSWER = "Do what the message above asks.";
@@ -48,7 +51,7 @@ public final class GeminiAgent implements Agent {
     @Override
     public RunHandle start(RunRequest request) {
         boolean plan = switch (request.kind()) {
-            case PLAN -> true;
+            case PLAN, REVIEW -> true;
             case EXECUTE -> false;
             // Splitting and the assistant need Claude Code's structured output and tools (ADR 0013, A-1).
             case SPLIT, ASSISTANT -> throw new IllegalArgumentException(request.kind() + " runs on claude-code, not gemini");
@@ -66,7 +69,7 @@ public final class GeminiAgent implements Agent {
             args.addAll(List.of("--include-directories",
                     String.join(",", request.readOnlyDirs().stream().map(Path::toString).toList())));
         }
-        args.addAll(List.of("-p", plan ? PLAN_ANSWER : EXECUTE_ANSWER));
+        args.addAll(List.of("-p", request.kind() == RunKind.REVIEW ? REVIEW_ANSWER : plan ? PLAN_ANSWER : EXECUTE_ANSWER));
         return ProcessRun.start("gemini", args, request, environment, request.prompt(),
                 new GeminiParser(plan, request.model(), request.workdir()), cancelGrace, confinement, STATE_IN_HOME);
     }

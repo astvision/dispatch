@@ -32,6 +32,7 @@ import java.util.regex.Pattern;
  */
 public final class CodexAgent implements Agent {
 
+    private static final String REVIEW_SCHEMA = Schemas.withoutLimits(Schemas.REVIEW);
     private static final String PLAN_SCHEMA = Schemas.withoutLimits(Schemas.PLAN);
     /** What a thread id may look like before it is passed back to Codex as an argument. */
     private static final Pattern THREAD_ID = Pattern.compile("[A-Za-z0-9._-]{1,100}");
@@ -64,7 +65,7 @@ public final class CodexAgent implements Agent {
     @Override
     public RunHandle start(RunRequest request) {
         boolean plan = switch (request.kind()) {
-            case PLAN -> true;
+            case PLAN, REVIEW -> true;
             case EXECUTE -> false;
             // Splitting and the assistant need Claude Code's structured output and tools (ADR 0013, A-1).
             case SPLIT, ASSISTANT -> throw new IllegalArgumentException(request.kind() + " runs on claude-code, not codex");
@@ -87,7 +88,7 @@ public final class CodexAgent implements Agent {
             args.addAll(List.of("-c", "model_reasoning_effort=\"" + request.effort() + "\""));
         }
         if (plan) {
-            args.addAll(List.of("--output-schema", writeSchema(request.logBase()).toString()));
+            args.addAll(List.of("--output-schema", writeSchema(request.logBase(), request.kind() == RunKind.REVIEW ? REVIEW_SCHEMA : PLAN_SCHEMA).toString()));
         }
         if (thread != null) {
             args.add(thread);
@@ -130,13 +131,13 @@ public final class CodexAgent implements Agent {
     }
 
     /** Beside the run's logs, so it is there to read when a run's plan is looked into later. */
-    private static Path writeSchema(Path logBase) {
+    private static Path writeSchema(Path logBase, String content) {
         Path schema = Path.of(logBase + ".schema.json");
         try {
             Files.createDirectories(schema.getParent());
-            Files.writeString(schema, PLAN_SCHEMA);
+            Files.writeString(schema, content);
         } catch (IOException e) {
-            throw new AgentStartException("cannot write the plan schema to " + schema + ": " + e.getMessage(), e);
+            throw new AgentStartException("cannot write the answer schema to " + schema + ": " + e.getMessage(), e);
         }
         return schema;
     }

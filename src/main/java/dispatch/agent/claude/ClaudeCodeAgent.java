@@ -21,6 +21,7 @@ import java.util.Map;
 public final class ClaudeCodeAgent implements Agent {
 
     private static final String PLAN_SCHEMA = Schemas.PLAN;
+    private static final String REVIEW_SCHEMA = Schemas.REVIEW;
     private static final String SPLIT_SCHEMA = Schemas.SPLIT;
     private static final String ASSISTANT_SCHEMA = Schemas.ASSISTANT;
     /** The one command the assistant may run: its view of the member's tasks (A-1). */
@@ -58,7 +59,7 @@ public final class ClaudeCodeAgent implements Agent {
 
     private static String permissionMode(RunKind kind) {
         return switch (kind) {
-            case PLAN, SPLIT -> "plan";
+            case PLAN, SPLIT, REVIEW -> "plan";
             case EXECUTE -> "auto";
             // Anything not allowed up front is refused without asking: here, every Bash command but dispatch ask.
             case ASSISTANT -> "dontAsk";
@@ -101,6 +102,8 @@ public final class ClaudeCodeAgent implements Agent {
             // --disallowedTools takes every following argument that is not a flag, so it stays last.
             case EXECUTE -> args.addAll(List.of("--tools", "Read,Edit,Write,Bash",
                     "--disallowedTools", "Bash(git commit *)", "Bash(git push *)", "Bash(gh *)"));
+            // The verify loop's reviewer: read-only like a plan, its own schema (spec: verify loop).
+            case REVIEW -> args.addAll(List.of("--tools", "Read,Bash", "--json-schema", REVIEW_SCHEMA));
             case SPLIT -> args.addAll(List.of("--tools", "", "--json-schema", SPLIT_SCHEMA, "--system-prompt", SPLIT_SYSTEM_PROMPT));
             // Reads code, asks for tasks and loads its taskmanager skill (A-1), nothing else; --allowedTools takes every following argument too, so it is last.
             case ASSISTANT -> args.addAll(List.of("--tools", "Read,Grep,Glob,Bash,Skill", "--json-schema", ASSISTANT_SCHEMA,
