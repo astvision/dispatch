@@ -299,9 +299,12 @@ Every agent's command line is wrapped by this machine's `Sandbox` (ADR 0032), ch
 | `/tmp` | a fresh tmpfs per run |
 | `request.readOnlyDirs()` (attachments) | read-only |
 | assistant only: `dispatch.db`, `-wal`, `-shm` / `assistant-bin` | read-write / read-only |
-| `~/.ssh`, `~/.config/gh`, `~/.gnupg`, Dispatch's config dir, this instance's state dir, every configured clone, and the state dirs and clones of every other Dispatch instance on the computer (`Instances.othersPrivate`) | hidden (empty tmpfs) |
+| the run's own log dir (Codex's `--output-schema`); the worktree's `.git` file; the git common dir's `config`, `hooks`, `info` and the worktree's `config.worktree`, `commondir`; `~/.claude/settings.json`, `~/.claude/settings.local.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.gradle/init.d`, `~/.gradle/gradle.properties`, `~/.m2/settings.xml` | read-only, mounted after the read-write paths they sit in |
+| `~/.ssh`, `~/.config/gh`, `~/.gnupg`, `$XDG_RUNTIME_DIR` (else `/run/user/<uid>`), Dispatch's config dir, this instance's state dir, every configured clone, and the config dirs, state dirs and clones of every other Dispatch instance on the computer (`Instances.othersPrivate`) | hidden (empty tmpfs) |
 
-The network is open. bwrap is the process Dispatch records and terminates (`--die-with-parent`), so cancelling and orphan detection are unchanged. The `JobResult` carries a `SandboxUse` (name and, if none, the reason); a plan or result of an unsandboxed run gets a ⚠️ line, and the run stores it (`runs.sandbox`).
+A worktree's `.git` file must name a configured clone's `.git` or `<stateDir>/repos/<name>/.git`, or the run fails to start. bwrap also runs with `--unshare-ipc`. Dispatch's own git (`Git`) passes `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, since it runs with `GH_TOKEN` in clones agents wrote to.
+
+The network is open. bwrap is the process Dispatch records and terminates (`--die-with-parent`), so cancelling and orphan detection are unchanged. The result's `AgentResult` carries a `SandboxUse` (name and, if none, the reason); a plan or result of an unsandboxed run gets a ⚠️ line, and the run stores it (`run.sandbox`).
 
 - The agent's environment excludes `TELEGRAM_BOT_TOKEN` and `GH_TOKEN`; only Dispatch's own git/gh calls get the token. This is a guardrail: processes running as the same user can still read each other's environment.
 - The init event's `permissionMode` must equal the requested mode (`plan` or `auto`). Otherwise the run is stopped at once and fails as `AGENT`: Claude Code does not refuse a mode the model lacks.

@@ -7,10 +7,19 @@ Linux. The whole root is read-only; the run's worktree, its clone's git dir, the
 `~/.claude.json`, `~/.codex`, `~/.gemini`) and the build caches (`~/.m2`, `~/.gradle`, `~/.npm`, `~/.cache`) are
 writable; `/tmp` is fresh per run. `~/.ssh`, `~/.config/gh`, `~/.gnupg`, Dispatch's config directory (which holds every
 instance's secrets file), this instance's state directory and every configured clone are hidden behind an empty
-directory. So are the state directories and configured clones of every other Dispatch instance on the computer, so one
-instance's agent cannot read another's `dispatch.db`; if those instances cannot be discovered, the run goes on and the
-log says `sandbox.instances_not_discovered`. The network stays open. Permission modes and deny rules are unchanged: the
-sandbox is a layer under them.
+directory. So are the config directories, state directories and configured clones of every other Dispatch instance on
+the computer, so one instance's agent cannot read another's `dispatch.db`; if those instances cannot be discovered, the
+run goes on and the log says `sandbox.instances_not_discovered` (one that does not load: `sandbox.instance_unreadable`).
+The owner's runtime directory (`$XDG_RUNTIME_DIR`, else `/run/user/<uid>`) is hidden too, and IPC is unshared: its
+sockets (systemd `--user`, ssh-agent, gpg-agent, D-Bus and the Secret Service) would otherwise run things outside the
+sandbox. The network stays open. Permission modes and deny rules are unchanged: the sandbox is a layer under them.
+
+Whatever an agent can write that later runs outside the sandbox is mounted back read-only: the worktree's `.git` file
+(which names the git dir the next run mounts; it must name a configured clone's `.git` or `<stateDir>/repos/<name>/.git`,
+or the run is refused), the clone's `config`, `hooks` and `info` and the worktree's `config.worktree` and `commondir`,
+and the agent and build-tool config that runs code (`~/.claude/settings.json` and `settings.local.json`,
+`~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.gradle/init.d`, `~/.gradle/gradle.properties`,
+`~/.m2/settings.xml`). Dispatch's own git, which runs with `GH_TOKEN`, also ignores hooks and `core.fsmonitor`.
 
 A machine that cannot sandbox (no bwrap, user namespaces blocked, macOS, Windows, or `sandbox: off`) runs its agents as
 before. It says so in `dispatch check`, at startup, and under every plan and result of such a run, so an unsandboxed run
@@ -22,9 +31,14 @@ container, slower builds on macOS and Windows).
 
 ## Consequences
 
-- An agent can no longer read the owner's SSH keys, GitHub token or other repositories, nor write outside its task.
+- An agent can no longer read the owner's SSH keys, `gh` login, GnuPG keys, Dispatch's secrets or any configured clone,
+  nor write outside its task.
 - It can still read its own login (it needs it), the worktree's code, and anything else readable under the root, and it
-  can still reach the network: the sandbox narrows what a prompt injection can take, it does not remove it.
+  can still reach the network: the sandbox narrows what a prompt injection can take, it does not remove it. Not
+  protected, among others: `~/.git-credentials`, `~/.netrc`, `~/.npmrc`, `~/.docker/config.json`, `~/.aws`, `~/.kube`,
+  keyring files, repositories that are not configured clones, `/var/run/docker.sock` (root-equivalent for a user in the
+  `docker` group), abstract-namespace sockets (X11, some D-Bus buses) since the network namespace is shared, and the
+  `mcpServers` in `~/.claude.json`, which stays writable because Claude Code writes it.
 - A poisoned build cache is possible, since caches are writable; accepted on a developer's own machine.
 - A worker reports the sandbox with each result, and a team machine from before this version refuses such a result:
   upgrade the team machine before its workers.
