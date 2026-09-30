@@ -16,7 +16,8 @@ class BubblewrapTest {
         SandboxPolicy policy = new SandboxPolicy(
                 Path.of("/state/worktrees/7"),
                 Path.of("/state/repos/alm/.git"),
-                List.of(Path.of("/state/attachments/7"), Path.of("/state/worktrees/7/.git"), Path.of("/state/repos/alm/.git/config")),
+                List.of(Path.of("/state/attachments/7"), Path.of("/state/worktrees/7/.git"), Path.of("/state/repos/alm/.git/config"),
+                        Path.of("/home/ann/.claude/settings.json")),
                 List.of(Path.of("/home/ann/.claude"), Path.of("/home/ann/.m2")),
                 List.of(Path.of("/home/ann/.ssh"), Path.of("/state")));
 
@@ -35,6 +36,7 @@ class BubblewrapTest {
                 // Read-only over the read-write mounts above: order is what makes them read-only.
                 "--ro-bind-try", "/state/worktrees/7/.git", "/state/worktrees/7/.git",
                 "--ro-bind-try", "/state/repos/alm/.git/config", "/state/repos/alm/.git/config",
+                "--ro-bind-try", "/home/ann/.claude/settings.json", "/home/ann/.claude/settings.json",
                 "--chdir", "/state/worktrees/7",
                 "--",
                 "claude", "-p", "--output-format", "stream-json"), wrapped);
