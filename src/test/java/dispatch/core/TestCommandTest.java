@@ -24,7 +24,7 @@ class TestCommandTest {
 
     @Test
     void aPassingCommandPasses() throws Exception {
-        TestRunner.TestRun run = tests.run("echo all good", dir, dir.resolve("t.log"), Duration.ofSeconds(10), () -> false);
+        TestRunner.TestRun run = tests.run("echo all good", dir, dir.resolve("t.log"), Duration.ofSeconds(10), () -> false, handle -> { });
 
         assertTrue(run.passed());
         assertEquals("all good", run.tail().strip());
@@ -33,7 +33,7 @@ class TestCommandTest {
 
     @Test
     void aFailingCommandKeepsItsExitCodeAndOutput() {
-        TestRunner.TestRun run = tests.run("echo boom >&2; exit 3", dir, dir.resolve("t.log"), Duration.ofSeconds(10), () -> false);
+        TestRunner.TestRun run = tests.run("echo boom >&2; exit 3", dir, dir.resolve("t.log"), Duration.ofSeconds(10), () -> false, handle -> { });
 
         assertFalse(run.passed());
         assertEquals(3, run.exitCode());
@@ -43,7 +43,7 @@ class TestCommandTest {
     @Test
     void hugeOutputKeepsOnlyTheTail() {
         TestRunner.TestRun run = tests.run("yes line | head -n 200000; echo LAST", dir, dir.resolve("t.log"),
-                Duration.ofSeconds(30), () -> false);
+                Duration.ofSeconds(30), () -> false, handle -> { });
 
         assertTrue(run.passed());
         assertTrue(run.tail().length() <= TestCommand.TAIL_BYTES, "tail " + run.tail().length());
@@ -54,7 +54,7 @@ class TestCommandTest {
     void aTimeoutEndsTheCommandAndItsChildren() {
         Instant start = Instant.now();
 
-        TestRunner.TestRun run = tests.run("sleep 300 & sleep 300", dir, dir.resolve("t.log"), Duration.ofSeconds(1), () -> false);
+        TestRunner.TestRun run = tests.run("sleep 300 & sleep 300", dir, dir.resolve("t.log"), Duration.ofSeconds(1), () -> false, handle -> { });
 
         assertTrue(run.timedOut());
         assertFalse(run.passed());
@@ -74,7 +74,7 @@ class TestCommandTest {
         });
         Instant start = Instant.now();
 
-        TestRunner.TestRun run = tests.run("sleep 300", dir, dir.resolve("t.log"), Duration.ofMinutes(5), stop::get);
+        TestRunner.TestRun run = tests.run("sleep 300", dir, dir.resolve("t.log"), Duration.ofMinutes(5), stop::get, handle -> { });
 
         assertTrue(run.stopped());
         assertTrue(Duration.between(start, Instant.now()).toSeconds() < 15);
@@ -85,7 +85,7 @@ class TestCommandTest {
         Instant start = Instant.now();
 
         // The shell exits at once; its background child keeps running (like a Gradle daemon) and must not hold the step.
-        TestRunner.TestRun run = tests.run("(sleep 30 &) ; echo done", dir, dir.resolve("t.log"), Duration.ofMinutes(1), () -> false);
+        TestRunner.TestRun run = tests.run("(sleep 30 &) ; echo done", dir, dir.resolve("t.log"), Duration.ofMinutes(1), () -> false, handle -> { });
 
         assertTrue(run.passed());
         assertTrue(Duration.between(start, Instant.now()).toSeconds() < 10);
@@ -93,7 +93,7 @@ class TestCommandTest {
 
     @Test
     void aCommandThatCannotStartFailsWithTheReason() {
-        TestRunner.TestRun run = tests.run("echo x", dir.resolve("missing-dir"), dir.resolve("t.log"), Duration.ofSeconds(5), () -> false);
+        TestRunner.TestRun run = tests.run("echo x", dir.resolve("missing-dir"), dir.resolve("t.log"), Duration.ofSeconds(5), () -> false, handle -> { });
 
         assertFalse(run.passed());
         assertTrue(run.tail().contains("cannot run"), run.tail());
@@ -105,8 +105,23 @@ class TestCommandTest {
                 "GH_TOKEN", "secret-x", "TELEGRAM_BOT_TOKEN", "t", "HOME", System.getProperty("user.home")));
 
         TestRunner.TestRun run = withSecrets.run("echo \"${GH_TOKEN:-none} ${TELEGRAM_BOT_TOKEN:-none}\"", dir,
-                dir.resolve("t.log"), Duration.ofSeconds(10), () -> false);
+                dir.resolve("t.log"), Duration.ofSeconds(10), () -> false, handle -> { });
 
         assertEquals("none none", run.tail().strip());
+    }
+
+    @Test
+    void theStartedCallbackGetsTheLiveTestProcess() {
+        java.util.List<ProcessHandle> started = new java.util.ArrayList<>();
+        java.util.List<Boolean> aliveThen = new java.util.ArrayList<>();
+
+        tests.run("sleep 1", dir, dir.resolve("t.log"), Duration.ofSeconds(10), () -> false, handle -> {
+            started.add(handle);
+            aliveThen.add(handle.isAlive());
+        });
+
+        assertEquals(1, started.size());
+        assertEquals(java.util.List.of(true), aliveThen, "recorded while the test runs, so an orphan kill can find it");
+        assertFalse(started.get(0).isAlive());
     }
 }

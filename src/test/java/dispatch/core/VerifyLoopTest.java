@@ -36,7 +36,7 @@ class VerifyLoopTest {
     private boolean stopped;
     private final List<BigDecimal> fixBudgets = new ArrayList<>();
 
-    private final TestRunner tests = (command, dir, log, timeout, stop) -> {
+    private final TestRunner tests = (command, dir, log, timeout, stop, started) -> {
         calls.add("test");
         boolean pass = testResults.isEmpty() || testResults.pop();
         return new TestRunner.TestRun(pass ? 0 : 1, false, false, pass ? "ok" : "FooTest failed");
@@ -61,6 +61,11 @@ class VerifyLoopTest {
         @Override
         public String diff() {
             return "diff --git a/x b/x";
+        }
+
+        @Override
+        public void testStarted(ProcessHandle process) {
+            // the loop's tests start no process
         }
     };
 

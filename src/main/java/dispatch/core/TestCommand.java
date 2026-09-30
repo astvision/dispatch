@@ -19,6 +19,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 /**
  * The project's test command, in the worktree and inside this machine's sandbox like an agent (ADR 0032). The output
@@ -44,7 +45,8 @@ public final class TestCommand implements TestRunner {
     }
 
     @Override
-    public TestRun run(String commandLine, Path dir, Path log, Duration timeout, BooleanSupplier stopRequested) {
+    public TestRun run(String commandLine, Path dir, Path log, Duration timeout, BooleanSupplier stopRequested,
+                       Consumer<ProcessHandle> started) {
         List<String> shell = System.getProperty("os.name").toLowerCase(Locale.ROOT).startsWith("windows")
                 ? List.of("cmd", "/c", commandLine)
                 : List.of("sh", "-c", commandLine);
@@ -72,6 +74,7 @@ public final class TestCommand implements TestRunner {
             // the command reads no input, so a failed close changes nothing
         }
         Log.info("verify.test_started", "pid", process.pid(), "dir", dir);
+        started.accept(process.toHandle());
         Instant deadline = Instant.now().plus(timeout);
         try {
             while (!process.waitFor(POLL.toMillis(), TimeUnit.MILLISECONDS)) {

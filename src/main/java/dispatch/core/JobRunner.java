@@ -184,6 +184,12 @@ public final class JobRunner implements Worker {
                     return "(the diff could not be read: " + e.getMessage() + ")";
                 }
             }
+
+            @Override
+            public void testStarted(ProcessHandle process) {
+                // The pid Recovery kills after a crash is the test tree's while it runs, as for each agent call.
+                events.agentStarted(process.pid(), process.info().startInstant().orElse(null));
+            }
         };
     }
 

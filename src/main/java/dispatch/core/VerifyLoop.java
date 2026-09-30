@@ -35,6 +35,9 @@ public final class VerifyLoop {
 
         /** The task's change since its branch started (the run's start when that is unknown), as git shows it. */
         String diff();
+
+        /** The test command's process started: recorded like an agent's, so an orphan kill after a crash finds it. */
+        void testStarted(ProcessHandle process);
     }
 
     /** @param budgetUsd null for no budget; @param spentUsd what the run has already cost */
@@ -110,7 +113,8 @@ public final class VerifyLoop {
                     return;
                 }
                 Path log = Path.of(setup.logBase() + ".test-" + (testRuns + 1) + ".log");
-                TestRunner.TestRun result = tests.run(setup.testCommand(), setup.worktree(), log, TEST_TIMEOUT, stop);
+                TestRunner.TestRun result = tests.run(setup.testCommand(), setup.worktree(), log, TEST_TIMEOUT, stop,
+                        agents::testStarted);
                 testRuns++;
                 tail = result.tail();
                 if (result.stopped()) {

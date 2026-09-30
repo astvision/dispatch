@@ -71,6 +71,8 @@ class JobRunnerTest {
     /** Runs in the task's worktree between the planning run and the execution, as an earlier run's delivery would. */
     private java.util.function.Consumer<Path> beforeExecute = worktree -> { };
     private Recorder events;
+    /** What the execution run with the verify loop recorded. */
+    private final Recorder loopEvents = new Recorder();
     private ActiveRuns.ActiveRun control;
     private Agent claude;
 
@@ -272,7 +274,7 @@ class JobRunnerTest {
         answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
         List<String> testCommands = new CopyOnWriteArrayList<>();
 
-        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop) -> {
+        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop, started) -> {
             testCommands.add(command);
             return new TestRunner.TestRun(0, false, false, "BUILD SUCCESS");
         });
@@ -289,7 +291,7 @@ class JobRunnerTest {
     void loopOffIsTodaysPath() throws Exception {
         answers.put(RunKind.EXECUTE, answer(null, "1.00"));
 
-        JobResult result = executeWithLoop(false, (command, workdir, log, timeout, stop) -> {
+        JobResult result = executeWithLoop(false, (command, workdir, log, timeout, stop, started) -> {
             throw new AssertionError("loop off never runs the tests");
         });
 
@@ -305,7 +307,7 @@ class JobRunnerTest {
         answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
         Deque<Integer> exitCodes = new ArrayDeque<>(List.of(1, 0));
 
-        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop) ->
+        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop, started) ->
                 new TestRunner.TestRun(exitCodes.pop(), false, false, "FooTest failed"));
 
         assertEquals(List.of(RunKind.EXECUTE, RunKind.EXECUTE, RunKind.REVIEW), agentKindsStarted);
@@ -320,7 +322,7 @@ class JobRunnerTest {
         java.util.concurrent.atomic.AtomicInteger testRuns = new java.util.concurrent.atomic.AtomicInteger();
 
         // The first test run fails and a fix runs; the member cancels during the second.
-        JobResult result = executeWithLoop(true, execution, (command, workdir, log, timeout, stop) -> {
+        JobResult result = executeWithLoop(true, execution, (command, workdir, log, timeout, stop, started) -> {
             if (testRuns.incrementAndGet() == 1) {
                 return new TestRunner.TestRun(1, false, false, "FooTest failed");
             }
@@ -344,7 +346,7 @@ class JobRunnerTest {
         Clock stopped = Clock.fixed(Instant.parse("2026-09-30T10:00:00Z"), java.time.ZoneOffset.UTC);
 
         JobResult result = executeWithLoop(true, new ActiveRuns().register(TASK, 2),
-                (command, workdir, log, limit, stop) -> new TestRunner.TestRun(1, false, false, "FooTest failed"),
+                (command, workdir, log, limit, stop, started) -> new TestRunner.TestRun(1, false, false, "FooTest failed"),
                 stopped, timeout, timeout.minusSeconds(1));
 
         assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome());
@@ -361,7 +363,7 @@ class JobRunnerTest {
         AtomicReference<Boolean> stillInterrupted = new AtomicReference<>();
         Thread worker = Thread.ofVirtual().start(() -> {
             result.set(executeWithLoop(true,
-                    (command, workdir, log, limit, stop) -> new TestRunner.TestRun(1, false, false, "FooTest failed")));
+                    (command, workdir, log, limit, stop, started) -> new TestRunner.TestRun(1, false, false, "FooTest failed")));
             stillInterrupted.set(Thread.currentThread().isInterrupted());
         });
         assertTrue(fixStarted.await(15, java.util.concurrent.TimeUnit.SECONDS), "the fix never started");
@@ -393,7 +395,7 @@ class JobRunnerTest {
             GitFixture.sh(worktree, "git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "first");
         };
 
-        executeWithLoop(true, (command, workdir, log, timeout, stop) -> new TestRunner.TestRun(0, false, false, "BUILD SUCCESS"));
+        executeWithLoop(true, (command, workdir, log, timeout, stop, started) -> new TestRunner.TestRun(0, false, false, "BUILD SUCCESS"));
 
         assertEquals(1, reviewPrompts.size());
         assertTrue(reviewPrompts.get(0).contains("the first execution's change"), reviewPrompts.get(0));
@@ -407,12 +409,42 @@ class JobRunnerTest {
         beforeExecute = worktree -> GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin",
                 dir.resolve("missing.git").toString());
 
-        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop) -> new TestRunner.TestRun(0, false, false, "ok"));
+        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop, started) -> new TestRunner.TestRun(0, false, false, "ok"));
 
         assertEquals(FailureReason.DELIVERY, result.failureReason());
         // The run's stored summary is what a DELIVER retry commits, so it carries the block.
         assertTrue(result.agent().summary().startsWith("Raised AUTH_TIMEOUT_SECONDS to 30\n\nVerification\n- Tests: pass (run 1)"),
                 result.agent().summary());
+    }
+
+    @Test
+    void theTestProcessIsRecordedForOrphanKillWhileItRuns() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+        List<Long> recordedDuringTheTest = new CopyOnWriteArrayList<>();
+        List<Long> testPids = new CopyOnWriteArrayList<>();
+        List<Boolean> startsDuringTheTest = new CopyOnWriteArrayList<>();
+
+        executeWithLoop(true, (command, workdir, log, timeout, stop, started) -> {
+            Process test;
+            try {
+                test = new ProcessBuilder("sleep", "30").start();
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            try {
+                started.accept(test.toHandle());
+                testPids.add(test.pid());
+                recordedDuringTheTest.add(loopEvents.pid);
+                startsDuringTheTest.add(loopEvents.processStart.equals(test.toHandle().info().startInstant().orElseThrow()));
+            } finally {
+                test.destroyForcibly();
+            }
+            return new TestRunner.TestRun(0, false, false, "ok");
+        });
+
+        assertEquals(testPids, recordedDuringTheTest, "the test's own process, not the agent's before it");
+        assertEquals(List.of(true), startsDuringTheTest, "its start time, which Recovery matches against the live process");
     }
 
     /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
@@ -440,7 +472,7 @@ class JobRunnerTest {
                 "Implement the approved plan", null, null, timeout.toMillis(), new BigDecimal("10"), List.of(),
                 "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null,
                 loop ? "Review this:" : null);
-        return looping.run(job, new Recorder(), execution);
+        return looping.run(job, loopEvents, execution);
     }
 
     private String lastCommitBody() {
