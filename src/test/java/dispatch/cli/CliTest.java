@@ -58,6 +58,14 @@ class CliTest {
     }
 
     @Test
+    void teleportTakesATaskNumberAndPlan() {
+        assertEquals(new Cli.Teleport(DEFAULT_CONFIG, 15, false), parse("teleport", "15"));
+        assertEquals(new Cli.Teleport(DEFAULT_CONFIG, 15, true), parse("teleport", "15", "--plan"));
+        assertTrue(error("teleport").contains("teleport needs a task number"));
+        assertTrue(error("teleport", "x").contains("teleport needs a task number"));
+    }
+
+    @Test
     void serviceActionsAndTheRunLogFile() {
         assertEquals(new Cli.Service(DEFAULT_CONFIG, "install"), parse("service", "install"));
         assertEquals(new Cli.Service(Path.of("team.yaml"), "status"), parse("service", "status", "--config", "team.yaml"));

@@ -19,6 +19,8 @@ public enum OutboxKind {
     PLAN_QUESTION,
     /** To the requester privately: asks for their own answer to a question, as a forced reply (G-1d). */
     PLAN_ANSWER_PROMPT,
+    /** /teleport N's answer: the command that continues the task's agent session in a terminal, or why not yet (RM-6). */
+    TELEPORT,
     /** To the presser of a plan's ✏️: asks for their correction as a forced reply; the reply corrects the plan. */
     PLAN_EDIT_PROMPT,
     EXECUTION_QUEUED,

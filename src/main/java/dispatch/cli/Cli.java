@@ -16,13 +16,13 @@ public final class Cli {
     private static final Set<String> VALUE_OPTIONS = Set.of("config", "name", "alias", "base", "model", "effort", "group", "log-file",
             "port", "agent", "instance", "idle-minutes");
     private static final List<String> SERVICE_ACTIONS = List.of("install", "start", "stop", "status", "uninstall");
-    private static final Set<String> SWITCHES = Set.of("force", "no-browser", "advanced");
+    private static final Set<String> SWITCHES = Set.of("force", "no-browser", "advanced", "plan");
 
     private Cli() {
     }
 
     public sealed interface Invocation permits Run, Init, Check, ProjectAdd, Service, Ui, WorkerInit, WorkerPair,
-            WorkerRun, WorkerService, Ask, Help, ListInstances {
+            WorkerRun, WorkerService, Ask, Teleport, Help, ListInstances {
     }
 
     /** {@code dispatch list}: named {@code ListInstances} to avoid clashing with {@link java.util.List}. */
@@ -58,6 +58,10 @@ public final class Cli {
         public Service(Path configFile, String action) {
             this(configFile, action, null);
         }
+    }
+
+    /** `dispatch teleport N [--plan]` (RM-6). */
+    public record Teleport(Path configFile, long taskId, boolean plan) implements Invocation {
     }
 
     public record Check(Path configFile) implements Invocation {
@@ -160,6 +164,9 @@ public final class Cli {
                            keep your worker running in the background
                   ask tasks | ask task N
                            what the bot's assistant reads about a member's tasks; the bot runs it
+                  teleport N [--plan]
+                           continue task N's agent session here, in its worktree (Claude Code tasks);
+                           --plan opens its planning session instead of its building one
                   help     show this help
 
                 FILE defaults to %s
@@ -263,7 +270,15 @@ public final class Cli {
                     default -> throw new CliException("unknown command 'worker " + arguments.positional().getFirst() + "'");
                 };
             }
-            case "ask" -> {
+            case "teleport" -> {
+                if (arguments.positional().size() != 1 || !arguments.positional().getFirst().matches("[1-9][0-9]{0,17}")) {
+                    throw new CliException("teleport needs a task number, e.g. dispatch teleport 15");
+                }
+                arguments.allow(1, Set.of("config", "instance", "plan"));
+                yield new Teleport(arguments.configFile(defaults), Long.parseLong(arguments.positional().getFirst()),
+                        arguments.switches().contains("plan"));
+            }
+                        case "ask" -> {
                 List<String> what = arguments.positional();
                 if (what.size() == 1 && what.getFirst().equals("tasks")) {
                     arguments.allow(1, Set.of("instance"));

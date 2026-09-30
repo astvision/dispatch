@@ -91,6 +91,7 @@ export default function RunMonitor({ taskId, live }: { taskId: number; live: boo
       {run.costUsd && <p className="run-cost num">${run.costUsd}</p>}
       {live && run.controls && <Controls run={run} now={now} busy={busy} onSteer={(control) => void steer(control)} />}
       {refusal && <p className="sheet-error" role="alert">{refusal}</p>}
+      {(!live || run.controls?.paused) && run.teleport && <TeleportLine teleport={run.teleport} />}
       {failed && <p className="quiet">Холболт тасарсан, дахин оролдож байна…</p>}
     </section>
   );
@@ -142,6 +143,33 @@ function Controls({ run, now, busy, onSteer }: {
                  onChange={(event) => onSteer({ action: event.target.checked ? "pause" : "unpause" })} />
         </label>
       )}
+    </div>
+  );
+}
+
+/**
+ * 🚀 the command that continues the agent's session in a terminal (RM-6), shown while paused and once the run ended. A
+ * task a worker ran names that computer; while any run is active there is nothing to offer.
+ */
+function TeleportLine({ teleport }: { teleport: NonNullable<RunView["teleport"]> }) {
+  const [copied, setCopied] = useState(false);
+  const text = teleport.reason === "ON_WORKER" ? teleport.line : teleport.command;
+  if (!text || (teleport.reason !== null && teleport.reason !== "ON_WORKER")) return null;
+  const copy = () => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }, () => undefined);
+  };
+  return (
+    <div className="run-teleport">
+      <p className="quiet">
+        🚀 {teleport.reason === "ON_WORKER" ? `${teleport.worker} компьютер дээр terminal-д:` : "Terminal-д үргэлжлүүлэх:"}
+      </p>
+      <div className="run-cmd">
+        <code>{text}</code>
+        <button type="button" className="choice" onClick={copy}>{copied ? "Хуулсан" : "Хуулах"}</button>
+      </div>
     </div>
   );
 }

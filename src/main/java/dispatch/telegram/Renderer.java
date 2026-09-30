@@ -150,6 +150,7 @@ public final class Renderer {
                     + (payload.hasNonNull("title") ? "\n" + escapeWithin(payload.get("title").asText(), TITLE_LIMIT) : ""));
             case PLAN_READY -> throw new IllegalStateException("rendered above");
             case PLAN_QUESTION -> planQuestion(payload);
+            case TELEPORT -> teleport(payload);
             case PLAN_EDIT_PROMPT -> new Rendered(format("plan.editPrompt", taskId(payload)), List.of(), null,
                     format("plan.editPlaceholder", taskId(payload)));
             case PLAN_ANSWER_PROMPT -> new Rendered(format("plan.answerPrompt", taskId(payload), payload.path("index").asInt()), List.of(),
@@ -835,6 +836,20 @@ public final class Renderer {
             }
         }
         return md.toString();
+    }
+
+    /** /teleport N's answer (RM-6): the command to run, and the line to paste where Dispatch is not installed. */
+    private Rendered teleport(JsonNode payload) {
+        String taskId = taskId(payload);
+        String line = payload.hasNonNull("line") ? "<code>" + escape(payload.get("line").asText()) + "</code>" : "";
+        return plain(switch (payload.path("reason").asText("")) {
+            case "" -> format("teleport.ready", taskId, escape(payload.path("command").asText()), line);
+            case "RUNNING" -> format("teleport.running", taskId);
+            case "NOT_CLAUDE" -> format("teleport.notClaude", taskId, escape(payload.path("agent").asText()));
+            case "ON_WORKER" -> format("teleport.onWorker", taskId, escape(payload.path("worker").asText()), line);
+            case "NO_WORKTREE" -> format("teleport.noWorktree", taskId);
+            default -> format("task.notFound", taskId);
+        });
     }
 
     private Rendered completed(JsonNode payload) {

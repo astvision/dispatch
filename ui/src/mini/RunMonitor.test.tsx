@@ -116,4 +116,29 @@ describe("the run monitor", () => {
 
     await waitFor(() => expect(api.steerRun).toHaveBeenCalledWith(15, { action: "review" }));
   });
+
+  it("shows the teleport command once the run has ended, and which computer holds a worker's session", async () => {
+    vi.mocked(api.getTaskRun).mockResolvedValue({ ...running, status: "SUCCEEDED",
+      teleport: { command: "dispatch teleport 15", line: "cd '/w/15' && claude --resume f21d", reason: null, worker: null } });
+
+    const { unmount } = render(<RunMonitor taskId={15} live={false} />);
+    expect(await screen.findByText("dispatch teleport 15")).toBeInTheDocument();
+    unmount();
+
+    vi.mocked(api.getTaskRun).mockResolvedValue({ ...running, status: "SUCCEEDED",
+      teleport: { command: "dispatch teleport 15", line: "cd '/w/15' && claude --resume f21d", reason: "ON_WORKER", worker: "ann-laptop" } });
+    render(<RunMonitor taskId={15} live={false} />);
+    expect(await screen.findByText("cd '/w/15' && claude --resume f21d")).toBeInTheDocument();
+    expect(screen.getByText(/ann-laptop/)).toBeInTheDocument();
+  });
+
+  it("offers no teleport while the run is live and not paused", async () => {
+    vi.mocked(api.getTaskRun).mockResolvedValue({ ...running,
+      teleport: { command: "dispatch teleport 15", line: null, reason: "RUNNING", worker: null } });
+
+    render(<RunMonitor taskId={15} live />);
+
+    expect(await screen.findByText("Хэрэгжүүлэлт")).toBeInTheDocument();
+    expect(screen.queryByText("dispatch teleport 15")).not.toBeInTheDocument();
+  });
 });

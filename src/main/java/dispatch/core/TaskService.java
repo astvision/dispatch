@@ -787,6 +787,7 @@ public final class TaskService {
                     payload.putObject("activity").put("steps", activity.steps()).put("lastAction", activity.lastAction()));
             activeRuns.run(taskId).ifPresent(active -> putControls(payload, RunSteps.of(tx, taskId, run.seq()), active));
         }
+        payload.set("teleport", teleportPayload(tx, taskId));
         return Optional.of(payload);
     }
 
@@ -827,6 +828,21 @@ public final class TaskService {
         Optional<ActiveRuns.ActiveRun> run = activeRuns.run(taskId);
         run.ifPresent(ActiveRuns.ActiveRun::resume);
         return run.isPresent();
+    }
+
+    /**
+     * Task #N's session as a terminal can go on with it (RM-6): the command, the line to paste, and why not when it cannot.
+     * It does not check who asks: the caller shows it to the requester alone.
+     */
+    public ObjectNode teleportPayload(Tx tx, long taskId) {
+        String agent = Tasks.find(tx, taskId).flatMap(task -> projects.byName(task.project())).map(Config.Project::agent)
+                .orElse("claude-code");
+        Teleport teleport = Teleport.of(tx, taskId, false, agent);
+        ObjectNode payload = Json.object().put("taskId", taskId).put("command", "dispatch teleport " + taskId)
+                .put("reason", teleport.refusal() == null ? null : teleport.refusal().name())
+                .put("worker", teleport.worker()).put("agent", agent);
+        payload.put("line", teleport.workdir() == null || teleport.session() == null ? null : teleport.shellLine());
+        return payload;
     }
 
     /** ⏭ on the task's running step (RM-4); false when no run of the task is active here. */

@@ -538,6 +538,24 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void teleportAnswersTheRequesterPrivatelyAndNobodyElse() {
+        long taskId = taskAwaitingApproval(List.of());
+
+        handler.handle(privateCommand(530, 100, "Bold", "/teleport " + taskId));
+        handler.handle(privateCommand(531, 200, "Ali", "/teleport " + taskId));
+        handler.handle(message(532, 19, 100, "Bold", GROUP, "supergroup", "/teleport " + taskId, null));
+        handler.handle(privateCommand(533, 100, "Bold", "/teleport"));
+
+        Map<String, String> bold = row("SELECT kind, payload FROM outbox WHERE reply_to_ref = 'telegram:100/530'");
+        assertEquals("TELEPORT", bold.get("kind"));
+        assertEquals("dispatch teleport " + taskId, Json.read(bold.get("payload")).path("command").asText());
+        assertEquals("TASK_NOT_FOUND", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:200/531'").get("kind"),
+                "someone else's worktree and session stay theirs");
+        assertEquals("PRIVATE_ONLY", row("SELECT kind FROM outbox WHERE reply_to_ref = ?", "telegram:" + GROUP + "/19").get("kind"));
+        assertEquals("TASK_USAGE", row("SELECT kind FROM outbox WHERE reply_to_ref = 'telegram:100/533'").get("kind"));
+    }
+
+    @Test
     void cancelAndRetryInAGroupArePointedToThePrivateChat() {
         handler.handle(message(507, 17, 100, "Bold", GROUP, "supergroup", "/cancel@" + BOT + " 3", null));
         handler.handle(message(508, 18, 100, "Bold", GROUP, "supergroup", "/retry 1", null));
