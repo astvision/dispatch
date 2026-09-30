@@ -170,8 +170,8 @@ Unit tests (every OS in CI):
 Integration test with real bwrap (Linux; skipped with its reason when the trial fails): a fake agent script in the
 sandbox writes a file in the worktree, runs `git status` there, fails to read a planted `~/.ssh/id_test`, fails to
 write `$HOME/x`, and a cancel ends it and its children. GitHub's Ubuntu 24 runners block unprivileged user namespaces.
-As built, no CI step installs bubblewrap or sets `kernel.apparmor_restrict_unprivileged_userns=0` (awaiting the owner's
-decision), so `BubblewrapSandboxTest` skips itself with its reason there; it runs on a machine with a working bwrap.
+As built, the Linux CI job installs bubblewrap and sets `kernel.apparmor_restrict_unprivileged_userns=0` on its
+throwaway runner, so `BubblewrapSandboxTest` runs there; it skips itself with its reason only where no bwrap works.
 
 Live check: one real task on the personal bot, plan and execution, with `run.sandbox = bubblewrap`.
 

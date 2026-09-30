@@ -66,6 +66,13 @@ jobs:
           # Except Maven's own: java.exe reads its arguments in the ANSI code page, which has no Cyrillic here, so
           # surefire's booter jar must sit on an ASCII path ("Unable to access jarfile D:\a\_temp\dispatch ????\...").
           "MAVEN_OPTS=-Djava.io.tmpdir=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+      - name: Allow bubblewrap sandboxes (Linux)
+        if: runner.os == 'Linux'
+        # Ubuntu 24 refuses unprivileged user namespaces by default; without them the real-bwrap sandbox tests
+        # (ADR 0032) skip. Only this throwaway runner is changed.
+        run: |
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build and test
         shell: bash
         run: ./mvnw --batch-mode -Pui verify

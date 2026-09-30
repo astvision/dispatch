@@ -54,5 +54,5 @@ container, slower builds on macOS and Windows).
 - A worker reports the sandbox with each result, and a team machine from before this version refuses such a result:
   upgrade the team machine before its workers.
 - macOS gets its own sandbox (Seatbelt) only once someone can run it on a Mac.
-- On GitHub's Ubuntu 24 runners unprivileged user namespaces are blocked, so the real-bwrap test skips itself there
-  until CI is set up for it.
+- GitHub's Ubuntu 24 runners block unprivileged user namespaces, so the Linux CI job installs bubblewrap and sets
+  `kernel.apparmor_restrict_unprivileged_userns=0` on its throwaway runner; the real-bwrap tests run on every push.
