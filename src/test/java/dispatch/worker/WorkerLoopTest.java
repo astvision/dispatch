@@ -3,6 +3,7 @@ package dispatch.worker;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dispatch.core.Job;
 import dispatch.core.JobResult;
@@ -10,6 +11,9 @@ import dispatch.domain.FailureReason;
 import dispatch.testing.SqlRows;
 import java.nio.file.Files;
 import java.time.Duration;
+import dispatch.domain.RunKind;
+import java.math.BigDecimal;
+import java.util.UUID;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -21,6 +25,30 @@ import org.junit.jupiter.api.condition.OS;
 /** The member's side: it takes the job, runs the real JobRunner and reports back. */
 @DisabledOnOs(value = OS.WINDOWS, disabledReason = "the fake claude and gh CLIs are POSIX shell scripts")
 class WorkerLoopTest extends WorkerApiFixture {
+
+    @Test
+    void workerKeepsTheLoopSettingsOfTheJob() throws Exception {
+        WorkerLoop loop = idleLoop("ann-laptop", repos.repo("alm"));
+
+        Job ran = loop.withLocalClone(executeJob(new Job.Project("alm", "git@github.com:acme/alm.git", null, "main",
+                "claude-code", List.of(), "./mvnw -q test", true), "Review it")).orElseThrow();
+
+        assertEquals("./mvnw -q test", ran.project().test());
+        assertTrue(ran.project().loopOn());
+        assertEquals("Review it", ran.reviewPrompt());
+        assertEquals(repos.repo("alm").toString(), ran.project().path(), "the member's own clone");
+
+        Job older = loop.withLocalClone(executeJob(new Job.Project("alm", "git@github.com:acme/alm.git", null, "main",
+                "claude-code", List.of()), null)).orElseThrow();
+        assertFalse(older.project().loopOn(), "a job without the loop stays off");
+        assertNull(older.reviewPrompt());
+    }
+
+    private static Job executeJob(Job.Project project, String reviewPrompt) {
+        return new Job(TASK_ID, 2, RunKind.EXECUTE, project, "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false,
+                "Implement", null, null, 1000L, new BigDecimal("2"), List.of(), "dispatch #7: x", List.of(), null, null,
+                reviewPrompt);
+    }
 
     @Test
     void theLoopRunsAJobInItsOwnCloneAndReportsTheResult() throws Exception {

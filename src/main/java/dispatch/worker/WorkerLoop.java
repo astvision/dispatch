@@ -197,7 +197,8 @@ public final class WorkerLoop implements Runnable {
      * The team's project as this computer has it: its own clone, and its own model and effort when it set any. Those are
      * Claude Code's, so a project the team runs on another agent keeps the team's, even one that moved since worker init.
      */
-    private Optional<Job> withLocalClone(Job job) {
+    // Package-private: WorkerLoopTest reaches it directly.
+    Optional<Job> withLocalClone(Job job) {
         WorkerConfig.Project mine = config.projects().get(job.project().name());
         if (mine == null) {
             return Optional.empty();

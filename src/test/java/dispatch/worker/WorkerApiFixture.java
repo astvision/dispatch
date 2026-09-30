@@ -230,6 +230,18 @@ abstract class WorkerApiFixture {
 
     private void startLoop(String name, Map<String, WorkerConfig.Project> projects, int maxConcurrentRuns,
                            ClientFactory clientFactory) throws Exception {
+        WorkerLoop loop = buildLoop(name, projects, maxConcurrentRuns, clientFactory);
+        loops.add(loop);
+        Thread.ofVirtual().name("worker-loop-" + name).start(loop);
+    }
+
+    /** A loop that is wired but not started, for a test that calls one of its package-private steps directly. */
+    WorkerLoop idleLoop(String name, Path clonePath) throws Exception {
+        return buildLoop(name, Map.of("alm", new WorkerConfig.Project(clonePath.toString(), null, null)), 1, WorkerClient::new);
+    }
+
+    private WorkerLoop buildLoop(String name, Map<String, WorkerConfig.Project> projects, int maxConcurrentRuns,
+                                 ClientFactory clientFactory) throws Exception {
         String key = pair(BOLD, name);
         Path bin = Files.createDirectories(workerStateDir(name).resolve("bin"));
         URI team = URI.create("http://127.0.0.1:" + api.port());
@@ -247,8 +259,7 @@ abstract class WorkerApiFixture {
                         workerConfig.stateDir().resolve("agent-sessions").resolve("codex")));
         WorkerLoop loop = new WorkerLoop(workerConfig, client, agents, workspaces, delivery, Redactor.patternsOnly(),
                 new ActiveRuns(), TEST_PROGRESS);
-        loops.add(loop);
-        Thread.ofVirtual().name("worker-loop-" + name).start(loop);
+        return loop;
     }
 
     /** Where {@code name}'s worker keeps its own worktrees, run logs and agent notes: never the team machine's own state. */
