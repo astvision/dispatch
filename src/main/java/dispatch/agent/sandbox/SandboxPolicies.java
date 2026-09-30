@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 /** What each run may touch on this machine (spec: 2026-09-30-agent-sandbox-design, "The policy"). */
@@ -41,8 +42,16 @@ public final class SandboxPolicies {
         this(home, stateDir, dispatchPrivate, List.of());
     }
 
-    /** @param agentStateInHome the agent's own files, relative to home, e.g. ".claude" and ".claude.json" */
+    /** As {@link #forRun(RunRequest, List, Map)} for an environment without XDG_RUNTIME_DIR. */
     public SandboxPolicy forRun(RunRequest request, List<String> agentStateInHome) {
+        return forRun(request, agentStateInHome, Map.of());
+    }
+
+    /**
+     * @param agentStateInHome the agent's own files, relative to home, e.g. ".claude" and ".claude.json"
+     * @param environment      the agent's environment; its XDG_RUNTIME_DIR is hidden
+     */
+    public SandboxPolicy forRun(RunRequest request, List<String> agentStateInHome, Map<String, String> environment) {
         Path workdir = request.workdir().toAbsolutePath().normalize();
         List<Path> writable = new ArrayList<>();
         agentStateInHome.forEach(entry -> writable.add(home.resolve(entry)));
@@ -55,7 +64,8 @@ public final class SandboxPolicies {
             readOnly.add(stateDir.resolve("assistant-bin"));
         }
         // bwrap cannot create a mount point on the read-only root: a directory that does not exist has nothing to hide.
-        List<Path> hidden = Stream.concat(SECRETS.stream().map(home::resolve), dispatchPrivate.stream())
+        List<Path> hidden = Stream.of(SECRETS.stream().map(home::resolve), dispatchPrivate.stream(), runtimeDir(environment))
+                .flatMap(paths -> paths)
                 .filter(Files::isDirectory)
                 .toList();
         Path gitCommonDir = gitCommonDir(workdir);
@@ -64,6 +74,22 @@ public final class SandboxPolicies {
             readOnly.add(workdir.resolve(".git"));
         }
         return new SandboxPolicy(workdir, gitCommonDir, readOnly, writable, hidden);
+    }
+
+    /**
+     * The owner's sockets live here: systemd --user (systemd-run escapes any sandbox), ssh-agent, gpg-agent, D-Bus and
+     * the Secret Service. /run/user/&lt;uid&gt; when XDG_RUNTIME_DIR is unset; nothing when the uid cannot be read.
+     */
+    private Stream<Path> runtimeDir(Map<String, String> environment) {
+        String fromEnvironment = environment.get("XDG_RUNTIME_DIR");
+        if (fromEnvironment != null && !fromEnvironment.isBlank()) {
+            return Stream.of(Path.of(fromEnvironment).toAbsolutePath());
+        }
+        try {
+            return Stream.of(Path.of("/run/user", String.valueOf(Files.getAttribute(home, "unix:uid"))));
+        } catch (IOException | UnsupportedOperationException | IllegalArgumentException e) {
+            return Stream.empty();
+        }
     }
 
     /**

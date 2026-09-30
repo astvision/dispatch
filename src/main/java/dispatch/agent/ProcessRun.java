@@ -61,12 +61,13 @@ public final class ProcessRun implements RunHandle {
     public static ProcessRun start(String agent, List<String> commandLine, RunRequest request, Map<String, String> environment,
                                    String prompt, OutputParser parser, Duration cancelGrace, Confinement confinement,
                                    List<String> agentStateInHome) {
-        List<String> confined = confinement.wrap(commandLine, request, agentStateInHome);
-        ProcessBuilder builder = new ProcessBuilder(confined).directory(request.workdir().toFile());
+        ProcessBuilder builder = new ProcessBuilder().directory(request.workdir().toFile());
         builder.environment().clear();
         builder.environment().putAll(environment);
         builder.environment().putAll(request.environment());
         WITHHELD_VARIABLES.forEach(builder.environment()::remove);
+        List<String> confined = confinement.wrap(commandLine, request, agentStateInHome, builder.environment());
+        builder.command(confined);
         Path stdoutLog = Path.of(request.logBase() + ".jsonl");
         Path stderrLog = Path.of(request.logBase() + ".stderr");
         Process process;

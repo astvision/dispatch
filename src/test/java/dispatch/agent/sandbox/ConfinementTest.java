@@ -21,7 +21,7 @@ class ConfinementTest {
     void anIsolatingSandboxWrapsTheCommandWithTheRunsPolicy() {
         Confinement confinement = new Confinement(new Bubblewrap("bwrap"), new SandboxPolicies(root, root.resolve("state"), List.of()));
 
-        List<String> wrapped = confinement.wrap(List.of("claude", "-p"), request(root), List.of(".claude"));
+        List<String> wrapped = confinement.wrap(List.of("claude", "-p"), request(root), List.of(".claude"), java.util.Map.of());
 
         assertEquals("bwrap", wrapped.getFirst());
         assertEquals(List.of("--", "claude", "-p"), wrapped.subList(wrapped.size() - 3, wrapped.size()));
@@ -32,7 +32,7 @@ class ConfinementTest {
     void noSandboxLeavesTheCommandAloneAndNeedsNoPolicies() {
         Confinement confinement = Confinement.none("bubblewrap (bwrap) is not installed");
 
-        assertEquals(List.of("claude", "-p"), confinement.wrap(List.of("claude", "-p"), request(root), List.of(".claude")));
+        assertEquals(List.of("claude", "-p"), confinement.wrap(List.of("claude", "-p"), request(root), List.of(".claude"), java.util.Map.of()));
         assertEquals(new SandboxUse("none", "bubblewrap (bwrap) is not installed"), confinement.use());
     }
 
@@ -45,5 +45,17 @@ class ConfinementTest {
     void anIsolatingSandboxWithoutPoliciesIsRefusedAtConstruction() {
         assertThrows(NullPointerException.class, () -> new Confinement(new Bubblewrap("bwrap"), null));
         Confinement.none("x");
+    }
+
+    @Test
+    void theAgentEnvironmentsRuntimeDirIsHidden() throws Exception {
+        Path runtime = java.nio.file.Files.createDirectory(root.resolve("run-user"));
+        Confinement confinement = new Confinement(new Bubblewrap("bwrap"), new SandboxPolicies(root, root.resolve("state"), List.of()));
+
+        List<String> wrapped = confinement.wrap(List.of("claude"), request(root), List.of(),
+                java.util.Map.of("XDG_RUNTIME_DIR", runtime.toString()));
+
+        int at = wrapped.indexOf(runtime.toString());
+        assertEquals("--tmpfs", wrapped.get(at - 1), wrapped.toString());
     }
 }
