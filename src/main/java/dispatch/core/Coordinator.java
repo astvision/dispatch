@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
@@ -119,30 +120,36 @@ public final class Coordinator {
         String prompt = task.planJson() == null ? Prompts.plan(task) : Prompts.correction(task, run);
         return newJob(task, run, project, task.sessionId(), agentStartedBefore(task.id(), RunKind.PLAN, run.seq()), prompt,
                 project.planModel(), project.planEffort(), limits.timeout().toMillis(), limits.budgetUsd(),
-                attachments(task.id()), null);
+                attachments(task.id()), null, null);
     }
 
     private Job executeJob(Task task, Run run, Config.Project project) {
         Config.RunLimits limits = executeLimits.apply(project);
         boolean resume = agentStartedBefore(task.id(), RunKind.EXECUTE, run.seq());
         return newJob(task, run, project, buildSession(task), resume, executePrompt(task, run, resume), project.executeModel(),
-                project.executeEffort(), limits.timeout().toMillis(), limits.budgetUsd(), attachments(task.id()), null);
+                project.executeEffort(), limits.timeout().toMillis(), limits.budgetUsd(), attachments(task.id()), null,
+                project.loopOn() ? Prompts.review(task, task.planJson(), reviewInstruction(task, run)) : null);
     }
 
     /** A delivery run has no agent: it commits what the failed delivery left, with that run's summary as the body. */
     private Job deliverJob(Task task, Run run, Config.Project project) {
-        return newJob(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction());
+        return newJob(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction(), null);
     }
 
     private Job newJob(Task task, Run run, Config.Project project, UUID sessionId, boolean resume, String prompt, String model,
                     String effort, long timeoutMillis, BigDecimal budgetUsd, List<Attachment> attachments,
-                    String deliverySummary) {
+                    String deliverySummary, String reviewPrompt) {
         Job.Project on = new Job.Project(project.name(), project.repo(), project.path(), project.baseBranch(), project.agent(),
-                project.copyFiles());
+                project.copyFiles(), project.test(), project.loopOn());
         return new Job(task.id(), run.seq(), run.kind(), on, task.baseBranch(), task.baseSha(),
                 task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
-                trailers(task, run.kind()), deliverySummary, Config.branchFor(branchPrefix, task.id()));
+                trailers(task, run.kind()), deliverySummary, Config.branchFor(branchPrefix, task.id()), reviewPrompt);
+    }
+
+    /** What this run adds to the approved plan; the approval's (and its retry's) instruction is the plan itself, so none. */
+    private static String reviewInstruction(Task task, Run run) {
+        return run.cause() == RunCause.APPROVAL || Objects.equals(run.instruction(), task.planJson()) ? null : run.instruction();
     }
 
     /**

@@ -108,6 +108,40 @@ final class Prompts {
     }
 
     /**
+     * The verify loop's reviewer: a fresh, read-only session that judges the change against what was approved. The worker
+     * appends the diff after the last line.
+     *
+     * @param instruction a follow-up's or retry's instruction; null for the first execution of the approved plan
+     */
+    static String review(Task task, String planJson, String instruction) {
+        String asked = instruction == null ? "" : """
+
+                Since then the team asked for this, which the change must also do:
+                <instruction>
+                %s
+                </instruction>
+                """.formatted(instruction);
+        return """
+                You review a change another agent made in this repository for task #%d from %s. You change nothing: read \
+                the code and the diff, and answer only through the structured output.
+
+                <task>
+                %s
+                </task>
+
+                The approved plan:
+                <plan>
+                %s
+                </plan>
+                %s
+                Report a finding as "blocking" only when the change is wrong, unsafe, breaks something, or misses part of \
+                the plan; everything else is "minor". Answer "ok" when nothing is blocking. At most 20 findings.
+
+                The change to review:
+                """.formatted(task.id(), task.requester().name(), task.description(), planJson, asked);
+    }
+
+    /**
      * A retried execution continues its session, which already has the task and the plan; it needs to know that it was cut
      * short, and why, so it checks what it already changed instead of starting over.
      *

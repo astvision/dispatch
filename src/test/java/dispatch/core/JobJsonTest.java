@@ -2,6 +2,7 @@ package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dispatch.Json;
 import dispatch.agent.AgentOutcome;
@@ -125,5 +126,31 @@ class JobJsonTest {
         JobResult read = Json.MAPPER.treeToValue(json, JobResult.class);
 
         assertEquals(null, read.agent().sandbox());
+    }
+
+    @Test
+    void aJobWithTheLoopSurvivesJsonUnchanged() throws Exception {
+        Job job = new Job(7, 2, RunKind.EXECUTE,
+                new Job.Project("alm", "git@github.com:acme/alm.git", "/home/ann/work/alm", "main", "claude-code", List.of(),
+                        "./mvnw -q test", true),
+                "main", "6f3030a", "/var/lib/dispatch/worktrees/7", null, UUID.fromString("11111111-2222-3333-4444-555555555555"),
+                false, "Implement the approved plan", "opus", "low", 1_800_000L, new BigDecimal("2.50"), List.of(),
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), null, null, "Review this change");
+
+        assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
+    }
+
+    @Test
+    void aJobFromAnOlderTeamMachineHasTheLoopOff() throws Exception {
+        Job old = new Job(7, 2, RunKind.EXECUTE,
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),
+                "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false, "p", null, null, 1L, null, List.of(), "s", List.of(),
+                null, null);
+
+        Job read = Json.MAPPER.readValue(Json.write(old), Job.class);
+
+        assertFalse(read.project().loopOn());
+        assertNull(read.reviewPrompt());
+        assertFalse(Json.write(old).contains("\"loop\""), "an older worker must still read a job without the loop");
     }
 }

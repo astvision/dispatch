@@ -31,6 +31,7 @@ import java.util.UUID;
  * @param deliverySummary DELIVER only: the failed run's summary, which becomes the commit body
  * @param branch          the task's branch, set by the team machine that made this job; null uses {@link Config#defaultBranch}
  *                        so an older worker that never heard of it (before M: several instances) still parses the job
+ * @param reviewPrompt    the reviewer's prompt without the diff; null unless an EXECUTE job with the verify loop on
  */
 public record Job(
         long taskId,
@@ -52,11 +53,21 @@ public record Job(
         String commitSubject,
         List<String> commitTrailers,
         String deliverySummary,
-        @JsonInclude(JsonInclude.Include.NON_NULL) String branch) {
+        @JsonInclude(JsonInclude.Include.NON_NULL) String branch,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String reviewPrompt) {
 
     public Job {
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         commitTrailers = commitTrailers == null ? List.of() : List.copyOf(commitTrailers);
+    }
+
+    /** Before the verify loop: no review prompt. */
+    public Job(long taskId, int seq, RunKind kind, Project project, String baseBranch, String baseSha, String worktree,
+            String prUrl, UUID sessionId, boolean resume, String prompt, String model, String effort, long timeoutMillis,
+            BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
+            String deliverySummary, String branch) {
+        this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
+                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch, null);
     }
 
     /** Before {@code branch} existed: an older worker's job, always the default branch. */
@@ -65,7 +76,7 @@ public record Job(
             BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
             String deliverySummary) {
         this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
-                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, null);
+                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, null, null);
     }
 
     /** The task's branch: the team's prefix when it sent one, else dispatch/<task>. */
@@ -75,10 +86,22 @@ public record Job(
     }
 
     /** @param path the clone the run works from, null when the worker keeps its own under {@code repos/<name>} */
-    public record Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles) {
+    public record Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles,
+                          @JsonInclude(JsonInclude.Include.NON_NULL) String test,
+                          @JsonInclude(JsonInclude.Include.NON_NULL) Boolean loop) {
 
         public Project {
             copyFiles = copyFiles == null ? List.of() : List.copyOf(copyFiles);
+        }
+
+        /** A project as a team machine from before the verify loop sends it: no test, loop off. */
+        public Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles) {
+            this(name, repo, path, baseBranch, agent, copyFiles, null, null);
+        }
+
+        /** Null, a job from an older team machine, keeps today's behaviour. */
+        public boolean loopOn() {
+            return Boolean.TRUE.equals(loop);
         }
     }
 }

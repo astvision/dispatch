@@ -242,6 +242,61 @@ class CoordinatorTest {
                 "the session id generated for this first EXECUTE survives even though the worker never got to run");
     }
 
+    @Test
+    void anExecutionJobCarriesTheLoopTheTestCommandAndAReviewPrompt() {
+        Job job = approvedExecutionJob(loopProject("on"));
+
+        assertTrue(job.project().loopOn());
+        assertEquals("./mvnw -q test", job.project().test());
+        assertTrue(job.reviewPrompt().contains("<plan>"), job.reviewPrompt());
+        assertFalse(job.reviewPrompt().contains("<instruction>"), "the first execution has no instruction beyond the plan");
+        assertTrue(job.reviewPrompt().strip().endsWith("The change to review:"), job.reviewPrompt());
+    }
+
+    @Test
+    void followUpReviewPromptCarriesTheInstruction() {
+        long id = queue("Fix the login timeout");
+        Projects loop = projects(List.of(loopProject("on")));
+        coordinator(loop, remember(JobResult.succeeded(agentResult(PLAN_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
+        Worker executes = (job, events, control) -> {
+            events.agentStarted(null, null);
+            return new JobResult(JobResult.Outcome.SUCCEEDED, agentResult(null), List.of(), "https://github.com/acme/alm/pull/9",
+                    null, null);
+        };
+        coordinator(loop, executes).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.FollowUp(id, "Also log the timeout", new Origin("telegram:100/followup"))));
+
+        coordinator(loop, remember(JobResult.succeeded(agentResult(null)))).execute(claim());
+
+        assertTrue(given.get().reviewPrompt().contains("Also log the timeout"), given.get().reviewPrompt());
+    }
+
+    @Test
+    void loopOffSendsNoReviewPrompt() {
+        Job job = approvedExecutionJob(loopProject("off"));
+
+        assertNull(job.reviewPrompt());
+        assertFalse(job.project().loopOn());
+    }
+
+    private static Config.Project loopProject(String loop) {
+        return new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm", "main", "claude-code", null,
+                "high", List.of(".env"), null, new Config.PhaseSettings("opus", null), new Config.PhaseSettings(null, "low"),
+                "./mvnw -q test", loop);
+    }
+
+    /** Plans and approves a task, then returns the EXECUTE job the worker got. */
+    private Job approvedExecutionJob(Config.Project project) {
+        long id = queue("Fix the login timeout");
+        Projects configured = projects(List.of(project));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(PLAN_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(null)))).execute(claim());
+        return given.get();
+    }
+
     private Coordinator coordinator(Projects projects, Worker worker) {
         return coordinator(projects, worker, null);
     }
