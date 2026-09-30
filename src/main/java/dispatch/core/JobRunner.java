@@ -221,9 +221,16 @@ public final class JobRunner implements Worker {
             delivered = delivery.deliver(worktree, job.taskId(), job.branchName(), job.baseBranch(), startSha,
                     commit(job, summary), job.prUrl());
         } catch (WorkspaceException e) {
-            return JobResult.failed(FailureReason.DELIVERY, e.getMessage(), result);
+            // The failed run's summary is what a DELIVER retry commits, so it carries the block the commit would have had.
+            return JobResult.failed(FailureReason.DELIVERY, e.getMessage(), withSummary(result, summary));
         }
         return JobResult.delivered(result, delivered.files(), delivered.prUrl(), verification);
+    }
+
+    private static AgentResult withSummary(AgentResult result, String summary) {
+        return new AgentResult(result.outcome(), result.exitCode(), result.sessionId(), result.structuredOutput(), summary,
+                result.costUsd(), result.turns(), result.denials(), result.error(), result.model(), result.requestedModel(),
+                result.sandbox());
     }
 
     /** Delivers a failed delivery's work again, without the agent: the commit body is that run's summary. */

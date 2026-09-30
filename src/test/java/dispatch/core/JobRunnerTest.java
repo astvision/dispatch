@@ -400,6 +400,21 @@ class JobRunnerTest {
         assertTrue(reviewPrompts.get(0).contains("fixed by the scripted agent"), reviewPrompts.get(0));
     }
 
+    @Test
+    void aDeliveryThatFailsAfterTheLoopKeepsTheVerificationForTheRetry() {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+        beforeExecute = worktree -> GitFixture.sh(repos.repo("alm"), "git", "remote", "set-url", "origin",
+                dir.resolve("missing.git").toString());
+
+        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop) -> new TestRunner.TestRun(0, false, false, "ok"));
+
+        assertEquals(FailureReason.DELIVERY, result.failureReason());
+        // The run's stored summary is what a DELIVER retry commits, so it carries the block.
+        assertTrue(result.agent().summary().startsWith("Raised AUTH_TIMEOUT_SECONDS to 30\n\nVerification\n- Tests: pass (run 1)"),
+                result.agent().summary());
+    }
+
     /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
     private JobResult executeWithLoop(boolean loop, TestRunner tests) {
         return executeWithLoop(loop, new ActiveRuns().register(TASK, 2), tests);
