@@ -122,6 +122,10 @@ public final class Git {
      */
     static Path verifiedCommonDir(Path dir) {
         Path dotGit = dir.resolve(".git");
+        if (Files.isSymbolicLink(dotGit)) {
+            // Fail closed: whatever it names was not checked.
+            throw new WorkspaceException("refusing to run git: " + dotGit + " is a symlink");
+        }
         if (Files.isDirectory(dotGit, LinkOption.NOFOLLOW_LINKS)) {
             return refuseCommondir(dotGit);
         }

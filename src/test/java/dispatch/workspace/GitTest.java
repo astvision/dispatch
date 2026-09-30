@@ -122,6 +122,16 @@ class GitTest {
         return new Git(script.toString(), null, Duration.ofSeconds(30));
     }
 
+    @Test
+    void aSymlinkedDotGitIsRefused() throws IOException {
+        Path linked = Files.createDirectories(dir.resolve("linked"));
+        Files.createSymbolicLink(linked.resolve(".git"), agentsGitDir());
+
+        WorkspaceException refused = assertThrows(WorkspaceException.class, () -> git.run(linked, "status", "--porcelain"));
+
+        assertTrue(refused.getMessage().contains(linked.resolve(".git").toString()), refused.getMessage());
+    }
+
     private Path addWorktree() {
         git.run(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "--no-verify", "-m", "x");
         Path worktree = dir.resolve("w");
