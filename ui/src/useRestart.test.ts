@@ -44,6 +44,18 @@ test("a service that does not come back shows the log's last lines", async () =>
   expect(api.getLogs).toHaveBeenCalledWith({ lines: 20 }, expect.any(AbortSignal));
 });
 
+test("a restart whose answer is lost to a proxy's 502 still waits for the service", async () => {
+  vi.mocked(api.restartService).mockRejectedValue(new api.ApiError("http", "the server answered 502"));
+  vi.mocked(api.getOverview).mockRejectedValueOnce(new api.ApiError("http", "the server answered 502"))
+    .mockResolvedValue(overview(true));
+  const { result } = renderHook(() => useRestart(5, 1000));
+
+  await act(() => result.current.restart());
+
+  expect(result.current.phase).toBe("done");
+  expect(result.current.error).toBeNull();
+});
+
 test("a refused restart says why", async () => {
   vi.mocked(api.restartService).mockRejectedValue(new api.ApiError("invalid", "Dispatch does not run as a background service here"));
   const { result } = renderHook(() => useRestart(5, 30));
