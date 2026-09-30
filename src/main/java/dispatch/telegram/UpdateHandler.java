@@ -1123,9 +1123,7 @@ public final class UpdateHandler {
         if (!groupLinks.open(tx, chatId, title, names)) {
             return;
         }
-        ObjectNode payload = Json.object().put("chatId", chatId).put("title", title).put("status", "OPEN");
-        names.forEach(payload.putArray("projects")::add);
-        Renderer.Rendered prompt = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+        Renderer.Rendered prompt = openPrompt(chatId, title, names);
         tx.afterCommit(() -> {
             long messageId;
             try {
@@ -1149,6 +1147,34 @@ public final class UpdateHandler {
                 Log.error("group.link_prompt_record_failed", e, "chat_id", chatId, "user_id", fromId, "message_id", messageId);
             }
         });
+    }
+
+    /** An open link prompt: a button per project, adding a project in the Mini App when there is one, and not linking. */
+    private Renderer.Rendered openPrompt(long chatId, String title, List<String> projects) {
+        ObjectNode payload = Json.object().put("chatId", chatId).put("title", title).put("status", "OPEN");
+        projects.forEach(payload.putArray("projects")::add);
+        if (miniAppUrl != null) {
+            payload.put("addProject", miniAppUrl.replaceAll("/+$", "") + "/projects/add");
+        }
+        return renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+    }
+
+    /**
+     * Redraws each open link prompt whose project list the config has changed since it was sent, so a project added
+     * meanwhile (from the prompt's own button) can be picked; called once at startup, which is when a project takes effect.
+     */
+    public void refreshLinkPrompts() {
+        if (groupLinks == null) {
+            return;
+        }
+        List<String> names = projects.all().stream().map(Config.Project::name).toList();
+        List<GroupLinks.OpenPrompt> changed = db.transactionReturning(tx -> groupLinks.refreshed(tx, names));
+        for (GroupLinks.OpenPrompt open : changed) {
+            Renderer.Rendered redrawn = openPrompt(open.chatId(), open.prompt().title(), names);
+            bestEffort("editMessageText", () -> api.editMessageText(open.prompt().sentTo(), open.prompt().messageId(), redrawn.html(),
+                    redrawn.keyboard()));
+            Log.info("group.link_prompt_refreshed", "chat_id", open.chatId(), "projects", names.size());
+        }
     }
 
     /** Telegram refusing the private chat itself (they never pressed Start, or blocked the bot): asking again cannot help. */

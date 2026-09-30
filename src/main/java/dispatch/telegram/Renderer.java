@@ -265,8 +265,14 @@ public final class Renderer {
         if (!row.isEmpty()) {
             keyboard.add(row);
         }
+        String html = format("group.linkAsk", title);
+        if (payload.hasNonNull("addProject")) {
+            // A web_app button, which Telegram allows here: the prompt is sent to a private chat.
+            keyboard.add(List.of(Button.webApp(text("button.groupAddProject"), payload.get("addProject").asText())));
+            html += "\n" + text("group.linkAddHint");
+        }
         keyboard.add(List.of(new Button(text("button.groupNoLink"), new Callback.NoLink(chatId).data())));
-        return new Rendered(format("group.linkAsk", title), keyboard, null);
+        return new Rendered(html, keyboard, null);
     }
 
     /**

@@ -28,6 +28,7 @@ import dispatch.domain.ClaimedRun;
 import dispatch.domain.Plan;
 import dispatch.domain.Priority;
 import dispatch.store.Database;
+import dispatch.store.Kv;
 import dispatch.store.Outbox;
 import dispatch.store.Runs;
 import dispatch.testing.FakeTelegram;
@@ -1934,6 +1935,45 @@ class UpdateHandlerTest {
         assertEquals("telegram:" + NEW_GROUP, row("SELECT chat_ref FROM task WHERE title = 'Given privately'").get("chat_ref"));
     }
 
+    @Test
+    void withAMiniAppThePromptOffersAddingAProjectThere() throws Exception {
+        personalHandler("life", "https://bold.example.com/").handle(myChatMember(746, 100, NEW_GROUP, "note", "member"));
+
+        JsonNode keyboard = telegram.awaitRequest("sendMessage", Duration.ofSeconds(2)).json().at("/reply_markup/inline_keyboard");
+        assertEquals("https://bold.example.com/projects/add", keyboard.get(1).get(0).at("/web_app/url").asText());
+        assertEquals("link:" + NEW_GROUP + ":-", keyboard.get(2).get(0).path("callback_data").asText(), "not linking stays last");
+    }
+
+    /** A project added from the prompt takes effect on restart; the prompt then offers it, and its button links it. */
+    @Test
+    void atStartupAPromptWhoseProjectsChangedIsRedrawnWithTheCurrentOnes() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(747, 100, NEW_GROUP, "note", "member"));
+        telegram.awaitRequest("sendMessage", Duration.ofSeconds(2));
+        db.transaction(tx -> Kv.put(tx, "group.link." + NEW_GROUP, Kv.get(tx, "group.link." + NEW_GROUP).orElseThrow()
+                .replace("[\"life\"]", "[\"gone\"]")));
+
+        handler.refreshLinkPrompts();
+
+        JsonNode redrawn = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(100, redrawn.get("chat_id").asLong());
+        assertEquals("life", redrawn.at("/reply_markup/inline_keyboard/0/0/text").asText());
+        handler.handle(callback(748, 100, "Bold", 100L, redrawn.get("message_id").asLong(), "link:" + NEW_GROUP + ":0"));
+        assertTrue(personalGroups.isGroupChat("telegram:" + NEW_GROUP), "the stored list was replaced with the buttons");
+    }
+
+    @Test
+    void aPromptWhoseProjectsAreCurrentIsLeftAlone() throws Exception {
+        UpdateHandler handler = personalHandler();
+        handler.handle(myChatMember(749, 100, NEW_GROUP, "note", "member"));
+        telegram.awaitRequest("sendMessage", Duration.ofSeconds(2));
+
+        handler.refreshLinkPrompts();
+
+        Thread.sleep(100);
+        assertTrue(telegram.drain("editMessageText").isEmpty());
+    }
+
     /** ADR 0025: adding the bot through a project's add link (?startgroup=life) links the group without asking. */
     @Test
     void addingTheBotThroughAProjectsAddLinkLinksTheGroupWithoutAsking() throws Exception {
@@ -2188,6 +2228,10 @@ class UpdateHandlerTest {
 
     /** A personal Dispatch: Bold alone, one chatless group owning {@code project}, and an in-memory config writer. */
     private UpdateHandler personalHandlerWithProject(String project) {
+        return personalHandler(project, null);
+    }
+
+    private UpdateHandler personalHandler(String project, String miniAppUrl) {
         Config.Project only = new Config.Project(project, null, "https://github.com/acme/life.git", null, "master",
                 "claude-code", null, null, List.of(), null, null, null);
         Projects personalProjects = new Projects(List.of(only), candidate -> Optional.empty());
@@ -2228,7 +2272,7 @@ class UpdateHandlerTest {
         };
         personalLinks = new GroupLinks(personalGroups, fakeWriter, clock, () -> { });
         return new UpdateHandler(db, personalTasks, new Membership(personalGroups, UpdateHandlerTest::noJoins, clock, () -> { }),
-                personalGroups, personalProjects, api, renderer, redactor, BOT, clock, () -> { }, null, null, null, personalLinks, null, null);
+                personalGroups, personalProjects, api, renderer, redactor, BOT, clock, () -> { }, null, null, miniAppUrl, personalLinks, null, null);
     }
 
     private static Config.Telegram withChat(Config.Telegram telegram, java.util.function.Predicate<Config.Group> which, long chatId) {
