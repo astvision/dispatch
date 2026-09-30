@@ -49,7 +49,9 @@ class SandboxPoliciesTest {
 
         assertEquals(worktree, policy.workdir());
         assertEquals(stateDir.resolve("repos/alm/.git"), policy.gitCommonDir());
-        assertEquals(List.of(attachments, worktree.resolve(".git")), policy.readOnly());
+        Path common = stateDir.resolve("repos/alm/.git");
+        assertEquals(List.of(attachments, worktree.resolve(".git"), common.resolve("config"), common.resolve("hooks"),
+                common.resolve("info"), gitDir.resolve("config.worktree"), gitDir.resolve("commondir")), policy.readOnly());
         assertEquals(List.of(home.resolve(".claude"), home.resolve(".claude.json"), home.resolve(".m2"),
                 home.resolve(".gradle"), home.resolve(".npm"), home.resolve(".cache")), policy.writable());
         assertEquals(List.of(home.resolve(".ssh"), home.resolve(".config/gh"), configDir, stateDir), policy.hidden());
@@ -184,6 +186,21 @@ class SandboxPoliciesTest {
                 .forRun(request(RunKind.PLAN, stateDir, List.of()), List.of(), Map.of());
 
         assertTrue(policy.hidden().contains(runUser), policy.hidden().toString());
+    }
+
+    @Test
+    void theGitConfigHooksAndWorktreeAdminFilesAreMountedBackReadOnlyAfterTheGitDir() throws IOException {
+        // Dispatch's own git later runs outside the sandbox with GH_TOKEN; config and hooks there must stay Dispatch's.
+        Path common = stateDir.resolve("repos/alm/.git");
+        Path gitDir = Files.createDirectories(common.resolve("worktrees/7"));
+        Path worktree = Files.createDirectories(stateDir.resolve("worktrees/7"));
+        Files.writeString(worktree.resolve(".git"), "gitdir: " + gitDir);
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of());
+
+        assertTrue(policy.readOnly().containsAll(List.of(common.resolve("config"), common.resolve("hooks"), common.resolve("info"),
+                gitDir.resolve("config.worktree"), gitDir.resolve("commondir"))), policy.readOnly().toString());
     }
 
     private static RunRequest request(RunKind kind, Path workdir, List<Path> readOnlyDirs) {

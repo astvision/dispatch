@@ -142,6 +142,27 @@ class BubblewrapSandboxTest {
         }
     }
 
+    @Test
+    void theAgentCannotChangeTheClonesGitConfigOrHooks() throws Exception {
+        Path common = stateDir.resolve("repos/alm/.git");
+        String config = Files.readString(common.resolve("config"));
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
+                        worktree.resolve("run")), List.of());
+
+        Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", """
+                if git config core.fsmonitor x 2>/dev/null; then echo config-written; else echo config-refused; fi
+                if { echo x > "$0/hooks/post-commit"; } 2>/dev/null; then echo hook-written; else echo hook-refused; fi
+                git status --porcelain >/dev/null && echo status-ok
+                """, common.toString()), policy)).directory(worktree.toFile()).redirectErrorStream(true).start();
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS));
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+        assertEquals(List.of("config-refused", "hook-refused", "status-ok"), output.strip().lines().toList(), output);
+        assertEquals(config, Files.readString(common.resolve("config")));
+        assertFalse(Files.exists(common.resolve("hooks/post-commit")));
+    }
+
     private static void git(Path dir, String... args) throws IOException, InterruptedException {
         List<String> command = new java.util.ArrayList<>(List.of("git"));
         command.addAll(List.of(args));
