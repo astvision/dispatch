@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.SandboxUse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.domain.Attachment;
 import dispatch.domain.FailureReason;
@@ -103,5 +104,26 @@ class JobJsonTest {
                 JobResult.cancelled(null))) {
             assertEquals(result, Json.MAPPER.readValue(Json.write(result), JobResult.class), result.toString());
         }
+    }
+
+    @Test
+    void aResultWithItsSandboxSurvivesJsonUnchanged() throws Exception {
+        AgentResult agent = new AgentResult(AgentOutcome.SUCCEEDED, 0, "s1", null, "done", new BigDecimal("0.12"), 3,
+                List.of(), null, "claude-sonnet-5", null).withSandbox(new SandboxUse("none", "not available on Windows"));
+        JobResult result = JobResult.succeeded(agent);
+
+        assertEquals(result, Json.MAPPER.readValue(Json.write(result), JobResult.class));
+    }
+
+    @Test
+    void aResultWithoutSandboxStillReads() throws Exception {
+        // A worker from before the sandbox sends no "sandbox" field; the team machine must still read its results.
+        ObjectNode json = (ObjectNode) Json.MAPPER.readTree(Json.write(JobResult.succeeded(new AgentResult(AgentOutcome.SUCCEEDED, 0,
+                "s1", null, "done", null, null, List.of(), null, null, null))));
+        ((ObjectNode) json.get("agent")).remove("sandbox");
+
+        JobResult read = Json.MAPPER.treeToValue(json, JobResult.class);
+
+        assertEquals(null, read.agent().sandbox());
     }
 }

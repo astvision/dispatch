@@ -11,6 +11,11 @@ import dispatch.agent.AgentResult;
 import dispatch.agent.AgentStartException;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
+import dispatch.agent.SandboxUse;
+import dispatch.agent.sandbox.Confinement;
+import dispatch.agent.sandbox.Sandbox;
+import dispatch.agent.sandbox.SandboxPolicies;
+import dispatch.agent.sandbox.SandboxPolicy;
 import dispatch.domain.RunKind;
 import dispatch.testing.FakeClaude;
 import java.io.IOException;
@@ -19,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -44,6 +50,52 @@ class ClaudeCodeAgentTest {
     void setUp() throws IOException {
         workdir = Files.createDirectories(dir.resolve("worktree"));
         agent = new ClaudeCodeAgent(FakeClaude.install(dir).toString(), FakeClaude.environment(), Duration.ofSeconds(2));
+    }
+
+    @Test
+    void agentWithoutConfinementRunsTheCommandUnwrapped() throws Exception {
+        RunRequest request = new RunRequest(RunKind.PLAN, workdir, "Plan it", SESSION, false, List.of(), null, null, null,
+                dir.resolve("runs/1/1"));
+
+        AgentResult result = agent.start(request).await();
+
+        assertEquals(AgentOutcome.SUCCEEDED, result.outcome());
+        assertTrue(Files.readAllLines(workdir.resolve("fake-claude.args")).contains("-p"), "the fake claude itself ran");
+        assertEquals(new SandboxUse("none", "no sandbox configured"), result.sandbox());
+    }
+
+    @Test
+    void aConfinedAgentStartsThroughItsSandbox() throws Exception {
+        Sandbox recording = new Sandbox() {
+            @Override
+            public String name() {
+                return "recording";
+            }
+
+            @Override
+            public String unavailableReason() {
+                return null;
+            }
+
+            @Override
+            public List<String> wrap(List<String> commandLine, SandboxPolicy policy) {
+                // env runs the command unchanged, so the fake claude still answers; the marker proves the wrap happened.
+                List<String> wrapped = new ArrayList<>(List.of("env", "SANDBOXED_BY=recording"));
+                wrapped.addAll(commandLine);
+                return wrapped;
+            }
+        };
+        Confinement confinement = new Confinement(recording, new SandboxPolicies(workdir, workdir.resolve("state"), List.of()));
+        ClaudeCodeAgent confined = new ClaudeCodeAgent(FakeClaude.install(Files.createDirectories(dir.resolve("confined"))).toString(),
+                FakeClaude.environment(), Duration.ofSeconds(2), confinement);
+        RunRequest request = new RunRequest(RunKind.PLAN, workdir, "Plan it", SESSION, false, List.of(), null, null, null,
+                dir.resolve("runs/1/1"));
+
+        AgentResult result = confined.start(request).await();
+
+        assertEquals(AgentOutcome.SUCCEEDED, result.outcome());
+        assertTrue(Files.readString(workdir.resolve("fake-claude.env")).contains("SANDBOXED_BY=recording"));
+        assertEquals(new SandboxUse("recording", null), result.sandbox());
     }
 
     @Test

@@ -10,6 +10,7 @@ import dispatch.agent.ProcessRun;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.Schemas;
+import dispatch.agent.sandbox.Confinement;
 import dispatch.domain.RunKind;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -39,16 +40,25 @@ public final class CodexAgent implements Agent {
     private final Map<String, String> environment;
     private final Duration cancelGrace;
     private final Path sessionsDir;
+    private final Confinement confinement;
+
+    private static final List<String> STATE_IN_HOME = List.of(".codex");
+
+    public CodexAgent(String command, Map<String, String> environment, Duration cancelGrace, Path sessionsDir) {
+        this(command, environment, cancelGrace, sessionsDir, Confinement.none("no sandbox configured"));
+    }
 
     /**
      * @param environment the base environment for agent processes, normally {@code System.getenv()}
      * @param sessionsDir where the thread each Dispatch session started is remembered, one file per session
      */
-    public CodexAgent(String command, Map<String, String> environment, Duration cancelGrace, Path sessionsDir) {
+    public CodexAgent(String command, Map<String, String> environment, Duration cancelGrace, Path sessionsDir,
+                      Confinement confinement) {
         this.command = command;
         this.environment = Map.copyOf(environment);
         this.cancelGrace = cancelGrace;
         this.sessionsDir = sessionsDir;
+        this.confinement = confinement;
     }
 
     @Override
@@ -84,7 +94,7 @@ public final class CodexAgent implements Agent {
         }
         args.add("-");
         ProcessRun run = ProcessRun.start("codex", args, request, environment, request.prompt(),
-                new CodexParser(plan, request.model(), request.workdir()), cancelGrace);
+                new CodexParser(plan, request.model(), request.workdir()), cancelGrace, confinement, STATE_IN_HOME);
         return request.resume() ? run : new RememberingRun(run, request.sessionId());
     }
 

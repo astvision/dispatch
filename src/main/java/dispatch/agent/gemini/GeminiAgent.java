@@ -5,6 +5,7 @@ import dispatch.agent.ProcessRun;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.Schemas;
+import dispatch.agent.sandbox.Confinement;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -25,15 +26,23 @@ public final class GeminiAgent implements Agent {
             + "this JSON Schema: " + Schemas.PLAN;
     private static final String EXECUTE_ANSWER = "Do what the message above asks.";
 
+    private static final List<String> STATE_IN_HOME = List.of(".gemini");
+
     private final String command;
     private final Map<String, String> environment;
     private final Duration cancelGrace;
+    private final Confinement confinement;
 
     /** @param environment the base environment for agent processes, normally {@code System.getenv()} */
     public GeminiAgent(String command, Map<String, String> environment, Duration cancelGrace) {
+        this(command, environment, cancelGrace, Confinement.none("no sandbox configured"));
+    }
+
+    public GeminiAgent(String command, Map<String, String> environment, Duration cancelGrace, Confinement confinement) {
         this.command = command;
         this.environment = Map.copyOf(environment);
         this.cancelGrace = cancelGrace;
+        this.confinement = confinement;
     }
 
     @Override
@@ -59,6 +68,6 @@ public final class GeminiAgent implements Agent {
         }
         args.addAll(List.of("-p", plan ? PLAN_ANSWER : EXECUTE_ANSWER));
         return ProcessRun.start("gemini", args, request, environment, request.prompt(),
-                new GeminiParser(plan, request.model(), request.workdir()), cancelGrace);
+                new GeminiParser(plan, request.model(), request.workdir()), cancelGrace, confinement, STATE_IN_HOME);
     }
 }
