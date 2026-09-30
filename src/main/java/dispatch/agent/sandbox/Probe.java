@@ -51,12 +51,14 @@ public interface Probe {
                 try {
                     Process process = new ProcessBuilder(commandLine).redirectErrorStream(true).start();
                     if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                        process.destroyForcibly();
+                        process.destroyForcibly().waitFor();
                         return new Trial(-1, "timed out after 5 s");
                     }
-                    return new Trial(process.exitValue(), new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+                    try (var is = process.getInputStream()) {
+                        return new Trial(process.exitValue(), new String(is.readAllBytes(), StandardCharsets.UTF_8));
+                    }
                 } catch (IOException e) {
-                    return new Trial(-1, e.getMessage());
+                    return new Trial(-1, e.toString());
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return new Trial(-1, "interrupted");
