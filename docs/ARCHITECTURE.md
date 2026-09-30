@@ -20,6 +20,7 @@ Dispatch is the task, state and communication layer; coding stays with the agent
 | Delivery | Dispatch makes one commit per run, pushes `dispatch/<id>` and opens a draft PR; a personal bot's requester may merge it from the result's Merge button | 0007 |
 | Restarts | Active runs fail as interrupted; members `/retry` | 0008 |
 | Permissions | Plan mode for planning; auto mode plus deny rules for execution, with the agent's actual mode verified; the OS user is the hard boundary. Codex and Gemini CLI plan read-only and execute unsandboxed, as the same user | 0009, 0026 |
+| Sandbox | Every agent process runs in bubblewrap on Linux: root read-only, secrets and every Dispatch instance's state hidden, network open; an unsandboxed run is flagged | 0032 |
 | Agents | Each project runs on Claude Code, Codex or Gemini CLI; ✂️ splitting and the assistant stay on Claude Code and are not offered without it | 0026 |
 | Telegram | Offset advanced only after commit; outcome messages go through an outbox | 0010 |
 | Private details | Plan, corrections and full result go to the requester's private chat, with a one-line outcome in the group and a group fallback; only the requester decides on their plan | 0011 |
@@ -287,6 +288,20 @@ The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the
 |---|---|
 | PLAN | `--approval-mode default` (headless, every edit and shell command is denied) and `-p` asking for one JSON object matching the plan schema, taken from the answer even inside a ```json fence |
 | EXECUTE | `--approval-mode yolo` |
+
+Every agent's command line is wrapped by this machine's `Sandbox` (ADR 0032), chosen once at startup from the `sandbox: auto | off` setting: `Bubblewrap` on Linux when `bwrap` runs (trial `bwrap --ro-bind / / --unshare-pid --proc /proc true`), else `NoSandbox` with its reason. `SandboxPolicies` builds the policy per run:
+
+| Path | Access |
+|---|---|
+| `/` (system, toolchains) | read-only |
+| the run's workdir, the clone's git common dir | read-write |
+| the agent's state (`~/.claude`, `~/.claude.json`; `~/.codex`; `~/.gemini`), build caches (`~/.m2`, `~/.gradle`, `~/.npm`, `~/.cache`) | read-write |
+| `/tmp` | a fresh tmpfs per run |
+| `request.readOnlyDirs()` (attachments) | read-only |
+| assistant only: `dispatch.db`, `-wal`, `-shm` / `assistant-bin` | read-write / read-only |
+| `~/.ssh`, `~/.config/gh`, `~/.gnupg`, Dispatch's config dir, this instance's state dir, every configured clone, and the state dirs and clones of every other Dispatch instance on the computer (`Instances.othersPrivate`) | hidden (empty tmpfs) |
+
+The network is open. bwrap is the process Dispatch records and terminates (`--die-with-parent`), so cancelling and orphan detection are unchanged. The `JobResult` carries a `SandboxUse` (name and, if none, the reason); a plan or result of an unsandboxed run gets a ⚠️ line, and the run stores it (`runs.sandbox`).
 
 - The agent's environment excludes `TELEGRAM_BOT_TOKEN` and `GH_TOKEN`; only Dispatch's own git/gh calls get the token. This is a guardrail: processes running as the same user can still read each other's environment.
 - The init event's `permissionMode` must equal the requested mode (`plan` or `auto`). Otherwise the run is stopped at once and fails as `AGENT`: Claude Code does not refuse a mode the model lacks.

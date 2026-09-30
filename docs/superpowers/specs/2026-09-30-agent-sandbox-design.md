@@ -70,9 +70,12 @@ and otherwise do not change.
 | build caches: `~/.m2`, `~/.gradle`, `~/.npm`, `~/.cache` | read-write |
 | `/tmp` | a fresh tmpfs per run |
 | `request.readOnlyDirs()` (attachments) | read-only |
-| `~/.ssh`, `~/.config/gh`, `~/.gnupg`, Dispatch's config dir, Dispatch's state dir, every configured project's clone | hidden (empty tmpfs) |
+| the assistant only: `dispatch.db`, `-wal`, `-shm` | read-write |
+| the assistant only: `assistant-bin` | read-only |
+| `~/.ssh`, `~/.config/gh`, `~/.gnupg`, Dispatch's config dir (as built, the whole `~/.config/dispatch`, which holds every instance's secrets file), Dispatch's state dir, every configured project's clone | hidden (empty tmpfs) |
+| the state dirs and configured clones of every other Dispatch instance on the computer (`Instances.othersPrivate`), so one instance's agent cannot read another's `dispatch.db` | hidden (empty tmpfs) |
 
-Network is open. Build caches are writable by choice: an injected prompt could poison a shared cache, which is accepted
+Discovering the other instances failing only logs WARN `sandbox.instances_not_discovered`; the run goes on. A hidden path that is not a directory is skipped, since bwrap cannot mount over it on a read-only root. Network is open. Build caches are writable by choice: an injected prompt could poison a shared cache, which is accepted
 on a developer's own machine in exchange for builds that work as they do outside the sandbox.
 
 ### bubblewrap command line
@@ -102,13 +105,13 @@ unchanged.
 
 - `sandbox: off` → `NoSandbox("turned off in config")`.
 - `sandbox: auto` (the default):
-  - Linux: `bwrap` on the PATH, and a trial `bwrap --ro-bind / / true` exits 0 → `Bubblewrap`. Otherwise
+  - Linux: `bwrap` on the PATH, and a trial `bwrap --ro-bind / / --unshare-pid --proc /proc true` exits 0 → `Bubblewrap`. Otherwise
     `NoSandbox` with the reason (not installed; the trial's stderr, e.g. user namespaces blocked by AppArmor on
     Ubuntu 24).
   - macOS → `NoSandbox("macOS sandbox not built yet")`.
   - Windows → `NoSandbox("not available on Windows")`.
 
-The OS name, PATH lookup and trial are passed in, so every branch is testable.
+The OS name, PATH lookup and trial are passed in, so every branch is testable. A trial that times out (5 s) is killed and reaped; an IOException's `toString()` is the reason.
 
 ### Configuration
 
@@ -123,7 +126,7 @@ processes (split, assistant).
 - Each run stores the sandbox it ran in (`runs.sandbox`, migration 029; `NULL` for runs before it). A remote worker
   reports it in `JobResult`.
 - A plan or result of a run with sandbox `none` carries a ⚠️ line, "not sandboxed: <reason>", in the same place as the
-  model-mismatch line, in Telegram, the Mini App and `dispatch ui`, in Mongolian and English.
+  model-mismatch line: in Telegram (Mongolian). The Mini App and `dispatch ui` show neither line yet.
 
 ### Errors
 
@@ -145,8 +148,9 @@ Unit tests (every OS in CI):
 
 Integration test with real bwrap (Linux; skipped with its reason when the trial fails): a fake agent script in the
 sandbox writes a file in the worktree, runs `git status` there, fails to read a planted `~/.ssh/id_test`, fails to
-write `$HOME/x`, and a cancel ends it and its children. GitHub's Ubuntu 24 runners block unprivileged user namespaces;
-the Linux CI job sets `kernel.apparmor_restrict_unprivileged_userns=0` so this test runs there rather than skipping.
+write `$HOME/x`, and a cancel ends it and its children. GitHub's Ubuntu 24 runners block unprivileged user namespaces.
+As built, no CI step installs bubblewrap or sets `kernel.apparmor_restrict_unprivileged_userns=0` (awaiting the owner's
+decision), so `BubblewrapSandboxTest` skips itself with its reason there; it runs on a machine with a working bwrap.
 
 Live check: one real task on the personal bot, plan and execution, with `runs.sandbox = bubblewrap`.
 

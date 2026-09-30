@@ -1,5 +1,7 @@
 # Agent permissions: plan mode, then auto mode
 
+Amended by ADR 0032: agent runs are sandboxed by default where the machine can.
+
 Agent runs are headless, so nobody can answer a permission prompt. Every run passes `--permission-prompts none`, which denies anything that would ask.
 - **Planning runs** use `--permission-mode plan` (read-only) with `--tools Read,Bash`. A recorded run without the tool restriction spawned a subagent and called scheduling tools, which doubled its cost.
 - **Execution runs** use `--permission-mode auto`: Claude's classifier allows routine work (edits, builds, tests) and denies actions it judges risky. Explicit deny rules for `git commit`, `git push` and `gh` are added on top.
