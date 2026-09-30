@@ -50,18 +50,23 @@ public final class Renderer {
      * An inline button: one that calls back with {@code data}, one that opens the Mini App at {@code webAppUrl} (ADR 0019),
      * or a link to {@code url}. Exactly one of the three is set.
      */
-    public record Button(String text, String data, String webAppUrl, String url) {
+    public record Button(String text, String data, String webAppUrl, String url, String style) {
 
         public Button(String text, String data) {
-            this(text, data, null, null);
+            this(text, data, null, null, null);
         }
 
         public static Button webApp(String text, String url) {
-            return new Button(text, null, url, null);
+            return new Button(text, null, url, null, null);
         }
 
         public static Button link(String text, String url) {
-            return new Button(text, null, null, url);
+            return new Button(text, null, null, url, null);
+        }
+
+        /** The one button a message is for, colored green where the Telegram app can show it; plain elsewhere. */
+        public static Button primary(String text, String data) {
+            return new Button(text, data, null, null, "success");
         }
     }
 
@@ -144,6 +149,8 @@ public final class Renderer {
                     + (payload.hasNonNull("title") ? "\n" + escapeWithin(payload.get("title").asText(), TITLE_LIMIT) : ""));
             case PLAN_READY -> throw new IllegalStateException("rendered above");
             case PLAN_QUESTION -> planQuestion(payload);
+            case PLAN_EDIT_PROMPT -> new Rendered(format("plan.editPrompt", taskId(payload)), List.of(), null,
+                    format("plan.editPlaceholder", taskId(payload)));
             case PLAN_ANSWER_PROMPT -> new Rendered(format("plan.answerPrompt", taskId(payload), payload.path("index").asInt()), List.of(),
                     null, text("plan.answerPlaceholder"));
             case EXECUTION_QUEUED -> plain(format("task.executionQueued", taskId(payload), escape(payload.path("by").asText())));
@@ -569,42 +576,136 @@ public final class Renderer {
         return project.hasNonNull("alias") ? project.get("alias").asText() : project.path("name").asText();
     }
 
+    /**
+     * A plan in one of its views, all one message redrawn in place by its buttons: the summary it is sent as, its details
+     * with the long sections folded, its decisions with a button per alternative, or, once corrected, the correction while
+     * the agent plans again. A plan whose details would not fit a message is sent as a document instead, with no views.
+     */
     private Rendered plan(JsonNode payload) {
         String taskId = taskId(payload);
         JsonNode plan = payload.path("plan");
-        int planSeq = payload.path("planSeq").asInt();
-        boolean openQuestions = !plan.path("questions").isEmpty();
-        // The buttons are task access's: no Approve while the plan asks questions (G-1d, ADR 0027); either way the answers
-        // come back as a correction.
-        List<Button> decisions = new ArrayList<>();
-        for (TaskAccess.Action action : TaskAccess.decisions(plan.path("questions").size())) {
-            decisions.add(action == TaskAccess.Action.APPROVE
-                    ? new Button(text("button.approve"), new Callback.Approve(payload.path("taskId").asLong(), planSeq).data())
-                    : new Button(text("button.reject"), new Callback.Reject(payload.path("taskId").asLong(), planSeq).data()));
-        }
-        List<List<Button>> buttons = List.of(decisions);
         String title = format("plan.title", taskId, escape(payload.path("project").asText()));
+        String view = payload.path("view").asText("summary");
+        if (view.equals("updating")) {
+            return plain(format("plan.titleUpdating", taskId, escape(payload.path("project").asText())) + "\n\n"
+                    + format("plan.correction", escapeWithin(payload.path("correction").asText(), SUMMARY_LIMIT)));
+        }
+        long id = payload.path("taskId").asLong();
+        int planSeq = payload.path("planSeq").asInt();
+        // The buttons are task access's: no Start while the plan asks questions (G-1d, ADR 0027); either way the answers
+        // come back as a correction.
+        List<TaskAccess.Action> actions = TaskAccess.decisions(plan.path("questions").size());
+        List<List<Button>> keyboard = new ArrayList<>();
+        if (actions.contains(TaskAccess.Action.APPROVE)) {
+            keyboard.add(List.of(Button.primary(text("button.start"), new Callback.Approve(id, planSeq).data())));
+        }
+        Button reject = new Button(text("button.reject"), new Callback.Reject(id, planSeq).data());
+        Button edit = new Button(text("button.edit"), new Callback.EditPlan(id, planSeq).data());
 
-        StringBuilder html = new StringBuilder(title).append("\n\n")
-                .append("<b>").append(text("plan.understanding")).append("</b>\n")
-                .append(escape(plan.path("understanding").asText())).append('\n');
-        htmlSection(html, "plan.findings", plan.path("findings"), false);
-        htmlSection(html, "plan.steps", plan.path("steps"), true);
-        htmlSection(html, "plan.risks", plan.path("risks"), false);
-        if (openQuestions) {
+        String details = planHtml(payload, title, "details");
+        if (details.length() > MESSAGE_LIMIT) {
+            keyboard.add(List.of(edit, reject));
+            String caption = truncate(title + "\n" + text("plan.document"), CAPTION_LIMIT);
+            return new Rendered(caption, keyboard, new Document("plan-" + taskId + ".md", markdown(payload)));
+        }
+        int decisions = plan.path("decisions").size();
+        Button decisionsButton = new Button(format("button.decisions", decisions), new Callback.PlanView(id, planSeq, Callback.View.DECISIONS).data());
+        switch (view) {
+            case "details" -> {
+                List<Button> row = new ArrayList<>();
+                if (decisions > 0) {
+                    row.add(decisionsButton);
+                }
+                row.add(edit);
+                row.add(new Button(text("button.collapse"), new Callback.PlanView(id, planSeq, Callback.View.SUMMARY).data()));
+                keyboard.add(row);
+                keyboard.add(List.of(reject));
+                return new Rendered(details, keyboard, null);
+            }
+            case "decisions" -> {
+                int number = 1;
+                for (JsonNode decision : plan.path("decisions")) {
+                    int alternative = 0;
+                    for (JsonNode label : decision.path("alternatives")) {
+                        keyboard.add(List.of(new Button(label(number + " · " + label.asText()),
+                                new Callback.Decide(id, planSeq, number, alternative++).data())));
+                    }
+                    number++;
+                }
+                keyboard.add(List.of(new Button(text("button.back"), new Callback.PlanView(id, planSeq, Callback.View.SUMMARY).data())));
+                return new Rendered(planHtml(payload, title, "decisions"), keyboard, null);
+            }
+            default -> {
+                List<Button> row = new ArrayList<>();
+                if (decisions > 0) {
+                    row.add(decisionsButton);
+                }
+                row.add(edit);
+                row.add(new Button(text("button.details"), new Callback.PlanView(id, planSeq, Callback.View.DETAILS).data()));
+                keyboard.add(row);
+                return new Rendered(planHtml(payload, title, "summary"), keyboard, null);
+            }
+        }
+    }
+
+    private String planHtml(JsonNode payload, String title, String view) {
+        JsonNode plan = payload.path("plan");
+        StringBuilder html = new StringBuilder(title).append("\n\n").append(escape(plan.path("understanding").asText()));
+        int steps = plan.path("steps").size();
+        if (steps > 0) {
+            html.append('\n').append(format("plan.stepsCount", steps));
+        }
+        html.append('\n');
+        switch (view) {
+            case "details" -> {
+                foldedSection(html, "plan.stepsSection", plan.path("steps"), true);
+                foldedSection(html, "plan.findingsSection", plan.path("findings"), false);
+                htmlSection(html, "plan.risks", plan.path("risks"), false);
+                decisionLines(html, plan.path("decisions"));
+            }
+            case "decisions" -> {
+                html.append('\n').append(text("plan.decisionsHeader"));
+                int number = 1;
+                for (JsonNode decision : plan.path("decisions")) {
+                    html.append('\n').append(format("plan.decisionItem", number++, escape(decision.path("text").asText()),
+                            escape(decision.path("chosen").asText())));
+                }
+                html.append('\n');
+            }
+            default -> decisionLines(html, plan.path("decisions"));
+        }
+        if (!plan.path("questions").isEmpty()) {
             htmlSection(html, "plan.questions", plan.path("questions"), true);
             html.append("<i>").append(text("plan.questionsHint")).append("</i>\n");
-        } else {
-            html.append("\n<i>").append(text("plan.replyHint")).append("</i>\n");
         }
         html.append("\n<i>").append(modelPrefix(payload)).append(format("plan.footer", money(payload.path("costUsd")),
-                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload)).append(sandboxWarning(payload));
+                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong())))).append("</i>").append(modelWarning(payload))
+                .append(sandboxWarning(payload));
+        return html.toString();
+    }
 
-        if (html.length() <= MESSAGE_LIMIT) {
-            return new Rendered(html.toString(), buttons, null);
+    private void decisionLines(StringBuilder html, JsonNode decisions) {
+        if (decisions.isEmpty()) {
+            return;
         }
-        String caption = truncate(title + "\n" + text("plan.document"), CAPTION_LIMIT);
-        return new Rendered(caption, buttons, new Document("plan-" + taskId + ".md", markdown(payload)));
+        html.append('\n');
+        for (JsonNode decision : decisions) {
+            html.append(format("plan.decisionLine", escape(decision.path("text").asText()), escape(decision.path("chosen").asText())))
+                    .append('\n');
+        }
+    }
+
+    /** A section as a Telegram quote that shows its first lines and opens on a tap, so a long one does not bury the rest. */
+    private void foldedSection(StringBuilder html, String labelKey, JsonNode items, boolean numbered) {
+        if (items.isEmpty()) {
+            return;
+        }
+        html.append("\n<blockquote expandable>").append(format(labelKey, items.size()));
+        int number = 1;
+        for (JsonNode item : items) {
+            html.append('\n').append(numbered ? number++ + ". " : "• ").append(escape(itemText(item)));
+        }
+        html.append("</blockquote>\n");
     }
 
     /**
@@ -721,6 +822,15 @@ public final class Renderer {
             int number = 1;
             for (JsonNode item : items) {
                 md.append(number++).append(". ").append(itemText(item)).append('\n');
+            }
+        }
+        JsonNode decisions = plan.path("decisions");
+        if (!decisions.isEmpty()) {
+            md.append("\n## ").append(text("plan.decisions")).append("\n\n");
+            int number = 1;
+            for (JsonNode decision : decisions) {
+                md.append(number++).append(". ").append(decision.path("text").asText()).append(" → ")
+                        .append(decision.path("chosen").asText()).append('\n');
             }
         }
         return md.toString();
@@ -1168,7 +1278,8 @@ public final class Renderer {
         return String.valueOf(payload.path("taskId").asLong());
     }
 
-    private String format(String key, Object... args) {
+    /** {@code key}'s text with {@code args} put in as they are: the caller escapes any that go into HTML. */
+    public String format(String key, Object... args) {
         Object[] texts = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
             texts[i] = String.valueOf(args[i]);   // strings, so MessageFormat never applies number grouping

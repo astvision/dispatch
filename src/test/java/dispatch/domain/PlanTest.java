@@ -102,4 +102,35 @@ class PlanTest {
         assertThrows(InvalidPlanException.class, () -> Plan.parse(
                 "{\"understanding\":\"u\",\"findings\":[],\"steps\":[],\"risks\":[],\"questions\":[{\"text\":\"q\",\"options\":[1]}]}"));
     }
+
+    @Test
+    void decisionsRoundTripAndAPlanWithoutThemHasNone() {
+        Plan plan = new Plan("u", List.of(), List.of("s"), List.of(), List.of(),
+                List.of(new PlanDecision("Which parent?", "the direct parent", List.of("the ministry"))));
+
+        assertEquals(plan, Plan.parse(plan.toJson()));
+        assertEquals(List.of(), Plan.parse("{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[]}")
+                .decisions(), "a plan stored before decisions existed");
+    }
+
+    @Test
+    void aDecisionKeepsThreeAlternativesAtMostCutToButtonLength() {
+        Plan plan = Plan.parse("""
+                {"understanding":"u","findings":[],"steps":["s"],"risks":[],"questions":[],
+                 "decisions":[{"text":"Where?","chosen":"%s","alternatives":["a","b","c","d"]}]}""".formatted("x".repeat(60)));
+
+        PlanDecision decision = plan.decisions().getFirst();
+        assertEquals(List.of("a", "b", "c"), decision.alternatives());
+        assertEquals(Plan.MAX_OPTION_LENGTH, decision.chosen().length());
+    }
+
+    @Test
+    void aDecisionWithoutTextChosenOrAlternativesIsInvalid() {
+        for (String decision : List.of("{\"chosen\":\"c\",\"alternatives\":[\"a\"]}", "{\"text\":\"t\",\"alternatives\":[\"a\"]}",
+                "{\"text\":\"t\",\"chosen\":\"c\",\"alternatives\":[]}")) {
+            assertThrows(InvalidPlanException.class, () -> Plan.parse(
+                    "{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[],\"decisions\":[" + decision + "]}"),
+                    decision);
+        }
+    }
 }

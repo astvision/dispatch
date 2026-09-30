@@ -12,20 +12,28 @@ import java.util.Set;
 
 /**
  * The agent's read-only analysis of a task, in the shape required by plan-schema.json. A question is an object with
- * answer options (G-1d); a plain string, as plans stored before then have it, is a question without options.
+ * answer options (G-1d); a plain string, as plans stored before then have it, is a question without options. Decisions
+ * came later still, so a stored plan may have none.
  */
 public record Plan(String understanding, List<String> findings, List<String> steps, List<String> risks,
-                   List<PlanQuestion> questionItems) {
+                   List<PlanQuestion> questionItems, List<PlanDecision> decisions) {
 
     public static final int MAX_OPTIONS = 4;
     public static final int MAX_OPTION_LENGTH = 40;
-    private static final Set<String> FIELDS = Set.of("understanding", "findings", "steps", "risks", "questions");
+    public static final int MAX_ALTERNATIVES = 3;
+    private static final Set<String> FIELDS = Set.of("understanding", "findings", "steps", "risks", "questions", "decisions");
 
     public Plan {
         findings = List.copyOf(findings);
         steps = List.copyOf(steps);
         risks = List.copyOf(risks);
         questionItems = List.copyOf(questionItems);
+        decisions = List.copyOf(decisions);
+    }
+
+    public Plan(String understanding, List<String> findings, List<String> steps, List<String> risks,
+                List<PlanQuestion> questionItems) {
+        this(understanding, findings, steps, risks, questionItems, List.of());
     }
 
     /** The open questions' texts. */
@@ -59,7 +67,8 @@ public record Plan(String understanding, List<String> findings, List<String> ste
         if (steps.isEmpty() && questions.isEmpty()) {
             throw new InvalidPlanException("plan has neither steps nor questions");
         }
-        return new Plan(understandingNode.asText(), texts(node, "findings"), steps, texts(node, "risks"), questions);
+        return new Plan(understandingNode.asText(), texts(node, "findings"), steps, texts(node, "risks"), questions,
+                decisions(node));
     }
 
     public String toJson() {
@@ -71,6 +80,12 @@ public record Plan(String understanding, List<String> findings, List<String> ste
         for (PlanQuestion question : questionItems) {
             ArrayNode options = questionsJson.addObject().put("text", question.text()).putArray("options");
             question.options().forEach(options::add);
+        }
+        ArrayNode decisionsJson = json.putArray("decisions");
+        for (PlanDecision decision : decisions) {
+            ArrayNode alternatives = decisionsJson.addObject().put("text", decision.text()).put("chosen", decision.chosen())
+                    .putArray("alternatives");
+            decision.alternatives().forEach(alternatives::add);
         }
         return json.toString();
     }
@@ -97,14 +112,52 @@ public record Plan(String understanding, List<String> findings, List<String> ste
                 }
                 String label = option.asText().strip();
                 if (!label.isEmpty() && options.size() < MAX_OPTIONS) {
-                    options.add(label.codePointCount(0, label.length()) <= MAX_OPTION_LENGTH
-                            ? label
-                            : label.substring(0, label.offsetByCodePoints(0, MAX_OPTION_LENGTH - 1)) + "…");
+                    options.add(buttonLabel(label));
                 }
             }
             questions.add(new PlanQuestion(text.asText(), options));
         }
         return questions;
+    }
+
+    /**
+     * Absent in a plan stored before decisions existed. Alternatives past the third are dropped and labels cut, as options
+     * are; a decision with nothing to switch to is no decision, and is rejected.
+     */
+    private static List<PlanDecision> decisions(JsonNode plan) {
+        JsonNode array = plan.get("decisions");
+        if (array == null) {
+            return List.of();
+        }
+        if (!array.isArray()) {
+            throw new InvalidPlanException("plan field 'decisions' must be an array");
+        }
+        List<PlanDecision> decisions = new ArrayList<>();
+        for (JsonNode item : array) {
+            String text = item.path("text").asText("").strip();
+            String chosen = item.path("chosen").asText("").strip();
+            if (text.isEmpty() || chosen.isEmpty()) {
+                throw new InvalidPlanException("plan field 'decisions' contains a decision without text or chosen answer");
+            }
+            List<String> alternatives = new ArrayList<>();
+            for (JsonNode alternative : item.path("alternatives")) {
+                String label = alternative.asText("").strip();
+                if (!label.isEmpty() && alternatives.size() < MAX_ALTERNATIVES) {
+                    alternatives.add(buttonLabel(label));
+                }
+            }
+            if (alternatives.isEmpty()) {
+                throw new InvalidPlanException("plan field 'decisions' contains a decision without alternatives");
+            }
+            decisions.add(new PlanDecision(text, buttonLabel(chosen), alternatives));
+        }
+        return decisions;
+    }
+
+    private static String buttonLabel(String label) {
+        return label.codePointCount(0, label.length()) <= MAX_OPTION_LENGTH
+                ? label
+                : label.substring(0, label.offsetByCodePoints(0, MAX_OPTION_LENGTH - 1)) + "…";
     }
 
     private static List<String> texts(JsonNode plan, String field) {

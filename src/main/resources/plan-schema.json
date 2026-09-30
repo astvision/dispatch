@@ -1,7 +1,7 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["understanding", "findings", "steps", "risks", "questions"],
+  "required": ["understanding", "findings", "steps", "risks", "questions", "decisions"],
   "properties": {
     "understanding": {"type": "string", "description": "What the task asks for, in your own words"},
     "findings": {"type": "array", "items": {"type": "string"}, "description": "Relevant facts from the code; for a bug, its root cause"},
@@ -21,6 +21,25 @@
             "maxItems": 4,
             "items": {"type": "string", "maxLength": 40},
             "description": "2 to 4 short likely answers the requester can pick with one tap, each at most 40 characters"
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "Choices you made yourself that the requester may want otherwise; empty if none",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "chosen", "alternatives"],
+        "properties": {
+          "text": {"type": "string", "description": "The choice, as a short question"},
+          "chosen": {"type": "string", "maxLength": 40, "description": "What the plan assumes, at most 40 characters"},
+          "alternatives": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {"type": "string", "maxLength": 40},
+            "description": "1 to 3 other answers the requester can pick with one tap, each at most 40 characters"
           }
         }
       }

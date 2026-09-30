@@ -19,6 +19,8 @@ public enum OutboxKind {
     PLAN_QUESTION,
     /** To the requester privately: asks for their own answer to a question, as a forced reply (G-1d). */
     PLAN_ANSWER_PROMPT,
+    /** To the presser of a plan's ✏️: asks for their correction as a forced reply; the reply corrects the plan. */
+    PLAN_EDIT_PROMPT,
     EXECUTION_QUEUED,
     CORRECTION_QUEUED,
     TASK_COMPLETED,

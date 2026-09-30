@@ -1218,6 +1218,97 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void detailsButtonRedrawsThePlanInPlaceWithItsSteps() throws Exception {
+        long taskId = taskAwaitingApproval(List.of());
+        planMessageSentAs(77);
+
+        handler.handle(callback(520, 100, "Bold", "pv:" + taskId + ":1:d"));
+
+        JsonNode edit = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(77, edit.get("message_id").asLong());
+        assertTrue(edit.get("text").asText().contains("<blockquote expandable>🛠 <b>Төлөвлөгөө (1)</b>\n1. Read auth.timeout"), edit.toString());
+        assertEquals("pv:" + taskId + ":1:s", edit.at("/reply_markup/inline_keyboard/1/1/callback_data").asText());
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+    }
+
+    @Test
+    void aPlanButtonUnderAnotherMessageIsAnsweredAsUnknown() throws Exception {
+        long taskId = taskAwaitingApproval(List.of());
+
+        handler.handle(callback(521, 100, "Bold", "pv:" + taskId + ":1:d"));   // the plan was never recorded as message 77
+
+        assertEquals(renderer.text("callback.unknown"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertFalse(telegram.calls().contains("editMessageText"), telegram.calls().toString());
+    }
+
+    @Test
+    void anAlternativeCorrectsThePlanAndTheMessageShowsItWhileTheAgentPlansAgain() throws Exception {
+        long taskId = taskAwaitingApproval(new Plan("Show the parent org", List.of(), List.of("Use OrgName"), List.of(), List.of(),
+                List.of(new dispatch.domain.PlanDecision("Which parent?", "the direct one", List.of("the ministry", "both")))));
+        planMessageSentAs(77);
+
+        handler.handle(callback(522, 100, "Bold", "pd:" + taskId + ":1:1:1"));
+
+        String instruction = row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction");
+        assertEquals("«Which parent?» гэдэгт «the direct one» биш «both» гэж үзээд төлөвлөгөөг дахин гарга.", instruction);
+        assertEquals(renderer.text("callback.decided"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        JsonNode edit = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertTrue(edit.get("text").asText().contains("🔄"), edit.toString());
+        assertTrue(edit.get("text").asText().contains("Which parent? → both"), edit.toString());
+        assertTrue(edit.path("reply_markup").path("inline_keyboard").isEmpty(), edit.toString());
+    }
+
+    @Test
+    void anAlternativePressedByAnotherMemberChangesNothing() throws Exception {
+        long taskId = taskAwaitingApproval(new Plan("u", List.of(), List.of("s"), List.of(), List.of(),
+                List.of(new dispatch.domain.PlanDecision("Which?", "a", List.of("b")))));
+        planMessageSentAs(77);
+
+        handler.handle(callback(523, 200, "Ali", "pd:" + taskId + ":1:1:0"));
+
+        assertEquals(Text.of("refused.notRequester", taskId, "Bold").render(Language.MN),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        assertFalse(telegram.calls().contains("editMessageText"), telegram.calls().toString());
+    }
+
+    @Test
+    void editAsksForTheCorrectionUnderThePlanAndTheReplyCorrectsIt() throws Exception {
+        long taskId = taskAwaitingApproval(List.of());
+        planMessageSentAs(77);
+
+        handler.handle(callback(524, 100, "Bold", "pe:" + taskId + ":1"));
+
+        assertEquals(renderer.text("callback.editPlan"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        Map<String, String> prompt = row("SELECT id, chat_ref, reply_to_ref FROM outbox WHERE kind = 'PLAN_EDIT_PROMPT'");
+        assertEquals("telegram:" + GROUP, prompt.get("chat_ref"));
+        assertEquals("telegram:" + GROUP + "/77", prompt.get("reply_to_ref"));
+        db.transaction(tx -> Outbox.markSent(tx, Long.parseLong(prompt.get("id")), 1, "telegram:" + GROUP + "/78", clock.instant()));
+
+        handler.handle(message(525, 42, 100, "Bold", GROUP, "supergroup", "Also cover the mobile login", botMessage(78)));
+
+        assertEquals("Also cover the mobile login", row("SELECT instruction FROM run WHERE task_id = ? AND seq = 2", taskId).get("instruction"));
+        JsonNode edit = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(77, edit.get("message_id").asLong());
+        assertTrue(edit.get("text").asText().contains("<i>Also cover the mobile login</i>"), edit.toString());
+    }
+
+    @Test
+    void replyToThePlanShowsTheCorrectionOnThePlan() throws Exception {
+        long taskId = taskAwaitingApproval(List.of());
+        planMessageSentAs(1000);
+
+        handler.handle(message(526, 43, 100, "Bold", GROUP, "supergroup", "Also cover the mobile login", botMessage(1000)));
+
+        JsonNode edit = telegram.awaitRequest("editMessageText", Duration.ofSeconds(2)).json();
+        assertEquals(1000, edit.get("message_id").asLong());
+        assertTrue(edit.get("text").asText().contains("🔄"), edit.toString());
+    }
+
+    @Test
     void rejectButtonRejectsThePlanAndAnswersTheCallback() throws Exception {
         long taskId = taskAwaitingApproval();
 
@@ -2555,10 +2646,13 @@ class UpdateHandlerTest {
     }
 
     private long taskAwaitingApproval(List<String> questions) {
+        return taskAwaitingApproval(new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(),
+                questions.stream().map(text -> new dispatch.domain.PlanQuestion(text, List.of())).toList()));
+    }
+
+    private long taskAwaitingApproval(Plan plan) {
         task("Fix the login timeout");
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
-        Plan plan = new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"), List.of(),
-                questions.stream().map(text -> new dispatch.domain.PlanQuestion(text, List.of())).toList());
         transitions.planSucceeded(run.taskId(), run.seq(), plan,
                 new AgentResult(AgentOutcome.SUCCEEDED, 0, "s", plan.toJson(), null, new BigDecimal("0.1"), 3, List.of(), null, null, null));
         return run.taskId();
