@@ -25,7 +25,9 @@ flowchart LR
     B --> C{"👀 Чи<br/>шалгана"}
     C -- "✏️ засвар" --> B
     C -- "✅ батлах" --> D["🛠 Хэрэгжүүлнэ"]
-    D --> E["🔀 Draft PR"]
+    D --> V["🧪 Тест + 🔍 Review"]
+    V -- "унасан" --> D
+    V --> E["🔀 Draft PR"]
 ```
 
 Агент **таны өөрийн компьютер** дээр, **таны** Claude Code / Codex / Gemini болон GitHub эрхээр ажиллана. Dispatch өөрөө ямар ч cloud үйлчилгээ шаардахгүй.
@@ -46,6 +48,9 @@ flowchart LR
 | 🖥 **Хөтөч** | `dispatch ui`: тойм, даалгавар, төсөл, хүмүүс, тохиргоо, лог — монгол эсвэл англиар (дээд буланд **Монгол / English**). Даалгавар өгөх, батлах, хариулах, цуцлах, мэдэгдэл авах нь бот ажиллаж байхад. Компьютер дээрх Telegram-ын Mini App-аас **Вэб UI нээх** дарвал нэвтэрсэн байдлаар шууд нээгдэнэ |
 | 🤖 **Олон агент** | Төсөл бүр өөрийн агенттай: Claude Code, Codex эсвэл Gemini CLI — `--agent codex` эсвэл Mini App-ын **Агент** мөр |
 | 💻 **Баг** | Хүн бүрийн даалгавар өөрийнх нь компьютер дээр ажиллана |
+| 🧪 **Шалгалт** | Хэрэгжүүлсний дараа Dispatch тестийг өөрөө ажиллуулж, унасныг агентад засуулна (3 хүртэл удаа), дараа нь шинэ review хийлгэнэ. Үр дүн нь PR дээр бичигдэнэ |
+| 🔒 **Sandbox** | Linux дээр агент бүр bubblewrap дотор: зөвхөн өөрийн worktree-д бичнэ, `~/.ssh`, `gh`, Dispatch-ийн нууцыг харахгүй |
+| 🚀 **Teleport** | `dispatch teleport N` — даалгаврын агентын яриаг terminal-д үргэлжлүүлнэ (Claude Code) |
 
 ## ⚡ 3 алхамаар эхлэх
 
@@ -89,6 +94,7 @@ dispatch init      # эсвэл: dispatch ui — хөтөч дээр, QR код�
 | `/retry N` · `/cancel N` | Дахин оролдох · цуцлах |
 | `/projects` | Төслүүд ба «➕ Группт нэмэх» холбоос |
 | `/manage` эсвэл **Удирдах** товч | Mini App нээх |
+| `/teleport N` | Даалгаврын агентын яриаг terminal-д үргэлжлүүлэх команд (`dispatch teleport N`) |
 | `/new` | Туслахтай шинэ яриа |
 
 **Группт:** `/task@bot текст` эсвэл `@bot текст` · хэн нэгнийг `@username` гэж дурдахад тэр хүнд даалгавар очно · мессежид 👀 → ✍ → 👍/👎 гэж хариу өгнө.
@@ -115,6 +121,7 @@ dispatch service status     # start · stop · install · uninstall
 dispatch project add ~/work/crm
 dispatch project add ~/work/api --agent codex   # эсвэл gemini
 dispatch ui                 # хөтөч дээр: даалгавар, төсөл, хүмүүс, тохиргоо, лог
+dispatch teleport 13        # #13-ийн Claude session-г terminal-д; --plan бол төлөвлөгөөний session
 ```
 
 > 💡 Төсөл бүрт богино `CLAUDE.md` (build, test команд, дүрэм) байвал агент хурдан, хямд ажиллана.
@@ -128,6 +135,16 @@ bot-ынхоо хажууд багийн bot. Хоёр дахь нь өөрий�
 бүгдийг харуулна. Хоёр дахийг нь `--instance NAME`-ээр аль ч командад зааж болно: `dispatch check --instance team`,
 `dispatch service status --instance team`, `dispatch ui --instance team`. Түүний даалгаврын branch-ууд
 `dispatch/team/<task>` тул хоёр bot нэг clone дээр зэрэг ажиллаж болно.
+
+### Linux дээрх Telegram Desktop-д Mini App нээгдэхгүй бол
+
+«Webview crashed» гарах эсвэл Mini App хулганаа аваачих хүртэл харагдахгүй бол Telegram X11/XWayland дээр ажиллаж байна (WebKitGTK зурж чадахгүй). Wayland-д шилжүүлээд Telegram-аа бүрэн хааж дахин нээгээрэй:
+
+```sh
+flatpak override --user --socket=wayland org.telegram.desktop
+```
+
+Утас, macOS, Windows дээр ийм асуудал гарахгүй.
 
 ## 🔐 Аюулгүй байдал
 

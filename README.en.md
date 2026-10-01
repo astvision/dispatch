@@ -145,7 +145,8 @@ A project runs on the agent its `agent:` names (ADR 0026): `claude-code`, `codex
 `agents:` with its command. Put a project on another one with `dispatch project add … --agent codex`, the **Агент** row
 on the Mini App's project page, or by hand in `dispatch.yaml`; switching drops the project's model and effort, which name
 the old agent's. Planning is read-only on every agent (Codex's read-only sandbox, Gemini CLI's default mode, where it
-denies every edit and command when headless), and execution runs as your user without a sandbox, as Claude Code's does.
+denies every edit and command when headless), and execution runs as your user inside the same sandbox as Claude Code's
+(see below).
 
 - **Model:** any model the CLI accepts, e.g. `model: gpt-5-codex` or `model: gemini-2.5-pro`; unset uses the CLI's own default.
 - **Effort:** Codex takes `low`, `medium`, `high` or `xhigh`; Gemini CLI has no effort setting.
@@ -170,6 +171,31 @@ Every planning and execution run reads the project's `CLAUDE.md` (or `.claude/CL
 - conventions a change must follow, and what not to touch
 
 `dispatch check` names the projects that have none.
+
+### The sandbox
+
+On Linux with `bubblewrap` installed, every agent run (plan, execution, split, assistant) runs inside it (ADR 0032): the
+whole filesystem is read-only except the run's worktree, its clone's git dir, the agent's own state and the build
+caches; `~/.ssh`, `~/.config/gh`, `~/.gnupg`, Dispatch's config directory, its state directory and every other
+instance's files are hidden. The network stays open. On macOS, Windows, a Linux without `bwrap`, or with `sandbox: off`,
+agents run unsandboxed as before, and `dispatch check`, the startup log and every plan and result of such a run say so.
+
+### Test and review before the pull request
+
+After an execution, Dispatch runs the project's `test:` command itself rather than trusting the agent's word, hands a
+failure's output back to the agent to fix (up to 3 rounds), then has a fresh read-only reviewer check the change
+against the approved plan (ADR 0033). It always delivers: the draft PR and the result say what passed, what failed and
+what was skipped, e.g. `stopped: time` when the tests hit the run's time limit. While it runs, the Mini App's task
+sheet shows each step, and the requester can skip the running test or review, or deliver at once. `loop: off` on the
+instance or a project turns it off.
+
+### Continue a task in the terminal
+
+`dispatch teleport N` opens task N's Claude Code session in this terminal, in its worktree (`--plan` opens the planning
+session instead), so you can take over where the agent stopped. The task keeps its state: a later correction or
+follow-up resumes the same session, with whatever you did. `/teleport N` in the chat, or the Mini App's task sheet,
+gives you the command. It refuses while a run is active, for a task on Codex or Gemini CLI, and when the worktree is
+gone; for a task a team member's computer ran, it names that computer, since the session lives there.
 
 ### Manage it in the browser
 
@@ -233,6 +259,11 @@ Restart Dispatch, and `dispatch check` will say whether the port answers and whe
 their own tasks, with **Cancel** and **Retry**; an admin also gets every task of their groups and the management pages
 above. Another member's task shows only its headline. Plans are still approved, corrected and rejected in the chat, and
 Dispatch is still set up with `dispatch init` or `dispatch ui` — never from Telegram.
+
+**Telegram Desktop on Linux:** if the Mini App shows "Webview crashed", or stays invisible until the mouse is over it,
+Telegram runs under X11/XWayland, where its WebKitGTK webview cannot draw. Let it use Wayland and fully quit and reopen
+it: `flatpak override --user --socket=wayland org.telegram.desktop` for the Flatpak. Phones, macOS and Windows use
+other webviews and are not affected.
 
 ## Set up a team instance with systemd (Linux server)
 
@@ -309,6 +340,7 @@ In the config, list each group under `telegram.groups` with its `chatId`, `membe
 | `/stats` | Your numbers, each group's and per person, for 7 days, this month or all time; your own view also shows what talking to the assistant cost |
 | `/cancel N` | Cancels task N |
 | `/projects` | Your projects with their base branch, and why any cannot take tasks now |
+| `/teleport N` | The command that continues task N's agent session in your terminal (`dispatch teleport N`) |
 
 Each plan and result ends with the model that answered, the cost and the duration. A ⚠️ line appears when the model isn't the one the config asks for.
 
