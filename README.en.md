@@ -185,9 +185,34 @@ agents run unsandboxed as before, and `dispatch check`, the startup log and ever
 After an execution, Dispatch runs the project's `test:` command itself rather than trusting the agent's word, hands a
 failure's output back to the agent to fix (up to 3 rounds), then has a fresh read-only reviewer check the change
 against the approved plan (ADR 0033). It always delivers: the draft PR and the result say what passed, what failed and
-what was skipped, e.g. `stopped: time` when the tests hit the run's time limit. While it runs, the Mini App's task
-sheet shows each step, and the requester can skip the running test or review, or deliver at once. `loop: off` on the
-instance or a project turns it off.
+what was skipped, e.g. `stopped: time` when the tests hit the run's time limit. You can watch and steer it from the
+Mini App (below). `loop: off` on the instance or a project turns it off.
+
+### Watch and steer a run
+
+Open a task in the Mini App and its latest run shows as a rail of steps, refreshed every 2 seconds while it runs: each
+step's state and time, the running agent's latest action, and the run's cost once it ends. A team member's computer
+reports its steps too, up to 10 seconds behind.
+
+| Step | What happens |
+|---|---|
+| Plan | The agent reads the code and writes a plan, read-only; you approve it |
+| Implement | The agent makes the change in the task's worktree |
+| Test N | Dispatch runs the project's `test:` command itself (10 minutes at most); a failure's tail folds out under it |
+| Fix N/3 | The failure goes back to the agent to fix, up to 3 rounds |
+| Paused before review | With ⏸ on, the run waits here for you after the tests |
+| Review | A fresh read-only reviewer checks the change against the plan; findings listed by severity |
+| Deliver | Commit, push and the draft PR, which says what passed, failed or was skipped |
+
+The controls are the requester's alone, while the run executes:
+
+| Control | What it does |
+|---|---|
+| ⏭ **Skip** the running step | A fix or review is cancelled at once, a test stops at its next check; the loop goes on as if that step gave nothing, and the result says it was skipped |
+| 📦 **Deliver now** | Cancels the running step, runs nothing more and delivers, marked "delivered early by the requester" |
+| ⏸ **Pause before review** | Can be switched until the review is reached. Once paused: 🔍 reviews now, 📦 delivers without the review, and after 15 minutes it reviews by itself. Time spent paused is given back to the run |
+| 🚀 **Teleport** | While paused or once the run ended: the command that continues the agent's session in a terminal, with a copy button |
+| **Cancel** | Cancels the task (`/cancel N`), the requester's or an admin's |
 
 ### Continue a task in the terminal
 
