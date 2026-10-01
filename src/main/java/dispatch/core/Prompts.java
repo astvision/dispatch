@@ -37,6 +37,10 @@ final class Prompts {
             Language: write all text in the natural language used inside <task> (a task written in Mongolian gets a \
             Mongolian plan, a task written in English gets an English plan). Keep code identifiers, file paths and \
             commands unchanged.
+
+            Speed matters: investigate only what the plan needs. Search for the code you need instead of reading whole \
+            files or directories, stop once you can name the change, and run a build or test only when it is the \
+            quickest way to confirm a bug's cause.
             """;
 
     /** The summary is the chat's result message and the pull request's body: brief, since the diff carries the detail. */
@@ -52,7 +56,47 @@ final class Prompts {
             Language: write the summary in the natural language used inside <task> (a task written in Mongolian gets a \
             Mongolian summary, a task written in English gets an English summary). Keep code identifiers, file paths \
             and commands unchanged.
+
+            Speed matters: read only the code your change touches, search instead of reading whole files, run only the \
+            tests that cover your change rather than the whole suite, and stop when the work is done: no refactoring, \
+            polish or extras beyond it.
             """;
+
+    /**
+     * What each agent call is told to use from the dispatch plugin (spec: agent skills). The machine that runs the agent
+     * adds it, never the team machine, so a machine without the plugin is never told to use one.
+     */
+    enum SkillNote {
+        PLAN("If the task reports a bug, use the dispatch:systematic-debugging skill to investigate its root cause before "
+                + "you plan; change nothing. Put the root cause in findings."),
+        EXECUTE("Use the dispatch:test-driven-development skill while you build, and the "
+                + "dispatch:verification-before-completion skill before your summary."),
+        FIX_TEST("Use the dispatch:systematic-debugging skill to find the root cause before you change code, then the "
+                + "dispatch:verification-before-completion skill."),
+        FIX_REVIEW("Use the dispatch:receiving-code-review skill: check each finding against the code before you change "
+                + "anything."),
+        REVIEW("Use the dispatch:code-reviewer skill, then answer only through the structured output.");
+
+        private final String text;
+
+        SkillNote(String text) {
+            this.text = text;
+        }
+
+        String text() {
+            return text;
+        }
+
+        /** The note after a prompt, on its own line. */
+        String after() {
+            return "\n" + text + "\n";
+        }
+
+        /** The note before a prompt, followed by a blank line. */
+        String before() {
+            return text + "\n\n";
+        }
+    }
 
     private Prompts() {
     }
