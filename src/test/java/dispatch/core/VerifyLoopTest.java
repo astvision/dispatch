@@ -24,6 +24,9 @@ class VerifyLoopTest {
     private final TestClock clock = new TestClock(NOW);
     private final Deque<Boolean> testResults = new ArrayDeque<>();
     private final List<String> calls = new ArrayList<>();
+    /** Whether the job's skills are on, and every fix and review prompt the loop sent, in order. */
+    private boolean skills;
+    private final List<String> prompts = new ArrayList<>();
     private String reviewAnswer = "{\"verdict\":\"ok\",\"findings\":[]}";
     private AgentOutcome fixOutcome = AgentOutcome.SUCCEEDED;
     private AgentResult fixAnswer;
@@ -73,6 +76,7 @@ class VerifyLoopTest {
     private final VerifyLoop.Agents agents = new VerifyLoop.Agents() {
         @Override
         public AgentResult fix(String prompt, BigDecimal budgetUsd, Duration timeout) {
+            prompts.add(prompt);
             calls.add("fix");
             fixBudgets.add(budgetUsd);
             if (tapDuring("FIX")) {
@@ -86,6 +90,7 @@ class VerifyLoopTest {
 
         @Override
         public AgentResult review(String prompt, BigDecimal budgetUsd, Duration timeout) {
+            prompts.add(prompt);
             calls.add("review");
             if (tapDuring("REVIEW")) {
                 return result(AgentOutcome.FAILED, null, new BigDecimal("0.05"));
@@ -139,7 +144,7 @@ class VerifyLoopTest {
 
     private VerifyLoop.Outcome run(String testCommand, Duration timeLeft, BigDecimal budget, BigDecimal spent) {
         VerifyLoop.Setup setup = new VerifyLoop.Setup(testCommand, Path.of("/w/7"), Path.of("/s/runs/7/2"), "Review this:",
-                NOW.plus(timeLeft), budget, spent);
+                NOW.plus(timeLeft), budget, spent, skills);
         return new VerifyLoop(tests, clock).run(setup, agents, () -> stopped);
     }
 
@@ -319,6 +324,31 @@ class VerifyLoopTest {
             + "{\"severity\":\"minor\",\"file\":\"B.java\",\"line\":2,\"text\":\"name\"}]}";
     private static final List<Review.Finding> BOTH_FINDINGS = List.of(new Review.Finding("blocking", "A.java", 1, "NPE"),
             new Review.Finding("minor", "B.java", 2, "name"));
+
+    @Test
+    void withSkillsEachFixAndTheReviewAreToldWhichSkillToUse() {
+        skills = true;
+        testResults.add(false);
+        reviewAnswer = BLOCKING_AND_MINOR;
+
+        run();
+
+        assertEquals(List.of("test", "fix", "test", "review", "fix", "test"), calls);
+        assertTrue(prompts.get(0).endsWith(Prompts.SkillNote.FIX_TEST.after()), prompts.get(0));
+        assertTrue(prompts.get(1).startsWith(Prompts.SkillNote.REVIEW.before()), prompts.get(1));
+        assertTrue(prompts.get(2).endsWith(Prompts.SkillNote.FIX_REVIEW.after()), prompts.get(2));
+    }
+
+    @Test
+    void withoutSkillsNoLoopPromptNamesASkill() {
+        testResults.add(false);
+        reviewAnswer = BLOCKING_AND_MINOR;
+
+        run();
+
+        assertEquals(3, prompts.size());
+        prompts.forEach(prompt -> assertFalse(prompt.contains("dispatch:"), prompt));
+    }
 
     @Test
     void blockingFindingsAreFixedAndRetested() {

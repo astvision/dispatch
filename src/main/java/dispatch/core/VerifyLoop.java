@@ -63,9 +63,14 @@ public final class VerifyLoop {
         void awaitResume(Duration max);
     }
 
-    /** @param budgetUsd null for no budget; @param spentUsd what the run has already cost */
+    /**
+     * @param budgetUsd null for no budget
+     * @param spentUsd  what the run has already cost
+     * @param skills    whether the job's skills are on: each fix and the review are told which dispatch skill to use
+     *                  (spec: agent skills)
+     */
     public record Setup(String testCommand, Path worktree, Path logBase, String reviewPrompt, Instant deadline,
-                        BigDecimal budgetUsd, BigDecimal spentUsd) {
+                        BigDecimal budgetUsd, BigDecimal spentUsd, boolean skills) {
     }
 
     public record Outcome(Verification verification, List<AgentResult> runs) {
@@ -178,7 +183,7 @@ public final class VerifyLoop {
                 if (result.passed() || fixesLeft == 0) {
                     return;
                 }
-                if (!fix(Prompts.testFailure(setup.testCommand(), tail))) {
+                if (!fix(Prompts.testFailure(setup.testCommand(), tail) + note(Prompts.SkillNote.FIX_TEST))) {
                     return;
                 }
             }
@@ -189,7 +194,8 @@ public final class VerifyLoop {
                 return;
             }
             int step = agents.stepStarted(RunStep.Kind.REVIEW, 1);
-            AgentResult result = agents.review(setup.reviewPrompt() + "\n" + capped(agents.diff()), budgetLeft(), timeLeft());
+            String skill = setup.skills() ? Prompts.SkillNote.REVIEW.before() : "";
+            AgentResult result = agents.review(skill + setup.reviewPrompt() + "\n" + capped(agents.diff()), budgetLeft(), timeLeft());
             record(result);
             if (tapped(step)) {
                 reviewState = Verification.ReviewState.SKIPPED;
@@ -225,7 +231,7 @@ public final class VerifyLoop {
             }
             // Every finding stays listed either way: nothing re-reviews a fix, so the block cannot call them resolved.
             left = parsed.findings();
-            if (fixesLeft == 0 || !fix(Prompts.reviewFindings(parsed.blocking()))) {
+            if (fixesLeft == 0 || !fix(Prompts.reviewFindings(parsed.blocking()) + note(Prompts.SkillNote.FIX_REVIEW))) {
                 reviewState = Verification.ReviewState.FINDINGS;
                 return;
             }
@@ -255,6 +261,11 @@ public final class VerifyLoop {
             } else {
                 agents.stepEnded(step, RunStep.Outcome.DONE, null);
             }
+        }
+
+        /** After a fix prompt: the skill note for it, when the job's skills are on. */
+        private String note(Prompts.SkillNote note) {
+            return setup.skills() ? note.after() : "";
         }
 
         /** @return true when the fix ran and succeeded, so the loop may go on */

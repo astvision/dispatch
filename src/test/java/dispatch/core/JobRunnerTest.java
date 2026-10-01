@@ -63,6 +63,10 @@ class JobRunnerTest {
     /** What the verify loop's tests start: each kind answered here is a canned result, the rest go to fake claude. */
     private final Map<RunKind, AgentResult> answers = new EnumMap<>(RunKind.class);
     private final List<RunKind> agentKindsStarted = new CopyOnWriteArrayList<>();
+    /** Every request the scripted agent was started with, in order. */
+    private final List<RunRequest> loopRequests = new CopyOnWriteArrayList<>();
+    /** Whether {@link #executeWithLoop} sends a job whose skills are on, as a team machine does for a Claude Code project. */
+    private boolean skills;
     /** When set, a fix (a resumed EXECUTE) runs until it is cancelled or its thread interrupted. */
     private volatile boolean fixesHang;
     private final java.util.concurrent.CountDownLatch fixStarted = new java.util.concurrent.CountDownLatch(1);
@@ -717,6 +721,82 @@ class JobRunnerTest {
     }
 
     /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
+    @Test
+    void withSkillsEveryCallOfAnExecutionGetsThePluginAndItsNote() throws Exception {
+        skills = true;
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+        Deque<Integer> exitCodes = new ArrayDeque<>(List.of(1, 0));
+
+        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop, started) ->
+                new TestRunner.TestRun(exitCodes.pop(), false, false, "FooTest failed"));
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), result.failureDetail());
+        assertEquals(List.of(RunKind.EXECUTE, RunKind.EXECUTE, RunKind.REVIEW), agentKindsStarted);
+        for (RunRequest request : loopRequests) {
+            assertEquals(List.of(workspaces.skillsPluginDir()), request.pluginDirs(), request.kind() + " resume=" + request.resume());
+        }
+        assertTrue(loopRequests.get(0).prompt().endsWith(Prompts.SkillNote.EXECUTE.after()), loopRequests.get(0).prompt());
+        assertTrue(loopRequests.get(1).prompt().endsWith(Prompts.SkillNote.FIX_TEST.after()), "the fix is resumed with its own note");
+        assertTrue(loopRequests.get(2).prompt().startsWith(Prompts.SkillNote.REVIEW.before()), loopRequests.get(2).prompt());
+    }
+
+    @Test
+    void withoutSkillsNoCallGetsThePluginOrANote() throws Exception {
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+
+        executeWithLoop(true, (command, workdir, log, timeout, stop, started) -> new TestRunner.TestRun(0, false, false, "ok"));
+
+        assertEquals(2, loopRequests.size());
+        for (RunRequest request : loopRequests) {
+            assertEquals(List.of(), request.pluginDirs());
+            assertFalse(request.prompt().contains("dispatch:"), request.prompt());
+        }
+    }
+
+    @Test
+    void aSkillsJobOnAMachineWithoutThePluginFailsAsSetupWithoutAnAgent() {
+        skills = true;
+
+        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop, started) -> {
+            throw new AssertionError("no test runs without the plugin");
+        });
+
+        assertEquals(FailureReason.SETUP, result.failureReason());
+        assertTrue(result.failureDetail().contains("skills plugin missing at " + workspaces.skillsPluginDir()),
+                result.failureDetail());
+        assertEquals(List.of(), agentKindsStarted);
+    }
+
+    @Test
+    void aPlanWithSkillsStartsClaudeWithThePluginAndThePlanNote() throws Exception {
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+
+        JobResult result = runner.run(withSkills(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null)),
+                events, control);
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), result.failureDetail());
+        Path worktree = Path.of(events.worktree);
+        List<String> args = Files.readAllLines(worktree.resolve("fake-claude.args"));
+        assertEquals(workspaces.skillsPluginDir().toString(), args.get(args.indexOf("--plugin-dir") + 1));
+        assertEquals("Read,Bash,Skill", args.get(args.indexOf("--tools") + 1));
+        // fake-claude.sh reads the prompt with $(cat), which drops its trailing newline.
+        String prompt = Files.readString(worktree.resolve("fake-claude.prompt"));
+        assertTrue(prompt.endsWith(Prompts.SkillNote.PLAN.text()), prompt);
+    }
+
+    /** A copy of {@code job} whose project has skills on, as the team machine sends a Claude Code project's job. */
+    private static Job withSkills(Job job) {
+        Job.Project p = job.project();
+        return new Job(job.taskId(), job.seq(), job.kind(), new Job.Project(p.name(), p.repo(), p.path(), p.baseBranch(),
+                p.agent(), p.copyFiles(), p.test(), p.loop(), true), job.baseBranch(), job.baseSha(), job.worktree(),
+                job.prUrl(), job.sessionId(), job.resume(), job.prompt(), job.model(), job.effort(), job.timeoutMillis(),
+                job.budgetUsd(), job.attachments(), job.commitSubject(), job.commitTrailers(), job.deliverySummary(),
+                job.branch(), job.reviewPrompt(), job.expectedHead());
+    }
+
     private JobResult executeWithLoop(boolean loop, TestRunner tests) {
         return executeWithLoop(loop, new ActiveRuns().register(TASK, 2), tests);
     }
@@ -736,7 +816,7 @@ class JobRunnerTest {
                     throw new IllegalStateException("file " + fileRef + " is gone");
                 }, tests, clock, deliveryReserve);
         Job.Project project = new Job.Project("alm", repos.origin.toString(), null, "main", "claude-code", List.of(),
-                "./mvnw -q test", loop);
+                "./mvnw -q test", loop, skills ? Boolean.TRUE : null);
         Job job = new Job(TASK, 2, RunKind.EXECUTE, project, "main", events.baseSha, events.worktree, null, SESSION, false,
                 "Implement the approved plan", null, null, timeout.toMillis(), new BigDecimal("10"), List.of(),
                 "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null,
@@ -758,6 +838,7 @@ class JobRunnerTest {
 
         @Override
         public RunHandle start(RunRequest request) {
+            loopRequests.add(request);
             agentKindsStarted.add(request.kind());
             if (request.kind() == RunKind.REVIEW) {
                 reviewPrompts.add(request.prompt());

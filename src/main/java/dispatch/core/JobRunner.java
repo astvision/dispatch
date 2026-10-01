@@ -134,7 +134,9 @@ public final class JobRunner implements Worker {
         }
         Path worktree;
         TaskFiles files;
+        List<Path> plugins;
         try {
+            plugins = plugins(job);
             worktree = job.worktree() == null ? createWorktree(job, events) : existingWorktree(job);
             if (control.stopReason() != null) {
                 return stopped(job, control.stopReason(), null);
@@ -143,8 +145,8 @@ public final class JobRunner implements Worker {
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
-        return steps.around(RunStep.Kind.PLAN,
-                () -> runAgent(job, events, control, request(job, worktree, files), Duration.ofMillis(job.timeoutMillis())));
+        return steps.around(RunStep.Kind.PLAN, () -> runAgent(job, events, control, request(job, worktree, files, plugins),
+                Duration.ofMillis(job.timeoutMillis())));
     }
 
     private JobResult implement(Job job, JobEvents events, ActiveRuns.ActiveRun control, Steps steps) {
@@ -153,8 +155,10 @@ public final class JobRunner implements Worker {
         }
         Path worktree;
         TaskFiles files;
+        List<Path> plugins;
         String startSha;
         try {
+            plugins = plugins(job);
             worktree = existingWorktree(job);
             files = attachments(job);
             // Local-only files (e.g. .env) the build and tests need; never part of planning runs.
@@ -181,8 +185,8 @@ public final class JobRunner implements Worker {
         }
         // The whole run's time: the loop's tests and agent calls share what the implementation left.
         Instant deadline = clock.instant().plusMillis(job.timeoutMillis());
-        JobResult result = steps.around(RunStep.Kind.IMPLEMENT,
-                () -> runAgent(job, events, control, request(job, worktree, files), Duration.ofMillis(job.timeoutMillis())));
+        JobResult result = steps.around(RunStep.Kind.IMPLEMENT, () -> runAgent(job, events, control,
+                request(job, worktree, files, plugins), Duration.ofMillis(job.timeoutMillis())));
         if (result.outcome() != JobResult.Outcome.SUCCEEDED) {
             return result;
         }
@@ -191,8 +195,8 @@ public final class JobRunner implements Worker {
         }
         VerifyLoop.Outcome verified = new VerifyLoop(tests, clock).run(
                 new VerifyLoop.Setup(job.project().test(), worktree, workspaces.runLogBase(job.taskId(), job.seq()),
-                        job.reviewPrompt(), deadline, job.budgetUsd(), cost(result.agent())),
-                loopAgents(job, events, control, worktree, files, startSha, steps),
+                        job.reviewPrompt(), deadline, job.budgetUsd(), cost(result.agent()), !plugins.isEmpty()),
+                loopAgents(job, events, control, worktree, files, startSha, steps, plugins),
                 // An interrupt ends a test step as stopped; the loop must not go on to the reviewer.
                 () -> control.stopReason() != null || Thread.currentThread().isInterrupted());
         // Every outcome records what the whole run cost, so the loop's calls count even when nothing is delivered.
@@ -209,7 +213,7 @@ public final class JobRunner implements Worker {
 
     /** The verify loop's agent calls: fixes resume the building session, the reviewer is a fresh read-only one. */
     private VerifyLoop.Agents loopAgents(Job job, JobEvents events, ActiveRuns.ActiveRun control, Path worktree, TaskFiles files,
-                                         String startSha, Steps steps) {
+                                         String startSha, Steps steps, List<Path> plugins) {
         Path logBase = workspaces.runLogBase(job.taskId(), job.seq());
         return new VerifyLoop.Agents() {
             private int fixes;
@@ -218,13 +222,15 @@ public final class JobRunner implements Worker {
             public AgentResult fix(String prompt, BigDecimal budgetUsd, Duration timeout) {
                 fixes++;
                 return call(job, events, control, new RunRequest(RunKind.EXECUTE, worktree, prompt, job.sessionId(), true,
-                        files.dirs(), budgetUsd, job.model(), job.effort(), Path.of(logBase + ".fix-" + fixes)), timeout);
+                        files.dirs(), budgetUsd, job.model(), job.effort(), Path.of(logBase + ".fix-" + fixes), Map.of(),
+                        plugins), timeout);
             }
 
             @Override
             public AgentResult review(String prompt, BigDecimal budgetUsd, Duration timeout) {
                 return call(job, events, control, new RunRequest(RunKind.REVIEW, worktree, prompt, UUID.randomUUID(), false,
-                        files.dirs(), budgetUsd, job.model(), job.effort(), Path.of(logBase + ".review")), timeout);
+                        files.dirs(), budgetUsd, job.model(), job.effort(), Path.of(logBase + ".review"), Map.of(), plugins),
+                        timeout);
             }
 
             @Override
@@ -440,9 +446,33 @@ public final class JobRunner implements Worker {
         return new Delivery.Commit(job.commitSubject(), body, job.commitTrailers());
     }
 
-    private RunRequest request(Job job, Path worktree, TaskFiles files) {
-        return new RunRequest(job.kind(), worktree, job.prompt() + files.note(), job.sessionId(), job.resume(), files.dirs(),
-                job.budgetUsd(), job.model(), job.effort(), workspaces.runLogBase(job.taskId(), job.seq()));
+    /**
+     * The dispatch plugin for a job whose skills are on (spec: agent skills), else none. A missing one means this
+     * machine's startup never wrote it: the run fails rather than tell the agent to use skills it cannot load.
+     */
+    private List<Path> plugins(Job job) {
+        if (!job.project().skillsOn()) {
+            return List.of();
+        }
+        Path dir = workspaces.skillsPluginDir();
+        if (!Files.isDirectory(dir)) {
+            throw new WorkspaceException("skills plugin missing at " + dir + "; restart Dispatch");
+        }
+        return List.of(dir);
+    }
+
+    /** The note naming the plugin's skills for a plan or an execution; added here, beside the plugin, never by the team machine. */
+    private static String skillNote(RunKind kind, List<Path> plugins) {
+        if (plugins.isEmpty()) {
+            return "";
+        }
+        return (kind == RunKind.PLAN ? Prompts.SkillNote.PLAN : Prompts.SkillNote.EXECUTE).after();
+    }
+
+    private RunRequest request(Job job, Path worktree, TaskFiles files, List<Path> plugins) {
+        return new RunRequest(job.kind(), worktree, job.prompt() + files.note() + skillNote(job.kind(), plugins),
+                job.sessionId(), job.resume(), files.dirs(), job.budgetUsd(), job.model(), job.effort(),
+                workspaces.runLogBase(job.taskId(), job.seq()), Map.of(), plugins);
     }
 
     /** No copyFiles here: planning needs no local secrets, and whatever the agent reads may be quoted in the group. */
