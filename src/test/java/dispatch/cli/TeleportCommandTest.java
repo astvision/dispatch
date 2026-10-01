@@ -1,6 +1,7 @@
 package dispatch.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dispatch.domain.Phase;
@@ -15,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +45,21 @@ class TeleportCommandTest {
     @AfterEach
     void close() {
         db.close();
+    }
+
+    /** The token lives in dispatch.env, not the shell: teleport reads it there, as `dispatch run` does. */
+    @Test
+    void readsTheSecretsBesideTheConfig() throws Exception {
+        Path config = dir.resolve("dispatch.yaml");
+        Files.writeString(config, new String(TeleportCommandTest.class.getResourceAsStream("/personal.yaml").readAllBytes())
+                .replace("STATE_DIR", dir.toString().replace("'", "''"))
+                .replace("CLONE", dir.resolve("work/alm").toString().replace("'", "''")));
+        SecretsFile.write(SecretsFile.beside(config), Map.of("TELEGRAM_BOT_TOKEN", "123456789" + ":AAH-fake-token-for-tests-only-0123456789"));
+
+        CliException error = assertThrows(CliException.class,
+                () -> TeleportCommand.run(new Cli.Teleport(config, 99, false), Map.of("PATH", "/usr/bin")));
+
+        assertEquals("no task #99 in this instance", error.getMessage(), "the config loaded and the task was looked up");
     }
 
     @Test

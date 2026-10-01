@@ -1,7 +1,6 @@
 package dispatch.cli;
 
 import dispatch.config.Config;
-import dispatch.config.ConfigLoader;
 import dispatch.core.Teleport;
 import dispatch.domain.Task;
 import dispatch.store.Database;
@@ -28,7 +27,8 @@ public final class TeleportCommand {
 
     /** Runs Claude in the terminal and answers with its exit code. */
     public static int run(Cli.Teleport teleport, Map<String, String> env) {
-        Config config = ConfigLoader.load(teleport.configFile(), env);
+        // Through RunCommand, so the token in dispatch.env counts as it does for `dispatch run`.
+        Config config = RunCommand.prepare(teleport.configFile(), env).config();
         Target target;
         try (Database db = Database.open(config.stateDir().resolve("dispatch.db"))) {
             String agent = config.projects().stream().filter(project -> project.name().equals(projectOf(db, teleport.taskId())))
