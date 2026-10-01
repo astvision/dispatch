@@ -70,6 +70,34 @@ class RunGuardTest {
         assertFalse(Files.exists(quarantine));
     }
 
+    /**
+     * The process's exit ends the guard on one thread while await() ends it on another: whichever comes second must
+     * not return before the sweep is done, or await()'s caller sees the owner's home not yet swept.
+     */
+    @Test
+    void aSecondEndWaitsForTheFirstToFinish() throws Exception {
+        Path home = Files.createDirectories(root.resolve("home"));
+        List<Path> watched = new java.util.ArrayList<>();
+        for (int i = 0; i < 400; i++) {
+            watched.add(home.resolve(".codex/memories-" + i));
+        }
+        RunGuard guard = RunGuard.start(policy(List.of(), watched), home, root.resolve("state/quarantine/7-2"),
+                root.resolve("state/runs/7/2"));
+        for (Path path : watched) {
+            Files.createDirectories(path);
+            Files.writeString(path.resolve("note.md"), "x");
+        }
+
+        Thread first = Thread.ofPlatform().start(() -> capturingLog(guard::end));
+        while (watched.stream().allMatch(Files::exists) && first.isAlive()) {
+            Thread.onSpinWait();
+        }
+        capturingLog(guard::end);
+
+        assertTrue(watched.stream().noneMatch(Files::exists), "end() returned before the sweep was done");
+        first.join();
+    }
+
     @Test
     void aCopyThatCannotBeMadeFailsTheRunBeforeItStarts() {
         Path home = root.resolve("home");

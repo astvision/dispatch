@@ -8,7 +8,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * What a sandboxed run leaves in the owner's home (spec: agent state guard). Before the run, the throwaway copies the
@@ -25,7 +24,7 @@ public final class RunGuard {
     private final Path home;
     private final Path quarantine;
     private final Path logBase;
-    private final AtomicBoolean ended = new AtomicBoolean();
+    private boolean ended;
 
     private RunGuard(List<SandboxPolicy.FileCopy> copies, List<Path> watched, Path home, Path quarantine, Path logBase) {
         this.copies = List.copyOf(copies);
@@ -48,11 +47,15 @@ public final class RunGuard {
         return new RunGuard(policy.copies(), policy.watched(), home, quarantine, logBase);
     }
 
-    /** Once, after the process exited; later calls do nothing. */
-    public void end() {
-        if (!ended.compareAndSet(false, true)) {
+    /**
+     * Once, after the process exited. Synchronized: the process's exit and {@code await()} both end it, and the second
+     * caller must not return before the first has swept, or {@code await()}'s caller would see the home not yet swept.
+     */
+    public synchronized void end() {
+        if (ended) {
             return;
         }
+        ended = true;
         for (SandboxPolicy.FileCopy copy : copies) {
             try {
                 Files.deleteIfExists(copy.copy());
