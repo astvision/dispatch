@@ -229,7 +229,7 @@ public final class WorkerLoop implements Runnable {
         String effort = claudeCode && mine.effort() != null ? mine.effort() : job.effort();
         Job.Project project = new Job.Project(job.project().name(), job.project().repo(), mine.path(),
                 job.project().baseBranch(), job.project().agent(), job.project().copyFiles(), job.project().test(),
-                job.project().loop());
+                job.project().loop(), job.project().skills());
         return Optional.of(new Job(job.taskId(), job.seq(), job.kind(), project, job.baseBranch(), job.baseSha(),
                 job.worktree(), job.prUrl(), job.sessionId(), job.resume(), job.prompt(), model, effort,
                 job.timeoutMillis(), job.budgetUsd(), job.attachments(), job.commitSubject(), job.commitTrailers(),

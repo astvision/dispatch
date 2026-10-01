@@ -45,6 +45,16 @@ class WorkerLoopTest extends WorkerApiFixture {
     }
 
     @Test
+    void workerKeepsTheJobsSkills() throws Exception {
+        WorkerLoop loop = idleLoop("ann-laptop", repos.repo("alm"));
+
+        Job ran = loop.withLocalClone(executeJob(new Job.Project("alm", "git@github.com:acme/alm.git", null, "main",
+                "claude-code", List.of(), null, null, true), null)).orElseThrow();
+
+        assertTrue(ran.project().skillsOn(), "a member's computer runs the team's job with its skills");
+    }
+
+    @Test
     void workerKeepsTheBranchsExpectedHead() throws Exception {
         WorkerLoop loop = idleLoop("ann-laptop", repos.repo("alm"));
         Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of());

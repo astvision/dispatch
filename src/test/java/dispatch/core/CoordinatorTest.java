@@ -368,6 +368,43 @@ class CoordinatorTest {
         assertNull(given.get().expectedHead(), "an unknown head is not checked, rather than refusing every later run");
     }
 
+    @Test
+    void aClaudeCodeProjectWithSkillsOnSendsThem() {
+        Job on = approvedExecutionJob(skillsProject("on", "claude-code"));
+
+        assertTrue(on.project().skillsOn());
+        assertTrue(Json.write(on).contains("\"skills\":true"), Json.write(on));
+    }
+
+    @Test
+    void skillsOffAddNothingAnOlderWorkerWouldRejectToTheJobsJson() {
+        Job off = approvedExecutionJob(skillsProject("off", "claude-code"));
+
+        assertFalse(off.project().skillsOn());
+        assertFalse(Json.write(off).contains("\"skills\""), Json.write(off));
+    }
+
+    @Test
+    void aCodexProjectWithSkillsOnNeverGetsThem() {
+        Job codex = approvedExecutionJob(skillsProject("on", "codex"));
+
+        assertFalse(codex.project().skillsOn(), "Codex cannot load the dispatch plugin");
+    }
+
+    @Test
+    void aPlanJobCarriesTheSkillsToo() {
+        queue("Fix the login timeout");
+        coordinator(projects(List.of(skillsProject("on", "claude-code"))), remember(JobResult.succeeded(agentResult(PLAN_JSON))))
+                .execute(claim());
+
+        assertTrue(given.get().project().skillsOn());
+    }
+
+    private static Config.Project skillsProject(String skills, String agent) {
+        return new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm", "main", agent, null, null,
+                List.of(), null, null, null, null, "off", skills);
+    }
+
     private static Config.Project loopProject(String loop) {
         return new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm", "main", "claude-code", null,
                 "high", List.of(".env"), null, new Config.PhaseSettings("opus", null), new Config.PhaseSettings(null, "low"),

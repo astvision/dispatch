@@ -156,12 +156,21 @@ public final class Coordinator {
                     String effort, long timeoutMillis, BigDecimal budgetUsd, List<Attachment> attachments,
                     String deliverySummary, String reviewPrompt) {
         Job.Project on = new Job.Project(project.name(), project.repo(), project.path(), project.baseBranch(), project.agent(),
-                project.copyFiles(), project.loopOn() ? project.test() : null, project.loopOn() ? Boolean.TRUE : null);
+                project.copyFiles(), project.loopOn() ? project.test() : null, project.loopOn() ? Boolean.TRUE : null,
+                skills(project));
         return new Job(task.id(), run.seq(), run.kind(), on, task.baseBranch(), task.baseSha(),
                 task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
                 trailers(task, run.kind()), deliverySummary, Config.branchFor(branchPrefix, task.id()), reviewPrompt,
                 expectedHead(task.id(), run.kind()));
+    }
+
+    /**
+     * True only where the run's agent can load the dispatch plugin (spec: agent skills); null is left out of the job's JSON,
+     * so a worker from before the skills still reads it.
+     */
+    private static Boolean skills(Config.Project project) {
+        return project.skillsOn() && "claude-code".equals(project.agent()) ? Boolean.TRUE : null;
     }
 
     /** Null for a PLAN job, which neither builds on the branch nor pushes it, so an older worker still reads it. */

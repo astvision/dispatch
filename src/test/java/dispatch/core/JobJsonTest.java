@@ -150,6 +150,21 @@ class JobJsonTest {
     }
 
     @Test
+    void aJobsSkillsSurviveJsonAndAJobWithoutThemHasThemOff() throws Exception {
+        Job on = new Job(7, 2, RunKind.EXECUTE,
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, true),
+                "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false, "p", null, null, 1L, null, List.of(), "s", List.of(),
+                null, null);
+        assertEquals(on, Json.MAPPER.readValue(Json.write(on), Job.class));
+
+        Job older = new Job(7, 2, RunKind.EXECUTE,
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),
+                "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false, "p", null, null, 1L, null, List.of(), "s", List.of(),
+                null, null);
+        assertFalse(Json.MAPPER.readValue(Json.write(older), Job.class).project().skillsOn());
+    }
+
+    @Test
     void aJobFromAnOlderTeamMachineHasTheLoopOff() throws Exception {
         Job old = new Job(7, 2, RunKind.EXECUTE,
                 new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),

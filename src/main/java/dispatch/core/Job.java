@@ -101,20 +101,32 @@ public record Job(
     /** @param path the clone the run works from, null when the worker keeps its own under {@code repos/<name>} */
     public record Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles,
                           @JsonInclude(JsonInclude.Include.NON_NULL) String test,
-                          @JsonInclude(JsonInclude.Include.NON_NULL) Boolean loop) {
+                          @JsonInclude(JsonInclude.Include.NON_NULL) Boolean loop,
+                          @JsonInclude(JsonInclude.Include.NON_NULL) Boolean skills) {
 
         public Project {
             copyFiles = copyFiles == null ? List.of() : List.copyOf(copyFiles);
         }
 
-        /** A project as a team machine from before the verify loop sends it: no test, loop off. */
+        /** A project as a team machine from before the verify loop sends it: no test, loop and skills off. */
         public Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles) {
-            this(name, repo, path, baseBranch, agent, copyFiles, null, null);
+            this(name, repo, path, baseBranch, agent, copyFiles, null, null, null);
+        }
+
+        /** A project as a team machine from before the agent skills sends it: skills off. */
+        public Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles,
+                       String test, Boolean loop) {
+            this(name, repo, path, baseBranch, agent, copyFiles, test, loop, null);
         }
 
         /** Null, a job from an older team machine, keeps today's behaviour. */
         public boolean loopOn() {
             return Boolean.TRUE.equals(loop);
+        }
+
+        /** Whether the run loads the dispatch skills plugin; null (skills off, or an older team machine) means no. */
+        public boolean skillsOn() {
+            return Boolean.TRUE.equals(skills);
         }
     }
 }
