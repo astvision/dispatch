@@ -50,11 +50,12 @@ flowchart LR
 | 💻 **Баг** | Хүн бүрийн даалгавар өөрийнх нь компьютер дээр ажиллана |
 | 🧪 **Шалгалт** | Хэрэгжүүлсний дараа Dispatch тестийг өөрөө ажиллуулж, унасныг агентад засуулна (3 хүртэл удаа), дараа нь шинэ review хийлгэнэ. Үр дүн нь PR дээр бичигдэнэ |
 | 🔒 **Sandbox** | Linux дээр агент бүр bubblewrap дотор: зөвхөн өөрийн worktree-д бичнэ, `~/.ssh`, `gh`, Dispatch-ийн нууцыг харахгүй |
+| 🧩 **Skills** | Claude-ийн ажилд шалгагдсан skill-үүд ачаалагдана: эхлээд унах тест (TDD), алдааны үндсэн шалтгааныг олох, дуусгахаасаа өмнө шалгах, review-ийн жагсаалт. Төлөвлөгөө, гүйцэтгэл бүрт «Speed matters» — хурдан ажилла. `skills: off` (instance эсвэл төсөл) skill-үүдийг унтраана |
 | 🚀 **Teleport** | `dispatch teleport N` — даалгаврын агентын яриаг terminal-д үргэлжлүүлнэ (Claude Code) |
 
 ## ⚡ 3 алхамаар эхлэх
 
-**Хэрэгтэй:** Java 25+, git, `gh auth login`, мөн нэвтэрсэн агент: [Claude Code](https://claude.ai/code) (`claude`), [Codex](https://github.com/openai/codex) (`codex login`) эсвэл [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`). ✂️ салгах, туслах нь зөвхөн Claude Code дээр.
+**Хэрэгтэй:** Java 25+, git, `gh auth login`, мөн нэвтэрсэн агент: [Claude Code](https://claude.ai/code) (`claude`), [Codex](https://github.com/openai/codex) (`codex login`) эсвэл [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`). ✂️ салгах, туслах нь зөвхөн Claude Code дээр. Claude Code 2.1.76+.
 Linux: агентыг sandbox-д ажиллуулахын тулд `bubblewrap` суулгана уу (`sandbox: off` унтраана).
 
 **1️⃣ Суулгах**

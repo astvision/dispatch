@@ -268,7 +268,8 @@ A session is resumed only if an earlier run of that phase started its agent: a p
 ```java
 interface Agent { RunHandle start(RunRequest request); }
 record RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId /* null for SPLIT */, boolean resume,
-                  List<Path> readOnlyDirs, BigDecimal budgetUsd, String model, Path logBase) {}
+                  List<Path> readOnlyDirs, BigDecimal budgetUsd, String model, String effort, Path logBase,
+                  Map<String, String> environment, List<Path> pluginDirs) {}
 interface RunHandle {
     ProcessHandle process();                // pid + start time, stored for orphan detection
     AgentResult await();                    // outcome, session id, structured output, cost, turns, denials
@@ -286,6 +287,8 @@ The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the
 | EXECUTE | `--permission-mode auto --tools Read,Edit,Write,Bash --disallowedTools "Bash(git commit *)" "Bash(git push *)" "Bash(gh *)"` |
 | REVIEW | `--permission-mode plan --tools Read,Bash --json-schema <review schema, compacted to one line>` with a fresh `--session-id` (never resumed) |
 | SPLIT | `--permission-mode plan --tools "" --json-schema <topics schema> --system-prompt <one line> --no-session-persistence --disable-slash-commands --model haiku`, no session flags, run in `splits/` |
+
+When the job's skills are on (ADR 0034), PLAN, EXECUTE and REVIEW also get `--plugin-dir <stateDir>/plugins/dispatch` and `Skill` in `--tools`, and the runner appends the note naming the skills for that call.
 
 `CodexAgent` passes the prompt on stdin (the final `-`) to (ADR 0026):
 

@@ -1,6 +1,6 @@
 # Agent skills (SK): vetted skills in Claude's runs
 
-Status: approved design, 2026-10-01. Builds on the agent sandbox (ADR 0032) and the verify loop (ADR 0033).
+Status: approved design, 2026-10-01; built on branch agent-skills (see [ADR 0034](../../adr/0034-claude-runs-load-a-vetted-skills-plugin.md)). Builds on the agent sandbox (ADR 0032) and the verify loop (ADR 0033).
 
 ## Goal
 
