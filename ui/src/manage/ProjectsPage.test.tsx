@@ -44,6 +44,21 @@ test("editing a project sends all its fields, the changed ones included", async 
   expect(await screen.findByText("Restart to apply")).toBeInTheDocument();
 });
 
+test("an alias the config cannot take is refused at the field, not after Save", async () => {
+  vi.mocked(api.getConfig).mockResolvedValue(teamConfig);
+  const edit = vi.mocked(api.editProject).mockResolvedValue(saved);
+
+  renderOnBoard(<ProjectsPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit crm" }));
+  fireEvent.change(screen.getByLabelText("Alias"), { target: { value: "шилэн" } });
+
+  expect(screen.getByText("Latin letters, digits, '.', '_' and '-' only (no Cyrillic, no spaces)")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Alias"), { target: { value: "shilen" } });
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  expect(edit).not.toHaveBeenCalled();
+});
+
 test("removing a project asks first", async () => {
   vi.mocked(api.getConfig).mockResolvedValue(teamConfig);
   const remove = vi.mocked(api.removeProject).mockResolvedValue(saved);
@@ -129,5 +144,5 @@ test("in Mongolian the columns and the panel's help are Mongolian", async () => 
     expect(await screen.findByRole("columnheader", { name: column })).toBeInTheDocument();
   }
   fireEvent.click(screen.getByText("crm"));
-  expect(within(await panel()).getByText("Даалгавар өгөхдөө төслийг ингэж дуудна; хоосон бол байхгүй")).toBeInTheDocument();
+  expect(within(await panel()).getByText("Даалгавар өгөхдөө төслийг ингэж дуудна: латин үсэг, цифр, '.', '_', '-'; хоосон бол байхгүй")).toBeInTheDocument();
 });
