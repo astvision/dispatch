@@ -24,7 +24,8 @@ class ConfinementTest {
         List<String> wrapped = confinement.prepare(List.of("claude", "-p"), request(root), AgentState.NONE, java.util.Map.of()).commandLine();
 
         assertEquals("bwrap", wrapped.getFirst());
-        assertEquals(List.of("--", "claude", "-p"), wrapped.subList(wrapped.size() - 3, wrapped.size()));
+        assertEquals(List.of("--", "/bin/sh", "-c", Bubblewrap.END_WITH_COMMAND, "sh", "claude", "-p"),
+                wrapped.subList(wrapped.size() - 7, wrapped.size()));
         assertEquals(new SandboxUse("bubblewrap", null), confinement.use());
     }
 

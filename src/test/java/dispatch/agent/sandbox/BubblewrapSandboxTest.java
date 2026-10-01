@@ -235,6 +235,38 @@ class BubblewrapSandboxTest {
         }
     }
 
+    /**
+     * bwrap returns when its command exits, but its own init waits for every process still in the sandbox: a Gradle
+     * daemon a run starts would live on with the run's mounts, outside Dispatch's process tree, and a later run's build
+     * would reach it through the shared ~/.gradle.
+     */
+    @Test
+    void whatTheCommandLeavesRunningEndsWithItAndItsExitCodeStands() throws Exception {
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
+                .forRun(new RunRequest(RunKind.PLAN, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
+                        worktree.resolve("run")), AgentState.NONE);
+        // A sleep nothing else runs, so the host finds it by its command line.
+        String marker = "sleep 299." + java.util.concurrent.ThreadLocalRandom.current().nextInt(100_000, 1_000_000);
+        Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", marker + " & exit 3"), policy))
+                .redirectErrorStream(true).start();
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "bwrap did not return");
+
+            assertEquals(3, process.exitValue(), new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+            assertEquals(List.of(), running(marker), "left running in the sandbox");
+        } finally {
+            // Without the fix the sleep and the sandbox's init outlive the test: end them, whatever the assertions said.
+            running(marker).forEach(ProcessHandle::destroyForcibly);
+        }
+    }
+
+    /** Its own command line only: bwrap's init, which may still be exiting, and the shells carry the sleep in theirs. */
+    private static List<ProcessHandle> running(String commandLine) {
+        return ProcessHandle.allProcesses()
+                .filter(process -> process.info().commandLine().map(line -> line.endsWith(commandLine)).orElse(false))
+                .toList();
+    }
+
     @Test
     void theAgentCannotRewriteItsWorktreesGitFile() throws Exception {
         // A rewritten .git would decide what the next run in this worktree mounts read-write.

@@ -50,7 +50,8 @@ class BubblewrapTest {
                 "--ro-bind-try", "/state/repos/alm/.git/worktrees/7/config.worktree", "/state/repos/alm/.git/worktrees/7/config.worktree",
                 "--ro-bind-try", "/state/repos/alm/.git/worktrees/7/commondir", "/state/repos/alm/.git/worktrees/7/commondir",
                 "--chdir", "/state/worktrees/7",
-                "--",
+                // Under a shell that ends what the command leaves running (BubblewrapSandboxTest).
+                "--", "/bin/sh", "-c", Bubblewrap.END_WITH_COMMAND, "sh",
                 "claude", "-p", "--output-format", "stream-json"), wrapped);
     }
 
@@ -64,7 +65,7 @@ class BubblewrapTest {
                 "--unshare-pid", "--unshare-ipc", "--new-session",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
                 "--bind", "/state/splits/3", "/state/splits/3",
-                "--chdir", "/state/splits/3", "--", "claude"), wrapped);
+                "--chdir", "/state/splits/3", "--", "/bin/sh", "-c", Bubblewrap.END_WITH_COMMAND, "sh", "claude"), wrapped);
     }
 
     @Test

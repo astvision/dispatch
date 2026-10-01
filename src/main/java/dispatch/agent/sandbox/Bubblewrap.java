@@ -11,6 +11,16 @@ import java.util.List;
  */
 public final class Bubblewrap implements Sandbox {
 
+    /**
+     * Runs the command, then ends whatever it left running, then exits with the command's status. bwrap returns when its
+     * command exits, but its init waits for every process still in the sandbox: a Gradle daemon would live on with the
+     * run's mounts, outside Dispatch's process tree, and a later run's build would reach it. {@code kill -1} reaches only
+     * the sandbox's own processes, since they are all a pid namespace holds; the wait, at most 5 s, lets bwrap's init
+     * reap them, so nothing of the run is left once bwrap has returned.
+     */
+    static final String END_WITH_COMMAND = "\"$@\"; s=$?; kill -KILL -1 2>/dev/null; n=0; "
+            + "while kill -0 -1 2>/dev/null && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done; exit $s";
+
     private final String command;
     private final boolean overlay;
 
@@ -76,7 +86,7 @@ public final class Bubblewrap implements Sandbox {
         }
         // Last, over whatever they hide: the guard made each one, so bwrap needs no mount point on a read-only path.
         policy.tmpfs().forEach(dir -> args.addAll(List.of("--tmpfs", dir.toString())));
-        args.addAll(List.of("--chdir", policy.workdir().toString(), "--"));
+        args.addAll(List.of("--chdir", policy.workdir().toString(), "--", "/bin/sh", "-c", END_WITH_COMMAND, "sh"));
         args.addAll(commandLine);
         return List.copyOf(args);
     }
