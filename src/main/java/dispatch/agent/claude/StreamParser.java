@@ -3,6 +3,7 @@ package dispatch.agent.claude;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dispatch.Log;
 import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
@@ -31,6 +32,7 @@ final class StreamParser implements OutputParser {
     private final String expectedPermissionMode;
     private final String requestedModel;
     private final Path workdir;
+    private final Path logBase;
     private final Set<String> models = new LinkedHashSet<>();
     private boolean initSeen;
     private String permissionMode;
@@ -42,11 +44,13 @@ final class StreamParser implements OutputParser {
     /**
      * @param requestedModel the run's --model, compared with the model that answers; null for Claude Code's default
      * @param workdir        file paths inside it are shown relative in the activity
+     * @param logBase        the run's log base, which names its task, run and step in the log
      */
-    StreamParser(String expectedPermissionMode, String requestedModel, Path workdir) {
+    StreamParser(String expectedPermissionMode, String requestedModel, Path workdir, Path logBase) {
         this.expectedPermissionMode = expectedPermissionMode;
         this.requestedModel = requestedModel;
         this.workdir = workdir;
+        this.logBase = logBase;
     }
 
     @Override
@@ -66,14 +70,23 @@ final class StreamParser implements OutputParser {
             initSeen = true;
             sessionId = event.path("session_id").asText(null);
             permissionMode = event.path("permissionMode").asText(null);
+            JsonNode pluginErrors = event.path("plugin_errors");
+            if (pluginErrors.isArray() && !pluginErrors.isEmpty()) {
+                // The run goes on without the skills its prompt names (spec: agent skills).
+                Log.warn("agent.plugin_errors", "run", logBase, "errors", pluginErrors.toString());
+            }
         } else if (type.equals("assistant")) {
             // A subagent's messages name the tool call that started it; only the run's own model is reported.
-            if (!event.hasNonNull("parent_tool_use_id") && event.path("message").hasNonNull("model")) {
+            boolean topLevel = !event.hasNonNull("parent_tool_use_id");
+            if (topLevel && event.path("message").hasNonNull("model")) {
                 models.add(event.path("message").get("model").asText());
             }
             for (JsonNode block : event.path("message").path("content")) {
                 if (block.path("type").asText().equals("tool_use")) {
                     activity = new AgentActivity(activity.steps() + 1, describe(block));
+                    if (topLevel && block.path("name").asText().equals("Skill")) {
+                        Log.info("agent.skill", "skill", block.path("input").path("skill").asText(), "run", logBase);
+                    }
                 }
             }
         } else if (type.equals("result")) {

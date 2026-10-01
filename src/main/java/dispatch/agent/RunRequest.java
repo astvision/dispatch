@@ -18,6 +18,7 @@ import java.util.UUID;
  * @param budgetUsd    the run's spending cap; null for none, as the owner chose for the assistant (A-1)
  * @param logBase      path prefix for the raw output files; the agent adds its own extensions
  * @param environment  variables added to the agent's base environment for this run only
+ * @param pluginDirs   Claude Code plugins this run loads (spec: agent skills); empty for none, ignored by Codex and Gemini CLI
  */
 public record RunRequest(
         RunKind kind,
@@ -30,10 +31,20 @@ public record RunRequest(
         String model,
         String effort,
         Path logBase,
-        Map<String, String> environment) {
+        Map<String, String> environment,
+        List<Path> pluginDirs) {
+
+    public RunRequest {
+        pluginDirs = pluginDirs == null ? List.of() : List.copyOf(pluginDirs);
+    }
+
+    public RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId, boolean resume, List<Path> readOnlyDirs,
+                      BigDecimal budgetUsd, String model, String effort, Path logBase, Map<String, String> environment) {
+        this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, environment, List.of());
+    }
 
     public RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId, boolean resume, List<Path> readOnlyDirs,
                       BigDecimal budgetUsd, String model, String effort, Path logBase) {
-        this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, Map.of());
+        this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, Map.of(), List.of());
     }
 }

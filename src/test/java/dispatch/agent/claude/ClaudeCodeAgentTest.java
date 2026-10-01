@@ -26,6 +26,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -287,6 +288,32 @@ class ClaudeCodeAgentTest {
         AgentStartException error = assertThrows(AgentStartException.class, () -> broken.start(plan("Plan it")));
 
         assertTrue(error.getMessage().contains("no-such-claude"), error.getMessage());
+    }
+
+    @Test
+    void aRunWithAPluginLoadsItAndMayInvokeItsSkills() throws Exception {
+        Path plugin = Files.createDirectories(dir.resolve("state/plugins/dispatch"));
+        for (RunKind kind : List.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW)) {
+            agent.start(new RunRequest(kind, workdir, "Do it", UUID.randomUUID(), false, List.of(), new BigDecimal("1"),
+                    null, null, dir.resolve("runs/1/" + kind), Map.of(), List.of(plugin))).await();
+
+            List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+            assertEquals(plugin.toString(), valueAfter(args, "--plugin-dir"), kind.name());
+            assertTrue(valueAfter(args, "--tools").endsWith(",Skill"), kind + ": " + args);
+            assertEquals("project,local", valueAfter(args, "--setting-sources"), "the owner's own plugins still stay out");
+        }
+    }
+
+    @Test
+    void aRunWithoutAPluginGetsNeitherThePluginNorTheSkillTool() throws Exception {
+        for (RunKind kind : List.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW)) {
+            agent.start(new RunRequest(kind, workdir, "Do it", UUID.randomUUID(), false, List.of(), new BigDecimal("1"),
+                    null, null, dir.resolve("runs/1/" + kind))).await();
+
+            List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+            assertFalse(args.contains("--plugin-dir"), kind + ": " + args);
+            assertFalse(valueAfter(args, "--tools").contains("Skill"), kind + ": " + args);
+        }
     }
 
     private RunRequest plan(String prompt) {

@@ -54,7 +54,7 @@ public final class ClaudeCodeAgent implements Agent {
     public RunHandle start(RunRequest request) {
         String permissionMode = permissionMode(request.kind());
         return ProcessRun.start("claude-code", commandLine(request, permissionMode), request, environment, request.prompt(),
-                new StreamParser(permissionMode, request.model(), request.workdir()), cancelGrace, confinement, STATE_IN_HOME);
+                new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE_IN_HOME);
     }
 
     private static String permissionMode(RunKind kind) {
@@ -95,15 +95,21 @@ public final class ClaudeCodeAgent implements Agent {
         for (Path dir : request.readOnlyDirs()) {
             args.addAll(List.of("--add-dir", dir.toString()));
         }
+        // The dispatch plugin's vetted skills (spec: agent skills); the owner's own plugins stay out (--setting-sources).
+        for (Path dir : request.pluginDirs()) {
+            args.addAll(List.of("--plugin-dir", dir.toString()));
+        }
+        // A listed skill cannot be invoked without the Skill tool (probed on Claude Code 2.1.286).
+        String skill = request.pluginDirs().isEmpty() ? "" : ",Skill";
         switch (request.kind()) {
             // Read-only investigation: no subagents or schedulers, just reading files and read-only shell commands.
-            case PLAN -> args.addAll(List.of("--tools", "Read,Bash", "--json-schema", PLAN_SCHEMA));
+            case PLAN -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", PLAN_SCHEMA));
             // Delivery is Dispatch's job (ADR 0007); the deny rules are a guardrail, not a boundary (ADR 0009).
             // --disallowedTools takes every following argument that is not a flag, so it stays last.
-            case EXECUTE -> args.addAll(List.of("--tools", "Read,Edit,Write,Bash",
+            case EXECUTE -> args.addAll(List.of("--tools", "Read,Edit,Write,Bash" + skill,
                     "--disallowedTools", "Bash(git commit *)", "Bash(git push *)", "Bash(gh *)"));
             // The verify loop's reviewer: read-only like a plan, its own schema (spec: verify loop).
-            case REVIEW -> args.addAll(List.of("--tools", "Read,Bash", "--json-schema", REVIEW_SCHEMA));
+            case REVIEW -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", REVIEW_SCHEMA));
             case SPLIT -> args.addAll(List.of("--tools", "", "--json-schema", SPLIT_SCHEMA, "--system-prompt", SPLIT_SYSTEM_PROMPT));
             // Reads code, asks for tasks and loads its taskmanager skill (A-1), nothing else; --allowedTools takes every following argument too, so it is last.
             case ASSISTANT -> args.addAll(List.of("--tools", "Read,Grep,Glob,Bash,Skill", "--json-schema", ASSISTANT_SCHEMA,

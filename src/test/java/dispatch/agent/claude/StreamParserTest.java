@@ -64,7 +64,7 @@ class StreamParserTest {
     @Test
     void executionRunReportsItsStepsAndLatestActionWithPathsRelativeToTheWorktree() throws IOException {
         List<String> lines = fixture("execute-success.jsonl");
-        StreamParser parser = new StreamParser("auto", null, WORKTREE);
+        StreamParser parser = new StreamParser("auto", null, WORKTREE, null);
         assertEquals(new AgentActivity(0, null), parser.activity());
 
         lines.subList(0, 6).forEach(parser::accept);
@@ -198,7 +198,7 @@ class StreamParserTest {
     }
 
     private static StreamParser feed(String expectedPermissionMode, String requestedModel, List<String> lines) {
-        StreamParser parser = new StreamParser(expectedPermissionMode, requestedModel, WORKTREE);
+        StreamParser parser = new StreamParser(expectedPermissionMode, requestedModel, WORKTREE, null);
         lines.forEach(parser::accept);
         return parser;
     }
@@ -207,5 +207,44 @@ class StreamParserTest {
         try (InputStream in = StreamParserTest.class.getResourceAsStream("/fixtures/claude/" + name)) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8).lines().toList();
         }
+    }
+
+    @Test
+    void aSkillTheRunInvokesIsLoggedAndASubagentsIsNot() {
+        Path logBase = Path.of("/s/runs/7/2");
+        StreamParser parser = new StreamParser("auto", null, WORKTREE, logBase);
+
+        String logged = capturingLog(() -> {
+            parser.accept("""
+                    {"type":"assistant","message":{"model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"dispatch:test-driven-development"}}]}}""");
+            parser.accept("""
+                    {"type":"assistant","parent_tool_use_id":"t9","message":{"model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t2","name":"Skill","input":{"skill":"dispatch:code-reviewer"}}]}}""");
+        });
+
+        assertTrue(logged.contains("event=agent.skill skill=dispatch:test-driven-development run=" + logBase), logged);
+        assertFalse(logged.contains("dispatch:code-reviewer"), logged);
+    }
+
+    @Test
+    void aPluginThatDidNotLoadIsLogged() {
+        StreamParser parser = new StreamParser("auto", null, WORKTREE, Path.of("/s/runs/7/2"));
+
+        String logged = capturingLog(() -> parser.accept("""
+                {"type":"system","subtype":"init","session_id":"s1","permissionMode":"auto","plugin_errors":[{"path":"/s/plugins/dispatch","error":"invalid manifest"}]}"""));
+
+        assertTrue(logged.contains("level=WARN event=agent.plugin_errors"), logged);
+        assertTrue(logged.contains("invalid manifest"), logged);
+    }
+
+    private static String capturingLog(Runnable action) {
+        java.io.PrintStream original = System.out;
+        java.io.ByteArrayOutputStream logged = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(logged, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            action.run();
+        } finally {
+            System.setOut(original);
+        }
+        return logged.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
 }

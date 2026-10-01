@@ -67,6 +67,8 @@ public final class SandboxPolicies {
         agentStateInHome.forEach(entry -> writable.add(home.resolve(entry)));
         CACHES.forEach(cache -> writable.add(home.resolve(cache)));
         List<Path> readOnly = new ArrayList<>(request.readOnlyDirs());
+        // The skills plugin lives in the hidden state dir: readable, never writable, or one agent could rewrite every later run's skills.
+        readOnly.addAll(request.pluginDirs());
         // Codex reads its --output-schema from beside the run's log, under the hidden state dir. Only that file: the log
         // dir holds other runs' logs, and for the assistant every member's conversations. A regular file outside the
         // workdir only, so an agent-planted symlink cannot mount anything it names.

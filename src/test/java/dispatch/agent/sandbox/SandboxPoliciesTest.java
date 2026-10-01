@@ -273,6 +273,21 @@ class SandboxPoliciesTest {
         }
     }
 
+    @Test
+    void aRunsPluginDirIsReadOnly() throws IOException {
+        Path workdir = Files.createDirectories(root.resolve("work/alm"));
+        Path plugin = Files.createDirectories(stateDir.resolve("plugins/dispatch"));
+        SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir));
+        RunRequest request = new RunRequest(RunKind.REVIEW, workdir, "prompt", UUID.randomUUID(), false, List.of(), null, null,
+                null, workdir.resolve("run"), Map.of(), List.of(plugin));
+
+        SandboxPolicy policy = policies.forRun(request, List.of(".claude"));
+
+        assertTrue(policy.readOnly().contains(plugin), policy.readOnly().toString());
+        assertFalse(policy.writable().contains(plugin), policy.writable().toString());
+        assertTrue(policy.hidden().contains(stateDir), "the rest of the state dir stays hidden");
+    }
+
     private static RunRequest request(RunKind kind, Path workdir, List<Path> readOnlyDirs) {
         return new RunRequest(kind, workdir, "prompt", UUID.randomUUID(), false, readOnlyDirs, null, null, null,
                 workdir.resolve("run"));
