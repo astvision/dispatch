@@ -86,8 +86,10 @@ invokes it. Updating the set is a commit that copies a newer upstream version, r
    - puts it in the new `RunRequest.pluginDirs` of the plan or execution run, every fix round and the review;
    - appends the note for the run's kind to the prompt, as it appends the attachments note: the team machine never
      writes it, so a machine without the plugin is never told to use one.
-4. **Agent.** `ClaudeCodeAgent` adds `--plugin-dir <dir>` for each entry of `pluginDirs` and, when there is one, adds
-   `Skill` to the `--tools` of a plan, execute or review run. `--setting-sources project,local` and
+4. **Agent.** `ClaudeCodeAgent` adds `--plugin-dir <dir>` and `--add-dir <dir>` for each entry of `pluginDirs` and, when
+   there is one, adds `Skill` to the `--tools` of a plan, execute or review run. `--add-dir` makes the plugin a working
+   directory: without it a plan or review run is denied reading a skill's supporting files, and nobody can answer the
+   prompt to allow it. `--setting-sources project,local` and
    `--strict-mcp-config` stay: the owner's own plugins and MCP servers still never load into a run. Codex and Gemini
    ignore `pluginDirs`.
 5. **Sandbox.** `SandboxPolicies.forRun` binds every entry of `pluginDirs` read-only, as it binds `readOnlyDirs`.
@@ -120,8 +122,10 @@ it writes the rest of the prompt:
   only the tests that cover your change rather than the whole suite, and stop when the work is done: no refactoring,
   polish or extras beyond it."
 
-They do not conflict with the skills: test-driven-development and verification-before-completion run the tests that
-cover the change, which is what the execution paragraph asks for.
+The skills are adapted to agree: upstream test-driven-development ran the project's whole suite even when the task was
+scoped, and verification-before-completion held that a partial check proves nothing. Here test-driven-development runs
+the tests that cover the changed code, since Dispatch runs the whole test command after the agent, and
+verification-before-completion claims only what its run covered. The reviewer does not run the tests.
 
 ## Components
 
@@ -136,7 +140,7 @@ cover the change, which is what the execution paragraph asks for.
 | `RunRequest` | `List<Path> pluginDirs`, empty by default; the existing constructors keep it empty |
 | `JobRunner`, `VerifyLoop` | Pass the plugin dir and the notes as above; fail as `SETUP` when the dir is missing |
 | `Prompts` | The five notes; the "Speed matters" paragraphs in `PLAN_FORMAT` and `EXECUTE_RULES` |
-| `ClaudeCodeAgent` | `--plugin-dir` per entry; `Skill` in `--tools` for plan, execute and review when there is one |
+| `ClaudeCodeAgent` | `--plugin-dir` and `--add-dir` per entry; `Skill` in `--tools` for plan, execute and review when there is one |
 | `SandboxPolicies` | `pluginDirs` read-only |
 | `StreamParser` (Claude) | Logs `agent.skill skill=<name> run=<log base>` for each top-level `Skill` call, and `agent.plugin_errors` when the init event reports any; the log base (`runs/<task>/<seq>[.fix-N\|.review]`) names the task, the run and the step |
 
@@ -163,8 +167,10 @@ cover the change, which is what the execution paragraph asks for.
 ## Testing
 
 - **Install:** writes every file in `files.txt`, replaces an older copy, and `plugin.json` names the plugin `dispatch`.
-- **Bundled text:** no file under `skills/dispatch/skills/` contains "human partner", "ask the user", "ask your partner"
-  or "wait for"; every `dispatch:<name>` in `Prompts` names a skill directory in the plugin.
+- **Bundled text:** no file under `skills/dispatch/skills/` contains "human partner", "your partner", "ask the user",
+  "ask for help" or "superpowers:" ("wait for" is legitimate in condition-based-waiting); test-driven-development no
+  longer sends the agent to the whole suite, keeps an earlier run's work and names its own exceptions; the reviewer does
+  not run the tests; every `dispatch:<name>` in `Prompts` names a skill directory in the plugin.
 - **`ClaudeCodeAgent`:** with a plugin dir, `--plugin-dir <dir>` and `Skill` in `--tools` for plan, execute and review;
   without one, the command line is exactly today's for every kind.
 - **`SandboxPolicies`:** a plugin dir is among the read-only paths and not among the writable ones.

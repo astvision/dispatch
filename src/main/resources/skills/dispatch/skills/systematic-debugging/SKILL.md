@@ -162,7 +162,7 @@ You MUST complete each phase before proceeding to the next.
 4. **When You Don't Know**
    - Say "I don't understand X"
    - Don't pretend to know
-   - Ask for help
+   - Say in your summary what you could not work out
    - Research more
 
 ### Phase 4: Implementation

@@ -304,6 +304,18 @@ class ClaudeCodeAgentTest {
         }
     }
 
+    /** Plan and review runs may not read outside their working directories, and nobody answers a prompt to allow it. */
+    @Test
+    void aRunMayReadItsPluginsSupportingFiles() throws Exception {
+        Path plugin = Files.createDirectories(dir.resolve("state/plugins/dispatch"));
+
+        agent.start(new RunRequest(RunKind.PLAN, workdir, "Do it", UUID.randomUUID(), false, List.of(), new BigDecimal("1"),
+                null, null, dir.resolve("runs/1/1"), Map.of(), List.of(plugin))).await();
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertEquals(plugin.toString(), valueAfter(args, "--add-dir"));
+    }
+
     @Test
     void aRunWithoutAPluginGetsNeitherThePluginNorTheSkillTool() throws Exception {
         for (RunKind kind : List.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW)) {

@@ -288,7 +288,7 @@ The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the
 | REVIEW | `--permission-mode plan --tools Read,Bash --json-schema <review schema, compacted to one line>` with a fresh `--session-id` (never resumed) |
 | SPLIT | `--permission-mode plan --tools "" --json-schema <topics schema> --system-prompt <one line> --no-session-persistence --disable-slash-commands --model haiku`, no session flags, run in `splits/` |
 
-When the job's skills are on (ADR 0034), PLAN, EXECUTE and REVIEW also get `--plugin-dir <stateDir>/plugins/dispatch` and `Skill` in `--tools`, and the runner appends the note naming the skills for that call.
+When the job's skills are on (ADR 0034), PLAN, EXECUTE and REVIEW also get `--plugin-dir <stateDir>/plugins/dispatch`, the same dir as `--add-dir` so that plan and review runs may read the skills' supporting files, and `Skill` in `--tools`, and the runner appends the note naming the skills for that call.
 
 `CodexAgent` passes the prompt on stdin (the final `-`) to (ADR 0026):
 

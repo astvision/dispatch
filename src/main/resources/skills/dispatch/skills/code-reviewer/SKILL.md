@@ -32,7 +32,7 @@ Do the whole review yourself, in passes if the diff is large. Never start a suba
 
 **Tests:**
 - Do the tests check real behaviour, not mocks?
-- Are the edge cases covered, and do the tests pass?
+- Are the edge cases covered? Do not run the tests: Dispatch ran the project's test command before this review.
 
 **Production readiness:**
 - A migration when a schema changed; backward compatibility; the documentation the change needs

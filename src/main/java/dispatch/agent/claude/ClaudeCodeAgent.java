@@ -96,8 +96,10 @@ public final class ClaudeCodeAgent implements Agent {
             args.addAll(List.of("--add-dir", dir.toString()));
         }
         // The dispatch plugin's vetted skills (spec: agent skills); the owner's own plugins stay out (--setting-sources).
+        // Also a working directory: a plan or review run may not read a skill's supporting files outside its own, and
+        // nobody answers the prompt to allow it (probed on Claude Code 2.1.286). The sandbox keeps it read-only.
         for (Path dir : request.pluginDirs()) {
-            args.addAll(List.of("--plugin-dir", dir.toString()));
+            args.addAll(List.of("--plugin-dir", dir.toString(), "--add-dir", dir.toString()));
         }
         // A listed skill cannot be invoked without the Skill tool (probed on Claude Code 2.1.286).
         String skill = request.pluginDirs().isEmpty() ? "" : ",Skill";

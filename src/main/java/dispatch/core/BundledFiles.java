@@ -48,7 +48,8 @@ public final class BundledFiles {
             Files.createDirectories(file.getParent());
             Files.writeString(file, content, StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new UncheckedIOException("cannot write " + file + ": " + e.getMessage(), e);
+            // toString: for the commonest failures getMessage() is only the path again, without what went wrong.
+            throw new UncheckedIOException("cannot write " + file + ": " + e, e);
         }
     }
 }

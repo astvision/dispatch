@@ -41,7 +41,7 @@ public final class SkillsPlugin {
                 Files.delete(path);
             }
         } catch (IOException e) {
-            throw new UncheckedIOException("cannot replace " + dir + ": " + e.getMessage(), e);
+            throw new UncheckedIOException("cannot replace " + dir + ": " + e, e);
         }
     }
 }

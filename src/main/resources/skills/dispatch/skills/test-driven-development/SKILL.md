@@ -21,10 +21,11 @@ Write the test first. Watch it fail. Write minimal code to pass.
 - Refactoring
 - Behavior changes
 
-**Exceptions (only where the approved plan allows them; name each in your summary):**
+**Exceptions (name each in your summary):**
 - Throwaway prototypes
 - Generated code
 - Configuration files
+- Documentation
 
 Thinking "skip TDD just this once"? Stop. That's rationalization.
 
@@ -34,7 +35,8 @@ Thinking "skip TDD just this once"? Stop. That's rationalization.
 NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST
 ```
 
-Write code before the test? Delete it. Start over.
+Wrote code in this run before its test? Delete it. Start over. Code an earlier run left in the repository (a retry or a
+follow-up continues it) stays: write the tests it lacks instead.
 
 **No exceptions:**
 - Don't keep it as "reference"
@@ -182,13 +184,12 @@ Confirm:
 
 **Other tests fail?** Fix now.
 
-**"Other tests" means the project's suite, not just your file.** A
-green run of the test you wrote is not a green suite. Before you call
-the change done, run the project's test command (bare `pytest`,
-`npm test`, `cargo test` — whatever the repo uses) even when your task
-named only one test file. A scope statement in your task bounds the
-deliverable, not your verification. Any failure that run shows —
-including one you didn't cause — goes in your report by name; a red
+**"Other tests" means the tests that cover the code you changed, not
+just your new test.** A green run of the test you wrote is not enough:
+before you call the change done, run the tests that exercise the code
+you touched. Dispatch runs the project's whole test command after you,
+so you need not run the whole suite. Any failure your run shows —
+including one you didn't cause — goes in your summary by name; a red
 test you watched scroll past and didn't mention is a report falsified
 by omission.
 
@@ -251,7 +252,7 @@ When writing or changing any test, read [writing-good-tests.md](writing-good-tes
 - "TDD is dogmatic, I'm being pragmatic"
 - "This is different because..."
 
-**All of these mean: Delete code. Start over with TDD.**
+**All of these mean: delete the code this run wrote before its test. Start over with TDD.**
 
 ## Example: Bug Fix
 
@@ -327,4 +328,4 @@ Production code → test exists and failed first
 Otherwise → not TDD
 ```
 
-No exceptions beyond what the approved plan allows; name every exception in your summary.
+No exceptions beyond those listed under When to Use; name every exception in your summary.

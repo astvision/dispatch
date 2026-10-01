@@ -2,9 +2,11 @@ package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -41,7 +43,7 @@ class SkillsPluginTest {
         assertTrue(skills.size() >= 5, skills.toString());
         for (String file : skills) {
             String text = BundledFiles.read(SkillsPlugin.RESOURCES + "/" + file).toLowerCase(Locale.ROOT);
-            for (String phrase : List.of("human partner", "your partner", "ask the user", "superpowers:")) {
+            for (String phrase : List.of("human partner", "your partner", "ask the user", "ask for help", "superpowers:")) {
                 assertFalse(text.contains(phrase), file + " still says '" + phrase + "'");
             }
         }
@@ -58,5 +60,45 @@ class SkillsPluginTest {
             String text = BundledFiles.read(SkillsPlugin.RESOURCES + "/" + file);
             assertTrue(text.startsWith("---\nname: " + name + "\ndescription: "), file);
         }
+    }
+
+    /** Speed matters (spec: agent skills): a skill must not send the agent to the whole suite, which Dispatch runs itself. */
+    @Test
+    void theSkillsTestWhatTheChangeCoversNotTheWholeSuite() {
+        assertFalse(skill("test-driven-development/SKILL.md").contains("A scope statement in your task bounds the"));
+        assertFalse(skill("verification-before-completion/SKILL.md").contains("Partial proves nothing"));
+    }
+
+    /** A retry continues an earlier run's work in the same worktree; TDD must not throw that work away. */
+    @Test
+    void tddKeepsTheWorkAnEarlierRunLeft() {
+        assertTrue(skill("test-driven-development/SKILL.md").contains("an earlier run"));
+    }
+
+    /** The planner is never asked to allow exceptions, so the run names its own (configuration, documentation, ...). */
+    @Test
+    void tddNamesItsOwnExceptions() {
+        assertFalse(skill("test-driven-development/SKILL.md").contains("approved plan allows"));
+    }
+
+    /** The reviewer runs read-only after Dispatch already ran the test command. */
+    @Test
+    void theReviewerLeavesTheTestsToDispatch() {
+        assertTrue(skill("code-reviewer/SKILL.md").contains("Do not run the tests"));
+    }
+
+    @Test
+    void aPluginThatCannotBeWrittenSaysWhy() throws IOException {
+        Files.writeString(dir.resolve("plugins"), "a file where the plugins directory should be");
+
+        UncheckedIOException error = assertThrows(UncheckedIOException.class,
+                () -> SkillsPlugin.install(dir.resolve("plugins/dispatch")));
+
+        // The path alone, as before, says nothing; the exception's type and reason vary by OS (Linux: Not a directory).
+        assertTrue(error.getMessage().contains("Exception: "), error.getMessage());
+    }
+
+    private static String skill(String path) {
+        return BundledFiles.read(SkillsPlugin.RESOURCES + "/skills/" + path);
     }
 }

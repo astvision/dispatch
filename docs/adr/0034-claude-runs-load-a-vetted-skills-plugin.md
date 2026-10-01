@@ -5,12 +5,14 @@ Builds on ADR 0032 (the sandbox) and ADR 0033 (the verify loop).
 Claude Code's plan, execute, fix and review runs load `dispatch`, a plugin of five skills that ship with Dispatch:
 test-driven-development, systematic-debugging, verification-before-completion, receiving-code-review and code-reviewer.
 They are adapted from superpowers 6.4.1 (MIT): wherever a skill sent the agent to a person, it now decides, follows the
-approved plan, and says what it decided in its summary, because nobody can answer during a run. `NOTICE.md` in the
-plugin lists every change.
+approved plan, and says what it decided in its summary, because nobody can answer during a run. They also keep to the
+run's scope: the agent runs the tests that cover its change, not the whole suite Dispatch runs after it. `NOTICE.md` in
+the plugin lists every change.
 
 The jar carries the plugin. A personal instance and a member's worker write it to `<stateDir>/plugins/dispatch` at
 startup, replacing any older copy. The team machine marks a Claude Code project's job with `skills`. The machine that
-runs the agent passes `--plugin-dir` and adds `Skill` to `--tools`, and appends a note naming the skills for that call:
+runs the agent passes `--plugin-dir`, and `--add-dir` so that plan and review runs may read the skills' supporting files,
+adds `Skill` to `--tools`, and appends a note naming the skills for that call:
 root-cause investigation for a plan, TDD and verification for an execution, systematic debugging for a fix after red
 tests, receiving-code-review for a fix after blocking findings, and the reviewer checklist for the review. The state dir
 is hidden from agents, and the sandbox binds the plugin back read-only. `--setting-sources project,local` stays, so the

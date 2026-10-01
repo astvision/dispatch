@@ -720,7 +720,6 @@ class JobRunnerTest {
         return logged.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
     @Test
     void withSkillsEveryCallOfAnExecutionGetsThePluginAndItsNote() throws Exception {
         skills = true;
@@ -797,6 +796,7 @@ class JobRunnerTest {
                 job.branch(), job.reviewPrompt(), job.expectedHead());
     }
 
+    /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
     private JobResult executeWithLoop(boolean loop, TestRunner tests) {
         return executeWithLoop(loop, new ActiveRuns().register(TASK, 2), tests);
     }
