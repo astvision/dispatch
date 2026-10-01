@@ -74,7 +74,9 @@ final class SystemdService implements Service {
 
     @Override
     public void restart() {
-        Service.required(commands, List.of("systemctl", "--user", "restart", kind.systemdUnit(instance)));
+        // --no-block: the Mini App's Restart runs inside the very service it restarts, and a waiting systemctl would be
+        // killed with it before the request is answered.
+        Service.required(commands, List.of("systemctl", "--user", "--no-block", "restart", kind.systemdUnit(instance)));
     }
 
     @Override

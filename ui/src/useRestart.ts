@@ -30,12 +30,17 @@ export function useRestart(intervalMs = 2000, timeoutMs = 60_000) {
     try {
       await restartService();
     } catch (e) {
-      if (!controller.signal.aborted) {
-        setError(e instanceof ApiError ? e.message : String(e));
-        setPhase("failed");
+      // The service restarting itself can end before it answers: the proxy in front then says 502, or the connection
+      // drops. Only a refusal Dispatch wrote itself is final; otherwise the poll below tells whether it came back.
+      const lostAnswer = e instanceof ApiError && (e.code === "http" || e.code === "unreachable");
+      if (!lostAnswer || controller.signal.aborted) {
+        if (!controller.signal.aborted) {
+          setError(e instanceof ApiError ? e.message : String(e));
+          setPhase("failed");
+        }
+        running.current = false;
+        return;
       }
-      running.current = false;
-      return;
     }
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline && !controller.signal.aborted) {

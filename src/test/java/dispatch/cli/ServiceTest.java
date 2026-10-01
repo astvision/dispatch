@@ -122,7 +122,8 @@ class ServiceTest {
         commands.run.clear();
         Service.forOs("Windows 11", dir, commands, "ACME\\bold").restart();
 
-        assertEquals(List.of("systemctl --user restart dispatch.service"), linux, "systemd restarts it in one step");
+        assertEquals(List.of("systemctl --user --no-block restart dispatch.service"), linux,
+                "systemd restarts it in one step, without waiting: the caller may be the service being restarted");
         assertEquals(List.of("id -u", "launchctl kickstart -k gui/501/io.dispatch.agent"), mac,
                 "kickstart -k restarts a loaded agent without an unload/reload gap");
         assertEquals(List.of("schtasks /End /TN Dispatch", "schtasks /Run /TN Dispatch"), commands.run);
