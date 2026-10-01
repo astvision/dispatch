@@ -1,1 +1,12 @@
 .claude-plugin/plugin.json
+NOTICE.md
+LICENSE-superpowers
+skills/test-driven-development/SKILL.md
+skills/test-driven-development/writing-good-tests.md
+skills/systematic-debugging/SKILL.md
+skills/systematic-debugging/root-cause-tracing.md
+skills/systematic-debugging/defense-in-depth.md
+skills/systematic-debugging/condition-based-waiting.md
+skills/verification-before-completion/SKILL.md
+skills/receiving-code-review/SKILL.md
+skills/code-reviewer/SKILL.md
