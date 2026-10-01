@@ -34,6 +34,9 @@ public final class Sandboxes {
         if (trial.exitCode() != 0) {
             return new NoSandbox("bwrap cannot create a sandbox here: " + trial.output().strip().lines().findFirst().orElse("exit " + trial.exitCode()));
         }
-        return new Bubblewrap(bwrap.get().toString());
+        // Copy-on-write state (spec: agent state guard) needs bwrap 0.10+ and overlayfs in a user namespace; a trial answers both.
+        Probe.Trial overlay = probe.trial(List.of(bwrap.get().toString(), "--ro-bind", "/", "/", "--unshare-pid", "--proc", "/proc",
+                "--overlay-src", "/etc", "--tmp-overlay", "/etc", "true"));
+        return new Bubblewrap(bwrap.get().toString(), overlay.exitCode() == 0);
     }
 }

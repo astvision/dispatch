@@ -1,6 +1,8 @@
 package dispatch.agent.sandbox;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import java.nio.file.Path;
@@ -15,10 +17,24 @@ class SandboxesTest {
 
     @Test
     void linuxWithAWorkingBwrapIsSandboxed() {
-        Sandbox sandbox = Sandboxes.detect(SandboxSetting.AUTO, probe("Linux", "/usr/bin/bwrap", new Probe.Trial(0, "")));
+        Sandbox sandbox = Sandboxes.detect(SandboxSetting.AUTO, probe("Linux", "/usr/bin/bwrap", new Probe.Trial(0, ""), new Probe.Trial(0, "")));
 
         assertInstanceOf(Bubblewrap.class, sandbox);
-        assertEquals(List.of(List.of(Path.of("/usr/bin/bwrap").toString(), "--ro-bind", "/", "/", "--unshare-pid", "--proc", "/proc", "true")), trials);
+        assertEquals(List.of(Path.of("/usr/bin/bwrap").toString(), "--ro-bind", "/", "/", "--unshare-pid", "--proc", "/proc", "true"),
+                trials.getFirst());
+    }
+
+    @Test
+    void aSecondTrialFindsOutWhetherOverlaysWork() {
+        Sandbox with = Sandboxes.detect(SandboxSetting.AUTO, probe("Linux", "/usr/bin/bwrap", new Probe.Trial(0, ""), new Probe.Trial(0, "")));
+        assertTrue(with.copyOnWrite());
+        assertEquals(List.of(Path.of("/usr/bin/bwrap").toString(), "--ro-bind", "/", "/", "--unshare-pid", "--proc", "/proc",
+                "--overlay-src", "/etc", "--tmp-overlay", "/etc", "true"), trials.get(1));
+
+        Sandbox without = Sandboxes.detect(SandboxSetting.AUTO, probe("Linux", "/usr/bin/bwrap", new Probe.Trial(0, ""),
+                new Probe.Trial(1, "bwrap: Unknown option --overlay-src")));
+        assertInstanceOf(Bubblewrap.class, without);
+        assertFalse(without.copyOnWrite());
     }
 
     @Test
@@ -60,7 +76,16 @@ class SandboxesTest {
         assertEquals(Optional.empty(), SandboxSetting.fromConfig("OFF"));
     }
 
-    private Probe probe(String os, String bwrap, Probe.Trial trial) {
+    /** Each trial gets the next answer; a null answer (no bwrap to try) is skipped. */
+    private Probe probe(String os, String bwrap, Probe.Trial... answers) {
+        java.util.Deque<Probe.Trial> left = new java.util.ArrayDeque<>();
+        if (answers != null) {
+            for (Probe.Trial answer : answers) {
+                if (answer != null) {
+                    left.add(answer);
+                }
+            }
+        }
         return new Probe() {
             @Override
             public String osName() {
@@ -75,7 +100,7 @@ class SandboxesTest {
             @Override
             public Trial trial(List<String> commandLine) {
                 trials.add(commandLine);
-                return trial;
+                return left.isEmpty() ? new Trial(1, "no answer") : left.pop();
             }
         };
     }

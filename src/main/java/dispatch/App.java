@@ -144,7 +144,7 @@ public final class App {
         config.agents().forEach((type, agent) -> agentCommands.put(type, agent.command()));
         Sandbox sandbox = Sandboxes.detect(config.sandbox(), Probe.system(environment));
         if (sandbox.unavailableReason() == null) {
-            Log.info("sandbox.selected", "name", sandbox.name());
+            Log.info("sandbox.selected", "name", sandbox.name(), "overlay", sandbox.copyOnWrite());
         } else {
             Log.warn("sandbox.unavailable", "reason", sandbox.unavailableReason());
         }

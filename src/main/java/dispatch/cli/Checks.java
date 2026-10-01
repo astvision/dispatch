@@ -114,9 +114,14 @@ public final class Checks {
 
     /** Which sandbox this machine's agents run in; never a failure, since runs go ahead without one (spec). */
     public static Finding sandbox(Sandbox sandbox) {
-        return sandbox.unavailableReason() == null
-                ? new Finding(Level.OK, "sandbox", Text.of("check.sandbox", sandbox.name()))
-                : new Finding(Level.WARN, "sandbox", Text.of("check.sandboxNone", sandbox.unavailableReason()));
+        if (sandbox.unavailableReason() != null) {
+            return new Finding(Level.WARN, "sandbox", Text.of("check.sandboxNone", sandbox.unavailableReason()));
+        }
+        // Without overlays, Claude Code's state is guarded on its listed paths only (spec: agent state guard).
+        if (!sandbox.copyOnWrite()) {
+            return new Finding(Level.WARN, "sandbox", Text.of("check.sandboxNoOverlay", sandbox.name()));
+        }
+        return new Finding(Level.OK, "sandbox", Text.of("check.sandbox", sandbox.name()));
     }
 
     public static boolean failed(List<Finding> findings) {

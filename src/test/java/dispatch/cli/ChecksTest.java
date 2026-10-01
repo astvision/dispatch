@@ -432,7 +432,7 @@ class ChecksTest {
 
     @Test
     void sandboxFindingSaysWhichOrWhyNone() {
-        Checks.Finding ok = Checks.sandbox(new Bubblewrap("/usr/bin/bwrap"));
+        Checks.Finding ok = Checks.sandbox(new Bubblewrap("/usr/bin/bwrap", true));
         assertEquals(Checks.Level.OK, ok.level());
         assertEquals("sandbox", ok.area());
         assertEquals("sandbox: bubblewrap", ok.message().english());
@@ -440,5 +440,15 @@ class ChecksTest {
         Checks.Finding none = Checks.sandbox(new NoSandbox("bubblewrap (bwrap) is not installed"));
         assertEquals(Checks.Level.WARN, none.level());
         assertTrue(none.message().english().contains("bubblewrap (bwrap) is not installed"), none.message().english());
+    }
+
+    @Test
+    void aSandboxWithoutOverlaysIsAWarning() {
+        Checks.Finding finding = Checks.sandbox(new Bubblewrap("/usr/bin/bwrap", false));
+
+        assertEquals(Checks.Level.WARN, finding.level());
+        assertTrue(finding.message().english().contains("without overlays"), finding.message().english());
+        assertTrue(finding.message().english().contains("Claude Code's state"), "MessageFormat keeps the apostrophe: "
+                + finding.message().english());
     }
 }
