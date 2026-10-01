@@ -279,6 +279,8 @@ interface RunHandle {
 
 The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the agent. `RunHandle.activity()` returns the agent's step count and latest tool call, parsed from the stream as it arrives, for `/status`.
 
+A sandboxed run is prepared by `Confinement.prepare`, which turns the agent's `AgentState` into mounts (ADR 0035) and returns a `RunGuard`: it makes the run's throwaway copies (Claude Code's `~/.claude.json`) before the process starts and, once the process exits however it ended, deletes them and moves any loader path the run created to `<stateDir>/quarantine`.
+
 `ClaudeCodeAgent` passes the prompt on stdin to:
 
 | Always | `claude -p --output-format stream-json --verbose --permission-prompts none --setting-sources project,local --strict-mcp-config --max-budget-usd <b>` + (`--session-id <uuid>` on a session's first run, `--resume <uuid>` afterwards: planning runs use the task's planning session, execution runs its building session) + optional `--model` and `--effort` (a project's `plan` or `execute` block, else the project's own), `--add-dir <attachments>` |

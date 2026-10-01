@@ -1,6 +1,6 @@
 # Agent state guard (SG): what a later session loads stays out of a sandboxed agent's reach
 
-Status: approved design, 2026-10-01. Amends ADR 0032 (the sandbox).
+Status: approved design, 2026-10-01; built on branch agent-state-guard (see [ADR 0035](../../adr/0035-an-agents-own-state-is-copy-on-write-or-read-only.md)). Amends ADR 0032 (the sandbox).
 
 ## Goal
 
