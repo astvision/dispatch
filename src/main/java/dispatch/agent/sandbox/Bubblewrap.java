@@ -12,9 +12,22 @@ import java.util.List;
 public final class Bubblewrap implements Sandbox {
 
     private final String command;
+    private final boolean overlay;
 
+    /** Without overlays, as on bubblewrap older than 0.10. */
     public Bubblewrap(String command) {
+        this(command, false);
+    }
+
+    /** @param overlay whether this machine's bwrap can mount an overlay (Sandboxes.detect's trial) */
+    public Bubblewrap(String command, boolean overlay) {
         this.command = command;
+        this.overlay = overlay;
+    }
+
+    @Override
+    public boolean copyOnWrite() {
+        return overlay;
     }
 
     @Override
@@ -47,6 +60,11 @@ public final class Bubblewrap implements Sandbox {
         }
         // Optional: a machine without ~/.gemini or ~/.m2 runs all the same.
         policy.writable().forEach(path -> bind(args, "--bind-try", path));
+        // Copy-on-write (spec: agent state guard): the agent sees its whole state dir, and what it writes there lands in
+        // a tmpfs that ends with the sandbox; then what must persist, and the throwaway copies, are mounted over it.
+        policy.overlays().forEach(dir -> args.addAll(List.of("--overlay-src", dir.toString(), "--tmp-overlay", dir.toString())));
+        policy.persisted().forEach(path -> bind(args, "--bind-try", path));
+        policy.copies().forEach(copy -> args.addAll(List.of("--bind", copy.copy().toString(), copy.original().toString())));
         policy.readOnly().forEach(path -> bind(args, "--ro-bind-try", path));
         if (policy.worktreeAdmin() != null) {
             // Over the read-only worktrees dir: git writes this worktree's index and HEAD here. Then read-only again

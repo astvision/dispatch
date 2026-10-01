@@ -13,4 +13,9 @@ public interface Sandbox {
 
     /** The command line that runs {@code commandLine} inside the sandbox. */
     List<String> wrap(List<String> commandLine, SandboxPolicy policy);
+
+    /** Whether this sandbox can mount a directory copy-on-write (spec: agent state guard); found once, at startup. */
+    default boolean copyOnWrite() {
+        return false;
+    }
 }

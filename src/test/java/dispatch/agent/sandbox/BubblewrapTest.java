@@ -1,6 +1,8 @@
 package dispatch.agent.sandbox;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.nio.file.Path;
@@ -74,5 +76,38 @@ class BubblewrapTest {
         assertEquals("none", none.name());
         assertEquals("bubblewrap (bwrap) is not installed", none.unavailableReason());
         assertEquals(CLAUDE, none.wrap(CLAUDE, null));
+    }
+
+    @Test
+    void copyOnWriteStateIsMountedAfterTheWritableDirsWithWhatPersistsAndTheCopiesOverIt() {
+        SandboxPolicy policy = new SandboxPolicy(Path.of("/state/worktrees/7"), null, null,
+                List.of(Path.of("/state/plugins/dispatch")), List.of(Path.of("/home/ann/.m2")), List.of(Path.of("/state")),
+                List.of(Path.of("/home/ann/.claude")),
+                List.of(Path.of("/home/ann/.claude/projects"), Path.of("/home/ann/.claude/.credentials.json")),
+                List.of(new SandboxPolicy.FileCopy(Path.of("/home/ann/.claude.json"), Path.of("/state/runs/7/2.claude.json"))),
+                List.of(Path.of("/home/ann/.codex/AGENTS.md")));
+
+        List<String> wrapped = new Bubblewrap("bwrap", true).wrap(List.of("claude"), policy);
+
+        int writable = wrapped.indexOf("/home/ann/.m2");
+        int overlay = wrapped.indexOf("--overlay-src");
+        int persisted = wrapped.indexOf("/home/ann/.claude/projects");
+        int copy = wrapped.indexOf("/state/runs/7/2.claude.json");
+        int readOnly = wrapped.indexOf("/state/plugins/dispatch");
+        assertTrue(writable < overlay && overlay < persisted && persisted < copy && copy < readOnly, wrapped.toString());
+        assertEquals(List.of("--overlay-src", "/home/ann/.claude", "--tmp-overlay", "/home/ann/.claude"),
+                wrapped.subList(overlay, overlay + 4));
+        assertEquals(List.of("--bind-try", "/home/ann/.claude/projects", "/home/ann/.claude/projects"),
+                wrapped.subList(persisted - 1, persisted + 2));
+        assertEquals(List.of("--bind", "/state/runs/7/2.claude.json", "/home/ann/.claude.json"),
+                wrapped.subList(copy - 1, copy + 2));
+        assertFalse(wrapped.contains("/home/ann/.codex/AGENTS.md"), "watched paths are the guard's, not a mount");
+    }
+
+    @Test
+    void onlyABubblewrapThatFoundOverlaysIsCopyOnWrite() {
+        assertTrue(new Bubblewrap("bwrap", true).copyOnWrite());
+        assertFalse(new Bubblewrap("bwrap").copyOnWrite());
+        assertFalse(new NoSandbox("bubblewrap (bwrap) is not installed").copyOnWrite());
     }
 }
