@@ -371,7 +371,7 @@ class CoordinatorTest {
     private static Config.Project loopProject(String loop) {
         return new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm", "main", "claude-code", null,
                 "high", List.of(".env"), null, new Config.PhaseSettings("opus", null), new Config.PhaseSettings(null, "low"),
-                "./mvnw -q test", loop);
+                "./mvnw -q test", loop, null);
     }
 
     /** Plans and approves a task, then returns the EXECUTE job the worker got. */

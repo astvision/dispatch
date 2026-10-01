@@ -76,9 +76,13 @@ public final class ConfigLoader {
         validateAgents(agents, errors);
         String loop = raw.loop() == null ? "on" : raw.loop();
         if (!loop.equals("on") && !loop.equals("off")) {
-            errors.add(Text.of("config.loop", "loop", raw.loop()));
+            errors.add(Text.of("config.onOff", "loop", raw.loop()));
         }
-        List<Config.Project> projects = validateProjects(raw.projects(), agents, loop, errors);
+        String skills = raw.skills() == null ? "on" : raw.skills();
+        if (!skills.equals("on") && !skills.equals("off")) {
+            errors.add(Text.of("config.onOff", "skills", raw.skills()));
+        }
+        List<Config.Project> projects = validateProjects(raw.projects(), agents, loop, skills, errors);
         Config.Telegram telegram = validateTelegram(raw.telegram(), projects, errors);
         Config.Delivery delivery = validateDelivery(raw.delivery(), errors);
         Config.Workers workers = validateWorkers(raw.workers(), telegram, errors);
@@ -363,7 +367,7 @@ public final class ConfigLoader {
     }
 
     private static List<Config.Project> validateProjects(List<Config.Project> projects, Map<String, Config.Agent> agents,
-                                                         String instanceLoop, List<Text> errors) {
+                                                         String instanceLoop, String instanceSkills, List<Text> errors) {
         if (projects == null || projects.isEmpty()) {
             errors.add(Text.of("config.projectsAtLeast"));
             return List.of();
@@ -417,14 +421,18 @@ public final class ConfigLoader {
             }
             String projectLoop = project.loop() == null ? instanceLoop : project.loop();
             if (!projectLoop.equals("on") && !projectLoop.equals("off")) {
-                errors.add(Text.of("config.loop", at + ".loop", project.loop()));
+                errors.add(Text.of("config.onOff", at + ".loop", project.loop()));
+            }
+            String projectSkills = project.skills() == null ? instanceSkills : project.skills();
+            if (!projectSkills.equals("on") && !projectSkills.equals("off")) {
+                errors.add(Text.of("config.onOff", at + ".skills", project.skills()));
             }
             if (project.test() != null && project.test().isBlank()) {
                 errors.add(Text.of("config.testBlank", at + ".test"));
             }
             normalized.add(new Config.Project(project.name(), project.alias(), project.repo(), project.path(), project.baseBranch(),
                     project.agent(), project.model(), project.effort(), List.copyOf(copyFiles), project.limits(), project.plan(),
-                    project.execute(), project.test(), projectLoop));
+                    project.execute(), project.test(), projectLoop, projectSkills));
         }
         return List.copyOf(normalized);
     }
@@ -487,6 +495,7 @@ public final class ConfigLoader {
             Config.MiniApp miniApp,
             String branchPrefix,
             String sandbox,
-            String loop) {
+            String loop,
+            String skills) {
     }
 }

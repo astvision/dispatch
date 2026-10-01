@@ -204,16 +204,23 @@ public record Config(
             /** Run by Dispatch in the worktree after each execution (verify loop); null for no test step. */
             String test,
             /** "on" or "off" once loaded: the project's own setting, else the instance's (spec: verify loop). */
-            String loop) {
+            String loop,
+            /** "on" or "off" once loaded: the project's own setting, else the instance's (spec: agent skills). */
+            String skills) {
 
-        /** A project as it was before the verify loop: no test command, loop unresolved. */
+        /** A project as it was before the verify loop: no test command, loop and skills unresolved. */
         public Project(String name, String alias, String repo, String path, String baseBranch, String agent, String model,
                        String effort, List<String> copyFiles, Limits limits, PhaseSettings plan, PhaseSettings execute) {
-            this(name, alias, repo, path, baseBranch, agent, model, effort, copyFiles, limits, plan, execute, null, null);
+            this(name, alias, repo, path, baseBranch, agent, model, effort, copyFiles, limits, plan, execute, null, null, null);
         }
 
         public boolean loopOn() {
             return "on".equals(loop);
+        }
+
+        /** Whether this project's Claude Code runs load the dispatch skills plugin; Codex and Gemini ignore it. */
+        public boolean skillsOn() {
+            return "on".equals(skills);
         }
 
         public String planModel() {

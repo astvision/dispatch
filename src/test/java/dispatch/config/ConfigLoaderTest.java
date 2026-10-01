@@ -84,6 +84,32 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void skillsAreOnByDefaultAndTheInstanceMayTurnThemOff() throws Exception {
+        assertTrue(ConfigLoader.load(write(VALID), ENV).projects().getFirst().skillsOn());
+
+        assertFalse(ConfigLoader.load(write("skills: off\n" + VALID), ENV).projects().getFirst().skillsOn());
+    }
+
+    @Test
+    void aProjectsSkillsOverrideTheInstance() throws Exception {
+        String yaml = "skills: off\n" + VALID.replace("- name: autoland-management\n",
+                "- name: autoland-management\n    skills: on\n");
+
+        assertTrue(ConfigLoader.load(write(yaml), ENV).projects().getFirst().skillsOn());
+    }
+
+    @Test
+    void anUnknownSkillsValueIsRefusedWhereItIsWritten() throws Exception {
+        Path instance = write("skills: maybe\n" + VALID);
+        ConfigException atInstance = assertThrows(ConfigException.class, () -> ConfigLoader.load(instance, ENV));
+        assertTrue(atInstance.getMessage().contains("skills: on or off, not maybe"), atInstance.getMessage());
+
+        Path project = write(VALID.replace("- name: autoland-management\n", "- name: autoland-management\n    skills: always\n"));
+        ConfigException atProject = assertThrows(ConfigException.class, () -> ConfigLoader.load(project, ENV));
+        assertTrue(atProject.getMessage().contains("projects[0].skills: on or off, not always"), atProject.getMessage());
+    }
+
+    @Test
     void aBlankTestCommandIsRefused() throws Exception {
         Path file = write(VALID.replace("- name: autoland-management\n", "- name: autoland-management\n    test: \"  \"\n"));
 
