@@ -24,6 +24,8 @@ public final class SandboxPolicies {
      */
     private static final List<String> CODE_IN_WRITABLE = List.of(".claude/settings.json", ".claude/settings.local.json",
             ".codex/config.toml", ".gemini/settings.json", ".gradle/init.d", ".gradle/gradle.properties", ".m2/settings.xml");
+    /** Run as code by a later build outside any sandbox: init scripts, JVM args. The agents' own are their loaders. */
+    private static final List<String> BUILD_CODE = List.of(".gradle/init.d", ".gradle/gradle.properties", ".m2/settings.xml");
     private static final List<String> SECRETS = List.of(".ssh", ".config/gh", ".gnupg");
     private static final String GITDIR_PREFIX = "gitdir: ";
     private static final Set<RunKind> IN_WORKTREE = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW);
@@ -50,6 +52,106 @@ public final class SandboxPolicies {
     /** No configured clones: only worktrees of Dispatch's own {@code <stateDir>/repos/*} get their git dir. */
     public SandboxPolicies(Path home, Path stateDir, List<Path> dispatchPrivate) {
         this(home, stateDir, dispatchPrivate, List.of());
+    }
+
+    public Path home() {
+        return home;
+    }
+
+    /** Where the run guard moves what a run planted: per run, named after its log base, e.g. {@code quarantine/7-2.fix-1}. */
+    public Path quarantineFor(Path logBase) {
+        Path base = logBase.toAbsolutePath().normalize();
+        String parent = base.getParent() == null ? "" : base.getParent().getFileName() + "-";
+        return stateDir.resolve("quarantine").resolve(parent + base.getFileName());
+    }
+
+    /** As {@link #forRun(RunRequest, AgentState, Map, boolean)} without copy-on-write, for an environment without XDG_RUNTIME_DIR. */
+    public SandboxPolicy forRun(RunRequest request, AgentState state) {
+        return forRun(request, state, Map.of(), false);
+    }
+
+    /** As {@link #forRun(RunRequest, AgentState, Map, boolean)} without copy-on-write. */
+    public SandboxPolicy forRun(RunRequest request, AgentState state, Map<String, String> environment) {
+        return forRun(request, state, environment, false);
+    }
+
+    /**
+     * @param state       what the agent keeps in the owner's home (spec: agent state guard)
+     * @param environment the agent's environment; its XDG_RUNTIME_DIR is hidden
+     * @param copyOnWrite whether this machine's sandbox can mount a directory copy-on-write
+     */
+    public SandboxPolicy forRun(RunRequest request, AgentState state, Map<String, String> environment, boolean copyOnWrite) {
+        Path workdir = request.workdir().toAbsolutePath().normalize();
+        List<Path> writable = new ArrayList<>();
+        List<Path> overlays = new ArrayList<>();
+        List<Path> persisted = new ArrayList<>();
+        Path agentDir = state.dir() == null ? null : home.resolve(state.dir());
+        // An overlay needs an existing lower dir; without one there is nothing of the agent's to protect yet.
+        boolean overlay = copyOnWrite && state.copyOnWrite() && agentDir != null
+                && Files.isDirectory(agentDir, LinkOption.NOFOLLOW_LINKS);
+        if (overlay) {
+            overlays.add(agentDir);
+            state.persisted().forEach(path -> persisted.add(home.resolve(path)));
+        } else if (agentDir != null) {
+            writable.add(agentDir);
+        }
+        CACHES.forEach(cache -> writable.add(home.resolve(cache)));
+        List<Path> readOnly = new ArrayList<>(request.readOnlyDirs());
+        // The skills plugin lives in the hidden state dir: readable, never writable, or one agent could rewrite every later run's skills.
+        readOnly.addAll(request.pluginDirs());
+        // Codex reads its --output-schema from beside the run's log, under the hidden state dir. Only that file: the log
+        // dir holds other runs' logs, and for the assistant every member's conversations. A regular file outside the
+        // workdir only, so an agent-planted symlink cannot mount anything it names.
+        Path schema = Path.of(request.logBase().toAbsolutePath().normalize() + ".schema.json");
+        if (!schema.startsWith(workdir) && Files.isRegularFile(schema, LinkOption.NOFOLLOW_LINKS)) {
+            readOnly.add(schema);
+        }
+        BUILD_CODE.forEach(entry -> readOnly.add(home.resolve(entry)));
+        List<Path> watched = new ArrayList<>();
+        if (!overlay) {
+            // bwrap skips a read-only bind of a missing path, so an absent loader is watched instead (the run guard).
+            for (String loader : state.loaders()) {
+                Path path = home.resolve(loader);
+                if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+                    readOnly.add(path);
+                } else {
+                    watched.add(path);
+                }
+            }
+        }
+        List<SandboxPolicy.FileCopy> copies = new ArrayList<>();
+        for (String file : state.runCopies()) {
+            Path original = home.resolve(file);
+            if (Files.isRegularFile(original, LinkOption.NOFOLLOW_LINKS)) {
+                String name = original.getFileName().toString().replaceFirst("^\\.", "");
+                copies.add(new SandboxPolicy.FileCopy(original, Path.of(request.logBase().toAbsolutePath().normalize() + "." + name)));
+            }
+        }
+        if (request.kind() == RunKind.ASSISTANT) {
+            // dispatch ask reads the state file, and SQLite writes -shm even to read a WAL database (AssistantHome).
+            Path database = stateDir.resolve("dispatch.db");
+            writable.addAll(List.of(database, stateDir.resolve("dispatch.db-wal"), stateDir.resolve("dispatch.db-shm")));
+            readOnly.add(stateDir.resolve("assistant-bin"));
+        }
+        // bwrap cannot create a mount point on the read-only root: a directory that does not exist has nothing to hide.
+        List<Path> hidden = Stream.of(SECRETS.stream().map(home::resolve), dispatchPrivate.stream(), runtimeDir(environment))
+                .flatMap(paths -> paths)
+                .filter(Files::isDirectory)
+                .toList();
+        // Only a task's worktree has a git dir. A split's or the assistant's workdir is agent-writable and no worktree:
+        // a .git an earlier run planted there would otherwise mount any configured clone read-write.
+        GitLink git = IN_WORKTREE.contains(request.kind()) ? gitLink(workdir) : null;
+        if (git == null) {
+            return new SandboxPolicy(workdir, null, null, readOnly, writable, hidden, overlays, persisted, copies, watched);
+        }
+        // Mounted after the workdir and the git dir: the agent cannot point the next run's mounts somewhere else, nor
+        // plant config (core.fsmonitor, filters, remotes) or hooks that Dispatch's own git runs outside the sandbox.
+        readOnly.add(workdir.resolve(".git"));
+        GIT_CONTROL.forEach(name -> readOnly.add(git.commonDir().resolve(name)));
+        // Other worktrees' admin dirs: a rewritten commondir there would redirect Dispatch's git in that worktree.
+        readOnly.add(git.commonDir().resolve("worktrees"));
+        return new SandboxPolicy(workdir, git.commonDir(), git.worktreeAdmin(), readOnly, writable, hidden, overlays, persisted,
+                copies, watched);
     }
 
     /** As {@link #forRun(RunRequest, List, Map)} for an environment without XDG_RUNTIME_DIR. */

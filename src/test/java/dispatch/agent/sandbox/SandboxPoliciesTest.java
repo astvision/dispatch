@@ -288,6 +288,91 @@ class SandboxPoliciesTest {
         assertTrue(policy.hidden().contains(stateDir), "the rest of the state dir stays hidden");
     }
 
+    private static final AgentState CLAUDE = new AgentState(".claude", true,
+            List.of(".claude/projects", ".claude/sessions", ".claude/.credentials.json"), List.of(".claude.json"),
+            List.of(".claude/CLAUDE.md", ".claude/agents"));
+    private static final AgentState CODEX = new AgentState(".codex", false, List.of(), List.of(),
+            List.of(".codex/AGENTS.md", ".codex/hooks.json"));
+
+    @Test
+    void aCopyOnWriteAgentGetsItsDirAsAnOverlayWithItsPersistedPathsAndACopy() throws IOException {
+        Files.createDirectories(home.resolve(".claude"));
+        Files.writeString(home.resolve(".claude.json"), "{}");
+        Path workdir = Files.createDirectories(root.resolve("work"));
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(request(RunKind.PLAN, workdir, List.of()), CLAUDE, Map.of(), true);
+
+        assertEquals(List.of(home.resolve(".claude")), policy.overlays());
+        assertEquals(List.of(home.resolve(".claude/projects"), home.resolve(".claude/sessions"),
+                home.resolve(".claude/.credentials.json")), policy.persisted());
+        assertEquals(List.of(new SandboxPolicy.FileCopy(home.resolve(".claude.json"), Path.of(workdir.resolve("run") + ".claude.json"))),
+                policy.copies());
+        assertFalse(policy.writable().contains(home.resolve(".claude")), policy.writable().toString());
+        assertFalse(policy.readOnly().contains(home.resolve(".claude/agents")), "the overlay covers the loaders");
+        assertEquals(List.of(), policy.watched());
+    }
+
+    @Test
+    void withoutCopyOnWriteTheAgentsDirIsWritableAndItsLoadersReadOnlyOrWatched() throws IOException {
+        Files.createDirectories(home.resolve(".claude/agents"));
+        Path workdir = Files.createDirectories(root.resolve("work"));
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(request(RunKind.PLAN, workdir, List.of()), CLAUDE, Map.of(), false);
+
+        assertEquals(List.of(), policy.overlays());
+        assertTrue(policy.writable().contains(home.resolve(".claude")), policy.writable().toString());
+        assertTrue(policy.readOnly().contains(home.resolve(".claude/agents")), policy.readOnly().toString());
+        assertEquals(List.of(home.resolve(".claude/CLAUDE.md")), policy.watched());
+    }
+
+    @Test
+    void aCodexRunsLoadersAreReadOnlyWhenPresentAndWatchedWhenAbsentEvenWithOverlays() throws IOException {
+        Files.createDirectories(home.resolve(".codex"));
+        Files.writeString(home.resolve(".codex/AGENTS.md"), "be nice");
+        Path workdir = Files.createDirectories(root.resolve("work"));
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(request(RunKind.EXECUTE, workdir, List.of()), CODEX, Map.of(), true);
+
+        assertEquals(List.of(), policy.overlays(), "Codex is never copy-on-write");
+        assertTrue(policy.writable().contains(home.resolve(".codex")));
+        assertTrue(policy.readOnly().contains(home.resolve(".codex/AGENTS.md")));
+        assertEquals(List.of(home.resolve(".codex/hooks.json")), policy.watched());
+    }
+
+    @Test
+    void aMissingAgentDirIsNeverAnOverlay() throws IOException {
+        Path workdir = Files.createDirectories(root.resolve("work"));
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(request(RunKind.PLAN, workdir, List.of()), CLAUDE, Map.of(), true);
+
+        assertEquals(List.of(), policy.overlays(), "an overlay needs an existing lower dir; bwrap would fail the run");
+        assertEquals(List.of(), policy.copies(), "no ~/.claude.json, no copy");
+    }
+
+    @Test
+    void theBuildToolsConfigStaysReadOnlyForEveryRun() throws IOException {
+        Path workdir = Files.createDirectories(root.resolve("work"));
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(request(RunKind.EXECUTE, workdir, List.of()), AgentState.NONE, Map.of(), true);
+
+        assertTrue(policy.readOnly().containsAll(List.of(home.resolve(".gradle/init.d"), home.resolve(".gradle/gradle.properties"),
+                home.resolve(".m2/settings.xml"))), policy.readOnly().toString());
+        assertFalse(policy.writable().stream().anyMatch(path -> path.startsWith(home.resolve(".claude"))));
+    }
+
+    @Test
+    void aRunsQuarantineIsNamedAfterItsLogBase() {
+        SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(stateDir));
+
+        assertEquals(stateDir.resolve("quarantine/7-2.fix-1"), policies.quarantineFor(stateDir.resolve("runs/7/2.fix-1")));
+        assertEquals(home, policies.home());
+    }
+
     private static RunRequest request(RunKind kind, Path workdir, List<Path> readOnlyDirs) {
         return new RunRequest(kind, workdir, "prompt", UUID.randomUUID(), false, readOnlyDirs, null, null, null,
                 workdir.resolve("run"));
