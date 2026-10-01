@@ -13,7 +13,7 @@ plugin. On by default for Claude Code projects, turned off in the config.
 In scope: a `dispatch` plugin of five adapted skills bundled in the jar and written to the state dir at startup; a
 `skills` setting (instance and project); `--plugin-dir` and the `Skill` tool on plan, execute, fix and review runs; a
 note in each run's prompt naming the skills for that run; the plugin read-only inside the sandbox; an `agent.skill` log
-line per skill a run invokes; ADR 0034.
+line per skill a run invokes; a "Speed matters" paragraph in every plan and execution prompt; ADR 0034.
 
 Out of scope:
 - **Codex and Gemini CLI.** Their projects run as today; `--plugin-dir` and the notes are Claude Code's.
@@ -31,10 +31,12 @@ Out of scope:
 2. In the live test, a real execution in a scratch repository invokes `dispatch:test-driven-development`, seen in the
    stream and logged as `agent.skill`.
 3. `skills: off` (instance or project), a Codex or Gemini project, the assistant and a split start with exactly today's
-   command line and prompt.
+   command line, and with today's prompt apart from the "Speed matters" paragraph of a plan or execution.
 4. No bundled skill tells the agent to ask, wait for or get permission from a person.
 5. Inside the sandbox the plugin dir is readable and not writable.
 6. A job with skills off carries no new field, so a worker from before this version still reads it.
+7. Every plan, correction, execution, retry and follow-up prompt, for every agent and with skills on or off, ends its
+   rules with the "Speed matters" paragraph for its kind.
 
 Whether skills help is measured, not gated: after about ten real executions with skills on, compare them with the
 earlier ones (see "Measuring").
@@ -104,6 +106,23 @@ The plan and execution notes go at the end of the prompt. The review note goes b
 with the diff. The fix notes end `Prompts.testFailure` and `Prompts.reviewFindings`, which `VerifyLoop` builds on the
 machine that runs the agent; its `Setup` carries the job's `skills`.
 
+## Speed matters
+
+Runs are slow today: a recorded execution took 56 minutes and its test step ran out of time. Every plan and execution
+prompt, for every agent and whether skills are on or not, tells the agent to finish fast. The paragraphs end
+`PLAN_FORMAT` (plan, correction) and `EXECUTE_RULES` (execution, retry, follow-up), so the team machine writes them as
+it writes the rest of the prompt:
+
+- **Plan:** "Speed matters: investigate only what the plan needs. Search for the code you need instead of reading whole
+  files or directories, stop once you can name the change, and run a build or test only when it is the quickest way to
+  confirm a bug's cause."
+- **Execution:** "Speed matters: read only the code your change touches, search instead of reading whole files, run
+  only the tests that cover your change rather than the whole suite, and stop when the work is done: no refactoring,
+  polish or extras beyond it."
+
+They do not conflict with the skills: test-driven-development and verification-before-completion run the tests that
+cover the change, which is what the execution paragraph asks for.
+
 ## Components
 
 | Unit | Change |
@@ -116,7 +135,7 @@ machine that runs the agent; its `Setup` carries the job's `skills`.
 | `Coordinator` | Sets `skills` for Claude Code projects with skills on |
 | `RunRequest` | `List<Path> pluginDirs`, empty by default; the existing constructors keep it empty |
 | `JobRunner`, `VerifyLoop` | Pass the plugin dir and the notes as above; fail as `SETUP` when the dir is missing |
-| `Prompts` | The five notes |
+| `Prompts` | The five notes; the "Speed matters" paragraphs in `PLAN_FORMAT` and `EXECUTE_RULES` |
 | `ClaudeCodeAgent` | `--plugin-dir` per entry; `Skill` in `--tools` for plan, execute and review when there is one |
 | `SandboxPolicies` | `pluginDirs` read-only |
 | `StreamParser` (Claude) | Logs `agent.skill skill=<name> run=<log base>` for each top-level `Skill` call; the log base (`runs/<task>/<seq>[.fix-N\|.review]`) names the task, the run and the step |
@@ -152,6 +171,8 @@ machine that runs the agent; its `Setup` carries the job's `skills`.
 - **`JobRunner` and `VerifyLoop`:** each kind gets its note and the plugin dir when on, neither when off; a missing dir
   fails the run as `SETUP` without starting the agent.
 - **`StreamParser`:** a `Skill` tool call logs `agent.skill` with the skill's name.
+- **`Prompts`:** plan and correction prompts contain the plan's "Speed matters" paragraph; execution, retry and follow-up
+  prompts the execution's; the review, fix, split and assistant prompts contain neither.
 - **Live, opt-in** (`DISPATCH_LIVE_CLAUDE=1 ./mvnw test -Dtest=LiveSkillsTest`): an execution in a scratch repository with
   a failing test to fix invokes `dispatch:test-driven-development`.
 
