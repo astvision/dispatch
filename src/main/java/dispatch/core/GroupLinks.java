@@ -81,6 +81,39 @@ public final class GroupLinks {
         });
     }
 
+    /** An open prompt and the group it asks about. */
+    public record OpenPrompt(long chatId, Prompt prompt) {
+    }
+
+    /**
+     * Brings every delivered open prompt's project list up to {@code projects}, which a restart may have changed (a
+     * project added from the prompt's own button, ADR 0025): the buttons index into the stored list, so it is replaced
+     * together with the message the caller then redraws.
+     *
+     * @return the prompts whose list changed, now holding {@code projects}
+     */
+    public List<OpenPrompt> refreshed(Tx tx, List<String> projects) {
+        List<OpenPrompt> changed = new ArrayList<>();
+        for (var entry : Kv.withPrefix(tx, KEY_PREFIX).entrySet()) {
+            long chatId;
+            try {
+                chatId = Long.parseLong(entry.getKey().substring(KEY_PREFIX.length()));
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            Optional<Prompt> prompt = prompt(tx, chatId);
+            if (prompt.isEmpty() || prompt.get().messageId() == null || prompt.get().projects().equals(projects)) {
+                continue;
+            }
+            ObjectNode stored = (ObjectNode) Json.read(entry.getValue());
+            projects.forEach(stored.putArray("projects")::add);
+            Kv.put(tx, entry.getKey(), stored.toString());
+            Prompt p = prompt.get();
+            changed.add(new OpenPrompt(chatId, new Prompt(p.title(), List.copyOf(projects), p.sentTo(), p.messageId())));
+        }
+        return changed;
+    }
+
     /** Records where the open prompt was delivered, so that a migration closing it can edit it; nothing if none is open. */
     public void sent(Tx tx, long chatId, long sentTo, long messageId) {
         Kv.get(tx, key(chatId)).map(Json::read).ifPresent(stored ->

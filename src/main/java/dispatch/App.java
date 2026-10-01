@@ -211,6 +211,8 @@ public final class App {
                 config.miniApp() == null ? null : config.miniApp().publicUrl(), groupLinks, assistant,
                 assistant == null ? null : assistantActions, mergeFromTelegram ? merges(db, groups, gh, stateDir, clock, outboxSignal) : null,
                 config.team());
+        // A project added since a link prompt was sent takes effect now, so the prompt can offer it.
+        handler.refreshLinkPrompts();
         Poller poller = new Poller(api, handler, 50, Duration.ofSeconds(1), Duration.ofMinutes(1));
 
         UiServer miniApp = null;
