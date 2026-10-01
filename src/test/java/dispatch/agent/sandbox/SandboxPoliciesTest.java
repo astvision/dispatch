@@ -50,17 +50,18 @@ class SandboxPoliciesTest {
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir));
 
         SandboxPolicy policy = policies.forRun(request(RunKind.EXECUTE, worktree, List.of(attachments)),
-                List.of(".claude", ".claude.json"), Map.of("XDG_RUNTIME_DIR", root.resolve("no-runtime-dir").toString()));
+                new AgentState(".claude", false, List.of(), List.of(), List.of()),
+                Map.of("XDG_RUNTIME_DIR", root.resolve("no-runtime-dir").toString()));
 
         assertEquals(worktree, policy.workdir());
         assertEquals(stateDir.resolve("repos/alm/.git"), policy.gitCommonDir());
         Path common = stateDir.resolve("repos/alm/.git");
-        assertEquals(List.of(attachments, home.resolve(".claude/settings.json"), home.resolve(".claude/settings.local.json"),
-                home.resolve(".codex/config.toml"), home.resolve(".gemini/settings.json"), home.resolve(".gradle/init.d"),
-                home.resolve(".gradle/gradle.properties"), home.resolve(".m2/settings.xml"), worktree.resolve(".git"), common.resolve("config"), common.resolve("hooks"),
+        // The agents' config files are their loaders now, read-only when present (none in this home).
+        assertEquals(List.of(attachments, home.resolve(".gradle/init.d"), home.resolve(".gradle/gradle.properties"),
+                home.resolve(".m2/settings.xml"), worktree.resolve(".git"), common.resolve("config"), common.resolve("hooks"),
                 common.resolve("info"), common.resolve("config.worktree"), common.resolve("worktrees")), policy.readOnly());
         assertEquals(gitDir, policy.worktreeAdmin());
-        assertEquals(List.of(home.resolve(".claude"), home.resolve(".claude.json"), home.resolve(".m2"),
+        assertEquals(List.of(home.resolve(".claude"), home.resolve(".m2"),
                 home.resolve(".gradle"), home.resolve(".npm"), home.resolve(".cache")), policy.writable());
         assertEquals(List.of(home.resolve(".ssh"), home.resolve(".config/gh"), configDir, stateDir), policy.hidden());
     }
@@ -70,7 +71,7 @@ class SandboxPoliciesTest {
         // bwrap cannot create a mount point on the read-only root, so hiding ~/.gnupg that does not exist would fail the run.
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(root.resolve("no-such-clone")));
 
-        SandboxPolicy policy = policies.forRun(request(RunKind.PLAN, stateDir, List.of()), List.of(".codex"));
+        SandboxPolicy policy = policies.forRun(request(RunKind.PLAN, stateDir, List.of()), new AgentState(".codex", false, List.of(), List.of(), List.of()));
 
         assertFalse(policy.hidden().contains(home.resolve(".gnupg")));
         assertFalse(policy.hidden().contains(root.resolve("no-such-clone")));
@@ -85,7 +86,7 @@ class SandboxPoliciesTest {
         Files.writeString(worktree.resolve(".git"), "gitdir: " + gitDir);
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir, clone), List.of(clone));
 
-        SandboxPolicy policy = policies.forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of(".claude"));
+        SandboxPolicy policy = policies.forRun(request(RunKind.EXECUTE, worktree, List.of()), new AgentState(".claude", false, List.of(), List.of(), List.of()));
 
         assertTrue(policy.hidden().contains(clone));
         assertEquals(clone.resolve(".git"), policy.gitCommonDir());
@@ -112,7 +113,7 @@ class SandboxPoliciesTest {
         Files.writeString(worktree.resolve(".git"), "gitdir: " + home);
 
         AgentStartException refused = assertThrows(AgentStartException.class, () ->
-                new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of()));
+                new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request(RunKind.EXECUTE, worktree, List.of()), AgentState.NONE));
 
         assertTrue(refused.getMessage().contains(worktree.resolve(".git").toString()), refused.getMessage());
         assertTrue(refused.getMessage().contains(home.toString()), refused.getMessage());
@@ -125,7 +126,7 @@ class SandboxPoliciesTest {
         Files.writeString(worktree.resolve(".git"), "gitdir: " + other);
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(stateDir), List.of(home.resolve("code/alm")));
 
-        assertThrows(AgentStartException.class, () -> policies.forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of()));
+        assertThrows(AgentStartException.class, () -> policies.forRun(request(RunKind.EXECUTE, worktree, List.of()), AgentState.NONE));
     }
 
     @Test
@@ -134,7 +135,7 @@ class SandboxPoliciesTest {
         Files.writeString(worktree.resolve(".git"), "gitdir: /x");
 
         assertThrows(AgentStartException.class, () ->
-                new SandboxPolicies(home, stateDir, List.of()).forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of()));
+                new SandboxPolicies(home, stateDir, List.of()).forRun(request(RunKind.EXECUTE, worktree, List.of()), AgentState.NONE));
     }
 
     @Test
@@ -144,7 +145,7 @@ class SandboxPoliciesTest {
         Files.writeString(worktree.resolve(".git"), "gitdir: " + gitDir + "\n");
 
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
-                .forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of());
+                .forRun(request(RunKind.EXECUTE, worktree, List.of()), AgentState.NONE);
 
         assertTrue(policy.readOnly().contains(worktree.resolve(".git")), policy.readOnly().toString());
     }
@@ -154,7 +155,7 @@ class SandboxPoliciesTest {
         Path assistantHome = Files.createDirectories(stateDir.resolve("assistant"));
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir));
 
-        SandboxPolicy policy = policies.forRun(request(RunKind.ASSISTANT, assistantHome, List.of()), List.of(".claude"));
+        SandboxPolicy policy = policies.forRun(request(RunKind.ASSISTANT, assistantHome, List.of()), new AgentState(".claude", false, List.of(), List.of(), List.of()));
 
         // dispatch ask reads the state file; SQLite needs -wal and -shm writable even to read.
         assertTrue(policy.writable().containsAll(List.of(stateDir.resolve("dispatch.db"),
@@ -168,7 +169,7 @@ class SandboxPoliciesTest {
         Path worktree = Files.createDirectories(stateDir.resolve("worktrees/7"));
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(stateDir));
 
-        SandboxPolicy policy = policies.forRun(request(RunKind.PLAN, worktree, List.of()), List.of(".claude"));
+        SandboxPolicy policy = policies.forRun(request(RunKind.PLAN, worktree, List.of()), new AgentState(".claude", false, List.of(), List.of(), List.of()));
 
         assertFalse(policy.writable().contains(stateDir.resolve("dispatch.db")));
         assertFalse(policy.readOnly().contains(stateDir.resolve("assistant-bin")));
@@ -180,7 +181,7 @@ class SandboxPoliciesTest {
         Path runtime = Files.createDirectories(root.resolve("run-user"));
 
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
-                .forRun(request(RunKind.PLAN, stateDir, List.of()), List.of(), Map.of("XDG_RUNTIME_DIR", runtime.toString()));
+                .forRun(request(RunKind.PLAN, stateDir, List.of()), AgentState.NONE, Map.of("XDG_RUNTIME_DIR", runtime.toString()));
 
         assertTrue(policy.hidden().contains(runtime), policy.hidden().toString());
     }
@@ -192,7 +193,7 @@ class SandboxPoliciesTest {
         org.junit.jupiter.api.Assumptions.assumeTrue(Files.isDirectory(runUser), "no " + runUser + " here");
 
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
-                .forRun(request(RunKind.PLAN, stateDir, List.of()), List.of(), Map.of());
+                .forRun(request(RunKind.PLAN, stateDir, List.of()), AgentState.NONE, Map.of());
 
         assertTrue(policy.hidden().contains(runUser), policy.hidden().toString());
     }
@@ -206,7 +207,7 @@ class SandboxPoliciesTest {
         Files.writeString(worktree.resolve(".git"), "gitdir: " + gitDir);
 
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
-                .forRun(request(RunKind.EXECUTE, worktree, List.of()), List.of());
+                .forRun(request(RunKind.EXECUTE, worktree, List.of()), AgentState.NONE);
 
         assertTrue(policy.readOnly().containsAll(List.of(common.resolve("config"), common.resolve("hooks"), common.resolve("info"),
                 common.resolve("config.worktree"), common.resolve("worktrees"))), policy.readOnly().toString());
@@ -224,7 +225,7 @@ class SandboxPoliciesTest {
         RunRequest request = new RunRequest(RunKind.REVIEW, worktree, "prompt", UUID.randomUUID(), false, List.of(), null, null, null,
                 logBase);
 
-        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, List.of(".codex"));
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, new AgentState(".codex", false, List.of(), List.of(), List.of()));
 
         assertTrue(policy.readOnly().contains(Path.of(logBase + ".schema.json")), policy.readOnly().toString());
         assertFalse(policy.readOnly().contains(stateDir.resolve("runs/7")), policy.readOnly().toString());
@@ -238,22 +239,25 @@ class SandboxPoliciesTest {
         RunRequest request = new RunRequest(RunKind.ASSISTANT, assistantHome, "prompt", UUID.randomUUID(), false, List.of(), null, null,
                 null, logs.resolve("42-1"));
 
-        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, List.of(".claude"));
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, new AgentState(".claude", false, List.of(), List.of(), List.of()));
 
         assertTrue(Stream.concat(policy.readOnly().stream(), policy.writable().stream()).noneMatch(path -> path.startsWith(logs)),
                 policy.readOnly() + " " + policy.writable());
     }
 
     @Test
-    void agentAndBuildToolConfigThatRunsCodeIsReadOnlyInsideTheWritableDirs() throws IOException {
-        // Hooks, notify commands, MCP servers, init scripts and JVM args would otherwise run later outside any sandbox.
+    void anAgentsConfigThatRunsCodeIsReadOnlyInsideItsWritableDirWhenPresent() throws IOException {
+        // Hooks, notify commands, MCP servers, init scripts and JVM args would otherwise run later outside any sandbox. The
+        // agents' own are their loaders (spec: agent state guard); a missing one is the run guard's to watch.
+        Files.createDirectories(home.resolve(".codex"));
+        Files.writeString(home.resolve(".codex/config.toml"), "model = 'x'");
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
-                .forRun(request(RunKind.EXECUTE, stateDir, List.of()), List.of(".claude", ".claude.json", ".codex", ".gemini"));
+                .forRun(request(RunKind.EXECUTE, stateDir, List.of()),
+                        new AgentState(".codex", false, List.of(), List.of(), List.of(".codex/config.toml")));
 
-        assertTrue(policy.readOnly().containsAll(List.of(home.resolve(".claude/settings.json"), home.resolve(".claude/settings.local.json"),
-                home.resolve(".codex/config.toml"), home.resolve(".gemini/settings.json"), home.resolve(".gradle/init.d"),
+        assertTrue(policy.writable().contains(home.resolve(".codex")), policy.writable().toString());
+        assertTrue(policy.readOnly().containsAll(List.of(home.resolve(".codex/config.toml"), home.resolve(".gradle/init.d"),
                 home.resolve(".gradle/gradle.properties"), home.resolve(".m2/settings.xml"))), policy.readOnly().toString());
-        assertTrue(policy.writable().contains(home.resolve(".claude.json")), "Claude Code must write it");
     }
 
     @Test
@@ -265,7 +269,7 @@ class SandboxPoliciesTest {
             Path workdir = Files.createDirectories(stateDir.resolve(kind.name().toLowerCase()));
             Files.writeString(workdir.resolve(".git"), "gitdir: " + clone.resolve(".git/worktrees/1"));
 
-            SandboxPolicy policy = policies.forRun(request(kind, workdir, List.of()), List.of(".claude"));
+            SandboxPolicy policy = policies.forRun(request(kind, workdir, List.of()), new AgentState(".claude", false, List.of(), List.of(), List.of()));
 
             assertNull(policy.gitCommonDir(), kind.name());
             assertNull(policy.worktreeAdmin(), kind.name());
@@ -281,7 +285,7 @@ class SandboxPoliciesTest {
         RunRequest request = new RunRequest(RunKind.REVIEW, workdir, "prompt", UUID.randomUUID(), false, List.of(), null, null,
                 null, workdir.resolve("run"), Map.of(), List.of(plugin));
 
-        SandboxPolicy policy = policies.forRun(request, List.of(".claude"));
+        SandboxPolicy policy = policies.forRun(request, new AgentState(".claude", false, List.of(), List.of(), List.of()));
 
         assertTrue(policy.readOnly().contains(plugin), policy.readOnly().toString());
         assertFalse(policy.writable().contains(plugin), policy.writable().toString());

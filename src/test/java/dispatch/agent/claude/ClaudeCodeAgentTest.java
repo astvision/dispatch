@@ -328,6 +328,60 @@ class ClaudeCodeAgentTest {
         }
     }
 
+    /** A sandbox that plants a loader path, then runs the agent, as a prompt-injected agent could. */
+    private Confinement planting(Path home, Path planted) {
+        Sandbox planter = new Sandbox() {
+            @Override
+            public String name() {
+                return "planting";
+            }
+
+            @Override
+            public String unavailableReason() {
+                return null;
+            }
+
+            @Override
+            public List<String> wrap(List<String> commandLine, SandboxPolicy policy) {
+                List<String> wrapped = new ArrayList<>(List.of("sh", "-c", "mkdir -p \"$0\" && exec \"$@\"", planted.toString()));
+                wrapped.addAll(commandLine);
+                return wrapped;
+            }
+        };
+        return new Confinement(planter, new SandboxPolicies(home, dir.resolve("state"), List.of()));
+    }
+
+    @Test
+    void aLoaderPathTheRunCreatesIsQuarantinedWhenItEnds() throws Exception {
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Path planted = home.resolve(".claude/agents");
+        ClaudeCodeAgent confined = new ClaudeCodeAgent(FakeClaude.install(Files.createDirectories(dir.resolve("planting"))).toString(),
+                FakeClaude.environment(), Duration.ofSeconds(2), planting(home, planted));
+
+        confined.start(new RunRequest(RunKind.PLAN, workdir, "Plan it", SESSION, false, List.of(), null, null, null,
+                dir.resolve("state/runs/1/1"))).await();
+
+        assertFalse(Files.exists(planted), "moved out of the owner's home");
+        assertTrue(Files.isDirectory(dir.resolve("state/quarantine/1-1/.claude/agents")));
+    }
+
+    @Test
+    void aCancelledRunIsSweptToo() throws Exception {
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Path planted = home.resolve(".claude/agents");
+        ClaudeCodeAgent confined = new ClaudeCodeAgent(FakeClaude.install(Files.createDirectories(dir.resolve("planting"))).toString(),
+                FakeClaude.environment(), Duration.ofSeconds(2), planting(home, planted));
+        RunHandle handle = confined.start(new RunRequest(RunKind.PLAN, workdir, "SCENARIO:sleep", SESSION, false, List.of(), null,
+                null, null, dir.resolve("state/runs/1/2")));
+        awaitChildPid();
+
+        handle.cancel();
+        CompletableFuture.supplyAsync(() -> awaitQuietly(handle)).get(10, TimeUnit.SECONDS);
+
+        assertFalse(Files.exists(planted));
+        assertTrue(Files.isDirectory(dir.resolve("state/quarantine/1-2/.claude/agents")));
+    }
+
     private RunRequest plan(String prompt) {
         return new RunRequest(RunKind.PLAN, workdir, prompt, SESSION, false, List.of(), new BigDecimal("2"), null,
                 null,

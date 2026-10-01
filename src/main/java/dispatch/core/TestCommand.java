@@ -58,7 +58,7 @@ public final class TestCommand implements TestRunner {
             Files.createDirectories(log.getParent());
             // One copy per run: the sandbox may add to it, and concurrent runs share this TestCommand.
             Map<String, String> runEnvironment = new HashMap<>(environment);
-            ProcessBuilder builder = new ProcessBuilder(confinement.wrap(shell, asRun, List.of(), runEnvironment))
+            ProcessBuilder builder = new ProcessBuilder(confinement.wrap(shell, asRun, runEnvironment))
                     .directory(dir.toFile())
                     .redirectErrorStream(true)
                     .redirectOutput(log.toFile());

@@ -21,7 +21,7 @@ class ConfinementTest {
     void anIsolatingSandboxWrapsTheCommandWithTheRunsPolicy() {
         Confinement confinement = new Confinement(new Bubblewrap("bwrap"), new SandboxPolicies(root, root.resolve("state"), List.of()));
 
-        List<String> wrapped = confinement.wrap(List.of("claude", "-p"), request(root), List.of(".claude"), java.util.Map.of());
+        List<String> wrapped = confinement.prepare(List.of("claude", "-p"), request(root), AgentState.NONE, java.util.Map.of()).commandLine();
 
         assertEquals("bwrap", wrapped.getFirst());
         assertEquals(List.of("--", "claude", "-p"), wrapped.subList(wrapped.size() - 3, wrapped.size()));
@@ -32,7 +32,7 @@ class ConfinementTest {
     void noSandboxLeavesTheCommandAloneAndNeedsNoPolicies() {
         Confinement confinement = Confinement.none("bubblewrap (bwrap) is not installed");
 
-        assertEquals(List.of("claude", "-p"), confinement.wrap(List.of("claude", "-p"), request(root), List.of(".claude"), java.util.Map.of()));
+        assertEquals(List.of("claude", "-p"), confinement.prepare(List.of("claude", "-p"), request(root), AgentState.NONE, java.util.Map.of()).commandLine());
         assertEquals(new SandboxUse("none", "bubblewrap (bwrap) is not installed"), confinement.use());
     }
 
@@ -52,7 +52,7 @@ class ConfinementTest {
         Path runtime = java.nio.file.Files.createDirectory(root.resolve("run-user"));
         Confinement confinement = new Confinement(new Bubblewrap("bwrap"), new SandboxPolicies(root, root.resolve("state"), List.of()));
 
-        List<String> wrapped = confinement.wrap(List.of("claude"), request(root), List.of(),
+        List<String> wrapped = confinement.wrap(List.of("claude"), request(root),
                 java.util.Map.of("XDG_RUNTIME_DIR", runtime.toString()));
 
         int at = wrapped.indexOf(runtime.toString());

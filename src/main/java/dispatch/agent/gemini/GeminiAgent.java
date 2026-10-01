@@ -6,6 +6,7 @@ import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.Schemas;
 import dispatch.domain.RunKind;
+import dispatch.agent.sandbox.AgentState;
 import dispatch.agent.sandbox.Confinement;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -29,7 +30,10 @@ public final class GeminiAgent implements Agent {
             + "this JSON Schema: " + Schemas.PLAN;
     private static final String EXECUTE_ANSWER = "Do what the message above asks.";
 
-    private static final List<String> STATE_IN_HOME = List.of(".gemini");
+    /** What Gemini CLI keeps in the owner's home: never copy-on-write, since it renames files into place (spec: agent state guard). */
+    public static final AgentState STATE = new AgentState(".gemini", false, List.of(), List.of(),
+            List.of(".gemini/settings.json", ".gemini/GEMINI.md", ".gemini/extensions", ".gemini/commands",
+                    ".gemini/trustedFolders.json"));
 
     private final String command;
     private final Map<String, String> environment;
@@ -71,6 +75,6 @@ public final class GeminiAgent implements Agent {
         }
         args.addAll(List.of("-p", request.kind() == RunKind.REVIEW ? REVIEW_ANSWER : plan ? PLAN_ANSWER : EXECUTE_ANSWER));
         return ProcessRun.start("gemini", args, request, environment, request.prompt(),
-                new GeminiParser(plan, request.model(), request.workdir()), cancelGrace, confinement, STATE_IN_HOME);
+                new GeminiParser(plan, request.model(), request.workdir()), cancelGrace, confinement, STATE);
     }
 }

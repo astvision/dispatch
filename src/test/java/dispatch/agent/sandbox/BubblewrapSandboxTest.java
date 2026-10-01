@@ -71,7 +71,7 @@ class BubblewrapSandboxTest {
         script.toFile().setExecutable(true);
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
                 .forRun(new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
-                        worktree.resolve("run")), List.of(".claude"));
+                        worktree.resolve("run")), new AgentState(".claude", false, List.of(), List.of(), List.of()));
 
         Process process = new ProcessBuilder(sandbox.wrap(List.of(script.toString(), home.toString()), policy))
                 .directory(worktree.toFile()).redirectErrorStream(true).start();
@@ -90,7 +90,7 @@ class BubblewrapSandboxTest {
     void cancellingEndsTheSandboxAndEverythingInIt() throws Exception {
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
                 .forRun(new RunRequest(RunKind.PLAN, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
-                        worktree.resolve("run")), List.of());
+                        worktree.resolve("run")), AgentState.NONE);
         Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", "sleep 300 & sleep 300"), policy)).start();
         // bwrap, sh and both sleeps start asynchronously; an empty tree would make the assertions below vacuous.
         List<ProcessHandle> tree = List.of();
@@ -120,7 +120,7 @@ class BubblewrapSandboxTest {
         String before = Files.readString(worktree.resolve(".git"));
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
                 .forRun(new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
-                        worktree.resolve("run")), List.of());
+                        worktree.resolve("run")), AgentState.NONE);
 
         Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", "echo 'gitdir: " + home + "' > .git"), policy))
                 .directory(worktree.toFile()).redirectErrorStream(true).start();
@@ -138,7 +138,7 @@ class BubblewrapSandboxTest {
             server.bind(java.net.UnixDomainSocketAddress.of(socket));
             SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
                     .forRun(new RunRequest(RunKind.PLAN, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
-                            worktree.resolve("run")), List.of(), Map.of("XDG_RUNTIME_DIR", runtime.toString()));
+                            worktree.resolve("run")), AgentState.NONE, Map.of("XDG_RUNTIME_DIR", runtime.toString()));
 
             Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c",
                     "if [ -e '" + socket + "' ]; then echo visible; else echo hidden; fi"), policy))
@@ -155,7 +155,7 @@ class BubblewrapSandboxTest {
         String config = Files.readString(common.resolve("config"));
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
                 .forRun(new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
-                        worktree.resolve("run")), List.of());
+                        worktree.resolve("run")), AgentState.NONE);
 
         Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", """
                 if git config core.fsmonitor x 2>/dev/null; then echo config-written; else echo config-refused; fi
@@ -179,7 +179,7 @@ class BubblewrapSandboxTest {
         String before = Files.readString(sibling.resolve("commondir"));
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
                 .forRun(new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
-                        worktree.resolve("run")), List.of());
+                        worktree.resolve("run")), AgentState.NONE);
 
         Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", """
                 if { echo /elsewhere > "$0/commondir"; } 2>/dev/null; then echo sibling-written; else echo sibling-refused; fi
@@ -199,7 +199,7 @@ class BubblewrapSandboxTest {
         // Agents start from virtual threads whose carriers retire when idle; PR_SET_PDEATHSIG fires on the forking thread.
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
                 .forRun(new RunRequest(RunKind.PLAN, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
-                        worktree.resolve("run")), List.of());
+                        worktree.resolve("run")), AgentState.NONE);
         Process[] started = new Process[1];
         Thread starter = Thread.ofPlatform().start(() -> {
             try {

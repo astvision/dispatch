@@ -5,6 +5,7 @@ import dispatch.agent.ProcessRun;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.Schemas;
+import dispatch.agent.sandbox.AgentState;
 import dispatch.agent.sandbox.Confinement;
 import dispatch.domain.RunKind;
 import java.nio.file.Path;
@@ -30,8 +31,12 @@ public final class ClaudeCodeAgent implements Agent {
     private static final String SPLIT_SYSTEM_PROMPT =
             "You split a developer's chat message into independent development tasks. Answer only through the structured output.";
 
-    /** Claude Code's login, settings and sessions: writable in the sandbox, or every run would fail to save its session. */
-    private static final List<String> STATE_IN_HOME = List.of(".claude", ".claude.json");
+    /** What Claude Code keeps in the owner's home (spec: agent state guard); what persists was probed on 2.1.286. */
+    public static final AgentState STATE = new AgentState(".claude", true,
+            List.of(".claude/projects", ".claude/sessions", ".claude/.credentials.json"),
+            List.of(".claude.json"),
+            List.of(".claude/settings.json", ".claude/settings.local.json", ".claude/CLAUDE.md", ".claude/agents",
+                    ".claude/skills", ".claude/plugins", ".claude/commands", ".claude/output-styles", ".claude/hooks"));
 
     private final String command;
     private final Map<String, String> environment;
@@ -54,7 +59,7 @@ public final class ClaudeCodeAgent implements Agent {
     public RunHandle start(RunRequest request) {
         String permissionMode = permissionMode(request.kind());
         return ProcessRun.start("claude-code", commandLine(request, permissionMode), request, environment, request.prompt(),
-                new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE_IN_HOME);
+                new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE);
     }
 
     private static String permissionMode(RunKind kind) {

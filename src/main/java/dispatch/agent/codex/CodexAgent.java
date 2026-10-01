@@ -10,6 +10,7 @@ import dispatch.agent.ProcessRun;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.Schemas;
+import dispatch.agent.sandbox.AgentState;
 import dispatch.agent.sandbox.Confinement;
 import dispatch.domain.RunKind;
 import java.io.IOException;
@@ -43,7 +44,10 @@ public final class CodexAgent implements Agent {
     private final Path sessionsDir;
     private final Confinement confinement;
 
-    private static final List<String> STATE_IN_HOME = List.of(".codex");
+    /** What Codex keeps in the owner's home: never copy-on-write, since its databases live in the dir's root (spec: agent state guard). */
+    public static final AgentState STATE = new AgentState(".codex", false, List.of(), List.of(),
+            List.of(".codex/config.toml", ".codex/AGENTS.md", ".codex/hooks.json", ".codex/prompts", ".codex/skills",
+                    ".codex/plugins", ".codex/rules", ".codex/memories"));
 
     public CodexAgent(String command, Map<String, String> environment, Duration cancelGrace, Path sessionsDir) {
         this(command, environment, cancelGrace, sessionsDir, Confinement.none("no sandbox configured"));
@@ -95,7 +99,7 @@ public final class CodexAgent implements Agent {
         }
         args.add("-");
         ProcessRun run = ProcessRun.start("codex", args, request, environment, request.prompt(),
-                new CodexParser(plan, request.model(), request.workdir()), cancelGrace, confinement, STATE_IN_HOME);
+                new CodexParser(plan, request.model(), request.workdir()), cancelGrace, confinement, STATE);
         return request.resume() ? run : new RememberingRun(run, request.sessionId());
     }
 

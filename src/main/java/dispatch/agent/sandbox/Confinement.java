@@ -19,13 +19,23 @@ public record Confinement(Sandbox sandbox, SandboxPolicies policies) {
         return new Confinement(new NoSandbox(reason), null);
     }
 
+    /** The command line inside the sandbox, and what to make and check around the process (spec: agent state guard). */
+    public record Confined(List<String> commandLine, RunGuard guard) {
+    }
+
     /** @param environment the agent process's environment, whose XDG_RUNTIME_DIR the sandbox hides */
-    public List<String> wrap(List<String> commandLine, RunRequest request, List<String> agentStateInHome,
-                             java.util.Map<String, String> environment) {
+    public Confined prepare(List<String> commandLine, RunRequest request, AgentState state, java.util.Map<String, String> environment) {
         if (sandbox.unavailableReason() != null) {
-            return List.copyOf(commandLine);
+            return new Confined(List.copyOf(commandLine), RunGuard.NONE);
         }
-        return sandbox.wrap(commandLine, policies.forRun(request, agentStateInHome, environment));
+        SandboxPolicy policy = policies.forRun(request, state, environment, sandbox.copyOnWrite());
+        RunGuard guard = RunGuard.start(policy, policies.home(), policies.quarantineFor(request.logBase()), request.logBase());
+        return new Confined(sandbox.wrap(commandLine, policy), guard);
+    }
+
+    /** For a command with no agent state of its own, such as the verify loop's tests: nothing to guard. */
+    public List<String> wrap(List<String> commandLine, RunRequest request, java.util.Map<String, String> environment) {
+        return prepare(commandLine, request, AgentState.NONE, environment).commandLine();
     }
 
     public SandboxUse use() {

@@ -30,7 +30,7 @@ class ConfinementsTest {
                 List.of(clone), List.of(siblingState, siblingClone));
 
         List<Path> hidden = confinement.policies().forRun(new RunRequest(RunKind.PLAN, workdir, "prompt", UUID.randomUUID(),
-                false, List.of(), null, null, null, workdir.resolve("run")), List.of()).hidden();
+                false, List.of(), null, null, null, workdir.resolve("run")), AgentState.NONE).hidden();
         for (Path expected : List.of(configDir, state, clone, siblingState, siblingClone)) {
             assertTrue(hidden.contains(expected.toAbsolutePath()), expected + " in " + hidden);
         }
@@ -47,6 +47,6 @@ class ConfinementsTest {
                 List.of(clone), List.of());
 
         assertEquals(clone.resolve(".git").toRealPath(), confinement.policies().forRun(new RunRequest(RunKind.EXECUTE, worktree,
-                "prompt", UUID.randomUUID(), false, List.of(), null, null, null, worktree.resolve("run")), List.of()).gitCommonDir());
+                "prompt", UUID.randomUUID(), false, List.of(), null, null, null, worktree.resolve("run")), AgentState.NONE).gitCommonDir());
     }
 }

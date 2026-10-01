@@ -2,7 +2,9 @@ package dispatch.agent;
 
 import dispatch.Log;
 import dispatch.ProcessTrees;
+import dispatch.agent.sandbox.AgentState;
 import dispatch.agent.sandbox.Confinement;
+import dispatch.agent.sandbox.RunGuard;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -44,10 +46,12 @@ public final class ProcessRun implements RunHandle {
     private final Thread stdoutReader;
     private final Instant processStart;
     private final SandboxUse sandbox;
+    private final RunGuard guard;
 
     private ProcessRun(Process process, OutputParser parser, Path stdoutLog, Path stderrLog, Duration cancelGrace,
-                       SandboxUse sandbox) {
+                       SandboxUse sandbox, RunGuard guard) {
         this.process = process;
+        this.guard = guard;
         this.parser = parser;
         this.stderrLog = stderrLog;
         this.cancelGrace = cancelGrace;
@@ -63,18 +67,18 @@ public final class ProcessRun implements RunHandle {
      * {@code <logBase>.stderr}.
      *
      * @param agent            names the agent in the log, e.g. "codex"
-     * @param agentStateInHome the agent's own files relative to home, which its sandbox leaves writable
+     * @param state            what the agent keeps in the owner's home; the sandbox guards it (spec: agent state guard)
      */
     public static ProcessRun start(String agent, List<String> commandLine, RunRequest request, Map<String, String> environment,
                                    String prompt, OutputParser parser, Duration cancelGrace, Confinement confinement,
-                                   List<String> agentStateInHome) {
+                                   AgentState state) {
         ProcessBuilder builder = new ProcessBuilder().directory(request.workdir().toFile());
         builder.environment().clear();
         Map<String, String> merged = new java.util.HashMap<>(environment);
         merged.putAll(request.environment());
         builder.environment().putAll(agentEnvironment(merged));
-        List<String> confined = confinement.wrap(commandLine, request, agentStateInHome, builder.environment());
-        builder.command(confined);
+        Confinement.Confined confined = confinement.prepare(commandLine, request, state, builder.environment());
+        builder.command(confined.commandLine());
         Path stdoutLog = Path.of(request.logBase() + ".jsonl");
         Path stderrLog = Path.of(request.logBase() + ".stderr");
         Process process;
@@ -83,13 +87,16 @@ public final class ProcessRun implements RunHandle {
             builder.redirectError(stderrLog.toFile());
             process = builder.start();
         } catch (IOException e) {
-            throw new AgentStartException("cannot start " + confined.getFirst() + ": " + e.getMessage(), e);
+            confined.guard().end();
+            throw new AgentStartException("cannot start " + confined.commandLine().getFirst() + ": " + e.getMessage(), e);
         }
+        // Whoever ends the process (the agent, a cancel, the watchdog), the guard runs once it has exited.
+        process.onExit().thenRun(confined.guard()::end);
         Log.info("agent.started", "agent", agent, "pid", process.pid(), "kind", request.kind(),
                 "workdir", request.workdir(), "resume", request.resume(),
                 "sandbox", confinement.sandbox().name());
         // Before the prompt: until it has read the prompt, the agent cannot have exited, so its start time is still known.
-        ProcessRun run = new ProcessRun(process, parser, stdoutLog, stderrLog, cancelGrace, confinement.use());
+        ProcessRun run = new ProcessRun(process, parser, stdoutLog, stderrLog, cancelGrace, confinement.use(), confined.guard());
         writePrompt(process, prompt);
         return run;
     }
@@ -108,6 +115,8 @@ public final class ProcessRun implements RunHandle {
     public AgentResult await() throws InterruptedException {
         int exitCode = process.waitFor();
         stdoutReader.join();
+        // Before the result: a caller that has it sees the owner's home already swept.
+        guard.end();
         return parser.result(exitCode, stderrTail()).withSandbox(sandbox);
     }
 
