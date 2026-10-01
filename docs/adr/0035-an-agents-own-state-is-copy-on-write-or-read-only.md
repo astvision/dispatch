@@ -8,16 +8,25 @@ their hooks, skills, subagents, commands, global instruction files, MCP servers,
 protected only the config files. Now each agent declares its state, and the sandbox treats it as follows:
 
 - **Claude Code:** `~/.claude` is mounted copy-on-write (`--overlay-src --tmp-overlay`): the agent sees all of it and its
-  writes land in a tmpfs that ends with the sandbox. Only `projects/` (transcripts, which resume and teleport need),
-  `sessions/` and `.credentials.json` are bound back. Claude Code renames its credentials into place and writes in place
-  when that rename fails with `EBUSY`, so a refreshed token still reaches the owner. `~/.claude.json` gets a throwaway
-  copy per run, which also closes the MCP-server gap ADR 0032 accepted.
-- **Codex and Gemini CLI:** their loader paths (Codex: `config.toml`, `AGENTS.md`, `hooks.json`, `prompts/`, `skills/`,
-  `plugins/`, `rules/`, `memories/`; Gemini: `settings.json`, `GEMINI.md`, `extensions/`, `commands/`,
-  `trustedFolders.json`) are bound read-only when present. Bubblewrap cannot protect a path that does not exist, so a
-  run guard records the absent ones and, after the run, moves any that appeared to `<stateDir>/quarantine` and logs it.
-- **Bubblewrap without overlays** (older than 0.10): Claude Code gets the read-only loader paths and the guard instead,
-  and startup and `dispatch check` say so.
+  writes land in a tmpfs that ends with the sandbox. Only `.credentials.json` and the run's own project dir under
+  `projects/` are bound back: the dir Claude Code 2.1.286 names after the working dir, which holds the transcripts resume
+  and teleport need. Its `memory/` is a tmpfs, since the owner's later sessions in a project load its auto-memory; no
+  other project's dir is bound. Claude Code renames its credentials into place and writes in place when that rename fails
+  with `EBUSY`, so a refreshed token still reaches the owner. `~/.claude.json` gets an owner-only throwaway copy per run,
+  which also closes the MCP-server gap ADR 0032 accepted.
+- **Codex and Gemini CLI:** their loader paths (Codex 0.152.0: `config.toml`, `.env`, `AGENTS.md`, `AGENTS.override.md`,
+  `hooks.json`, `prompts/`, `skills/`, `plugins/`, `rules/`, `memories/`; Gemini CLI 0.61.0: `settings.json`, `.env`,
+  `GEMINI.md`, `extensions/`, `commands/`, `skills/`, `agents/`, `policies/`, `acknowledgments/`, `trustedFolders.json`)
+  are bound read-only when present. Bubblewrap cannot protect a path that does not exist, so a run guard records the
+  absent ones and, after the run, moves any that appeared to `<stateDir>/quarantine` and logs it. One that cannot be moved
+  there, such as a non-empty dir on another filesystem, is renamed in place to a name no agent loads.
+- **Bubblewrap without overlays** (older than 0.10): Claude Code gets the read-only loader paths (also `rules/` and
+  `local/`) and the guard instead; `projects/` is read-only with the run's own dir bound back over it and its `memory/` a
+  tmpfs, as are the dirs a later session sources (`session-env/`, `shell-snapshots/`, `sessions/`, and `plugins/store/`
+  when `plugins/` exists). Startup and `dispatch check` say so.
+- **The guard's lifecycle:** it records what it must undo in `<stateDir>/guards/` before the run starts. After a cancel,
+  the sandbox's outer process exits while the processes inside it are still being ended, so the guard sweeps then and
+  again once the whole tree is gone. A record a crash left behind is closed at the next start, after the orphan kill.
 
 We chose this over:
 - **Copy-on-write for every agent.** Codex keeps live SQLite databases in the root of `~/.codex`, and Gemini CLI renames
@@ -27,6 +36,7 @@ We chose this over:
 - **Leaving it.** A planted plugin hook runs as the owner the next time they open the agent.
 
 Consequences: a planted loader path exists until its run ends, so a session the owner starts in that window could load
-it. Claude's fallback protects only the listed paths. Claude Code's persisted paths are 2.1.286's; a version that keeps
-something new under `~/.claude` loses it at the end of each run until the list is updated. If the owner's own session
-refreshes the token during a run, the run keeps the file it started with; a refresh it then needs can fail, loudly.
+it. Claude's fallback protects only the listed paths. Claude Code's persisted paths and project-dir names are 2.1.286's;
+a version that keeps something new under `~/.claude` loses it at the end of each run until the list is updated, and one
+that names project dirs differently cannot resume a session, loudly. If the owner's own session refreshes the token
+during a run, the run keeps the file it started with; a refresh it then needs can fail, loudly.

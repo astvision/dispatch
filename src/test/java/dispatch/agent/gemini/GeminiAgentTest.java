@@ -112,4 +112,11 @@ class GeminiAgentTest {
         assertEquals("default", after(args, "--approval-mode"));
         assertTrue(after(args, "-p").contains("\"verdict\""), after(args, "-p"));
     }
+
+    /** What Gemini CLI 0.61.0 loads from its home: its .env, user skills, subagents, policies and acknowledgments too. */
+    @Test
+    void geminisLoadersIncludeItsEnvSkillsAgentsPoliciesAndAcknowledgments() {
+        assertTrue(GeminiAgent.STATE.loaders().containsAll(List.of(".gemini/.env", ".gemini/skills", ".gemini/agents",
+                ".gemini/policies", ".gemini/acknowledgments", ".gemini/settings.json")), GeminiAgent.STATE.loaders().toString());
+    }
 }

@@ -48,15 +48,43 @@ public final class SandboxPolicies {
         this(home, stateDir, dispatchPrivate, List.of());
     }
 
+    /**
+     * Claude Code's name for a working dir's project dir under {@code ~/.claude/projects} (2.1.286): every char but a
+     * letter or digit becomes '-'; a name over 200 chars keeps its first 200 and adds '-' and the base-36 hash of the path.
+     */
+    static String projectName(String path) {
+        String name = path.replaceAll("[^a-zA-Z0-9]", "-");
+        if (name.length() <= 200) {
+            return name;
+        }
+        // Claude Code's hash is Java's String.hashCode; Math.abs of a long, since JavaScript's abs never overflows.
+        return name.substring(0, 200) + "-" + Long.toString(Math.abs((long) path.hashCode()), 36);
+    }
+
     public Path home() {
         return home;
     }
 
+    /** Where each run's guard records what it must undo; what a crash leaves there is closed at the next start. */
+    public static Path guardsDir(Path stateDir) {
+        return stateDir.resolve("guards");
+    }
+
+    /** The run's guard manifest, named after its log base, e.g. {@code guards/7-2.fix-1.json}. */
+    public Path guardManifestFor(Path logBase) {
+        return guardsDir(stateDir).resolve(runName(logBase) + ".json");
+    }
+
     /** Where the run guard moves what a run planted: per run, named after its log base, e.g. {@code quarantine/7-2.fix-1}. */
     public Path quarantineFor(Path logBase) {
+        return stateDir.resolve("quarantine").resolve(runName(logBase));
+    }
+
+    /** {@code runs/7/2.fix-1} is {@code 7-2.fix-1}. */
+    private static String runName(Path logBase) {
         Path base = logBase.toAbsolutePath().normalize();
         String parent = base.getParent() == null ? "" : base.getParent().getFileName() + "-";
-        return stateDir.resolve("quarantine").resolve(parent + base.getFileName());
+        return parent + base.getFileName();
     }
 
     /** As {@link #forRun(RunRequest, AgentState, Map, boolean)} without copy-on-write, for an environment without XDG_RUNTIME_DIR. */
@@ -89,6 +117,18 @@ public final class SandboxPolicies {
         } else if (agentDir != null) {
             writable.add(agentDir);
         }
+        List<Path> tmpfs = new ArrayList<>();
+        List<Path> created = new ArrayList<>();
+        if (state.projectsDir() != null) {
+            // One dir per working dir: transcripts, which resume and teleport need, and auto-memory, which the owner's
+            // later sessions in that project load. Only the run's own persists, its memory a tmpfs; every other project's
+            // is in the overlay, or read-only without one (below). Created first, or the bind and the tmpfs are skipped.
+            Path real = realPath(workdir);
+            Path own = home.resolve(state.projectsDir()).resolve(projectName((real == null ? workdir : real).toString()));
+            persisted.add(own);
+            created.addAll(List.of(own, own.resolve("memory")));
+            tmpfs.add(own.resolve("memory"));
+        }
         CACHES.forEach(cache -> writable.add(home.resolve(cache)));
         List<Path> readOnly = new ArrayList<>(request.readOnlyDirs());
         // The skills plugin lives in the hidden state dir: readable, never writable, or one agent could rewrite every later run's skills.
@@ -110,6 +150,18 @@ public final class SandboxPolicies {
                     readOnly.add(path);
                 } else {
                     watched.add(path);
+                }
+            }
+            if (state.projectsDir() != null) {
+                readOnly.add(home.resolve(state.projectsDir()));
+            }
+            // What a later session sources, e.g. a session's env files: a tmpfs. Only where its parent exists: one under
+            // an absent loader would create that loader, which the guard would then quarantine after every run.
+            for (String dir : state.scratch()) {
+                Path path = home.resolve(dir);
+                if (Files.isDirectory(path.getParent(), LinkOption.NOFOLLOW_LINKS)) {
+                    created.add(path);
+                    tmpfs.add(path);
                 }
             }
         }
@@ -136,7 +188,8 @@ public final class SandboxPolicies {
         // a .git an earlier run planted there would otherwise mount any configured clone read-write.
         GitLink git = IN_WORKTREE.contains(request.kind()) ? gitLink(workdir) : null;
         if (git == null) {
-            return new SandboxPolicy(workdir, null, null, readOnly, writable, hidden, overlays, persisted, copies, watched);
+            return new SandboxPolicy(workdir, null, null, readOnly, writable, hidden, overlays, persisted, copies, watched, tmpfs,
+                    created);
         }
         // Mounted after the workdir and the git dir: the agent cannot point the next run's mounts somewhere else, nor
         // plant config (core.fsmonitor, filters, remotes) or hooks that Dispatch's own git runs outside the sandbox.
@@ -145,7 +198,7 @@ public final class SandboxPolicies {
         // Other worktrees' admin dirs: a rewritten commondir there would redirect Dispatch's git in that worktree.
         readOnly.add(git.commonDir().resolve("worktrees"));
         return new SandboxPolicy(workdir, git.commonDir(), git.worktreeAdmin(), readOnly, writable, hidden, overlays, persisted,
-                copies, watched);
+                copies, watched, tmpfs, created);
     }
 
     /**

@@ -295,6 +295,17 @@ class AppTest {
         assertTrue(fatalErrors.isEmpty(), fatalErrors.toString());
     }
 
+    /** A sandboxed run's guard that a crash left open: what it must undo is done before any new run starts. */
+    @Test
+    void aRunGuardACrashLeftOpenIsClosedAtStart() throws Exception {
+        Path copy = dispatch.agent.sandbox.LeftoverGuards.leave(repos.stateDir, dir.resolve("home"));
+
+        app = start();
+
+        assertFalse(Files.exists(copy), "the run's throwaway copy");
+        assertFalse(Files.exists(repos.stateDir.resolve("guards/7-2.json")), "its manifest");
+    }
+
     /**
      * With a Mini App, the chat menu button opens it (ADR 0019, amended); without one, it is set back to the command
      * list, so a button left over from an earlier run never points at an address that no longer answers.

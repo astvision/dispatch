@@ -382,6 +382,51 @@ class ClaudeCodeAgentTest {
         assertTrue(Files.isDirectory(dir.resolve("state/quarantine/1-2/.claude/agents")));
     }
 
+    /** As a sandbox whose outer bwrap dies at once on SIGTERM while a process inside plants something before it is killed. */
+    private Confinement plantingLate(Path home, Path planted) {
+        Sandbox planter = new Sandbox() {
+            @Override
+            public String name() {
+                return "planting-late";
+            }
+
+            @Override
+            public String unavailableReason() {
+                return null;
+            }
+
+            @Override
+            public List<String> wrap(List<String> commandLine, SandboxPolicy policy) {
+                List<String> wrapped = new ArrayList<>(List.of("sh", "-c",
+                        "( trap 'sleep 0.5; mkdir -p \"$0\"' TERM; while true; do sleep 0.1; done ) & exec \"$@\"", planted.toString()));
+                wrapped.addAll(commandLine);
+                return wrapped;
+            }
+        };
+        return new Confinement(planter, new SandboxPolicies(home, dir.resolve("state"), List.of()));
+    }
+
+    @Test
+    void aLoaderPlantedWhileACancelledSandboxDiesIsSweptOnceItIsDead() throws Exception {
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Path planted = home.resolve(".claude/agents");
+        ClaudeCodeAgent confined = new ClaudeCodeAgent(FakeClaude.install(Files.createDirectories(dir.resolve("late"))).toString(),
+                FakeClaude.environment(), Duration.ofSeconds(2), plantingLate(home, planted));
+        RunHandle handle = confined.start(new RunRequest(RunKind.PLAN, workdir, "SCENARIO:sleep", SESSION, false, List.of(), null,
+                null, null, dir.resolve("state/runs/1/3")));
+        awaitChildPid();
+
+        handle.cancel();
+        CompletableFuture.supplyAsync(() -> awaitQuietly(handle)).get(10, TimeUnit.SECONDS);
+        java.time.Instant deadline = java.time.Instant.now().plusSeconds(10);
+        while (!Files.isDirectory(dir.resolve("state/quarantine/1-3/.claude/agents")) && java.time.Instant.now().isBefore(deadline)) {
+            Thread.sleep(50);
+        }
+
+        assertFalse(Files.exists(planted), "planted after the first sweep, swept once the sandbox was dead");
+        assertTrue(Files.isDirectory(dir.resolve("state/quarantine/1-3/.claude/agents")));
+    }
+
     private RunRequest plan(String prompt) {
         return new RunRequest(RunKind.PLAN, workdir, prompt, SESSION, false, List.of(), new BigDecimal("2"), null,
                 null,

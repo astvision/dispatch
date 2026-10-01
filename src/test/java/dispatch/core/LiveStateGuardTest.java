@@ -8,6 +8,7 @@ import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.agent.RunRequest;
 import dispatch.agent.claude.ClaudeCodeAgent;
+import dispatch.agent.sandbox.Bubblewrap;
 import dispatch.agent.sandbox.Confinement;
 import dispatch.agent.sandbox.Probe;
 import dispatch.agent.sandbox.Sandbox;
@@ -27,7 +28,8 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
  * Real Claude Code in the real sandbox with the owner's own ~/.claude (spec: agent state guard): a file the agent writes
- * under ~/.claude/agents is gone after the run, and a second run still resumes the first one's session. Off unless
+ * under ~/.claude/agents is gone after the run, and a second run still resumes the first one's session, with overlays and
+ * without. Off unless
  * DISPATCH_LIVE_CLAUDE=1, since it spends the account's quota.
  */
 class LiveStateGuardTest {
@@ -38,6 +40,21 @@ class LiveStateGuardTest {
     void aPlantedAgentFileIsGoneAndTheSessionStillResumes() throws Exception {
         Sandbox sandbox = Sandboxes.detect(SandboxSetting.AUTO, Probe.system(System.getenv()));
         assumeTrue(sandbox.copyOnWrite(), "needs bwrap with overlays");
+
+        plantAndResume(sandbox, "the copy-on-write layer took the write");
+    }
+
+    /** Bubblewrap older than 0.10: ~/.claude writable but for its loaders and every other project, read-only. */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "DISPATCH_LIVE_CLAUDE", matches = "1")
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    void withoutOverlaysAPlantedAgentFileIsGoneAndTheSessionStillResumes() throws Exception {
+        assumeTrue(Sandboxes.detect(SandboxSetting.AUTO, Probe.system(System.getenv())) instanceof Bubblewrap, "needs bwrap");
+
+        plantAndResume(new Bubblewrap("bwrap", false), "read-only when present, quarantined when planted");
+    }
+
+    private static void plantAndResume(Sandbox sandbox, String howItIsGone) throws Exception {
         Path root = Files.createTempDirectory(Path.of("target").toAbsolutePath(), "live-guard");
         Path stateDir = Files.createDirectories(root.resolve("state"));
         Path workdir = Files.createDirectories(root.resolve("work"));
@@ -56,11 +73,11 @@ class LiveStateGuardTest {
                 List.of(), null, "sonnet", null, stateDir.resolve("runs/1/2"))).await();
 
         // Claude Code may itself refuse to write under ~/.claude; either way the file must not exist on the host. That a
-        // planted file vanishes is proven in BubblewrapSandboxTest; this run proves real Claude works and resumes under the overlay.
-        System.out.println("LIVE guard: first=" + first.outcome() + " (" + first.summary() + ") second=" + second.outcome()
-                + " says: " + second.summary());
+        // planted file vanishes is proven in BubblewrapSandboxTest; this run proves real Claude works and resumes in the sandbox.
+        System.out.println("LIVE guard (" + (sandbox.copyOnWrite() ? "overlay" : "fallback") + "): first=" + first.outcome()
+                + " (" + first.summary() + ") second=" + second.outcome() + " says: " + second.summary());
         assertEquals(AgentOutcome.SUCCEEDED, first.outcome(), first.error());
-        assertFalse(Files.exists(planted), "the copy-on-write layer took the write");
+        assertFalse(Files.exists(planted), howItIsGone);
         assertEquals(AgentOutcome.SUCCEEDED, second.outcome(), "resume needs the first run's transcript: " + second.error());
     }
 }

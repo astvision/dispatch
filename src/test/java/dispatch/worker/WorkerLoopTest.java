@@ -73,6 +73,22 @@ class WorkerLoopTest extends WorkerApiFixture {
                 reviewPrompt);
     }
 
+    /** A sandboxed run's guard that a crash left open on this computer: undone before the loop takes a job. */
+    @Test
+    void aRunGuardACrashLeftOpenIsClosedWhenTheLoopStarts() throws Exception {
+        java.nio.file.Path copy = dispatch.agent.sandbox.LeftoverGuards.leave(workerStateDir("ann-laptop"),
+                workerStateDir("ann-laptop").resolve("home"));
+
+        startLoop("ann-laptop", repos.repo("alm"));
+
+        java.time.Instant deadline = java.time.Instant.now().plusSeconds(10);
+        while (Files.exists(copy) && java.time.Instant.now().isBefore(deadline)) {
+            Thread.sleep(50);
+        }
+        assertFalse(Files.exists(copy), "the run's throwaway copy");
+        assertFalse(Files.exists(workerStateDir("ann-laptop").resolve("guards/7-2.json")), "its manifest");
+    }
+
     @Test
     void theLoopRunsAJobInItsOwnCloneAndReportsTheResult() throws Exception {
         startLoop("ann-laptop", repos.repo("alm"));

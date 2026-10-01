@@ -31,12 +31,17 @@ public final class ClaudeCodeAgent implements Agent {
     private static final String SPLIT_SYSTEM_PROMPT =
             "You split a developer's chat message into independent development tasks. Answer only through the structured output.";
 
-    /** What Claude Code keeps in the owner's home (spec: agent state guard); what persists was probed on 2.1.286. */
-    public static final AgentState STATE = new AgentState(".claude", true,
-            List.of(".claude/projects", ".claude/sessions", ".claude/.credentials.json"),
+    /**
+     * What Claude Code keeps in the owner's home (spec: agent state guard); what persists, where a working dir's project
+     * dir is, and what is sourced were probed on 2.1.286.
+     */
+    public static final AgentState STATE = new AgentState(".claude", true, ".claude/projects",
+            List.of(".claude/.credentials.json"),
             List.of(".claude.json"),
             List.of(".claude/settings.json", ".claude/settings.local.json", ".claude/CLAUDE.md", ".claude/agents",
-                    ".claude/skills", ".claude/plugins", ".claude/commands", ".claude/output-styles", ".claude/hooks"));
+                    ".claude/skills", ".claude/plugins", ".claude/commands", ".claude/output-styles", ".claude/hooks",
+                    ".claude/rules", ".claude/local"),
+            List.of(".claude/session-env", ".claude/shell-snapshots", ".claude/sessions", ".claude/plugins/store"));
 
     private final String command;
     private final Map<String, String> environment;

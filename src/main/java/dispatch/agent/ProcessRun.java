@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -43,6 +44,8 @@ public final class ProcessRun implements RunHandle {
     private final Duration cancelGrace;
     private final OutputParser parser;
     private final AtomicBoolean cancelRequested = new AtomicBoolean();
+    /** Counted down once a cancel has ended the whole process tree and closed the guard. */
+    private final CountDownLatch terminated = new CountDownLatch(1);
     private final Thread stdoutReader;
     private final Instant processStart;
     private final SandboxUse sandbox;
@@ -87,16 +90,16 @@ public final class ProcessRun implements RunHandle {
             builder.redirectError(stderrLog.toFile());
             process = builder.start();
         } catch (IOException e) {
-            confined.guard().end();
+            confined.guard().close();
             throw new AgentStartException("cannot start " + confined.commandLine().getFirst() + ": " + e.getMessage(), e);
         }
-        // Whoever ends the process (the agent, a cancel, the watchdog), the guard runs once it has exited.
-        process.onExit().thenRun(confined.guard()::end);
         Log.info("agent.started", "agent", agent, "pid", process.pid(), "kind", request.kind(),
                 "workdir", request.workdir(), "resume", request.resume(),
                 "sandbox", confinement.sandbox().name());
         // Before the prompt: until it has read the prompt, the agent cannot have exited, so its start time is still known.
         ProcessRun run = new ProcessRun(process, parser, stdoutLog, stderrLog, cancelGrace, confinement.use(), confined.guard());
+        // Whoever ends the process (the agent, a cancel, the watchdog), the guard runs once it has exited.
+        process.onExit().thenRun(run::guardAfterExit);
         writePrompt(process, prompt);
         return run;
     }
@@ -115,8 +118,12 @@ public final class ProcessRun implements RunHandle {
     public AgentResult await() throws InterruptedException {
         int exitCode = process.waitFor();
         stdoutReader.join();
-        // Before the result: a caller that has it sees the owner's home already swept.
-        guard.end();
+        // Before the result: a caller that has it sees the whole sandbox gone and the owner's home already swept.
+        if (cancelRequested.get()) {
+            terminated.await();
+        } else {
+            guard.close();
+        }
         return parser.result(exitCode, stderrTail()).withSandbox(sandbox);
     }
 
@@ -129,8 +136,31 @@ public final class ProcessRun implements RunHandle {
     public void cancel() {
         if (cancelRequested.compareAndSet(false, true)) {
             Log.info("agent.cancelling", "pid", process.pid(), "grace_seconds", cancelGrace.toSeconds());
-            Thread.ofVirtual().name("agent-cancel-" + process.pid())
-                    .start(() -> ProcessTrees.terminate(process.toHandle(), cancelGrace));
+            Thread.ofVirtual().name("agent-cancel-" + process.pid()).start(() -> {
+                try {
+                    ProcessTrees.terminate(process.toHandle(), cancelGrace);
+                    // Only now: until the processes inside the sandbox are dead, they can still plant a loader.
+                    guard.close();
+                } finally {
+                    terminated.countDown();
+                }
+            });
+        }
+    }
+
+    /**
+     * Once the process has exited. A cancelled sandbox's outer process exits first while the processes inside it are
+     * still being terminated: sweep now, and close once the cancel has ended them all.
+     */
+    private void guardAfterExit() {
+        try {
+            if (cancelRequested.get()) {
+                guard.sweep();
+            } else {
+                guard.close();
+            }
+        } catch (RuntimeException e) {
+            Log.error("sandbox.guard_failed", e, "pid", process.pid());
         }
     }
 

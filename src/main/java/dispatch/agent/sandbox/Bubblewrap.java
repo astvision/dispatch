@@ -61,11 +61,12 @@ public final class Bubblewrap implements Sandbox {
         // Optional: a machine without ~/.gemini or ~/.m2 runs all the same.
         policy.writable().forEach(path -> bind(args, "--bind-try", path));
         // Copy-on-write (spec: agent state guard): the agent sees its whole state dir, and what it writes there lands in
-        // a tmpfs that ends with the sandbox; then what must persist, and the throwaway copies, are mounted over it.
+        // a tmpfs that ends with the sandbox. The throwaway copies are mounted over their originals.
         policy.overlays().forEach(dir -> args.addAll(List.of("--overlay-src", dir.toString(), "--tmp-overlay", dir.toString())));
-        policy.persisted().forEach(path -> bind(args, "--bind-try", path));
         policy.copies().forEach(copy -> args.addAll(List.of("--bind", copy.copy().toString(), copy.original().toString())));
         policy.readOnly().forEach(path -> bind(args, "--ro-bind-try", path));
+        // After the read-only paths: without an overlay the run's own project dir is bound over the read-only projects dir.
+        policy.persisted().forEach(path -> bind(args, "--bind-try", path));
         if (policy.worktreeAdmin() != null) {
             // Over the read-only worktrees dir: git writes this worktree's index and HEAD here. Then read-only again
             // what says where its config is (commondir) and its own config (config.worktree).
@@ -73,6 +74,8 @@ public final class Bubblewrap implements Sandbox {
             bind(args, "--ro-bind-try", policy.worktreeAdmin().resolve("config.worktree"));
             bind(args, "--ro-bind-try", policy.worktreeAdmin().resolve("commondir"));
         }
+        // Last, over whatever they hide: the guard made each one, so bwrap needs no mount point on a read-only path.
+        policy.tmpfs().forEach(dir -> args.addAll(List.of("--tmpfs", dir.toString())));
         args.addAll(List.of("--chdir", policy.workdir().toString(), "--"));
         args.addAll(commandLine);
         return List.copyOf(args);

@@ -292,9 +292,9 @@ class SandboxPoliciesTest {
         assertTrue(policy.hidden().contains(stateDir), "the rest of the state dir stays hidden");
     }
 
-    private static final AgentState CLAUDE = new AgentState(".claude", true,
-            List.of(".claude/projects", ".claude/sessions", ".claude/.credentials.json"), List.of(".claude.json"),
-            List.of(".claude/CLAUDE.md", ".claude/agents"));
+    private static final AgentState CLAUDE = new AgentState(".claude", true, ".claude/projects",
+            List.of(".claude/.credentials.json"), List.of(".claude.json"), List.of(".claude/CLAUDE.md", ".claude/agents"),
+            List.of(".claude/session-env", ".claude/plugins/store"));
     private static final AgentState CODEX = new AgentState(".codex", false, List.of(), List.of(),
             List.of(".codex/AGENTS.md", ".codex/hooks.json"));
 
@@ -307,9 +307,12 @@ class SandboxPoliciesTest {
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
                 .forRun(request(RunKind.PLAN, workdir, List.of()), CLAUDE, Map.of(), true);
 
+        Path own = home.resolve(".claude/projects").resolve(SandboxPolicies.projectName(workdir.toString()));
         assertEquals(List.of(home.resolve(".claude")), policy.overlays());
-        assertEquals(List.of(home.resolve(".claude/projects"), home.resolve(".claude/sessions"),
-                home.resolve(".claude/.credentials.json")), policy.persisted());
+        assertEquals(List.of(home.resolve(".claude/.credentials.json"), own), policy.persisted(),
+                "only the run's own project dir: every other one's memory is loaded by the owner's sessions there");
+        assertEquals(List.of(own, own.resolve("memory")), policy.created());
+        assertEquals(List.of(own.resolve("memory")), policy.tmpfs());
         assertEquals(List.of(new SandboxPolicy.FileCopy(home.resolve(".claude.json"), Path.of(workdir.resolve("run") + ".claude.json"))),
                 policy.copies());
         assertFalse(policy.writable().contains(home.resolve(".claude")), policy.writable().toString());
@@ -329,6 +332,22 @@ class SandboxPoliciesTest {
         assertTrue(policy.writable().contains(home.resolve(".claude")), policy.writable().toString());
         assertTrue(policy.readOnly().contains(home.resolve(".claude/agents")), policy.readOnly().toString());
         assertEquals(List.of(home.resolve(".claude/CLAUDE.md")), policy.watched());
+    }
+
+    @Test
+    void withoutCopyOnWriteOtherProjectsAreReadOnlyAndTheRunsMemoryAndScratchDirsAreThrowaway() throws IOException {
+        Files.createDirectories(home.resolve(".claude"));
+        Path workdir = Files.createDirectories(root.resolve("work"));
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(request(RunKind.PLAN, workdir, List.of()), CLAUDE, Map.of(), false);
+
+        Path own = home.resolve(".claude/projects").resolve(SandboxPolicies.projectName(workdir.toString()));
+        assertTrue(policy.readOnly().contains(home.resolve(".claude/projects")), policy.readOnly().toString());
+        assertEquals(List.of(own), policy.persisted(), "bound back read-write over the read-only projects dir");
+        assertEquals(List.of(own.resolve("memory"), home.resolve(".claude/session-env")), policy.tmpfs(),
+                "no plugins/store: its parent plugins/ is absent, a loader the guard watches");
+        assertEquals(List.of(own, own.resolve("memory"), home.resolve(".claude/session-env")), policy.created());
     }
 
     @Test
@@ -375,6 +394,14 @@ class SandboxPoliciesTest {
 
         assertEquals(stateDir.resolve("quarantine/7-2.fix-1"), policies.quarantineFor(stateDir.resolve("runs/7/2.fix-1")));
         assertEquals(home, policies.home());
+    }
+
+    /** Claude Code 2.1.286 names a working dir's project dir so; a mismatch would put transcripts in the throwaway layer. */
+    @Test
+    void aProjectIsNamedAsClaudeCodeNamesIt() {
+        assertEquals("-home-ann--local-state-dispatch-worktrees-1", SandboxPolicies.projectName("/home/ann/.local/state/dispatch/worktrees/1"));
+        String longPath = "/srv/" + "x".repeat(250);
+        assertEquals("-srv-" + "x".repeat(195) + "-k2t98n", SandboxPolicies.projectName(longPath), "first 200, then the base-36 hash");
     }
 
     private static RunRequest request(RunKind kind, Path workdir, List<Path> readOnlyDirs) {

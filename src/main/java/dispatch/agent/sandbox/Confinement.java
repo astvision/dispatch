@@ -29,7 +29,8 @@ public record Confinement(Sandbox sandbox, SandboxPolicies policies) {
             return new Confined(List.copyOf(commandLine), RunGuard.NONE);
         }
         SandboxPolicy policy = policies.forRun(request, state, environment, sandbox.copyOnWrite());
-        RunGuard guard = RunGuard.start(policy, policies.home(), policies.quarantineFor(request.logBase()), request.logBase());
+        RunGuard guard = RunGuard.start(policy, policies.home(), policies.quarantineFor(request.logBase()), request.logBase(),
+                policies.guardManifestFor(request.logBase()));
         return new Confined(sandbox.wrap(commandLine, policy), guard);
     }
 

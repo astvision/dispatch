@@ -279,7 +279,7 @@ interface RunHandle {
 
 The timeout is enforced by `JobRunner` (a watchdog calls `cancel()`), not by the agent. `RunHandle.activity()` returns the agent's step count and latest tool call, parsed from the stream as it arrives, for `/status`.
 
-A sandboxed run is prepared by `Confinement.prepare`, which turns the agent's `AgentState` into mounts (ADR 0035) and returns a `RunGuard`: it makes the run's throwaway copies (Claude Code's `~/.claude.json`) before the process starts and, once the process exits however it ended, deletes them and moves any loader path the run created to `<stateDir>/quarantine`.
+A sandboxed run is prepared by `Confinement.prepare`, which turns the agent's `AgentState` into mounts (ADR 0035) and returns a `RunGuard`. Before the process starts, the guard makes the dirs the mounts need (the run's own project dir under `~/.claude/projects` and its `memory`), records what it must undo in `<stateDir>/guards/<run>.json`, and makes the run's owner-only throwaway copies (Claude Code's `~/.claude.json`). Once the process exits it moves any loader path the run created to `<stateDir>/quarantine`; after a cancel it sweeps again and closes only when `ProcessTrees.terminate` has ended the whole tree. Closing deletes the copies and the record. At startup, after the orphan kill, the instance and the worker close every guard a crash left in `guards/`.
 
 `ClaudeCodeAgent` passes the prompt on stdin to:
 

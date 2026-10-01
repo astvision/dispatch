@@ -4,7 +4,9 @@ import dispatch.agent.Agent;
 import dispatch.agent.Agents;
 import dispatch.agent.sandbox.Confinements;
 import dispatch.agent.sandbox.Probe;
+import dispatch.agent.sandbox.RunGuard;
 import dispatch.agent.sandbox.Sandbox;
+import dispatch.agent.sandbox.SandboxPolicies;
 import dispatch.agent.sandbox.Sandboxes;
 import dispatch.config.Config;
 import dispatch.config.GroupWriter;
@@ -184,6 +186,8 @@ public final class App {
         splitter[0] = claude == null ? null : new Splitter(db, tasks, claude, workspaces.splitsDir(), clock, Duration.ofMinutes(1));
 
         new Recovery(db, transitions, Duration.ofSeconds(10)).run();
+        // After Recovery's orphan kill: nothing a crashed run left running can plant after this sweep.
+        RunGuard.closeLeftovers(SandboxPolicies.guardsDir(stateDir));
         db.transaction(tasks::failInterruptedSplits);
         Git slowGit = git.withTimeout(Duration.ofMinutes(30));
         for (Config.Project project : projects.all()) {

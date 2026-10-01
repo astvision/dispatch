@@ -15,13 +15,16 @@ import java.util.List;
  * @param writable     mounted back read-write when they exist
  * @param hidden       existing directories replaced by empty ones
  * @param overlays     agent dirs mounted copy-on-write: the agent sees them, and what it writes ends with the sandbox
- * @param persisted    under an overlay, mounted back read-write so they survive the run
+ * @param persisted    mounted back read-write over the overlays and the read-only paths, so they survive the run
  * @param copies       a throwaway copy of each file, made before the run and mounted over the original
  * @param watched      loader paths absent when the run started; the run guard quarantines any that exist when it ends
+ * @param tmpfs        empty tmpfs mounted last: what the agent may write but no later session may see
+ * @param created      made owner-only before the run when missing, so that a persisted dir is bound and a tmpfs has
+ *                     where to mount
  */
 public record SandboxPolicy(Path workdir, Path gitCommonDir, Path worktreeAdmin, List<Path> readOnly, List<Path> writable,
                             List<Path> hidden, List<Path> overlays, List<Path> persisted, List<FileCopy> copies,
-                            List<Path> watched) {
+                            List<Path> watched, List<Path> tmpfs, List<Path> created) {
 
     /** @param copy where the throwaway copy of {@code original} is made, in the hidden state dir */
     public record FileCopy(Path original, Path copy) {
@@ -35,11 +38,14 @@ public record SandboxPolicy(Path workdir, Path gitCommonDir, Path worktreeAdmin,
         persisted = List.copyOf(persisted);
         copies = List.copyOf(copies);
         watched = List.copyOf(watched);
+        tmpfs = List.copyOf(tmpfs);
+        created = List.copyOf(created);
     }
 
-    /** A policy with nothing copy-on-write, copied or watched. */
+    /** A policy with nothing copy-on-write, copied, watched or made. */
     public SandboxPolicy(Path workdir, Path gitCommonDir, Path worktreeAdmin, List<Path> readOnly, List<Path> writable,
                          List<Path> hidden) {
-        this(workdir, gitCommonDir, worktreeAdmin, readOnly, writable, hidden, List.of(), List.of(), List.of(), List.of());
+        this(workdir, gitCommonDir, worktreeAdmin, readOnly, writable, hidden, List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of());
     }
 }

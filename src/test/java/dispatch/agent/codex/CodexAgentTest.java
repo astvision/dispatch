@@ -144,4 +144,11 @@ class CodexAgentTest {
         assertEquals(dispatch.agent.Schemas.withoutLimits(dispatch.agent.Schemas.REVIEW), schema);
         assertTrue(schema.contains("\"verdict\""), schema);
     }
+
+    /** What Codex 0.152.0 loads from its home besides config: a planted .env runs code in every command it spawns. */
+    @Test
+    void codexsLoadersIncludeItsEnvAndInstructionOverrides() {
+        assertTrue(CodexAgent.STATE.loaders().containsAll(List.of(".codex/.env", ".codex/AGENTS.override.md", ".codex/AGENTS.md",
+                ".codex/hooks.json", ".codex/config.toml")), CodexAgent.STATE.loaders().toString());
+    }
 }

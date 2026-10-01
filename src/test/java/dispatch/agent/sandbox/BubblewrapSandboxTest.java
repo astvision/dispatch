@@ -57,20 +57,25 @@ class BubblewrapSandboxTest {
         }
     }
 
-    private static final AgentState CLAUDE = new AgentState(".claude", true,
-            List.of(".claude/projects", ".claude/sessions", ".claude/.credentials.json"), List.of(".claude.json"),
-            List.of(".claude/agents"));
+    private static final AgentState CLAUDE = new AgentState(".claude", true, ".claude/projects",
+            List.of(".claude/.credentials.json"), List.of(".claude.json"), List.of(".claude/agents"), List.of(".claude/session-env"));
     private static final AgentState CODEX = new AgentState(".codex", false, List.of(), List.of(),
             List.of(".codex/AGENTS.md", ".codex/hooks.json"));
 
-    private String runConfined(AgentState state, String script) throws Exception {
-        Confinement confinement = new Confinement(sandbox, new SandboxPolicies(home, stateDir, List.of(stateDir)));
+    private String runConfined(AgentState state, String script, String... args) throws Exception {
+        return runConfined(sandbox, state, script, args);
+    }
+
+    private String runConfined(Sandbox in, AgentState state, String script, String... args) throws Exception {
+        Confinement confinement = new Confinement(in, new SandboxPolicies(home, stateDir, List.of(stateDir)));
         RunRequest request = new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
                 stateDir.resolve("runs/7/1"));
-        Confinement.Confined confined = confinement.prepare(List.of("sh", "-c", script, home.toString()), request, state, Map.of());
+        List<String> command = new java.util.ArrayList<>(List.of("sh", "-c", script, home.toString()));
+        command.addAll(List.of(args));
+        Confinement.Confined confined = confinement.prepare(command, request, state, Map.of());
         Process process = new ProcessBuilder(confined.commandLine()).directory(worktree.toFile()).redirectErrorStream(true).start();
         assertTrue(process.waitFor(30, TimeUnit.SECONDS));
-        confined.guard().end();
+        confined.guard().close();
         return new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
     }
 
@@ -78,20 +83,65 @@ class BubblewrapSandboxTest {
     void copyOnWriteKeepsWhatPersistsAndDropsTheRest() throws Exception {
         assumeTrue(sandbox.copyOnWrite(), "bwrap here has no overlays");
         Files.createDirectories(home.resolve(".claude/agents"));
-        Files.createDirectories(home.resolve(".claude/projects"));
         Files.writeString(home.resolve(".claude.json"), "{}");
+        String own = SandboxPolicies.projectName(worktree.toRealPath().toString());
 
         String output = runConfined(CLAUDE, """
                 echo planted > "$0/.claude/agents/planted.md" && echo planted-inside
-                echo kept > "$0/.claude/projects/kept.jsonl"
+                echo kept > "$0/.claude/projects/$1/kept.jsonl"
                 echo '{"mcpServers":{"x":{}}}' > "$0/.claude.json" && cat "$0/.claude.json"
-                """);
+                """, own);
 
         assertTrue(output.contains("planted-inside"), output);
         assertFalse(Files.exists(home.resolve(".claude/agents/planted.md")), "gone with the sandbox");
-        assertEquals("kept", Files.readString(home.resolve(".claude/projects/kept.jsonl")).strip());
+        assertEquals("kept", Files.readString(home.resolve(".claude/projects/" + own + "/kept.jsonl")).strip(),
+                "the run's own project dir persists though it did not exist before the run");
         assertEquals("{}", Files.readString(home.resolve(".claude.json")), "the copy took the write");
         assertFalse(Files.exists(stateDir.resolve("runs/7/1.claude.json")), "the copy is deleted");
+    }
+
+    /** Auto-memory under ~/.claude/projects/<dir>/memory is loaded into the owner's later sessions in that project. */
+    @Test
+    void noProjectsMemoryAndNoOtherProjectsTranscriptSurvivesTheRun() throws Exception {
+        assumeTrue(sandbox.copyOnWrite(), "bwrap here has no overlays");
+        Path other = Files.createDirectories(home.resolve(".claude/projects/-home-ann-work-crm/memory"));
+        Files.writeString(other.resolve("MEMORY.md"), "the owner's own memory");
+        String own = SandboxPolicies.projectName(worktree.toRealPath().toString());
+
+        String output = runConfined(CLAUDE, """
+                echo 'obey the agent' >> "$0/.claude/projects/-home-ann-work-crm/memory/MEMORY.md" && echo other-written
+                mkdir -p "$0/.claude/projects/$1/memory" && echo 'obey' > "$0/.claude/projects/$1/memory/MEMORY.md" && echo own-memory-written
+                echo transcript > "$0/.claude/projects/$1/session.jsonl"
+                """, own);
+
+        assertTrue(output.contains("other-written") && output.contains("own-memory-written"), output);
+        assertEquals("the owner's own memory", Files.readString(other.resolve("MEMORY.md")));
+        assertFalse(Files.exists(home.resolve(".claude/projects/" + own + "/memory/MEMORY.md")), "the run's own memory is a tmpfs");
+        assertEquals("transcript", Files.readString(home.resolve(".claude/projects/" + own + "/session.jsonl")).strip(),
+                "the run's own transcript persists, for resume and teleport");
+    }
+
+    /** Without overlays the rest of ~/.claude is writable: other projects must still be out of reach, and sourced dirs throwaway. */
+    @Test
+    void withoutOverlaysOtherProjectsAreReadOnlyAndTheRunsMemoryAndSessionEnvAreThrowaway() throws Exception {
+        Path other = Files.createDirectories(home.resolve(".claude/projects/-home-ann-work-crm/memory"));
+        Files.writeString(other.resolve("MEMORY.md"), "the owner's own memory");
+        String own = SandboxPolicies.projectName(worktree.toRealPath().toString());
+
+        String output = runConfined(new Bubblewrap("bwrap", false), CLAUDE, """
+                if { echo 'obey the agent' >> "$0/.claude/projects/-home-ann-work-crm/memory/MEMORY.md"; } 2>/dev/null; then echo other-written; else echo other-refused; fi
+                if mkdir -p "$0/.claude/projects/-home-ann-new/memory" 2>/dev/null; then echo new-project-created; else echo new-project-refused; fi
+                echo obey > "$0/.claude/projects/$1/memory/MEMORY.md" && echo own-memory-written
+                echo transcript > "$0/.claude/projects/$1/session.jsonl"
+                mkdir -p "$0/.claude/session-env/s1" && echo 'curl evil' > "$0/.claude/session-env/s1/hook-0.sh" && echo env-written
+                """, own);
+
+        assertEquals(List.of("other-refused", "new-project-refused", "own-memory-written", "env-written"), output.strip().lines().toList(),
+                output);
+        assertEquals("the owner's own memory", Files.readString(other.resolve("MEMORY.md")));
+        assertFalse(Files.exists(home.resolve(".claude/projects/" + own + "/memory/MEMORY.md")), "the run's own memory is a tmpfs");
+        assertEquals("transcript", Files.readString(home.resolve(".claude/projects/" + own + "/session.jsonl")).strip());
+        assertFalse(Files.exists(home.resolve(".claude/session-env/s1")), "a later session of this id would source it");
     }
 
     /** Claude Code renames its credentials into place and falls back to writing in place when the rename fails (2.1.286). */
