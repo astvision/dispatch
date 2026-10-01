@@ -68,7 +68,7 @@ in each file and why.
 | `systematic-debugging` with `root-cause-tracing.md`, `defense-in-depth.md`, `condition-based-waiting.md` | `skills/systematic-debugging` | plan (a bug: investigation only), fix | "Discuss with your human partner before attempting more fixes" becomes: stop, keep the change as it is, and say in the summary which root cause is unresolved. The skill-authoring files (`test-pressure-*.md`, `test-academic.md`, `CREATION-LOG.md`) and `find-polluter.sh` are left out |
 | `verification-before-completion` | `skills/verification-before-completion` | execute, fix | Copied as it is |
 | `receiving-code-review` | `skills/receiving-code-review` | fix after blocking review findings | "Push back to your human partner" becomes: check each finding against the code; do not change code for a finding you have shown is wrong, and say why in the summary |
-| `code-reviewer` | `skills/requesting-code-review/code-reviewer.md` | review | Rewritten as a skill for a read-only reviewer: no subagents, no git commands that change anything, judge behaviour the plan is silent on by what a reasonable user expects, and answer only through Dispatch's review schema, Critical and Important as `blocking`, Minor as `minor` |
+| `code-reviewer` | `skills/requesting-code-review/code-reviewer.md` | review | Rewritten as a skill for a read-only reviewer: no subagents, no git commands that change anything, judge behaviour the plan is silent on by what a reasonable user expects, and answer only through Dispatch's review schema: `blocking` for what makes the change wrong, unsafe, broken or short of the plan (the review prompt's own rule), `minor` for the rest |
 
 A skill costs its one-line description in every run and its full text (about 1,000 to 2,500 tokens) only in a run that
 invokes it. Updating the set is a commit that copies a newer upstream version, re-applies the adaptations and updates
@@ -138,7 +138,7 @@ cover the change, which is what the execution paragraph asks for.
 | `Prompts` | The five notes; the "Speed matters" paragraphs in `PLAN_FORMAT` and `EXECUTE_RULES` |
 | `ClaudeCodeAgent` | `--plugin-dir` per entry; `Skill` in `--tools` for plan, execute and review when there is one |
 | `SandboxPolicies` | `pluginDirs` read-only |
-| `StreamParser` (Claude) | Logs `agent.skill skill=<name> run=<log base>` for each top-level `Skill` call; the log base (`runs/<task>/<seq>[.fix-N\|.review]`) names the task, the run and the step |
+| `StreamParser` (Claude) | Logs `agent.skill skill=<name> run=<log base>` for each top-level `Skill` call, and `agent.plugin_errors` when the init event reports any; the log base (`runs/<task>/<seq>[.fix-N\|.review]`) names the task, the run and the step |
 
 ## Errors
 
@@ -146,8 +146,10 @@ cover the change, which is what the execution paragraph asks for.
   assistant's home.
 - **The plugin dir is missing when a run starts.** The run fails as `SETUP`: `skills plugin missing at <dir>; restart
   Dispatch`. Running on would send a prompt that names skills the agent cannot find.
-- **Claude Code too old for `--plugin-dir`.** The run fails as `AGENT` with Claude Code's own message; the README names
-  the minimum version, the first that has `--plugin-dir`.
+- **Claude Code too old for `--plugin-dir`.** The run fails as `AGENT` with Claude Code's own message. The README names
+  the minimum, 2.1.76, from which `--plugin-dir` takes one directory as Dispatch passes it (verified on 2.1.286).
+- **The plugin does not load** (a broken manifest). Claude Code reports it in the init event's `plugin_errors`; the parser
+  logs it as `agent.plugin_errors` (WARN) with the run, and the run goes on without the skills.
 - **The agent does not invoke a skill it was told to.** Nothing fails; the run has no `agent.skill` line for it.
 - **A skill would make the agent wait for a person.** Prevented by the adaptations and a test over the bundled text; the
   prompts keep saying that nobody can answer questions.
@@ -170,7 +172,8 @@ cover the change, which is what the execution paragraph asks for.
 - **`Coordinator`:** `skills` is true only for a Claude Code project with skills on, and absent from the JSON otherwise.
 - **`JobRunner` and `VerifyLoop`:** each kind gets its note and the plugin dir when on, neither when off; a missing dir
   fails the run as `SETUP` without starting the agent.
-- **`StreamParser`:** a `Skill` tool call logs `agent.skill` with the skill's name.
+- **`StreamParser`:** a `Skill` tool call logs `agent.skill` with the skill's name, a subagent's does not, and an init
+  event with `plugin_errors` logs `agent.plugin_errors`.
 - **`Prompts`:** plan and correction prompts contain the plan's "Speed matters" paragraph; execution, retry and follow-up
   prompts the execution's; the review, fix, split and assistant prompts contain neither.
 - **Live, opt-in** (`DISPATCH_LIVE_CLAUDE=1 ./mvnw test -Dtest=LiveSkillsTest`): an execution in a scratch repository with
