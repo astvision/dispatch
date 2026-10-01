@@ -335,6 +335,13 @@ class AppTest {
         assertEquals(java.util.Optional.empty(), dispatch.ui.DeskFile.read(config.stateDir()));
     }
 
+    @Test
+    void aPersonalBotWritesTheSkillsPluginItsRunsLoad() {
+        app = start();
+
+        assertTrue(Files.isRegularFile(config.stateDir().resolve("plugins/dispatch/.claude-plugin/plugin.json")));
+    }
+
     private App start() {
         return start((group, member) -> {
             throw new AssertionError("no one joins in this test");

@@ -1,7 +1,6 @@
 package dispatch.core;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -29,8 +28,6 @@ public final class AssistantHome {
     public static final String PROJECTS_VARIABLE = "DISPATCH_ASK_PROJECTS";
     public static final String DATABASE_VARIABLE = "DISPATCH_ASK_DB";
     public static final String ADMIN_VARIABLE = "DISPATCH_ASK_ADMIN";
-    /** The resources that make up the home, relative to {@code /assistant/} on the classpath. */
-    private static final String FILE_LIST = "files.txt";
 
     private final Path dir;
     private final Path database;
@@ -75,9 +72,7 @@ public final class AssistantHome {
 
     /** Writes CLAUDE.md and the skill over whatever an older Dispatch left there. */
     public void install() {
-        for (String file : resource(FILE_LIST).lines().map(String::strip).filter(line -> !line.isEmpty()).toList()) {
-            write(dir.resolve(file), resource(file));
-        }
+        BundledFiles.copy("/assistant", dir);
     }
 
     /**
@@ -125,14 +120,4 @@ public final class AssistantHome {
         }
     }
 
-    private static String resource(String name) {
-        try (InputStream in = AssistantHome.class.getResourceAsStream("/assistant/" + name)) {
-            if (in == null) {
-                throw new IllegalStateException("resource missing: /assistant/" + name);
-            }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
 }

@@ -17,6 +17,7 @@ import dispatch.cli.ServiceCommand;
 import dispatch.cli.Terminal;
 import dispatch.config.ConfigException;
 import dispatch.core.ActiveRuns;
+import dispatch.core.SkillsPlugin;
 import dispatch.workspace.Delivery;
 import dispatch.workspace.Gh;
 import dispatch.workspace.Git;
@@ -143,6 +144,13 @@ public final class WorkerCommand {
             return 1;
         }
         try {
+            try {
+                // This computer runs its member's agents, which load the vetted skills from here (spec: agent skills).
+                SkillsPlugin.install(workspaces.skillsPluginDir());
+            } catch (java.io.UncheckedIOException e) {
+                out.println(e.getMessage());
+                return 1;
+            }
             WorkerClient client = new WorkerClient(HttpClient.newHttpClient(), URI.create(config.team()), key);
             WorkerClient.Setup setup;
             try {

@@ -107,6 +107,14 @@ public final class Workspaces {
         return stateDir.resolve("runs").resolve(Long.toString(taskId)).resolve(Integer.toString(seq));
     }
 
+    /**
+     * The dispatch skills plugin Claude Code's runs load (spec: agent skills). Hidden from agents with the rest of the
+     * state dir; each run's sandbox binds it back read-only.
+     */
+    public Path skillsPluginDir() {
+        return stateDir.resolve("plugins").resolve("dispatch");
+    }
+
     /** Empty when tasks can run. The clone is Dispatch's own ({@link #cloneMissing}), or the developer's (ADR 0014). */
     public Optional<String> unavailableReason(Config.Project project) {
         Path repo = repo(project);

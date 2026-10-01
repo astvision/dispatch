@@ -134,4 +134,24 @@ class WorkerCommandTest extends WorkerApiFixture {
             assertTrue(printed.contains("already holds"), printed);
         }
     }
+
+    @Test
+    void aWorkerWritesTheSkillsPluginBeforeItContactsTheTeam() throws Exception {
+        Path workerFile = dir.resolve("worker.yaml");
+        Path stateDir = dir.resolve("worker-state");
+        Files.writeString(workerFile, """
+                team: https://127.0.0.1:9
+                name: ann-laptop
+                stateDir: %s
+                """.formatted(stateDir));
+        SecretsFile.write(SecretsFile.beside(workerFile), Map.of(WorkerCommand.KEY_VARIABLE, "some-key"));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        int status = new WorkerCommand(new PrintStream(out, true, StandardCharsets.UTF_8))
+                .run(new Cli.WorkerRun(workerFile, null), Map.of());
+
+        assertEquals(1, status, out.toString(StandardCharsets.UTF_8));
+        assertTrue(out.toString(StandardCharsets.UTF_8).contains("cannot reach"), out.toString(StandardCharsets.UTF_8));
+        assertTrue(Files.isRegularFile(stateDir.resolve("plugins/dispatch/.claude-plugin/plugin.json")));
+    }
 }

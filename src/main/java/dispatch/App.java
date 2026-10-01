@@ -15,6 +15,7 @@ import dispatch.core.AssistantActions;
 import dispatch.core.AssistantHome;
 import dispatch.core.Coordinator;
 import dispatch.core.DraftExpiry;
+import dispatch.core.SkillsPlugin;
 import dispatch.core.Sweeper;
 import dispatch.core.GroupLinks;
 import dispatch.core.Groups;
@@ -119,6 +120,10 @@ public final class App {
         // Team mode never runs a task's agent or holds a worktree here; each member's own computer does (ADR 0021).
         (config.workers() == null ? workspaces.createDirectories() : workspaces.createTeamDirectories())
                 .ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));
+        if (config.workers() == null) {
+            // This machine runs the tasks' agents, which load the vetted skills from here (spec: agent skills).
+            SkillsPlugin.install(workspaces.skillsPluginDir());
+        }
         Database db = Database.open(stateDir.resolve("dispatch.db"));
         db.migrate();
         com.fasterxml.jackson.databind.JsonNode me = api.getMe();
