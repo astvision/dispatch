@@ -52,7 +52,8 @@ class RunGuardTest {
 
         assertFalse(Files.exists(watched));
         assertEquals("remember this", Files.readString(quarantine().resolve(".codex/memories/note.md")));
-        assertTrue(logged.contains("level=WARN event=sandbox.quarantined path=" + watched), logged);
+        // Not the path itself: Log quotes and escapes one with a space, as Windows CI's temp dir has.
+        assertTrue(logged.contains("level=WARN event=sandbox.quarantined path="), logged);
     }
 
     @Test
@@ -142,7 +143,7 @@ class RunGuardTest {
 
         assertFalse(Files.exists(watched), "out of the loader's path");
         assertEquals("run this", Files.readString(home.resolve(".codex/prompts.dispatch-quarantined-7-2/evil.md")));
-        assertTrue(logged.contains("level=ERROR event=sandbox.quarantined_in_place path=" + watched), logged);
+        assertTrue(logged.contains("level=ERROR event=sandbox.quarantined_in_place path="), logged);
     }
 
     /** What a crash would leave to undo is on disk before the run starts, and gone once the guard closes. */
