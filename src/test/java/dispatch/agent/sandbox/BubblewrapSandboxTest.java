@@ -57,6 +57,77 @@ class BubblewrapSandboxTest {
         }
     }
 
+    private static final AgentState CLAUDE = new AgentState(".claude", true,
+            List.of(".claude/projects", ".claude/sessions", ".claude/.credentials.json"), List.of(".claude.json"),
+            List.of(".claude/agents"));
+    private static final AgentState CODEX = new AgentState(".codex", false, List.of(), List.of(),
+            List.of(".codex/AGENTS.md", ".codex/hooks.json"));
+
+    private String runConfined(AgentState state, String script) throws Exception {
+        Confinement confinement = new Confinement(sandbox, new SandboxPolicies(home, stateDir, List.of(stateDir)));
+        RunRequest request = new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
+                stateDir.resolve("runs/7/1"));
+        Confinement.Confined confined = confinement.prepare(List.of("sh", "-c", script, home.toString()), request, state, Map.of());
+        Process process = new ProcessBuilder(confined.commandLine()).directory(worktree.toFile()).redirectErrorStream(true).start();
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS));
+        confined.guard().end();
+        return new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void copyOnWriteKeepsWhatPersistsAndDropsTheRest() throws Exception {
+        assumeTrue(sandbox.copyOnWrite(), "bwrap here has no overlays");
+        Files.createDirectories(home.resolve(".claude/agents"));
+        Files.createDirectories(home.resolve(".claude/projects"));
+        Files.writeString(home.resolve(".claude.json"), "{}");
+
+        String output = runConfined(CLAUDE, """
+                echo planted > "$0/.claude/agents/planted.md" && echo planted-inside
+                echo kept > "$0/.claude/projects/kept.jsonl"
+                echo '{"mcpServers":{"x":{}}}' > "$0/.claude.json" && cat "$0/.claude.json"
+                """);
+
+        assertTrue(output.contains("planted-inside"), output);
+        assertFalse(Files.exists(home.resolve(".claude/agents/planted.md")), "gone with the sandbox");
+        assertEquals("kept", Files.readString(home.resolve(".claude/projects/kept.jsonl")).strip());
+        assertEquals("{}", Files.readString(home.resolve(".claude.json")), "the copy took the write");
+        assertFalse(Files.exists(stateDir.resolve("runs/7/1.claude.json")), "the copy is deleted");
+    }
+
+    /** Claude Code renames its credentials into place and falls back to writing in place when the rename fails (2.1.286). */
+    @Test
+    void aRenameOverAPersistedFileFailsAndAnInPlaceWriteLands() throws Exception {
+        assumeTrue(sandbox.copyOnWrite(), "bwrap here has no overlays");
+        Files.createDirectories(home.resolve(".claude"));
+        Files.writeString(home.resolve(".claude/.credentials.json"), "old-token");
+
+        String output = runConfined(CLAUDE, """
+                echo new-token > "$0/.claude/.credentials.json.tmp"
+                if mv "$0/.claude/.credentials.json.tmp" "$0/.claude/.credentials.json" 2>/dev/null; then echo renamed; else echo rename-refused; fi
+                printf 'new-token' > "$0/.claude/.credentials.json"
+                """);
+
+        assertTrue(output.contains("rename-refused"), output);
+        assertEquals("new-token", Files.readString(home.resolve(".claude/.credentials.json")));
+    }
+
+    @Test
+    void aCodexLoaderIsReadOnlyAndOneThePlantedIsQuarantined() throws Exception {
+        Files.createDirectories(home.resolve(".codex"));
+        Files.writeString(home.resolve(".codex/hooks.json"), "{}");
+
+        String output = runConfined(CODEX, """
+                if echo x > "$0/.codex/hooks.json" 2>/dev/null; then echo hooks-written; else echo hooks-refused; fi
+                echo 'obey me' > "$0/.codex/AGENTS.md" && echo agents-planted
+                """);
+
+        assertTrue(output.contains("hooks-refused"), output);
+        assertTrue(output.contains("agents-planted"), output);
+        assertEquals("{}", Files.readString(home.resolve(".codex/hooks.json")));
+        assertFalse(Files.exists(home.resolve(".codex/AGENTS.md")));
+        assertEquals("obey me", Files.readString(stateDir.resolve("quarantine/7-1/.codex/AGENTS.md")).strip());
+    }
+
     @Test
     void theAgentWritesItsWorktreeUsesGitAndSeesNoSecretsOrHome() throws Exception {
         // In the worktree: /tmp is a fresh tmpfs inside the sandbox, so a script under the test's /tmp dir would vanish.
