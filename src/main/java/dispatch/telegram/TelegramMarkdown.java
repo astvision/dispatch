@@ -48,32 +48,31 @@ final class TelegramMarkdown {
     private static String line(String raw) {
         Matcher heading = HEADING.matcher(raw);
         if (heading.matches()) {
-            // Already bold: its own ** would nest a tag in a tag.
-            return "<b>" + inline(heading.group(1), false) + "</b>";
+            // Plain bold text: Telegram does not take code inside bold, and a refused message would lose the answer.
+            return "<b>" + escape(heading.group(1).replace("**", "").replace("`", "")) + "</b>";
         }
         Matcher bullet = BULLET.matcher(raw);
         if (bullet.lookingAt()) {
-            return bullet.group(1) + "• " + inline(raw.substring(bullet.end()), true);
+            return bullet.group(1) + "• " + inline(raw.substring(bullet.end()));
         }
-        return inline(raw, true);
+        return inline(raw);
     }
 
     /** Inline code first, so nothing inside it reads as bold. */
-    private static String inline(String raw, boolean bold) {
+    private static String inline(String raw) {
         StringBuilder html = new StringBuilder();
         Matcher code = INLINE_CODE.matcher(raw);
         int last = 0;
         while (code.find()) {
-            html.append(prose(raw.substring(last, code.start()), bold)).append("<code>").append(escape(code.group(1)))
+            html.append(prose(raw.substring(last, code.start()))).append("<code>").append(escape(code.group(1)))
                     .append("</code>");
             last = code.end();
         }
-        return html.append(prose(raw.substring(last), bold)).toString();
+        return html.append(prose(raw.substring(last))).toString();
     }
 
-    private static String prose(String raw, boolean bold) {
-        String escaped = escape(raw);
-        return bold ? BOLD.matcher(escaped).replaceAll("<b>$1</b>") : escaped;
+    private static String prose(String raw) {
+        return BOLD.matcher(escape(raw)).replaceAll("<b>$1</b>");
     }
 
     private static String escape(String text) {

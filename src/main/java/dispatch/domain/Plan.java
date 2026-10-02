@@ -128,7 +128,10 @@ public record Plan(String understanding, List<String> findings, List<String> ste
             decision.alternatives().forEach(alternatives::add);
         }
         plugins.forEach(json.putArray("plugins")::add);
-        json.put("result", result.json()).put("answer", answer);
+        if (result == Result.ANSWER) {
+            // Only an answer says so: a plan stays readable by a jar from before answers, which a rollback runs.
+            json.put("result", result.json()).put("answer", answer);
+        }
         return json.toString();
     }
 

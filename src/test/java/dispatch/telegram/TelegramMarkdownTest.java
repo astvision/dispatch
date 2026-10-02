@@ -58,4 +58,9 @@ class TelegramMarkdownTest {
     private static int count(String text, String part) {
         return text.split(java.util.regex.Pattern.quote(part), -1).length - 1;
     }
+
+    @Test
+    void aHeadingIsPlainBoldTextWithoutTagsInsideIt() {
+        assertEquals("<b>Fix in List&lt;X&gt; and Y</b>", TelegramMarkdown.toHtml("## Fix in `List<X>` and **Y**"));
+    }
 }

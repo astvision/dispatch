@@ -361,6 +361,22 @@ class OutboxSenderTest {
     }
 
     @Test
+    void aPersonalTasksAnswerRenamesItsTopicAsFinished() throws Exception {
+        long personal = task("NORMAL");
+        db.transaction(tx -> tx.update("""
+                UPDATE task SET origin_ref = 'telegram:100/4', topic_ref = '500', phase = 'COMPLETED', chat_ref = 'telegram:100'
+                WHERE id = ?""", personal));
+        enqueueFor(personal, OutboxKind.ANSWER_READY, "telegram:100", "telegram:100/5", Json.object().put("taskId", personal)
+                .put("project", "life").put("answer", "Because.").put("costUsd", "0.1").put("durationSeconds", 60));
+
+        sender.deliverDue();
+
+        JsonNode renamed = telegram.awaitRequest("editForumTopic", Duration.ofSeconds(1)).json();
+        assertEquals(500, renamed.get("message_thread_id").asLong(), "a personal task has no group line: its answer renames it");
+    }
+
+
+    @Test
     void finishedTasksTopicIsRenamedWithItsOutcome() throws Exception {
         long taskId = task("NORMAL");
         db.transaction(tx -> tx.update("UPDATE task SET topic_ref = '500', phase = 'COMPLETED' WHERE id = ?", taskId));

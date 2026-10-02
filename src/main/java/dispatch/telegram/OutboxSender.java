@@ -35,7 +35,8 @@ public final class OutboxSender implements Runnable {
      * group's task, the full result for a personal bot's task (ADR 0014). Copies sent elsewhere do not rename it again.
      */
     private static final Set<OutboxKind> OUTCOMES = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_FAILED,
-            OutboxKind.TASK_COMPLETED_SHORT, OutboxKind.TASK_FAILED_SHORT, OutboxKind.TASK_REJECTED, OutboxKind.TASK_CANCELLED);
+            OutboxKind.TASK_COMPLETED_SHORT, OutboxKind.TASK_FAILED_SHORT, OutboxKind.TASK_REJECTED, OutboxKind.TASK_CANCELLED,
+            OutboxKind.ANSWER_READY);
     /** Telegram's fixed topic colors: red, yellow, green. */
     private static final Map<Priority, Integer> TOPIC_COLORS = Map.of(Priority.URGENT, 0xFB6F5F, Priority.NORMAL, 0xFFD67E,
             Priority.LOW, 0x8EEE98);

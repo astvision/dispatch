@@ -57,7 +57,8 @@ in `required`):
 - with `PLAN`, keeps today's rules and ignores `answer`;
 - refuses any other `result` as an invalid plan.
 
-`toJson` writes both fields.
+`toJson` writes both fields only for an answer, so a plan stays readable by a jar from before this change (found in
+the final review: a rollback would otherwise strand every plan made after the upgrade).
 
 `Prompts.PLAN_FORMAT`, which both the plan prompt and the correction prompt end with, gains:
 
@@ -142,7 +143,7 @@ The timeline shows `💬 Хариулсан` for the "answered" event.
 - **Privacy:** answers may hold data from the owner's databases or logs, so they go to the requester only.
 - **Upgrade together:** a team machine from before this version refuses a plan with `result` and `answer` from a newer
   worker; a newer team machine's plan jobs are unchanged for older workers. A rollback to an older jar cannot read
-  plans stored after the upgrade.
+  an answered task; plans stay readable.
 
 ## Testing
 

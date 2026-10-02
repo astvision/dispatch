@@ -232,4 +232,12 @@ class PlanTest {
         assertTrue(schema.path("required").toString().contains("\"answer\""), schema.toString());
         assertEquals("[\"plan\",\"answer\"]", schema.path("properties").path("result").path("enum").toString());
     }
+
+    @Test
+    void aPlansStoredJsonHasNoAnswerFieldsSoAnOlderJarStillReadsIt() {
+        String json = new Plan("u", List.of(), List.of("s"), List.of(), List.of()).toJson();
+
+        assertFalse(json.contains("\"result\""), json);
+        assertFalse(json.contains("\"answer\""), json);
+    }
 }
