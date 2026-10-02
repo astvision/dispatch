@@ -46,10 +46,11 @@ case "$prompt" in
     exit 0
     ;;
   *SCENARIO:wrong-mode*)
-    # What Claude Code does when the model has no auto mode: it starts anyway, in default mode.
-    printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-session","permissionMode":"default"}'
+    # What Claude Code does when the model has no auto mode: it starts anyway, in default mode. The child is recorded
+    # first: Dispatch stops the run as soon as it reads the init line, which on a slow machine came before the record.
     sleep 300 &
     echo $! > fake-claude.child
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-session","permissionMode":"default"}'
     wait
     ;;
   *)
