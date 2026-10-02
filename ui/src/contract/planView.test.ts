@@ -11,10 +11,13 @@ const PLAN: Record<keyof PlanView, true> = {
 const QUESTION: Record<keyof PlanQuestionView, true> = { index: true, text: true, options: true, answer: true };
 const DECISION: Record<keyof PlanDecisionView, true> = { text: true, chosen: true, alternatives: true };
 
+// tsc checks every field's type here, not only its name; JSON has no literal types, so result is narrowed by hand.
+const typed: PlanView = { ...golden, result: golden.result as PlanView["result"] };
+
 const fields = (value: object) => Object.keys(value).sort();
 
 test("the server's plan view has exactly the fields the pages are typed against", () => {
-  expect(fields(golden)).toEqual(fields(PLAN));
+  expect(fields(typed)).toEqual(fields(PLAN));
   expect(fields(golden.questions[0])).toEqual(fields(QUESTION));
   expect(fields(golden.decisions[0])).toEqual(fields(DECISION));
 });

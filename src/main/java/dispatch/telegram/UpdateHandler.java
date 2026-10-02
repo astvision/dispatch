@@ -263,7 +263,7 @@ public final class UpdateHandler {
                 continue;
             }
             ObjectNode payload = Json.object().put("chatId", newChatId).put("title", closed.title()).put("status", "MOVED");
-            Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+            Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, redactor.redactJson(payload));
             tx.afterCommit(() -> bestEffort("editMessageText",
                     () -> api.editMessageText(closed.sentTo(), closed.messageId(), redrawn.html(), redrawn.keyboard())));
         }
@@ -779,7 +779,7 @@ public final class UpdateHandler {
         String planRef = Refs.message(chatId, message.path("message_id").asLong(), null);
         Optional<ObjectNode> plan = Outbox.findSent(tx, planRef)
                 .filter(sent -> sent.kind() == OutboxKind.PLAN_READY)
-                .map(sent -> (ObjectNode) Json.read(redactor.redact(sent.payload())));
+                .map(sent -> (ObjectNode) redactor.redactJson(Json.read(sent.payload())));
         if (plan.isEmpty()) {
             answer(tx, callbackId, "callback.unknown");
             return;
@@ -831,7 +831,7 @@ public final class UpdateHandler {
     /** The corrected plan's message says what it was corrected with, and loses its buttons while the agent plans again. */
     private void showCorrected(Tx tx, String planRef, String correction) {
         Outbox.findSent(tx, planRef).filter(sent -> sent.kind() == OutboxKind.PLAN_READY).ifPresent(sent -> redrawPlan(tx, planRef,
-                ((ObjectNode) Json.read(redactor.redact(sent.payload()))).put("view", "updating").put("correction", correction)));
+                ((ObjectNode) redactor.redactJson(Json.read(sent.payload()))).put("view", "updating").put("correction", correction)));
     }
 
     private void redrawPlan(Tx tx, String planRef, ObjectNode payload) {
@@ -1004,7 +1004,7 @@ public final class UpdateHandler {
             return;
         }
         ObjectNode payload = tasks.draftPayload(tx, draftId).orElseThrow();
-        Renderer.Rendered prompt = renderer.render(OutboxKind.DRAFT_PROMPT, Json.read(redactor.redact(payload.toString())));
+        Renderer.Rendered prompt = renderer.render(OutboxKind.DRAFT_PROMPT, redactor.redactJson(payload));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, prompt.html(), prompt.keyboard())));
     }
 
@@ -1034,7 +1034,7 @@ public final class UpdateHandler {
         payload.withArray("actions").forEach(action -> ids.add(action.path("id").asLong()));
         Map<Long, String> taken = Conversations.outcomes(tx, ids);
         payload.withArray("actions").forEach(action -> ((ObjectNode) action).put("outcome", taken.get(action.path("id").asLong())));
-        Renderer.Rendered redrawn = renderer.render(OutboxKind.ASSISTANT_REPLY, Json.read(redactor.redact(payload.toString())));
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.ASSISTANT_REPLY, redactor.redactJson(payload));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard())));
     }
 
@@ -1103,7 +1103,7 @@ public final class UpdateHandler {
         long chatId = message.path("chat").path("id").asLong();
         long messageId = message.path("message_id").asLong();
         ObjectNode payload = membership.requestPayload(tx, requestId).orElseThrow();
-        Renderer.Rendered redrawn = renderer.render(OutboxKind.JOIN_REQUEST, Json.read(redactor.redact(payload.toString())));
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.JOIN_REQUEST, redactor.redactJson(payload));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard())));
     }
 
@@ -1126,7 +1126,7 @@ public final class UpdateHandler {
         }
         answer(tx, callbackId, "callback.done");
         long messageId = message.path("message_id").asLong();
-        Renderer.Rendered stats = renderer.render(OutboxKind.STATS, Json.read(redactor.redact(payload.get().toString())));
+        Renderer.Rendered stats = renderer.render(OutboxKind.STATS, redactor.redactJson(payload.get()));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, stats.html(), stats.keyboard())));
     }
 
@@ -1144,7 +1144,7 @@ public final class UpdateHandler {
         boolean privateChat = isPrivateChatOf(message.path("chat"), callback.path("from"));
         TaskAccess.Viewer viewer = privateChat ? access.member(who.ref()) : access.chat(Refs.chat(chatId));
         ObjectNode payload = tasks.statusPayload(tx, viewer);
-        Renderer.Rendered status = renderer.render(OutboxKind.STATUS, Json.read(redactor.redact(payload.toString())));
+        Renderer.Rendered status = renderer.render(OutboxKind.STATUS, redactor.redactJson(payload));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> api.editMessageText(chatId, messageId, status.html(), status.keyboard())));
     }
 
@@ -1243,7 +1243,7 @@ public final class UpdateHandler {
         tx.afterCommit(() -> setGroupMenu(chatId));
         open.filter(prompt -> prompt.messageId() != null).ifPresent(prompt -> {
             ObjectNode payload = Json.object().put("chatId", chatId).put("title", prompt.title()).put("status", "LINKED").put("project", project);
-            Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+            Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, redactor.redactJson(payload));
             tx.afterCommit(() -> bestEffort("editMessageText",
                     () -> api.editMessageText(prompt.sentTo(), prompt.messageId(), redrawn.html(), redrawn.keyboard())));
         });
@@ -1303,7 +1303,7 @@ public final class UpdateHandler {
         if (miniAppUrl != null) {
             payload.put("addProject", miniAppUrl.replaceAll("/+$", "") + "/projects/add");
         }
-        return renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+        return renderer.render(OutboxKind.GROUP_LINK, redactor.redactJson(payload));
     }
 
     /**
@@ -1362,7 +1362,7 @@ public final class UpdateHandler {
         } else {
             tx.afterCommit(() -> bestEffort("leaveChat", () -> api.leaveChat(chatId)));
         }
-        Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, Json.read(redactor.redact(payload.toString())));
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.GROUP_LINK, redactor.redactJson(payload));
         JsonNode message = callback.path("message");
         long promptChatId = message.path("chat").path("id").asLong();
         long messageId = message.path("message_id").asLong();
@@ -1524,7 +1524,7 @@ public final class UpdateHandler {
             default -> payload = helpHome(tx, who, firstName(callback, who));
         }
         long messageId = message.path("message_id").asLong();
-        Renderer.Rendered redrawn = renderer.render(OutboxKind.HELP, Json.read(redactor.redact(payload.toString())));
+        Renderer.Rendered redrawn = renderer.render(OutboxKind.HELP, redactor.redactJson(payload));
         tx.afterCommit(() -> bestEffort("editMessageText", () -> {
             try {
                 api.editMessageText(chatId, messageId, redrawn.html(), redrawn.keyboard());

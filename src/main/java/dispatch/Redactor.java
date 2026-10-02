@@ -1,5 +1,9 @@
 package dispatch;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +54,27 @@ public final class Redactor {
 
     public static Redactor patternsOnly() {
         return new Redactor(List.of());
+    }
+
+    /**
+     * {@code json} with each text value masked on its own. Masking the serialized text instead lets a pattern run from one
+     * value into the next and take the field names between them away, which breaks the payload's shape.
+     */
+    public JsonNode redactJson(JsonNode json) {
+        if (json.isTextual()) {
+            return TextNode.valueOf(redact(json.asText()));
+        }
+        if (json.isObject()) {
+            ObjectNode masked = Json.object();
+            json.fields().forEachRemaining(field -> masked.set(field.getKey(), redactJson(field.getValue())));
+            return masked;
+        }
+        if (json.isArray()) {
+            ArrayNode masked = Json.MAPPER.createArrayNode();
+            json.forEach(item -> masked.add(redactJson(item)));
+            return masked;
+        }
+        return json;
     }
 
     public String redact(String text) {

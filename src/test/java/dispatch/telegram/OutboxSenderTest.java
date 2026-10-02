@@ -570,4 +570,20 @@ class OutboxSenderTest {
         }
         return logged.toString(StandardCharsets.UTF_8);
     }
+
+    /** Masked as one text, the URL pattern ran from the step's port to the risk's @ and took the field between them away. */
+    @Test
+    void aPlanWhoseTextLooksLikeAUrlCredentialAcrossTwoFieldsIsStillSent() throws Exception {
+        long taskId = task("NORMAL");
+        ObjectNode payload = planPayload(taskId);
+        ((ObjectNode) payload.get("plan")).putArray("steps").add("Open http://localhost:8080");
+        ((ObjectNode) payload.get("plan")).putArray("risks").add("ops@team.mn must approve");
+        long id = enqueueFor(taskId, OutboxKind.PLAN_READY, "telegram:100", "telegram:100/5", payload);
+
+        sender.deliverDue();
+
+        assertEquals("SENT", row(id).get("status"));
+        assertTrue(telegram.awaitRequest("sendMessage", Duration.ofSeconds(1)).json().get("text").asText()
+                .contains("Make it configurable"));
+    }
 }

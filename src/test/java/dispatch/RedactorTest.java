@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -77,5 +78,20 @@ class RedactorTest {
 
         assertEquals(text, patterns.redact(text));
         assertTrue(patterns.redact(null) == null);
+    }
+
+    @Test
+    void aMaskNeverRunsAcrossTwoValuesOfAJsonPayload() {
+        JsonNode payload = Json.read("{\"steps\":[\"Open http://localhost:8080\"],\"risks\":[\"ops@team.mn must approve\"]}");
+
+        assertFalse(patterns.redact(payload.toString()).contains("risks"), "as text, the URL pattern swallows the next field");
+        assertEquals(payload, patterns.redactJson(payload), "value by value, nothing here is a secret");
+    }
+
+    @Test
+    void aSecretInsideAJsonValueIsMaskedAndItsFieldNameKept() {
+        JsonNode payload = Json.read("{\"summary\":\"pushed with " + GITHUB_CLASSIC + "\",\"files\":[\"a\"],\"n\":3}");
+
+        assertEquals(Json.read("{\"summary\":\"pushed with [redacted]\",\"files\":[\"a\"],\"n\":3}"), patterns.redactJson(payload));
     }
 }

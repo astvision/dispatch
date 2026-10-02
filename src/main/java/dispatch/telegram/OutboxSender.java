@@ -105,7 +105,7 @@ public final class OutboxSender implements Runnable {
         Renderer.Rendered rendered;
         try {
             // Masked before rendering, so length limits apply to the text that is actually sent.
-            rendered = renderer.render(message.kind(), Json.read(redactor.redact(message.payload())), message.fellBack());
+            rendered = renderer.render(message.kind(), redactor.redactJson(Json.read(message.payload())), message.fellBack());
         } catch (RuntimeException e) {
             Log.error("outbox.render_failed", e, "id", message.id(), "kind", message.kind());
             db.transaction(tx -> Outbox.markFailed(tx, message.id(), attempts, "render failed: " + e.getMessage()));
