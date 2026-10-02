@@ -1,6 +1,7 @@
 # Claude's runs load a vetted skills plugin
 
 Builds on ADR 0032 (the sandbox) and ADR 0033 (the verify loop).
+Amended by ADR 0036: plan, execution and review runs also load the plugins and MCP servers the machine's owner lists.
 
 Claude Code's plan, execute, fix and review runs load `dispatch`, a plugin of skills that ship with Dispatch:
 test-driven-development, systematic-debugging, verification-before-completion, receiving-code-review, code-reviewer and,

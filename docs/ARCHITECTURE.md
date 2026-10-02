@@ -283,7 +283,7 @@ A sandboxed run is prepared by `Confinement.prepare`, which turns the agent's `A
 
 `ClaudeCodeAgent` passes the prompt on stdin to:
 
-| Always | `claude -p --output-format stream-json --verbose --permission-prompts none --setting-sources project,local --strict-mcp-config --max-budget-usd <b>` + (`--session-id <uuid>` on a session's first run, `--resume <uuid>` afterwards: planning runs use the task's planning session, execution runs its building session) + optional `--model` and `--effort` (a project's `plan` or `execute` block, else the project's own), `--add-dir <attachments>` |
+| Always | `claude -p --output-format stream-json --verbose --permission-prompts none --setting-sources project,local --strict-mcp-config --max-budget-usd <b>` + (`--session-id <uuid>` on a session's first run, `--resume <uuid>` afterwards: planning runs use the task's planning session, execution runs its building session) + optional `--model` and `--effort` (a project's `plan` or `execute` block, else the project's own), `--add-dir <attachments>`, and for plan, execute and review runs the owner's listed plugins (`--plugin-dir`, `--add-dir`) and MCP servers (`--mcp-config <one line of JSON>`), read again before each run (ADR 0036) |
 |---|---|
 | PLAN | `--permission-mode plan --tools Read,Bash --json-schema <plan schema, compacted to one line>` |
 | EXECUTE | `--permission-mode auto --tools Read,Edit,Write,Bash --disallowedTools "Bash(git commit *)" "Bash(git push *)" "Bash(gh *)"` |
@@ -509,7 +509,7 @@ Tests throughout: unit tests for transitions and scheduler rules; end-to-end tes
 
 1. Agents run as CLI subprocesses with the prompt on stdin. There is no SDK, because there is no Java SDK and a CLI keeps Claude Code, Codex and Gemini CLI uniform.
 2. Dispatch generates a task's planning session UUID when the task is created, and its building session UUID on the first execution run. Later runs of each phase resume that phase's session (ADR 0017).
-3. Runs load only project/local Claude settings and no MCP servers, so behaviour is the same on a laptop and a server. The repo's `CLAUDE.md` still applies. Verified in M1: the recorded runs report no plugins, no MCP servers and no personal skills; only Claude Code's built-in skills remain.
+3. Runs load only project/local Claude settings, and no plugins or MCP servers but those the machine's owner lists for its runs (ADR 0036), so behaviour does not change with what the owner enabled for their own sessions. The repo's `CLAUDE.md` still applies. Verified in M1: the recorded runs report no plugins, no MCP servers and no personal skills; only Claude Code's built-in skills remain.
 4. The agent never receives `TELEGRAM_BOT_TOKEN` or `GH_TOKEN`.
 5. Every bot message except live status edits goes through the outbox, including "queued" acks and "not allowed" replies.
 6. Approve/Reject buttons carry the plan's run seq, so buttons on a superseded plan are refused.

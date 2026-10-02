@@ -200,6 +200,13 @@ shows which a run used (`grep event=agent.skill`). Every plan and execution prom
 are on by default for Claude Code projects; `skills: off` on the instance or a project turns them off. They need Claude
 Code 2.1.76 or later. Codex and Gemini CLI projects are unchanged.
 
+A machine can add its own Claude Code plugins and MCP servers to those runs (ADR 0036): list them in `dispatch.yaml`
+under `agents.claude-code` (`plugins: [frontend-design@claude-plugins-official]`, `mcpServers: [mongodb]`) or in a
+member's `worker.yaml` (`claudePlugins`, `claudeMcpServers`). Each run reads the lists again, so an edit applies without
+a restart; something listed and missing fails the run and `dispatch check` says what to do. Nothing unlisted loads: not
+your other plugins, your claude.ai connectors, or a repository's `.mcp.json`. Listed servers run in the sandbox, which
+has no display: Playwright's server connects, but its browser cannot open a window there.
+
 ### Watch and steer a run
 
 Open a task in the Mini App and its latest run shows as a rail of steps, refreshed every 2 seconds while it runs: each
