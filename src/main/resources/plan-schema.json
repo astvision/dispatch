@@ -1,7 +1,7 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["understanding", "findings", "steps", "risks", "questions", "decisions"],
+  "required": ["understanding", "findings", "steps", "risks", "questions", "decisions", "plugins"],
   "properties": {
     "understanding": {"type": "string", "description": "What the task asks for, in your own words"},
     "findings": {"type": "array", "items": {"type": "string"}, "description": "Relevant facts from the code; for a bug, its root cause"},
@@ -43,6 +43,11 @@
           }
         }
       }
+    },
+    "plugins": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Plugins from the list in the prompt that the execution needs; empty if none"
     }
   }
 }

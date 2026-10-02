@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import dispatch.Json;
+import dispatch.agent.Schemas;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -132,5 +135,42 @@ class PlanTest {
                     "{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[],\"decisions\":[" + decision + "]}"),
                     decision);
         }
+    }
+
+    @Test
+    void picksKeepListedPluginsInTheirListedFormAndDropTheRest() {
+        Plan plan = Plan.parse("""
+                {"understanding":"u","findings":[],"steps":["s"],"risks":[],"questions":[],"decisions":[],
+                 "plugins":[" Frontend-Design ","playwright@claude-plugins-official","telegram","frontend-design",7]}""");
+
+        assertEquals(List.of("frontend-design", "playwright"), plan.plugins());
+    }
+
+    @Test
+    void aPlanStoredBeforePicksHasNone() {
+        Plan plan = Plan.parse("{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[]}");
+
+        assertEquals(List.of(), plan.plugins());
+    }
+
+    @Test
+    void picksThatAreNotAnArrayAreInvalid() {
+        assertThrows(InvalidPlanException.class, () -> Plan.parse(
+                "{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[],\"plugins\":\"playwright\"}"));
+    }
+
+    @Test
+    void picksSurviveTheStoredJson() {
+        Plan plan = new Plan("u", List.of(), List.of("s"), List.of(), List.of(), List.of(), List.of("context7"));
+
+        assertEquals(plan, Plan.parse(plan.toJson()));
+    }
+
+    @Test
+    void theSchemaRequiresPicksSoStrictOutputModesAcceptIt() {
+        JsonNode schema = Json.read(Schemas.PLAN);
+
+        assertTrue(schema.path("required").toString().contains("\"plugins\""), schema.toString());
+        assertEquals("array", schema.path("properties").path("plugins").path("type").asText());
     }
 }

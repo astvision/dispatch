@@ -5,23 +5,26 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
+import dispatch.Log;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
  * The agent's read-only analysis of a task, in the shape required by plan-schema.json. A question is an object with
  * answer options (G-1d); a plain string, as plans stored before then have it, is a question without options. Decisions
- * came later still, so a stored plan may have none.
+ * came later still, and plugin picks after them, so a stored plan may have neither.
  */
 public record Plan(String understanding, List<String> findings, List<String> steps, List<String> risks,
-                   List<PlanQuestion> questionItems, List<PlanDecision> decisions) {
+                   List<PlanQuestion> questionItems, List<PlanDecision> decisions, List<String> plugins) {
 
     public static final int MAX_OPTIONS = 4;
     public static final int MAX_OPTION_LENGTH = 40;
     public static final int MAX_ALTERNATIVES = 3;
-    private static final Set<String> FIELDS = Set.of("understanding", "findings", "steps", "risks", "questions", "decisions");
+    private static final Set<String> FIELDS = Set.of("understanding", "findings", "steps", "risks", "questions", "decisions",
+            "plugins");
 
     public Plan {
         findings = List.copyOf(findings);
@@ -29,6 +32,13 @@ public record Plan(String understanding, List<String> findings, List<String> ste
         risks = List.copyOf(risks);
         questionItems = List.copyOf(questionItems);
         decisions = List.copyOf(decisions);
+        plugins = List.copyOf(plugins);
+    }
+
+    /** A plan without plugin picks. */
+    public Plan(String understanding, List<String> findings, List<String> steps, List<String> risks,
+                List<PlanQuestion> questionItems, List<PlanDecision> decisions) {
+        this(understanding, findings, steps, risks, questionItems, decisions, List.of());
     }
 
     public Plan(String understanding, List<String> findings, List<String> steps, List<String> risks,
@@ -68,7 +78,7 @@ public record Plan(String understanding, List<String> findings, List<String> ste
             throw new InvalidPlanException("plan has neither steps nor questions");
         }
         return new Plan(understandingNode.asText(), texts(node, "findings"), steps, texts(node, "risks"), questions,
-                decisions(node));
+                decisions(node), plugins(node));
     }
 
     public String toJson() {
@@ -87,6 +97,7 @@ public record Plan(String understanding, List<String> findings, List<String> ste
                     .putArray("alternatives");
             decision.alternatives().forEach(alternatives::add);
         }
+        plugins.forEach(json.putArray("plugins")::add);
         return json.toString();
     }
 
@@ -152,6 +163,30 @@ public record Plan(String understanding, List<String> findings, List<String> ste
             decisions.add(new PlanDecision(text, buttonLabel(chosen), alternatives));
         }
         return decisions;
+    }
+
+    /**
+     * Absent in a plan stored before plugin picks. A name outside {@link CuratedPlugins} is dropped rather than the plan
+     * rejected: the agent only suggested it, and the plan works without it.
+     */
+    private static List<String> plugins(JsonNode plan) {
+        JsonNode array = plan.get("plugins");
+        if (array == null) {
+            return List.of();
+        }
+        if (!array.isArray()) {
+            throw new InvalidPlanException("plan field 'plugins' must be an array");
+        }
+        List<String> plugins = new ArrayList<>();
+        for (JsonNode item : array) {
+            Optional<String> name = CuratedPlugins.match(item.asText(""));
+            if (name.isEmpty()) {
+                Log.info("plan.plugin_dropped", "plugin", item.toString());
+            } else if (!plugins.contains(name.get())) {
+                plugins.add(name.get());
+            }
+        }
+        return plugins;
     }
 
     private static String buttonLabel(String label) {
