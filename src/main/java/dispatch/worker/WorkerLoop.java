@@ -224,7 +224,8 @@ public final class WorkerLoop implements Runnable {
         if (mine == null) {
             return Optional.empty();
         }
-        boolean claudeCode = AgentKind.of(job.project().agent()).takesAComputersOwnModel();
+        // A kind this version does not know keeps the team's model: the run then fails saying the agent is not configured here.
+        boolean claudeCode = AgentKind.find(job.project().agent()).map(AgentKind::takesAComputersOwnModel).orElse(false);
         if (!claudeCode && (mine.model() != null || mine.effort() != null)) {
             Log.warn("worker.override_ignored", "task", job.taskId(), "project", job.project().name(),
                     "agent", job.project().agent());

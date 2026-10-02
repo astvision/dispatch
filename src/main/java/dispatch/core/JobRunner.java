@@ -482,7 +482,7 @@ public final class JobRunner implements Worker {
      * plugins, so they are offered none. Package-private: JobRunnerTest reaches it directly.
      */
     static String pluginNote(Job job) {
-        return job.kind() == RunKind.PLAN && AgentKind.of(job.project().agent()).loadsPlugins() ? Prompts.PLUGIN_NOTE : "";
+        return job.kind() == RunKind.PLAN && AgentKind.find(job.project().agent()).map(AgentKind::loadsPlugins).orElse(false) ? Prompts.PLUGIN_NOTE : "";
     }
 
     /** No copyFiles here: planning needs no local secrets, and whatever the agent reads may be quoted in the group. */
