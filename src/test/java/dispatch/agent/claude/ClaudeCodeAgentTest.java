@@ -18,8 +18,12 @@ import dispatch.agent.sandbox.SandboxPolicies;
 import dispatch.agent.sandbox.SandboxPolicy;
 import dispatch.domain.RunKind;
 import dispatch.testing.FakeClaude;
+import dispatch.testing.OwnerPluginsFixture;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -40,6 +44,7 @@ import org.junit.jupiter.api.io.TempDir;
 class ClaudeCodeAgentTest {
 
     private static final UUID SESSION = UUID.fromString("0b9d2c1e-7a53-4b5e-9d1a-2f6a8e4c3b21");
+    private static final String FAKE_SECRET = "fake-connection-string-not-a-secret";
 
     @TempDir
     Path dir;
@@ -443,5 +448,80 @@ class ClaudeCodeAgentTest {
         assertEquals(dispatch.agent.Schemas.REVIEW, args.get(args.indexOf("--json-schema") + 1));
         assertEquals(reviewSession.toString(), args.get(args.indexOf("--session-id") + 1));
         assertFalse(args.contains("--resume"));
+    }
+
+    /** What Log printed while {@code action} ran. */
+    private static String capturingLog(Runnable action) {
+        PrintStream original = System.out;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(logged, true, StandardCharsets.UTF_8));
+        try {
+            action.run();
+        } finally {
+            System.setOut(original);
+        }
+        return logged.toString(StandardCharsets.UTF_8);
+    }
+
+    private ClaudeCodeAgent owning(Path config, Path home, Map<String, Path> installed) throws IOException {
+        Path claude = FakeClaude.install(Files.createDirectories(dir.resolve("owner")));
+        OwnerPluginsFixture.installed(claude, installed);
+        return new ClaudeCodeAgent(claude.toString(), FakeClaude.environment(), Duration.ofSeconds(2),
+                Confinement.none("no sandbox configured"), OwnerPlugins.instance(config, home));
+    }
+
+    @Test
+    void listedPluginsAndServersReachTheCommandLineAndAnEditReachesTheNextRun() throws Exception {
+        Path plugin = OwnerPluginsFixture.plugin(dir.resolve("cache/playwright"), "{\"playwright\": {\"command\": \"npx\"}}");
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Files.writeString(home.resolve(".claude.json"), "{\"mcpServers\": {\"mongodb\": {\"command\": \"mongodb-mcp-server\", "
+                + "\"env\": {\"MDB_MCP_CONNECTION_STRING\": \"" + FAKE_SECRET + "\"}}}}");
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    command: claude\n"
+                + "    plugins: [playwright@claude-plugins-official]\n    mcpServers: [mongodb]\n");
+        ClaudeCodeAgent owned = owning(config, home, Map.of("playwright@claude-plugins-official", plugin));
+
+        String logged = capturingLog(() -> awaitQuietly(owned.start(plan("Plan it"))));
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+
+        assertEquals(plugin.toString(), args.get(args.indexOf("--plugin-dir") + 1));
+        assertEquals(plugin.toString(), args.get(args.indexOf("--add-dir") + 1), "plan runs may read its skill files");
+        assertTrue(args.get(args.indexOf("--tools") + 1).endsWith(",Skill"), args.toString());
+        int mcp = args.indexOf("--mcp-config");
+        assertTrue(args.get(mcp + 1).contains("\"plugin_playwright_playwright\"") && args.get(mcp + 1).contains("\"mongodb\""));
+        assertTrue(args.get(mcp + 2).startsWith("--"), "a flag ends --mcp-config's values: " + args);
+        assertTrue(args.contains("--strict-mcp-config"));
+        assertFalse(logged.contains(FAKE_SECRET), "a server's credentials never reach the log");
+
+        Files.writeString(config, "agents:\n  claude-code:\n    command: claude\n");
+        awaitQuietly(owned.start(plan("Plan it")));
+        List<String> after = Files.readAllLines(workdir.resolve("fake-claude.args"));
+
+        assertFalse(after.contains("--mcp-config") || after.contains("--plugin-dir"), "emptied, no restart: " + after);
+        assertFalse(after.get(after.indexOf("--tools") + 1).contains("Skill"), after.toString());
+    }
+
+    @Test
+    void aSplitLoadsNoneOfTheOwnersPlugins() throws Exception {
+        Path plugin = OwnerPluginsFixture.plugin(dir.resolve("cache/playwright"), null);
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"),
+                "agents:\n  claude-code:\n    plugins: [playwright@claude-plugins-official]\n");
+        ClaudeCodeAgent owned = owning(config, dir, Map.of("playwright@claude-plugins-official", plugin));
+
+        awaitQuietly(owned.start(new RunRequest(RunKind.SPLIT, workdir, "fix X, add Y", null, false, List.of(), null, null,
+                null, dir.resolve("runs/split/1"))));
+
+        assertFalse(Files.readAllLines(workdir.resolve("fake-claude.args")).contains("--plugin-dir"));
+    }
+
+    @Test
+    void aListedPluginThatIsNotInstalledFailsTheRunBeforeItsAgentStarts() throws Exception {
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"),
+                "agents:\n  claude-code:\n    plugins: [frontend-design@claude-plugins-official]\n");
+        ClaudeCodeAgent owned = owning(config, dir, Map.of());
+
+        AgentStartException error = assertThrows(AgentStartException.class, () -> owned.start(plan("Plan it")));
+
+        assertTrue(error.getMessage().startsWith("claude-code plugin frontend-design@claude-plugins-official is not installed"));
+        assertFalse(Files.exists(workdir.resolve("fake-claude.args")), "the agent never started");
     }
 }

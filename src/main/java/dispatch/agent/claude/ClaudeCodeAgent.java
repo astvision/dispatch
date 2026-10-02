@@ -13,11 +13,13 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Runs Claude Code headless: {@code claude -p} with stream-json output, the prompt on stdin, and no permission prompts
- * (anything that would ask is denied). Only project/local Claude settings and no MCP servers are loaded, so a run
- * behaves the same on a laptop and on a team server.
+ * (anything that would ask is denied). Only project/local Claude settings are loaded, and only the plugins and MCP servers
+ * the machine's owner lists for Dispatch's runs (spec: owner plugins), so a run does not change with what the owner has
+ * enabled for their own sessions.
  */
 public final class ClaudeCodeAgent implements Agent {
 
@@ -30,6 +32,8 @@ public final class ClaudeCodeAgent implements Agent {
     /** Replaces Claude Code's coding prompt, which a split does not need: it would multiply the split's cost (ADR 0013). */
     private static final String SPLIT_SYSTEM_PROMPT =
             "You split a developer's chat message into independent development tasks. Answer only through the structured output.";
+    /** Runs that do the task's work; a split and an assistant turn keep only what Dispatch gives them. */
+    private static final Set<RunKind> OWNER_KINDS = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW);
 
     /**
      * What Claude Code keeps in the owner's home (spec: agent state guard); what persists, where a working dir's project
@@ -47,6 +51,7 @@ public final class ClaudeCodeAgent implements Agent {
     private final Map<String, String> environment;
     private final Duration cancelGrace;
     private final Confinement confinement;
+    private final OwnerPlugins ownerPlugins;
 
     /** @param environment the base environment for agent processes, normally {@code System.getenv()} */
     public ClaudeCodeAgent(String command, Map<String, String> environment, Duration cancelGrace) {
@@ -54,16 +59,26 @@ public final class ClaudeCodeAgent implements Agent {
     }
 
     public ClaudeCodeAgent(String command, Map<String, String> environment, Duration cancelGrace, Confinement confinement) {
+        this(command, environment, cancelGrace, confinement, OwnerPlugins.NONE);
+    }
+
+    /** @param ownerPlugins what this machine's owner lists for Claude Code runs (spec: owner plugins) */
+    public ClaudeCodeAgent(String command, Map<String, String> environment, Duration cancelGrace, Confinement confinement,
+                           OwnerPlugins ownerPlugins) {
         this.command = command;
         this.environment = Map.copyOf(environment);
         this.cancelGrace = cancelGrace;
         this.confinement = confinement;
+        this.ownerPlugins = ownerPlugins;
     }
 
     @Override
     public RunHandle start(RunRequest request) {
         String permissionMode = permissionMode(request.kind());
-        return ProcessRun.start("claude-code", commandLine(request, permissionMode), request, environment, request.prompt(),
+        // Read and resolved now, on the machine that runs the agent: an edit or an install applies to this run.
+        OwnerPlugins.Resolved owner = OWNER_KINDS.contains(request.kind())
+                ? ownerPlugins.resolve(command, ProcessRun.agentEnvironment(environment)) : OwnerPlugins.Resolved.NONE;
+        return ProcessRun.start("claude-code", commandLine(request, permissionMode, owner), request, environment, request.prompt(),
                 new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE);
     }
 
@@ -77,7 +92,7 @@ public final class ClaudeCodeAgent implements Agent {
         };
     }
 
-    private List<String> commandLine(RunRequest request, String permissionMode) {
+    private List<String> commandLine(RunRequest request, String permissionMode, OwnerPlugins.Resolved owner) {
         List<String> args = new ArrayList<>(List.of(command, "-p",
                 "--output-format", "stream-json", "--verbose",
                 "--permission-mode", permissionMode,
@@ -85,6 +100,11 @@ public final class ClaudeCodeAgent implements Agent {
                 // The assistant's home is Dispatch's own directory; nothing local to a person's checkout applies there.
                 "--setting-sources", request.kind() == RunKind.ASSISTANT ? "project" : "project,local",
                 "--strict-mcp-config"));
+        if (owner.mcpConfig() != null) {
+            // Inline, as --json-schema is: nothing written to disk. --mcp-config takes every following argument that is
+            // not a flag, and a flag always follows here.
+            args.addAll(List.of("--mcp-config", owner.mcpConfig()));
+        }
         if (request.budgetUsd() != null) {
             args.addAll(List.of("--max-budget-usd", request.budgetUsd().toPlainString()));
         }
@@ -105,14 +125,17 @@ public final class ClaudeCodeAgent implements Agent {
         for (Path dir : request.readOnlyDirs()) {
             args.addAll(List.of("--add-dir", dir.toString()));
         }
-        // The dispatch plugin's vetted skills (spec: agent skills); the owner's own plugins stay out (--setting-sources).
-        // Also a working directory: a plan or review run may not read a skill's supporting files outside its own, and
-        // nobody answers the prompt to allow it (probed on Claude Code 2.1.286). The sandbox keeps it read-only.
-        for (Path dir : request.pluginDirs()) {
+        // The dispatch plugin's vetted skills (spec: agent skills), then the plugins the owner lists (spec: owner plugins);
+        // nothing else the owner has enabled (--setting-sources). Also a working directory: a plan or review run may not
+        // read a skill's supporting files outside its own, and nobody answers the prompt to allow it (probed on Claude Code
+        // 2.1.286). The sandbox keeps it read-only.
+        List<Path> plugins = new ArrayList<>(request.pluginDirs());
+        plugins.addAll(owner.pluginDirs());
+        for (Path dir : plugins) {
             args.addAll(List.of("--plugin-dir", dir.toString(), "--add-dir", dir.toString()));
         }
         // A listed skill cannot be invoked without the Skill tool (probed on Claude Code 2.1.286).
-        String skill = request.pluginDirs().isEmpty() ? "" : ",Skill";
+        String skill = plugins.isEmpty() ? "" : ",Skill";
         switch (request.kind()) {
             // Read-only investigation: no subagents or schedulers, just reading files and read-only shell commands.
             case PLAN -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", PLAN_SCHEMA));

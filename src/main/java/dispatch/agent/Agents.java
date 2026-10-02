@@ -1,6 +1,7 @@
 package dispatch.agent;
 
 import dispatch.agent.claude.ClaudeCodeAgent;
+import dispatch.agent.claude.OwnerPlugins;
 import dispatch.agent.codex.CodexAgent;
 import dispatch.agent.gemini.GeminiAgent;
 import dispatch.agent.sandbox.Confinement;
@@ -30,9 +31,18 @@ public final class Agents {
     /** @param confinement this machine's sandbox, shared by every agent it runs */
     public static Map<String, Agent> create(Map<String, String> commands, Map<String, String> environment, Path stateDir,
                                             Confinement confinement) {
+        return create(commands, environment, stateDir, confinement, OwnerPlugins.NONE);
+    }
+
+    /**
+     * @param confinement  this machine's sandbox, shared by every agent it runs
+     * @param ownerPlugins what this machine's owner lists for Claude Code runs (spec: owner plugins)
+     */
+    public static Map<String, Agent> create(Map<String, String> commands, Map<String, String> environment, Path stateDir,
+                                            Confinement confinement, OwnerPlugins ownerPlugins) {
         Map<String, Agent> agents = new LinkedHashMap<>();
         commands.forEach((type, command) -> agents.put(type, switch (type) {
-            case "claude-code" -> new ClaudeCodeAgent(command, environment, CANCEL_GRACE, confinement);
+            case "claude-code" -> new ClaudeCodeAgent(command, environment, CANCEL_GRACE, confinement, ownerPlugins);
             case "codex" -> new CodexAgent(command, environment, CANCEL_GRACE, stateDir.resolve("agent-sessions").resolve("codex"), confinement);
             case "gemini" -> new GeminiAgent(command, environment, CANCEL_GRACE, confinement);
             default -> throw new IllegalArgumentException("unsupported agent type: " + type);

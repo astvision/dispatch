@@ -174,7 +174,8 @@ public final class WorkerCommand {
             // One confinement for the agents and the verify loop's test command, which runs in the same sandbox (ADR 0032).
             dispatch.agent.sandbox.Confinement confinement = Confinements.of(sandbox, config.stateDir(), options.workerFile(),
                     clones, dispatch.cli.Instances.othersPrivate(options.workerFile(), environment));
-            Map<String, Agent> agents = Agents.create(config.agentCommands(), environment, config.stateDir(), confinement);
+            Map<String, Agent> agents = Agents.create(config.agentCommands(), environment, config.stateDir(), confinement,
+                    dispatch.agent.claude.OwnerPlugins.worker(options.workerFile(), Path.of(System.getProperty("user.home"))));
             ActiveRuns activeRuns = new ActiveRuns();
             WorkerLoop loop = new WorkerLoop(config, client, agents, workspaces, delivery,
                     Redactor.fromEnvironment(environment), activeRuns, WorkerLoop.PROGRESS,

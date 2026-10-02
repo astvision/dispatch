@@ -56,6 +56,8 @@ class AppTest {
         repos = GitFixture.create(dir, "autoland-management");
         Path claude = FakeClaude.install(Files.createDirectories(dir.resolve("bin")));
         Path gh = FakeGh.install(dir.resolve("bin"));
+        // Each run reads the owner's plugin lists from the file the config came from (spec: owner plugins); none here.
+        Files.writeString(dir.resolve("dispatch.yaml"), "");
         config = new Config("backend", repos.stateDir,
                 new Config.Telegram(List.of(), List.of(new Config.Group("backend", GROUP,
                         List.of(new Config.Member(100, "Bold"), new Config.Member(200, "Ali")), List.of("autoland-management")))),

@@ -153,7 +153,8 @@ public final class App {
         // One confinement for the agents and the verify loop's test command, which runs in the same sandbox (ADR 0032).
         dispatch.agent.sandbox.Confinement confinement = Confinements.of(sandbox, stateDir, configFile, clones,
                 dispatch.cli.Instances.othersPrivate(configFile, environment));
-        Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir, confinement);
+        Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir, confinement,
+                dispatch.agent.claude.OwnerPlugins.instance(configFile, Path.of(System.getProperty("user.home"))));
         // Splitting and the assistant need Claude Code (ADR 0013, A-1); without it they are simply not offered (ADR 0026).
         Agent claude = agents.get("claude-code");
         WorkerKeys workerKeys = null;
