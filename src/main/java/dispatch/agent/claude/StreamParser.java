@@ -75,6 +75,12 @@ final class StreamParser implements OutputParser {
                 // The run goes on without the skills its prompt names (spec: agent skills).
                 Log.warn("agent.plugin_errors", "run", logBase, "errors", pluginErrors.toString());
             }
+            for (JsonNode server : event.path("mcp_servers")) {
+                if (server.path("status").asText().equals("failed")) {
+                    // The run goes on without it (spec: owner plugins).
+                    Log.warn("agent.mcp_failed", "server", server.path("name").asText(), "run", logBase);
+                }
+            }
         } else if (type.equals("assistant")) {
             // A subagent's messages name the tool call that started it; only the run's own model is reported.
             boolean topLevel = !event.hasNonNull("parent_tool_use_id");

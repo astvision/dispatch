@@ -236,6 +236,19 @@ class StreamParserTest {
         assertTrue(logged.contains("invalid manifest"), logged);
     }
 
+    /** The run goes on without it; a server that needs what the sandbox hides fails here (spec: owner plugins). */
+    @Test
+    void aServerThatFailedToStartIsLogged() {
+        Path logBase = Path.of("/s/runs/7/2");
+        StreamParser parser = new StreamParser("auto", null, WORKTREE, logBase);
+
+        String logged = capturingLog(() -> parser.accept("""
+                {"type":"system","subtype":"init","session_id":"s","permissionMode":"auto","mcp_servers":[{"name":"plugin_playwright_playwright","status":"connected"},{"name":"mongodb","status":"failed"}]}"""));
+
+        assertTrue(logged.contains("level=WARN event=agent.mcp_failed server=mongodb run=" + logBase), logged);
+        assertFalse(logged.contains("server=plugin_playwright_playwright"), logged);
+    }
+
     private static String capturingLog(Runnable action) {
         java.io.PrintStream original = System.out;
         java.io.ByteArrayOutputStream logged = new java.io.ByteArrayOutputStream();
