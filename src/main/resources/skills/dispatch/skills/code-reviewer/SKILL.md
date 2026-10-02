@@ -37,6 +37,11 @@ Do the whole review yourself, in passes if the diff is large. Never start a suba
 **Production readiness:**
 - A migration when a schema changed; backward compatibility; the documentation the change needs
 
+**Over-engineering:**
+- What the change could cut and still do the job: dead code or unused flexibility (`delete`), a hand-rolled version of what the standard library ships (`stdlib`), a dependency or code doing what the platform already does (`native`), an abstraction with one implementation or a config nobody sets (`yagni`), the same logic in fewer lines (`shrink`)
+- One line each: the tag, what to cut, what replaces it, e.g. `stdlib: 27-line validator class; "@" in the address, the confirmation mail does the real check.`
+- A single smoke test or self-check is the minimum, never bloat
+
 ## The Plan Is a Vision Document
 
 The plan says what the software must do; it does not list every input or condition the software will meet. For behaviour the plan is silent on, judge by what a reasonable person using the software would expect: that expectation is a requirement, and the plan's silence is not permission. Grade such a finding by its effect on that person.
@@ -47,7 +52,7 @@ Grade by actual severity:
 - **blocking**: the change is wrong, unsafe, breaks something, or misses part of the plan.
 - **minor**: everything else: style, naming, small improvements, polish.
 
-Not everything is blocking. A finding about the plan itself rather than the change is minor, and says so.
+Not everything is blocking. A finding about the plan itself rather than the change is minor, and says so. Over-engineering is always `minor`: it is reported, and never sends the change back for a fix round on its own.
 
 ## Each Finding
 

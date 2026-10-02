@@ -190,10 +190,12 @@ Mini App (below). `loop: off` on the instance or a project turns it off.
 
 ### Skills in Claude's runs
 
-Claude Code's plans, executions, fixes and reviews load `dispatch`, a plugin of five skills that ships with Dispatch
+Claude Code's plans, executions, fixes and reviews load `dispatch`, a plugin of six skills that ships with Dispatch
 (ADR 0034): test-driven-development, systematic-debugging, verification-before-completion, receiving-code-review and a
-code-reviewer checklist, adapted from superpowers 6.4.1 for runs nobody can answer. Each prompt names the skills for its
-step, for example TDD and verification for an execution, and systematic debugging for a fix after red tests. The log
+code-reviewer checklist, adapted from superpowers 6.4.1 for runs nobody can answer, and ponytail, adapted from ponytail
+4.9.0: the simplest change that works. Each prompt names the skills for its step, for example ponytail, TDD and
+verification for an execution, and systematic debugging for a fix after red tests. The reviewer lists over-engineering
+as minor findings, and an execution's summary names what it left out on a `skipped:` line. The log
 shows which a run used (`grep event=agent.skill`). Every plan and execution prompt also says that speed matters. Skills
 are on by default for Claude Code projects; `skills: off` on the instance or a project turns them off. They need Claude
 Code 2.1.76 or later. Codex and Gemini CLI projects are unchanged.

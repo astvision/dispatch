@@ -50,7 +50,8 @@ final class Prompts {
             - Keep the change focused on the approved plan.
             - Run the relevant tests if they are quick to run.
             - Finish with a brief plain-text summary (no Markdown) of at most 5 short lines: what changed (each file in \
-            one clause), the test result in one line, and only the assumptions the team must know. No background, no \
+            one clause), the test result in one line, and only the assumptions the team must know. For anything you left \
+            out that the task could be read to ask for, one line: skipped: <what>, add when <when>. No background, no \
             restating the plan, no list of every detail: the diff shows those. State only what you verified.
 
             Language: write the summary in the natural language used inside <task> (a task written in Mongolian gets a \
@@ -67,11 +68,14 @@ final class Prompts {
      * adds it, never the team machine, so a machine without the plugin is never told to use one.
      */
     enum SkillNote {
-        PLAN("If the task reports a bug, use the dispatch:systematic-debugging skill to investigate its root cause before "
-                + "you plan; change nothing. Put the root cause in findings."),
-        EXECUTE("Use the dispatch:test-driven-development skill while you build, and the "
-                + "dispatch:verification-before-completion skill before your summary."),
-        FIX_TEST("Use the dispatch:systematic-debugging skill to find the root cause before you change code, then the "
+        PLAN("Load the dispatch:ponytail skill and plan the smallest change that works. If the task reports a bug, use "
+                + "the dispatch:systematic-debugging skill to investigate its root cause before you plan; change nothing. Put "
+                + "the root cause in findings."),
+        EXECUTE("Before you choose how to make the change, load the dispatch:ponytail skill and follow it. Then use the "
+                + "dispatch:test-driven-development skill while you build, and the dispatch:verification-before-completion "
+                + "skill before your summary."),
+        FIX_TEST("Use the dispatch:systematic-debugging skill to find the root cause before you change code, and load the "
+                + "dispatch:ponytail skill to fix it where every caller passes; then use the "
                 + "dispatch:verification-before-completion skill."),
         FIX_REVIEW("Use the dispatch:receiving-code-review skill: check each finding against the code before you change "
                 + "anything."),

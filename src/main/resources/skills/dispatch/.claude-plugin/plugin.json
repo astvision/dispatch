@@ -1,6 +1,6 @@
 {
   "name": "dispatch",
   "version": "1.0.0",
-  "description": "Vetted engineering skills for Dispatch's unattended Claude Code runs, adapted from superpowers 6.4.1",
+  "description": "Vetted engineering skills for Dispatch's unattended Claude Code runs, adapted from superpowers 6.4.1 and ponytail 4.9.0",
   "license": "MIT"
 }

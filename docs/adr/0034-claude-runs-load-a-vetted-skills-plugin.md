@@ -2,9 +2,9 @@
 
 Builds on ADR 0032 (the sandbox) and ADR 0033 (the verify loop).
 
-Claude Code's plan, execute, fix and review runs load `dispatch`, a plugin of five skills that ship with Dispatch:
-test-driven-development, systematic-debugging, verification-before-completion, receiving-code-review and code-reviewer.
-They are adapted from superpowers 6.4.1 (MIT): wherever a skill sent the agent to a person, it now decides, follows the
+Claude Code's plan, execute, fix and review runs load `dispatch`, a plugin of skills that ship with Dispatch:
+test-driven-development, systematic-debugging, verification-before-completion, receiving-code-review, code-reviewer and,
+since 2026-10-02, ponytail. The first five are adapted from superpowers 6.4.1 (MIT): wherever a skill sent the agent to a person, it now decides, follows the
 approved plan, and says what it decided in its summary, because nobody can answer during a run. They also keep to the
 run's scope: the agent runs the tests that cover its change, not the whole suite Dispatch runs after it. `NOTICE.md` in
 the plugin lists every change.
@@ -20,6 +20,17 @@ owner's own plugins never load into a run. `skills: off`, on the instance or a p
 
 Every plan and execution prompt also says that speed matters: investigate or read only what the work needs, search
 instead of reading whole files, run only the tests that cover the change, and stop when it is done.
+
+**Ponytail by default** (amended 2026-10-02). `ponytail` is adapted from ponytail 4.9.0 (MIT, `LICENSE-ponytail`) and
+fixed at its `full` level: the simplest change that works (YAGNI, what the codebase already has, the standard library,
+platform features, the shortest diff once the problem is understood), with its levels, commands and questions to a
+person removed, and tests left to test-driven-development. The plan, execution and test-fix notes tell the agent to load
+it first: without that, runs on small tasks never loaded it. The reviewer's checklist adds ponytail-review's
+over-engineering check (delete, stdlib, native, yagni, shrink), whose findings are always `minor`, so taste never holds up
+delivery. An execution's summary gives one `skipped: <what>, add when <when>` line for each thing it left out: without
+that rule, what was left out hid among the assumptions. Measured with skill-creator on three small tasks (Sonnet, each
+with and without): equally lean code either way, runs a few seconds faster, and the skipped lines only once the summary
+rule asked for them.
 
 We chose this over:
 - **Loading whole marketplace plugins.** Their skills assume a person in the loop (a brainstorming hard gate, "ask your

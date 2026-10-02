@@ -47,6 +47,20 @@ class PromptsTest {
         }
     }
 
+    /** What an execution left out reaches the team in its summary, on a line of its own (ponytail). */
+    @Test
+    void anExecutionSummaryNamesWhatWasLeftOut() {
+        assertTrue(Prompts.execute(task(), "{}").contains("skipped: <what>, add when <when>"), Prompts.execute(task(), "{}"));
+    }
+
+    /** Ponytail by default (ADR 0034): the simplest change that works, planned, built and fixed where every caller passes. */
+    @Test
+    void planExecuteAndTestFixRunsAreToldToMakeTheSimplestChangeThatWorks() {
+        for (Prompts.SkillNote note : List.of(Prompts.SkillNote.PLAN, Prompts.SkillNote.EXECUTE, Prompts.SkillNote.FIX_TEST)) {
+            assertTrue(note.text().contains("dispatch:ponytail"), note + ": " + note.text());
+        }
+    }
+
     @Test
     void everySkillANoteNamesShipsInThePlugin() {
         Pattern named = Pattern.compile("dispatch:([a-z-]+)");

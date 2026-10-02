@@ -43,7 +43,8 @@ class SkillsPluginTest {
         assertTrue(skills.size() >= 5, skills.toString());
         for (String file : skills) {
             String text = BundledFiles.read(SkillsPlugin.RESOURCES + "/" + file).toLowerCase(Locale.ROOT);
-            for (String phrase : List.of("human partner", "your partner", "ask the user", "ask for help", "superpowers:")) {
+            for (String phrase : List.of("human partner", "your partner", "ask the user", "ask for help", "superpowers:",
+                    "/ponytail", "stop ponytail", "normal mode")) {
                 assertFalse(text.contains(phrase), file + " still says '" + phrase + "'");
             }
         }
@@ -54,7 +55,7 @@ class SkillsPluginTest {
         List<String> skills = SkillsPlugin.files().stream().filter(file -> file.endsWith("/SKILL.md")).toList();
         assertEquals(List.of("skills/test-driven-development/SKILL.md", "skills/systematic-debugging/SKILL.md",
                 "skills/verification-before-completion/SKILL.md", "skills/receiving-code-review/SKILL.md",
-                "skills/code-reviewer/SKILL.md"), skills);
+                "skills/code-reviewer/SKILL.md", "skills/ponytail/SKILL.md"), skills);
         for (String file : skills) {
             String name = file.substring("skills/".length(), file.length() - "/SKILL.md".length());
             String text = BundledFiles.read(SkillsPlugin.RESOURCES + "/" + file);
@@ -85,6 +86,28 @@ class SkillsPluginTest {
     @Test
     void theReviewerLeavesTheTestsToDispatch() {
         assertTrue(skill("code-reviewer/SKILL.md").contains("Do not run the tests"));
+    }
+
+    /** Nobody is there to say "build the full version": the run says in its summary what it left out instead. */
+    @Test
+    void ponytailLeavesTestsToTddAndWhatItSkippedToTheSummary() {
+        String ponytail = skill("ponytail/SKILL.md");
+
+        assertTrue(ponytail.contains("dispatch:test-driven-development"), "tests follow TDD, not ponytail's one check");
+        assertTrue(ponytail.contains("in your summary"), "what was left out is reported, not asked about");
+    }
+
+    /** A matter of taste must not hold up delivery: over-engineering is reported, never sent back for a fix round. */
+    @Test
+    void theReviewerListsOverEngineeringAsMinorOnly() {
+        assertTrue(skill("code-reviewer/SKILL.md").contains("Over-engineering is always `minor`"));
+    }
+
+    @Test
+    void eachUpstreamIsCreditedWithItsLicence() {
+        assertTrue(SkillsPlugin.files().containsAll(List.of("LICENSE-superpowers", "LICENSE-ponytail")), SkillsPlugin.files().toString());
+        String notice = BundledFiles.read(SkillsPlugin.RESOURCES + "/NOTICE.md");
+        assertTrue(notice.contains("ponytail 4.9.0") && notice.contains("superpowers 6.4.1"), notice);
     }
 
     @Test
