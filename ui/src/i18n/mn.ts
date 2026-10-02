@@ -285,6 +285,7 @@ export const mn: Record<Key, string> = {
   "tasks.plan": "Төлөвлөгөө",
   "tasks.risks": "Эрсдэл",
   "tasks.plugins": "Плагин",
+  "tasks.answer": "Хариулт",
   "tasks.question": "Асуулт {index}/{count}",
   "tasks.yourAnswer": "Өөрийн хариулт",
   "tasks.send": "Илгээх",

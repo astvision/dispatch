@@ -64,17 +64,26 @@ export default function TaskView({ taskId, layout = "panel", onChanged, onDetail
         <section>
           <Typography.Text type="secondary" className="task-label">{t("tasks.plan")}</Typography.Text>
           {plan.understanding && <Typography.Paragraph style={{ margin: "4px 0" }}>{plan.understanding}</Typography.Paragraph>}
-          <ol className="task-steps">{plan.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
-          {plan.risks.length > 0 && (
+          {plan.result === "answer" ? (
             <>
-              <Typography.Text type="secondary" className="task-label">{t("tasks.risks")}</Typography.Text>
-              <ul className="task-steps">{plan.risks.map((risk, index) => <li key={index}>{risk}</li>)}</ul>
+              <Typography.Text type="secondary" className="task-label">{t("tasks.answer")}</Typography.Text>
+              <Typography.Paragraph style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>{plan.answer}</Typography.Paragraph>
             </>
-          )}
-          {plan.plugins.length > 0 && (
+          ) : (
             <>
-              <Typography.Text type="secondary" className="task-label">{t("tasks.plugins")}</Typography.Text>
-              <ul className="task-steps">{plan.plugins.map((plugin) => <li key={plugin}>{plugin}</li>)}</ul>
+              <ol className="task-steps">{plan.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
+              {plan.risks.length > 0 && (
+                <>
+                  <Typography.Text type="secondary" className="task-label">{t("tasks.risks")}</Typography.Text>
+                  <ul className="task-steps">{plan.risks.map((risk, index) => <li key={index}>{risk}</li>)}</ul>
+                </>
+              )}
+              {plan.plugins.length > 0 && (
+                <>
+                  <Typography.Text type="secondary" className="task-label">{t("tasks.plugins")}</Typography.Text>
+                  <ul className="task-steps">{plan.plugins.map((plugin) => <li key={plugin}>{plugin}</li>)}</ul>
+                </>
+              )}
             </>
           )}
         </section>

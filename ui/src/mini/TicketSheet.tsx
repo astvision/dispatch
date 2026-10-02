@@ -120,10 +120,19 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
                 ))}
               </>
             )}
-            <PlanList title="Алхмууд" items={plan.steps} ordered />
-            <PlanList title="Эрсдэл" items={plan.risks} />
-            <PlanList title="Плагин" items={plan.plugins} />
-            <PlanList title="Олдвор" items={plan.findings} />
+            {plan.result === "answer" ? (
+              <>
+                <h3>Хариулт</h3>
+                <p style={{ whiteSpace: "pre-wrap" }}>{plan.answer}</p>
+              </>
+            ) : (
+              <>
+                <PlanList title="Алхмууд" items={plan.steps} ordered />
+                <PlanList title="Эрсдэл" items={plan.risks} />
+                <PlanList title="Плагин" items={plan.plugins} />
+                <PlanList title="Олдвор" items={plan.findings} />
+              </>
+            )}
           </>
         )}
         {detail && !plan && <p className="quiet" style={{ marginTop: 16 }}>Төлөвлөгөө хараахан гараагүй байна.</p>}

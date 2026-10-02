@@ -284,6 +284,7 @@ export const en = {
   "tasks.plan": "Plan",
   "tasks.risks": "Risks",
   "tasks.plugins": "Plugins",
+  "tasks.answer": "Answer",
   "tasks.question": "Question {index} of {count}",
   "tasks.yourAnswer": "Your own answer",
   "tasks.send": "Send",

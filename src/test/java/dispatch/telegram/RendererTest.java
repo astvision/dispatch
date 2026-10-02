@@ -1512,4 +1512,13 @@ class RendererTest {
         assertTrue(html.contains("💬 Хариулсан"), html);
         assertFalse(html.contains("pull request"), html);
     }
+
+    @Test
+    void anAnsweredTasksTimelineSaysItWasAnswered() {
+        ObjectNode payload = timelinePayload().put("phase", "COMPLETED").putNull("prUrl").put("answered", true);
+
+        String html = renderer.render(OutboxKind.TASK_TIMELINE, payload).html();
+
+        assertTrue(html.contains("💬 Хариулсан"), html);
+    }
 }

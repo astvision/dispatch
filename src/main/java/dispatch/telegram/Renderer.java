@@ -1194,7 +1194,9 @@ public final class Renderer {
 
     private String outcome(JsonNode payload) {
         return switch (payload.path("phase").asText()) {
-            case "COMPLETED" -> payload.hasNonNull("prUrl")
+            case "COMPLETED" -> payload.path("answered").asBoolean()
+                    ? text("timeline.answered")
+                    : payload.hasNonNull("prUrl")
                     ? format("timeline.completedPr", escape(payload.path("prUrl").asText()))
                     : text("timeline.completedNoChanges");
             case "FAILED" -> format("timeline.failed", text("failure." + payload.path("failureReason").asText()));

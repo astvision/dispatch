@@ -733,7 +733,7 @@ public final class TaskService {
                 .put("requester", task.requester().name()).put("phase", task.phase().name()).put("priority", task.priority().name())
                 .put("prUrl", task.prUrl()).put("baseBranch", task.baseBranch()).put("branch", Config.branch(branchPrefix, task.id()))
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
-                .put("completedAt", text(task.completedAt()));
+                .put("completedAt", text(task.completedAt())).put("answered", Plan.answers(task.planJson()));
         putActions(payload, actionsOf(tx, viewer, List.of(task)).get(task.id()));
         if (!isOwn(viewer, task)) {
             return Optional.of(payload.put("headline", true).putNull("costUsd"));
@@ -872,6 +872,7 @@ public final class TaskService {
         plan.risks().forEach(payload.putArray("risks")::add);
         plan.findings().forEach(payload.putArray("findings")::add);
         plan.plugins().forEach(payload.putArray("plugins")::add);
+        payload.put("result", plan.result().json()).put("answer", plan.answer());
         ArrayNode questions = payload.putArray("questions");
         for (int index = 1; index <= plan.questionItems().size(); index++) {
             PlanQuestion question = plan.questionItems().get(index - 1);

@@ -677,4 +677,15 @@ class TasksApiTest {
 
         assertEquals("[\"playwright\"]", plan.path("plugins").toString());
     }
+
+    @Test
+    void theRequestersAnsweredTaskShowsItsAnswer() {
+        long taskId = planned(ALI, new Plan("Where?", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                Plan.Result.ANSWER, "In `AuthClient.java`"));
+
+        JsonNode plan = api.detail(ALI_CALLER, Json.object().put("taskId", taskId)).path("plan");
+
+        assertEquals("answer", plan.path("result").asText());
+        assertEquals("In `AuthClient.java`", plan.path("answer").asText());
+    }
 }

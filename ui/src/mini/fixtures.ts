@@ -110,6 +110,8 @@ export const planWithQuestions: PlanView = {
   risks: ["Sessions end sooner in staging"],
   findings: [],
   plugins: [],
+  result: "plan",
+  answer: "",
   current: 1,
   questions: [
     { index: 1, text: "Which environments?", options: ["staging", "prod"], answer: null },
