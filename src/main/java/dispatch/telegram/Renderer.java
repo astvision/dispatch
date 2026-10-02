@@ -126,7 +126,7 @@ public final class Renderer {
      *                 instead (ADR 0020), never {@code kind}'s actual rendering
      */
     public Rendered render(OutboxKind kind, JsonNode payload, boolean fellBack) {
-        if (fellBack && (kind == OutboxKind.DRAFT_PROMPT || kind == OutboxKind.ADDITION_OFFERED)) {
+        if (fellBack && kind.answersGroupMessage()) {
             // A task, or an addition to one, given in the group (G-1b): its developer has to open the private chat first.
             return plain(format("group.taskStartFirst", escape(payload.path("requester").asText()), escape(botUsername)));
         }

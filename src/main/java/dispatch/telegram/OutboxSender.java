@@ -20,7 +20,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Delivers outbox messages one at a time (ADR 0010). Transient failures are retried with logged, bounded backoff. A
@@ -30,13 +29,6 @@ import java.util.Set;
 public final class OutboxSender implements Runnable {
 
     private static final Duration MAX_AGE = Duration.ofHours(24);
-    /**
-     * Messages that report how a task ended. The one sent to the task's own chat renames its topic: the group line for a
-     * group's task, the full result for a personal bot's task (ADR 0014). Copies sent elsewhere do not rename it again.
-     */
-    private static final Set<OutboxKind> OUTCOMES = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_FAILED,
-            OutboxKind.TASK_COMPLETED_SHORT, OutboxKind.TASK_FAILED_SHORT, OutboxKind.TASK_REJECTED, OutboxKind.TASK_CANCELLED,
-            OutboxKind.ANSWER_READY);
     /** Telegram's fixed topic colors: red, yellow, green. */
     private static final Map<Priority, Integer> TOPIC_COLORS = Map.of(Priority.URGENT, 0xFB6F5F, Priority.NORMAL, 0xFFD67E,
             Priority.LOW, 0x8EEE98);
@@ -102,11 +94,11 @@ public final class OutboxSender implements Runnable {
         Optional<Task> task = message.taskId() == null
                 ? Optional.empty()
                 : db.transactionReturning(tx -> Tasks.find(tx, message.taskId()));
-        if (message.kind() == OutboxKind.TOPIC_CREATE) {
+        if (message.kind().form() == OutboxKind.Form.TOPIC) {
             createTopic(message, attempts, task.orElseThrow());
             return;
         }
-        if (message.kind() == OutboxKind.GROUP_REACTION) {
+        if (message.kind().form() == OutboxKind.Form.REACTION) {
             react(message, attempts);
             return;
         }
@@ -147,8 +139,7 @@ public final class OutboxSender implements Runnable {
                             rendered.document().markdown().getBytes(StandardCharsets.UTF_8), rendered.html(), replyTo, rendered.keyboard());
             db.transaction(tx -> {
                 Outbox.markSent(tx, message.id(), attempts, Refs.message(chatId, sentId, null), clock.instant());
-                if ((message.kind() == OutboxKind.DRAFT_PROMPT || message.kind() == OutboxKind.ADDITION_OFFERED)
-                        && message.fallbackChatRef() != null) {
+                if (message.kind().answersGroupMessage() && message.fallbackChatRef() != null) {
                     // A task, or an addition to one, given in a group (G-1b): only now that it arrived privately does the
                     // group hear so, by the developer's own choice of reaction, reaction + line, or silence (G-1e).
                     String requester = Json.read(message.payload()).path("requester").asText();
@@ -169,7 +160,9 @@ public final class OutboxSender implements Runnable {
             }
             return;
         }
-        if (task.isPresent() && OUTCOMES.contains(message.kind()) && message.chatRef().equals(task.get().chatRef())) {
+        // The outcome sent to the task's own chat renames its topic: the group line for a group's task, the full result for
+        // a personal bot's task (ADR 0014). Copies sent elsewhere do not rename it again.
+        if (task.isPresent() && message.kind().endsTask() && message.chatRef().equals(task.get().chatRef())) {
             renameTopic(task.get());
         }
     }
