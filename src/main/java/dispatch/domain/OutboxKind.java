@@ -129,6 +129,22 @@ public enum OutboxKind {
         RESULT
     }
 
+    /** What a member's reply to the message means. */
+    public enum Reply {
+        /** Nothing of its own: the reply is read as any other message. */
+        NOTHING,
+        /** More work on the finished task (ADR 0006). */
+        FOLLOW_UP,
+        /** A correction of the plan it shows or asks about. */
+        CORRECTION,
+        /** The answer to the plan question it asks (G-1d). */
+        ANSWER,
+        /** More text and files for the draft it prompts for. */
+        DRAFT_CONTEXT,
+        /** A task, given by explicit intent (ADR 0024). */
+        TASK
+    }
+
     /** How the message reaches Telegram, and what its group hears of it. */
     public enum Form {
         /** An ordinary message to its chat. */
@@ -159,6 +175,17 @@ public enum OutboxKind {
     /** Whether the message says how its task ended; the one sent to the task's own chat renames its topic (ADR 0014). */
     public boolean endsTask() {
         return ending != Ending.NONE;
+    }
+
+    /** What a reply to this message means; the chat handler routes a reply by this alone. */
+    public Reply replyMeans() {
+        return switch (this) {
+            case PLAN_QUESTION, PLAN_ANSWER_PROMPT -> Reply.ANSWER;
+            case PLAN_READY, PLAN_EDIT_PROMPT -> Reply.CORRECTION;
+            case DRAFT_PROMPT -> Reply.DRAFT_CONTEXT;
+            case TASK_PROMPT -> Reply.TASK;
+            default -> ending == Ending.RESULT ? Reply.FOLLOW_UP : Reply.NOTHING;
+        };
     }
 
     /** Whether a reply to the message continues its task as a follow-up. */

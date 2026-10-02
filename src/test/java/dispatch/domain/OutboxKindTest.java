@@ -35,6 +35,19 @@ class OutboxKindTest {
         assertEquals(EnumSet.of(OutboxKind.GROUP_REACTION), kinds(kind -> kind.form() == OutboxKind.Form.REACTION));
     }
 
+    @Test
+    void aReplyToOneOfTheBotsMessagesMeansWhatItsKindSays() {
+        assertEquals(EnumSet.of(OutboxKind.PLAN_QUESTION, OutboxKind.PLAN_ANSWER_PROMPT), meaning(OutboxKind.Reply.ANSWER));
+        assertEquals(EnumSet.of(OutboxKind.PLAN_READY, OutboxKind.PLAN_EDIT_PROMPT), meaning(OutboxKind.Reply.CORRECTION));
+        assertEquals(EnumSet.of(OutboxKind.DRAFT_PROMPT), meaning(OutboxKind.Reply.DRAFT_CONTEXT));
+        assertEquals(EnumSet.of(OutboxKind.TASK_PROMPT), meaning(OutboxKind.Reply.TASK));
+        assertEquals(kinds(OutboxKind::replyIsFollowUp), meaning(OutboxKind.Reply.FOLLOW_UP));
+    }
+
+    private static Set<OutboxKind> meaning(OutboxKind.Reply reply) {
+        return kinds(kind -> kind.replyMeans() == reply);
+    }
+
     private static Set<OutboxKind> kinds(Predicate<OutboxKind> trait) {
         EnumSet<OutboxKind> kinds = EnumSet.noneOf(OutboxKind.class);
         Arrays.stream(OutboxKind.values()).filter(trait).forEach(kinds::add);

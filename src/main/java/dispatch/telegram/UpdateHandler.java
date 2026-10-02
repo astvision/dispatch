@@ -73,6 +73,8 @@ public final class UpdateHandler {
     static final String OFFSET_KEY = "telegram.offset";
     private static final Set<String> JOINED_STATUSES = Set.of("member", "administrator");
     /** Messages about a task's outcome; a reply to one is a follow-up (ADR 0006). */
+    /** Commands about a member's own tasks and computers, answered only in their private chat. */
+    private static final Set<String> PRIVATE_COMMANDS = Set.of("cancel", "retry", "teleport", "worker", "manage");
     private static final Set<String> COMMANDS =
             Set.of("task", "status", "history", "stats", "cancel", "retry", "teleport", "worker", "manage", "new", "projects", "help",
                     "start");
@@ -305,13 +307,16 @@ public final class UpdateHandler {
         TaskAccess.Viewer viewer = privateChat ? access.member(who.ref()) : access.chat(chatRef);
         Set<String> visible = viewer.projects();
         Optional<Command> parsed = Command.parse(message);
+        // Looked up once: what the message replies to decides, by its kind, what the reply means (OutboxKind.replyMeans).
+        Optional<Replied> replied = replied(tx, message);
         Optional<Task> topicTask = privateChat && thread != null
                 ? tasks.taskOfTopic(tx, who.ref(), Long.toString(thread))
                 : Optional.empty();
         if (topicTask.isPresent() && parsed.map(command -> !COMMANDS.contains(command.name())).orElse(true)) {
             // Inside a task's own topic, anything that is not a command is about that task: a follow-up once it has finished,
             // otherwise a correction of its plan, which is refused with the reason when no plan is waiting.
-            if (replyToQuestion(tx, message, who, origin, chatRef)) {
+            if (replied.filter(to -> to.means() == OutboxKind.Reply.ANSWER).isPresent()) {
+                answerQuestion(tx, replied.get(), message, who, origin, chatRef);
                 return;
             }
             Task task = topicTask.get();
@@ -322,15 +327,16 @@ public final class UpdateHandler {
             return;
         }
         if (parsed.isEmpty()) {
-            if (privateChat && replyToDraft(tx, message, who)) {
+            if (privateChat && replied.filter(to -> to.means() == OutboxKind.Reply.DRAFT_CONTEXT).isPresent()
+                    && addToDraft(tx, replied.get(), message, who)) {
                 return;
             }
-            if (privateChat && repliesTo(tx, message, OutboxKind.TASK_PROMPT)) {
+            if (privateChat && replied.filter(to -> to.means() == OutboxKind.Reply.TASK).isPresent()) {
                 // An answer to /help's ✍️ prompt: a task by explicit intent, as /task's text is, never an assistant turn.
                 tasks.draft(tx, who, null, text(message), origin, attachments(message));
                 return;
             }
-            if (replyToTask(tx, message, who, origin, chatRef)) {
+            if (replyToTask(tx, replied, message, who, origin, chatRef)) {
                 return;
             }
             if (privateChat && assistant != null && !text(message).isBlank() && attachments(message).isEmpty()) {
@@ -362,6 +368,10 @@ public final class UpdateHandler {
             enqueue(tx, OutboxKind.ASSISTANT_REPLY, chatRef, origin, Json.object().put("new", true));
             return;
         }
+        if (!privateChat && PRIVATE_COMMANDS.contains(command.name())) {
+            privateOnly(tx, chatRef, origin);
+            return;
+        }
         switch (command.name()) {
             case "task" -> {
                 if (!privateChat) {
@@ -375,10 +385,6 @@ public final class UpdateHandler {
             case "status" -> enqueue(tx, OutboxKind.STATUS, chatRef, origin, tasks.statusPayload(tx, viewer));
             case "history" -> history(tx, viewer, command.args(), origin, chatRef);
             case "cancel" -> {
-                if (!privateChat) {
-                    privateOnly(tx, chatRef, origin);
-                    return;
-                }
                 Optional<Long> id = taskId(command.args());
                 if (id.isEmpty()) {
                     enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "cancel"));
@@ -388,10 +394,6 @@ public final class UpdateHandler {
                 reply(tx, who, cancel, commands.run(tx, who, cancel), origin, chatRef);
             }
             case "retry" -> {
-                if (!privateChat) {
-                    privateOnly(tx, chatRef, origin);
-                    return;
-                }
                 Optional<Long> id = taskId(command.args());
                 if (id.isEmpty()) {
                     enqueue(tx, OutboxKind.TASK_USAGE, chatRef, origin, Json.object().put("command", "retry"));
@@ -401,24 +403,12 @@ public final class UpdateHandler {
                 reply(tx, who, retry, commands.run(tx, who, retry), origin, chatRef);
             }
             case "teleport" -> {
-                if (!privateChat) {
-                    privateOnly(tx, chatRef, origin);
-                    return;
-                }
                 teleport(tx, who, command.args(), origin, chatRef);
             }
             case "worker" -> {
-                if (!privateChat) {
-                    privateOnly(tx, chatRef, origin);
-                    return;
-                }
                 worker(tx, who, command.args(), origin, chatRef);
             }
             case "manage" -> {
-                if (!privateChat) {
-                    privateOnly(tx, chatRef, origin);
-                    return;
-                }
                 manage(tx, who, origin, chatRef);
             }
             case "stats" -> stats(tx, privateChat ? who.ref() : null,
@@ -429,7 +419,7 @@ public final class UpdateHandler {
             default -> {
                 // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
                 // it replies to a plan, otherwise a task when written privately.
-                if (replyToTask(tx, message, who, origin, chatRef)) {
+                if (replyToTask(tx, replied, message, who, origin, chatRef)) {
                     return;
                 }
                 if (privateChat) {
@@ -698,68 +688,69 @@ public final class UpdateHandler {
         enqueue(tx, OutboxKind.PRIVATE_ONLY, chatRef, origin, Json.object().put("bot", botUsername));
     }
 
-    /** Whether {@code message} replies to one of the bot's sent messages of {@code kind}. */
-    private static boolean repliesTo(Tx tx, JsonNode message, OutboxKind kind) {
+    /** One of the bot's sent messages that a message replies to, with what a reply to it means. */
+    private record Replied(String ref, Outbox.Sent sent) {
+
+        OutboxKind.Reply means() {
+            return sent.kind().replyMeans();
+        }
+    }
+
+    /** What {@code message} replies to, when that is one of the bot's sent messages. */
+    private static Optional<Replied> replied(Tx tx, JsonNode message) {
         JsonNode repliedTo = message.path("reply_to_message");
         if (!repliedTo.has("message_id")) {
-            return false;
+            return Optional.empty();
         }
-        String repliedRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
-        return Outbox.findSent(tx, repliedRef).filter(sent -> sent.kind() == kind).isPresent();
+        String ref = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
+        return Outbox.findSent(tx, ref).map(sent -> new Replied(ref, sent));
     }
 
     /**
-     * A reply to the prompt of the writer's own open draft adds its text and files to that draft; false for any other
-     * message, including a reply to a draft given or closed since, which keeps its old meaning.
+     * A reply to the prompt of the writer's own open draft adds its text and files to that draft; false for a draft given
+     * or closed since, whose reply keeps its old meaning.
      */
-    private boolean replyToDraft(Tx tx, JsonNode message, Requester who) {
-        JsonNode repliedTo = message.path("reply_to_message");
-        if (!repliedTo.has("message_id")) {
-            return false;
-        }
-        String promptRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
-        Optional<Outbox.Sent> sent = Outbox.findSent(tx, promptRef).filter(found -> found.kind() == OutboxKind.DRAFT_PROMPT);
-        if (sent.isEmpty()) {
-            return false;
-        }
-        long draftId = Json.read(sent.get().payload()).path("draftId").asLong();
+    private boolean addToDraft(Tx tx, Replied prompt, JsonNode message, Requester who) {
+        long draftId = Json.read(prompt.sent().payload()).path("draftId").asLong();
         int filesBefore = Attachments.forDraft(tx, draftId).size();
-        return tasks.addContext(tx, who, draftId, text(message), attachments(filesBefore, message), promptRef);
+        return tasks.addContext(tx, who, draftId, text(message), attachments(filesBefore, message), prompt.ref());
     }
 
     /**
-     * A reply to one of the bot's plan messages corrects that plan, and one to a task's result is a follow-up; false for any
-     * other message.
+     * A reply to a plan's question answers it, one to a task's result is a follow-up, and one to a plan corrects that plan;
+     * false for any other message.
      */
-    private boolean replyToTask(Tx tx, JsonNode message, Requester who, String origin, String chatRef) {
-        JsonNode repliedTo = message.path("reply_to_message");
-        if (!repliedTo.has("message_id")) {
+    private boolean replyToTask(Tx tx, Optional<Replied> replied, JsonNode message, Requester who, String origin, String chatRef) {
+        if (replied.isEmpty()) {
+            // Not a reply to one of the bot's messages: another reading, such as an addition to a task given in a group,
+            // may still apply.
             return false;
         }
-        if (replyToQuestion(tx, message, who, origin, chatRef)) {
-            return true;
+        Outbox.Sent sent = replied.get().sent();
+        String repliedRef = replied.get().ref();
+        OutboxKind kind = sent.kind();
+        switch (replied.get().means()) {
+            case ANSWER -> {
+                answerQuestion(tx, replied.get(), message, who, origin, chatRef);
+                return true;
+            }
+            case FOLLOW_UP -> {
+                TaskCommand followUp = new TaskCommand.FollowUp(sent.taskId(), text(message), new Origin(origin));
+                reply(tx, who, followUp, commands.run(tx, who, followUp), origin, chatRef);
+                return true;
+            }
+            case DRAFT_CONTEXT, TASK, NOTHING -> {
+                tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind.name()));
+                return false;
+            }
+            case CORRECTION -> {
+                // Below: the plan it corrects is the message itself, or the one its prompt was asked under.
+            }
         }
-        long chatId = message.path("chat").path("id").asLong();
-        String repliedRef = Refs.message(chatId, repliedTo.get("message_id").asLong(), null);
-        Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef);
-        if (sent.isPresent() && sent.get().kind().replyIsFollowUp()) {
-            TaskCommand followUp = new TaskCommand.FollowUp(sent.get().taskId(), text(message), new Origin(origin));
-            reply(tx, who, followUp, commands.run(tx, who, followUp), origin, chatRef);
-            return true;
-        }
-        if (sent.isEmpty()) {
-            // Not one of the bot's messages: another reply, such as an addition to a task given in a group, may still apply.
-            return false;
-        }
-        OutboxKind kind = sent.get().kind();
-        if (kind != OutboxKind.PLAN_READY && kind != OutboxKind.PLAN_EDIT_PROMPT) {
-            tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind.name()));
-            return false;
-        }
-        JsonNode payload = Json.read(sent.get().payload());
+        JsonNode payload = Json.read(sent.payload());
         // A reply to ✏️'s prompt corrects the plan the prompt was asked under.
         String planRef = kind == OutboxKind.PLAN_READY ? repliedRef : payload.path("planRef").asText();
-        TaskCommand correct = new TaskCommand.Correct(sent.get().taskId(), OptionalInt.of(payload.path("planSeq").asInt()), text(message));
+        TaskCommand correct = new TaskCommand.Correct(sent.taskId(), OptionalInt.of(payload.path("planSeq").asInt()), text(message));
         CommandResult result = commands.run(tx, who, correct);
         if (result instanceof CommandResult.Done) {
             showCorrected(tx, planRef, text(message));
@@ -854,27 +845,14 @@ public final class UpdateHandler {
         }));
     }
 
-    /**
-     * A reply to a plan's question message, or to the prompt asking for an answer to one, answers that question (G-1d);
-     * false for any other message.
-     */
-    private boolean replyToQuestion(Tx tx, JsonNode message, Requester who, String origin, String chatRef) {
-        JsonNode repliedTo = message.path("reply_to_message");
-        if (!repliedTo.has("message_id")) {
-            return false;
-        }
-        String repliedRef = Refs.message(message.path("chat").path("id").asLong(), repliedTo.get("message_id").asLong(), null);
-        Optional<Outbox.Sent> sent = Outbox.findSent(tx, repliedRef)
-                .filter(found -> found.kind() == OutboxKind.PLAN_QUESTION || found.kind() == OutboxKind.PLAN_ANSWER_PROMPT);
-        if (sent.isEmpty()) {
-            return false;
-        }
-        JsonNode question = Json.read(sent.get().payload());
-        TaskCommand answer = new TaskCommand.Answer(sent.get().taskId(), question.path("planSeq").asInt(), question.path("index").asInt(),
+    /** A reply to a plan's question message, or to the prompt asking for an answer to one, answers that question (G-1d). */
+    private void answerQuestion(Tx tx, Replied asked, JsonNode message, Requester who, String origin, String chatRef) {
+        Outbox.Sent sent = asked.sent();
+        JsonNode question = Json.read(sent.payload());
+        TaskCommand answer = new TaskCommand.Answer(sent.taskId(), question.path("planSeq").asInt(), question.path("index").asInt(),
                 new TaskCommand.Choice.Written(text(message)));
         // Every refusal is answered in words: a reply has no callback to answer, and silence would look like it was taken.
         reply(tx, who, answer, commands.run(tx, who, answer), origin, chatRef);
-        return true;
     }
 
     /**
