@@ -78,6 +78,8 @@ class JobRunnerTest {
     private java.util.function.Consumer<Path> duringExecute = worktree -> { };
     /** Whether {@link #executeWithLoop} sends the planned commit as the branch's expected head, as a guarded team machine does. */
     private boolean guarded;
+    /** The plugin picks {@link #executeWithLoop} sends with its job, as a team machine does for a plan that picked some. */
+    private List<String> picks = List.of();
     private Recorder events;
     /** What the execution run with the verify loop recorded. */
     private final Recorder loopEvents = new Recorder();
@@ -822,7 +824,7 @@ class JobRunnerTest {
         Job job = new Job(TASK, 2, RunKind.EXECUTE, project, "main", events.baseSha, events.worktree, null, SESSION, false,
                 "Implement the approved plan", null, null, timeout.toMillis(), new BigDecimal("10"), List.of(),
                 "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null,
-                loop ? "Review this:" : null, guarded ? events.baseSha : null);
+                loop ? "Review this:" : null, guarded ? events.baseSha : null, picks);
         return looping.run(job, loopEvents, execution);
     }
 
@@ -1015,5 +1017,22 @@ class JobRunnerTest {
         assertEquals(Prompts.PLUGIN_NOTE, JobRunner.pluginNote(plan));
         assertEquals("", JobRunner.pluginNote(codexPlan), "Codex loads no plugins, so it is offered none");
         assertEquals("", JobRunner.pluginNote(job(RunKind.EXECUTE, 2, "Implement", null, null, null)), "only a plan picks");
+    }
+
+    @Test
+    void theExecutionItsFixAndItsReviewerAllCarryThePicks() {
+        picks = List.of("playwright");
+        answers.put(RunKind.EXECUTE, answer(null, "1.00"));
+        answers.put(RunKind.REVIEW, answer("{\"verdict\":\"ok\",\"findings\":[]}", "0.20"));
+        java.util.concurrent.atomic.AtomicInteger testRuns = new java.util.concurrent.atomic.AtomicInteger();
+
+        JobResult result = executeWithLoop(true, (command, workdir, log, timeout, stop, started) ->
+                new TestRunner.TestRun(testRuns.getAndIncrement() == 0 ? 1 : 0, false, false, "FooTest failed"));
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), result.failureDetail());
+        assertEquals(List.of(RunKind.EXECUTE, RunKind.EXECUTE, RunKind.REVIEW), agentKindsStarted);
+        for (RunRequest request : loopRequests) {
+            assertEquals(List.of("playwright"), request.picks(), request.kind() + " resume=" + request.resume());
+        }
     }
 }

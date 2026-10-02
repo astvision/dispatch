@@ -223,14 +223,14 @@ public final class JobRunner implements Worker {
                 fixes++;
                 return call(job, events, control, new RunRequest(RunKind.EXECUTE, worktree, prompt, job.sessionId(), true,
                         files.dirs(), budgetUsd, job.model(), job.effort(), Path.of(logBase + ".fix-" + fixes), Map.of(),
-                        plugins), timeout);
+                        plugins, job.picks()), timeout);
             }
 
             @Override
             public AgentResult review(String prompt, BigDecimal budgetUsd, Duration timeout) {
                 return call(job, events, control, new RunRequest(RunKind.REVIEW, worktree, prompt, UUID.randomUUID(), false,
-                        files.dirs(), budgetUsd, job.model(), job.effort(), Path.of(logBase + ".review"), Map.of(), plugins),
-                        timeout);
+                        files.dirs(), budgetUsd, job.model(), job.effort(), Path.of(logBase + ".review"), Map.of(), plugins,
+                        job.picks()), timeout);
             }
 
             @Override
@@ -473,7 +473,7 @@ public final class JobRunner implements Worker {
         return new RunRequest(job.kind(), worktree,
                 job.prompt() + files.note() + pluginNote(job) + skillNote(job.kind(), plugins),
                 job.sessionId(), job.resume(), files.dirs(), job.budgetUsd(), job.model(), job.effort(),
-                workspaces.runLogBase(job.taskId(), job.seq()), Map.of(), plugins);
+                workspaces.runLogBase(job.taskId(), job.seq()), Map.of(), plugins, job.picks());
     }
 
     /**

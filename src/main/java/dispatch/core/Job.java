@@ -35,6 +35,8 @@ import java.util.UUID;
  * @param expectedHead    EXECUTE and DELIVER only: the commit Dispatch last left the task's branch at, which the run must find
  *                        it at before it builds on or pushes it; null when there is nothing to check (a PLAN job, a task from
  *                        before the guard, an older team machine), and then nothing is checked
+ * @param plugins         EXECUTE only: the official plugins the plan picked (spec: plugin picks); null when there are none,
+ *                        and then left out of the JSON, so an older worker still reads every job without picks
  */
 public record Job(
         long taskId,
@@ -58,11 +60,23 @@ public record Job(
         String deliverySummary,
         @JsonInclude(JsonInclude.Include.NON_NULL) String branch,
         @JsonInclude(JsonInclude.Include.NON_NULL) String reviewPrompt,
-        @JsonInclude(JsonInclude.Include.NON_NULL) String expectedHead) {
+        @JsonInclude(JsonInclude.Include.NON_NULL) String expectedHead,
+        @JsonInclude(JsonInclude.Include.NON_NULL) List<String> plugins) {
 
     public Job {
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         commitTrailers = commitTrailers == null ? List.of() : List.copyOf(commitTrailers);
+        plugins = plugins == null || plugins.isEmpty() ? null : List.copyOf(plugins);
+    }
+
+    /** Before plugin picks: none. */
+    public Job(long taskId, int seq, RunKind kind, Project project, String baseBranch, String baseSha, String worktree,
+            String prUrl, UUID sessionId, boolean resume, String prompt, String model, String effort, long timeoutMillis,
+            BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
+            String deliverySummary, String branch, String reviewPrompt, String expectedHead) {
+        this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
+                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch, reviewPrompt,
+                expectedHead, null);
     }
 
     /** Before the branch guard: no expected head, so nothing is checked. */
@@ -90,6 +104,12 @@ public record Job(
             String deliverySummary) {
         this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
                 timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, null, null, null);
+    }
+
+    /** The plugins this run loads (spec: plugin picks); empty for a job without picks or from an older team machine. */
+    @JsonIgnore
+    public List<String> picks() {
+        return plugins == null ? List.of() : plugins;
     }
 
     /** The task's branch: the team's prefix when it sent one, else dispatch/<task>. */

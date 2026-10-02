@@ -45,6 +45,8 @@ class CoordinatorTest {
             new Config.PhaseSettings(null, "low"));
     private static final String PLAN_JSON = new Plan("The login times out", List.of("AUTH_TIMEOUT_SECONDS is 5"),
             List.of("Raise the timeout"), List.of(), List.of()).toJson();
+    private static final String PICKING_PLAN = new Plan("The page needs a layout", List.of(), List.of("Build the page"),
+            List.of(), List.of(), List.of(), List.of("frontend-design")).toJson();
 
     @TempDir
     Path dir;
@@ -413,9 +415,13 @@ class CoordinatorTest {
 
     /** Plans and approves a task, then returns the EXECUTE job the worker got. */
     private Job approvedExecutionJob(Config.Project project) {
+        return approvedExecutionJob(project, PLAN_JSON);
+    }
+
+    private Job approvedExecutionJob(Config.Project project, String planJson) {
         long id = queue("Fix the login timeout");
         Projects configured = projects(List.of(project));
-        coordinator(configured, remember(JobResult.succeeded(agentResult(PLAN_JSON)))).execute(claim());
+        coordinator(configured, remember(JobResult.succeeded(agentResult(planJson)))).execute(claim());
         db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
         coordinator(configured, remember(JobResult.succeeded(agentResult(null)))).execute(claim());
         return given.get();
@@ -467,5 +473,35 @@ class CoordinatorTest {
 
     private Map<String, String> row(String sql, Object... params) {
         return SqlRows.single(dbFile, sql, params);
+    }
+
+    @Test
+    void anExecutionJobCarriesThePlansPicks() {
+        Job job = approvedExecutionJob(ALM, PICKING_PLAN);
+
+        assertEquals(List.of("frontend-design"), job.picks());
+        assertTrue(Json.write(job).contains("\"plugins\":[\"frontend-design\"]"), Json.write(job));
+    }
+
+    @Test
+    void anExecutionWithoutPicksSendsNoPluginsFieldAnOlderWorkerWouldReject() {
+        Job job = approvedExecutionJob(ALM);
+
+        assertEquals(List.of(), job.picks());
+        assertFalse(Json.write(job).contains("\"plugins\""), Json.write(job));
+    }
+
+    @Test
+    void aCorrectionOfAPickingPlanPlansWithoutLoadingThePicks() {
+        long id = queue("Add a settings page");
+        Projects configured = projects(List.of(ALM));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(PICKING_PLAN)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Correct(id, java.util.OptionalInt.of(1), "Reuse the form")));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(PICKING_PLAN)))).execute(claim());
+
+        assertEquals(RunKind.PLAN, given.get().kind());
+        assertEquals(List.of(), given.get().picks(), "a plan run chooses picks; it never loads them");
     }
 }

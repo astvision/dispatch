@@ -19,6 +19,8 @@ import java.util.UUID;
  * @param logBase      path prefix for the raw output files; the agent adds its own extensions
  * @param environment  variables added to the agent's base environment for this run only
  * @param pluginDirs   Claude Code plugins this run loads (spec: agent skills); empty for none, ignored by Codex and Gemini CLI
+ * @param picks        the official plugins the task's plan picked (spec: plugin picks); empty for none, ignored by Codex and
+ *                     Gemini CLI
  */
 public record RunRequest(
         RunKind kind,
@@ -32,10 +34,12 @@ public record RunRequest(
         String effort,
         Path logBase,
         Map<String, String> environment,
-        List<Path> pluginDirs) {
+        List<Path> pluginDirs,
+        List<String> picks) {
 
     public RunRequest {
         pluginDirs = pluginDirs == null ? List.of() : List.copyOf(pluginDirs);
+        picks = picks == null ? List.of() : List.copyOf(picks);
     }
 
     /** This request with {@code more} plugin directories after its own; the sandbox binds them all read-only. */
@@ -43,16 +47,26 @@ public record RunRequest(
         List<Path> dirs = new java.util.ArrayList<>(pluginDirs);
         dirs.addAll(more);
         return new RunRequest(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase,
-                environment, dirs);
+                environment, dirs, picks);
+    }
+
+    /** Without picks. */
+    public RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId, boolean resume, List<Path> readOnlyDirs,
+                      BigDecimal budgetUsd, String model, String effort, Path logBase, Map<String, String> environment,
+                      List<Path> pluginDirs) {
+        this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, environment, pluginDirs,
+                List.of());
     }
 
     public RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId, boolean resume, List<Path> readOnlyDirs,
                       BigDecimal budgetUsd, String model, String effort, Path logBase, Map<String, String> environment) {
-        this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, environment, List.of());
+        this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, environment, List.of(),
+                List.of());
     }
 
     public RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId, boolean resume, List<Path> readOnlyDirs,
                       BigDecimal budgetUsd, String model, String effort, Path logBase) {
-        this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, Map.of(), List.of());
+        this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, Map.of(), List.of(),
+                List.of());
     }
 }

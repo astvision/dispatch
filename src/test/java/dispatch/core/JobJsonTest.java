@@ -200,4 +200,21 @@ class JobJsonTest {
         assertFalse(Json.write(delivered).contains("\"head\""), "an older team machine must still read the result");
         assertNull(Json.MAPPER.readValue(Json.write(plan), Job.class).expectedHead(), "an older team machine's job checks nothing");
     }
+
+    @Test
+    void aJobsPicksSurviveJsonAndAJobWithoutPicksLeavesTheFieldOutForOlderWorkers() throws Exception {
+        Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of());
+        UUID session = UUID.fromString("11111111-2222-3333-4444-555555555555");
+        Job picked = new Job(7, 2, RunKind.EXECUTE, project, "main", "6f3030a", "/w/7", null, session, false, "Implement",
+                null, null, 1000L, new BigDecimal("2"), List.of(), "dispatch #7: x", List.of(), null, null, null, null,
+                List.of("playwright"));
+        Job none = new Job(7, 2, RunKind.EXECUTE, project, "main", "6f3030a", "/w/7", null, session, false, "Implement",
+                null, null, 1000L, new BigDecimal("2"), List.of(), "dispatch #7: x", List.of(), null, null, null, null,
+                List.of());
+
+        assertEquals(picked, Json.MAPPER.readValue(Json.write(picked), Job.class));
+        assertEquals(List.of("playwright"), picked.picks());
+        assertFalse(Json.write(none).contains("\"plugins\""), Json.write(none));
+        assertEquals(List.of(), none.picks());
+    }
 }

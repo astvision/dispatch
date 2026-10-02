@@ -136,7 +136,7 @@ public final class Coordinator {
         String prompt = task.planJson() == null ? Prompts.plan(task) : Prompts.correction(task, run);
         return newJob(task, run, project, task.sessionId(), agentStartedBefore(task.id(), RunKind.PLAN, run.seq()), prompt,
                 project.planModel(), project.planEffort(), limits.timeout().toMillis(), limits.budgetUsd(),
-                attachments(task.id()), null, null);
+                attachments(task.id()), null, null, null);
     }
 
     private Job executeJob(Task task, Run run, Config.Project project) {
@@ -144,17 +144,22 @@ public final class Coordinator {
         boolean resume = agentStartedBefore(task.id(), RunKind.EXECUTE, run.seq());
         return newJob(task, run, project, buildSession(task), resume, executePrompt(task, run, resume), project.executeModel(),
                 project.executeEffort(), limits.timeout().toMillis(), limits.budgetUsd(), attachments(task.id()), null,
-                project.loopOn() ? Prompts.review(task, task.planJson(), reviewInstruction(task, run)) : null);
+                project.loopOn() ? Prompts.review(task, task.planJson(), reviewInstruction(task, run)) : null, picks(task));
+    }
+
+    /** The plan's plugin picks (spec: plugin picks); a task without a plan has none. A plan run never loads them. */
+    private static List<String> picks(Task task) {
+        return task.planJson() == null ? null : Plan.parse(task.planJson()).plugins();
     }
 
     /** A delivery run has no agent: it commits what the failed delivery left, with that run's summary as the body. */
     private Job deliverJob(Task task, Run run, Config.Project project) {
-        return newJob(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction(), null);
+        return newJob(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction(), null, null);
     }
 
     private Job newJob(Task task, Run run, Config.Project project, UUID sessionId, boolean resume, String prompt, String model,
                     String effort, long timeoutMillis, BigDecimal budgetUsd, List<Attachment> attachments,
-                    String deliverySummary, String reviewPrompt) {
+                    String deliverySummary, String reviewPrompt, List<String> plugins) {
         Job.Project on = new Job.Project(project.name(), project.repo(), project.path(), project.baseBranch(), project.agent(),
                 project.copyFiles(), project.loopOn() ? project.test() : null, project.loopOn() ? Boolean.TRUE : null,
                 skills(project));
@@ -162,7 +167,7 @@ public final class Coordinator {
                 task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
                 trailers(task, run.kind()), deliverySummary, Config.branchFor(branchPrefix, task.id()), reviewPrompt,
-                expectedHead(task.id(), run.kind()));
+                expectedHead(task.id(), run.kind()), plugins);
     }
 
     /**
