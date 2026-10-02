@@ -2,6 +2,7 @@ package dispatch.agent.claude;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -247,5 +248,45 @@ class OwnerPluginsTest {
 
         assertTrue(Files.readString(plugin.resolve(".claude-plugin/plugin.json")).contains("\"owner-skills\""));
         assertEquals("graphify's skill", Files.readString(plugin.resolve("skills/graphify/SKILL.md")));
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void picksLoadWithTheirServersAndAPickTheOwnerAlsoListsLoadsOnceAsListed() throws IOException {
+        Path claude = FakeClaude.install(Files.createDirectories(dir.resolve("bin")));
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Path marketplace = OwnerPluginsFixture.marketplace(home, Map.of("frontend-design", "",
+                "playwright", "{\"playwright\": {\"command\": \"npx\"}}"));
+        Path installed = OwnerPluginsFixture.plugin(dir.resolve("cache/frontend-design"), null);
+        OwnerPluginsFixture.installed(claude, Map.of("frontend-design@claude-plugins-official", installed));
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"),
+                "agents:\n  claude-code:\n    plugins: [frontend-design@claude-plugins-official]\n");
+
+        OwnerPlugins.Resolved resolved = OwnerPlugins.instance(config, home)
+                .resolve(claude.toString(), FakeClaude.environment(), List.of("frontend-design", "playwright"));
+
+        assertEquals(List.of(installed, marketplace.resolve("plugins/playwright")), resolved.pluginDirs());
+        JsonNode servers = Json.MAPPER.readTree(resolved.mcpConfig()).get("mcpServers");
+        assertEquals("npx", servers.path("plugin_playwright_playwright").path("command").asText());
+    }
+
+    @Test
+    void picksAloneResolveWithoutAskingClaudeCodeForItsPlugins() throws IOException {
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Path marketplace = OwnerPluginsFixture.marketplace(home, Map.of("frontend-design", ""));
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    command: claude\n");
+
+        OwnerPlugins.Resolved resolved = OwnerPlugins.instance(config, home)
+                .resolve("/nonexistent/claude", Map.of(), List.of("frontend-design"));
+
+        assertEquals(List.of(marketplace.resolve("plugins/frontend-design")), resolved.pluginDirs());
+        assertNull(resolved.mcpConfig(), "no server, no --mcp-config");
+    }
+
+    @Test
+    void noHomeSkipsEveryPickInsteadOfFailingTheRun() {
+        OwnerPlugins.Resolved resolved = OwnerPlugins.NONE.resolve("claude", Map.of(), List.of("frontend-design"));
+
+        assertEquals(List.of(), resolved.pluginDirs());
     }
 }

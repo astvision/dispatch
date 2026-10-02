@@ -581,4 +581,35 @@ class ClaudeCodeAgentTest {
         assertEquals(graphify.toString(), args.get(args.lastIndexOf("--add-dir") + 1), "what the link points to stays readable");
         assertTrue(args.get(args.indexOf("--tools") + 1).endsWith(",Skill"), args.toString());
     }
+
+    @Test
+    void anExecutionLoadsItsPicksAndAPickThisMachineLacksIsSkippedAndLogged() throws Exception {
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Path marketplace = OwnerPluginsFixture.marketplace(home, Map.of("playwright", "{\"playwright\": {\"command\": \"npx\"}}"));
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    command: claude\n");
+        ClaudeCodeAgent owned = owning(config, home, Map.of());
+        RunRequest execute = new RunRequest(RunKind.EXECUTE, workdir, "Build it", SESSION, false, List.of(),
+                new BigDecimal("2"), null, null, dir.resolve("runs/1/2"), Map.of(), List.of(), List.of("playwright", "context7"));
+
+        String logged = capturingLog(() -> awaitQuietly(owned.start(execute)));
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertEquals(marketplace.resolve("plugins/playwright").toString(), valueAfter(args, "--plugin-dir"));
+        assertTrue(valueAfter(args, "--mcp-config").contains("\"plugin_playwright_playwright\""), args.toString());
+        assertTrue(args.contains("--strict-mcp-config"));
+        assertTrue(valueAfter(args, "--tools").endsWith(",Skill"), args.toString());
+        assertTrue(logged.contains("event=agent.plugin_skipped") && logged.contains("context7"), logged);
+    }
+
+    @Test
+    void anExecutionWithoutPicksKeepsTodaysCommandLine() throws Exception {
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    command: claude\n");
+        ClaudeCodeAgent owned = owning(config, dir, Map.of());
+
+        awaitQuietly(owned.start(new RunRequest(RunKind.EXECUTE, workdir, "Build it", SESSION, false, List.of(),
+                new BigDecimal("2"), null, null, dir.resolve("runs/1/2"))));
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertFalse(args.contains("--plugin-dir") || args.contains("--mcp-config"), args.toString());
+    }
 }

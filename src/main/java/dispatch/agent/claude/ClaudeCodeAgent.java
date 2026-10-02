@@ -76,9 +76,10 @@ public final class ClaudeCodeAgent implements Agent {
     @Override
     public RunHandle start(RunRequest request) {
         String permissionMode = permissionMode(request.kind());
-        // Read and resolved now, on the machine that runs the agent: an edit or an install applies to this run.
+        // Read and resolved now, on the machine that runs the agent: an edit, an install or the plan's picks apply to this run.
         OwnerPlugins.Resolved owner = OWNER_KINDS.contains(request.kind())
-                ? ownerPlugins.resolve(command, ProcessRun.agentEnvironment(environment)) : OwnerPlugins.Resolved.NONE;
+                ? ownerPlugins.resolve(command, ProcessRun.agentEnvironment(environment), request.picks())
+                : OwnerPlugins.Resolved.NONE;
         List<Path> ownerDirs = new ArrayList<>(owner.pluginDirs());
         if (!owner.skills().isEmpty()) {
             ownerDirs.add(OwnerPlugins.skillsPlugin(Path.of(request.logBase() + ".skills"), owner.skills()));

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.agent.AgentStartException;
+import dispatch.domain.CuratedPlugins;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -170,8 +171,17 @@ public final class OwnerPlugins {
      * missing.
      */
     public Resolved resolve(String claudeCommand, Map<String, String> environment) {
+        return resolve(claudeCommand, environment, List.of());
+    }
+
+    /**
+     * As {@link #resolve(String, Map)}, plus the official plugins the task's plan picked (spec: plugin picks), found in
+     * this machine's marketplace copy with their servers in the same configuration. A pick the owner also lists loads
+     * once, as listed. A pick this machine lacks is skipped.
+     */
+    public Resolved resolve(String claudeCommand, Map<String, String> environment, List<String> picks) {
         Lists lists = lists();
-        if (lists.isEmpty()) {
+        if (lists.isEmpty() && picks.isEmpty()) {
             return Resolved.NONE;
         }
         ObjectNode servers = Json.MAPPER.createObjectNode();
@@ -185,11 +195,13 @@ public final class OwnerPlugins {
             }
             dirs.add(dir);
             // Named as Claude Code names a plugin's server in the owner's own sessions, so its tools are called the same.
-            String plugin = id.contains("@") ? id.substring(0, id.indexOf('@')) : id;
-            for (Iterator<Map.Entry<String, JsonNode>> it = pluginServers(dir); it.hasNext(); ) {
-                Map.Entry<String, JsonNode> server = it.next();
-                add(servers, "plugin_" + plugin + "_" + server.getKey(), withRoot(server.getValue(), dir));
-            }
+            addServers(servers, id.contains("@") ? id.substring(0, id.indexOf('@')) : id, dir);
+        }
+        List<String> unlisted = picks.stream()
+                .filter(pick -> !lists.plugins().contains(pick + "@" + CuratedPlugins.MARKETPLACE)).toList();
+        for (Map.Entry<String, Path> pick : OfficialPlugins.find(home, unlisted).entrySet()) {
+            dirs.add(pick.getValue());
+            addServers(servers, pick.getKey(), pick.getValue());
         }
         if (!lists.mcpServers().isEmpty()) {
             JsonNode defined = userServers();
@@ -284,6 +296,14 @@ public final class OwnerPlugins {
             String variable = "DISPATCH_MCP_" + (environment.size() + 1);
             environment.put(variable, value.asText());
             object.put(name, "${" + variable + "}");
+        }
+    }
+
+    /** A plugin's own servers, named {@code plugin_<plugin>_<server>}, with its directory as ${CLAUDE_PLUGIN_ROOT}. */
+    private static void addServers(ObjectNode servers, String plugin, Path dir) {
+        for (Iterator<Map.Entry<String, JsonNode>> it = pluginServers(dir); it.hasNext(); ) {
+            Map.Entry<String, JsonNode> server = it.next();
+            add(servers, "plugin_" + plugin + "_" + server.getKey(), withRoot(server.getValue(), dir));
         }
     }
 

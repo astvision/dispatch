@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.StringJoiner;
 import java.util.stream.Collectors;
 
 /** Installed Claude Code plugins for the tests of the owner's plugins (spec: owner plugins). */
@@ -29,5 +30,21 @@ public final class OwnerPluginsFixture {
                 .map(e -> "{\"id\": \"" + e.getKey() + "\", \"installPath\": " + Json.write(e.getValue().toString()) + "}")
                 .collect(Collectors.joining(","));
         Files.writeString(claude.resolveSibling("fake-claude.plugins.json"), "[" + entries + "]");
+    }
+
+    /**
+     * An official marketplace copy under {@code home}, as Claude Code keeps it, hosting each plugin at ./plugins/<name>
+     * with its {@code .mcp.json} holding the given servers, or none when they are "".
+     */
+    public static Path marketplace(Path home, Map<String, String> plugins) throws IOException {
+        Path marketplace = home.resolve(".claude/plugins/marketplaces/claude-plugins-official");
+        Files.createDirectories(marketplace.resolve(".claude-plugin"));
+        StringJoiner entries = new StringJoiner(",");
+        for (Map.Entry<String, String> plugin : plugins.entrySet()) {
+            plugin(marketplace.resolve("plugins").resolve(plugin.getKey()), plugin.getValue().isEmpty() ? null : plugin.getValue());
+            entries.add("{\"name\": \"" + plugin.getKey() + "\", \"source\": \"./plugins/" + plugin.getKey() + "\"}");
+        }
+        Files.writeString(marketplace.resolve(".claude-plugin/marketplace.json"), "{\"plugins\": [" + entries + "]}");
+        return marketplace;
     }
 }
