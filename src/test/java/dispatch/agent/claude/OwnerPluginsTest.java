@@ -33,11 +33,11 @@ class OwnerPluginsTest {
         Path config = Files.writeString(dir.resolve("dispatch.yaml"),
                 "agents:\n  claude-code:\n    command: claude\n    plugins: [a@m]\n    mcpServers: [mongodb]\n");
         OwnerPlugins owner = OwnerPlugins.instance(config, dir);
-        assertEquals(new OwnerPlugins.Lists(List.of("a@m"), List.of("mongodb")), owner.lists());
+        assertEquals(new OwnerPlugins.Lists(List.of("a@m"), List.of("mongodb"), List.of()), owner.lists());
 
         Files.writeString(config, "agents:\n  claude-code:\n    command: claude\n    plugins: [a@m, b@m]\n");
 
-        assertEquals(new OwnerPlugins.Lists(List.of("a@m", "b@m"), List.of()), owner.lists(), "read again, no restart");
+        assertEquals(new OwnerPlugins.Lists(List.of("a@m", "b@m"), List.of(), List.of()), owner.lists(), "read again, no restart");
     }
 
     @Test
@@ -45,7 +45,7 @@ class OwnerPluginsTest {
         Path config = Files.writeString(dir.resolve("worker.yaml"),
                 "team: https://team.example.com\nname: ann\nclaudePlugins: [a@m]\nclaudeMcpServers: [mongodb]\n");
 
-        assertEquals(new OwnerPlugins.Lists(List.of("a@m"), List.of("mongodb")), OwnerPlugins.worker(config, dir).lists());
+        assertEquals(new OwnerPlugins.Lists(List.of("a@m"), List.of("mongodb"), List.of()), OwnerPlugins.worker(config, dir).lists());
     }
 
     @Test
@@ -209,5 +209,43 @@ class OwnerPluginsTest {
         String text = reference.asText();
         assertTrue(text.startsWith("${") && text.endsWith("}"), text);
         return text.substring(2, text.length() - 1);
+    }
+
+    @Test
+    void theOwnersSkillsAreListedByNameAndAPathIsRefused() throws IOException {
+        Path config = Files.writeString(dir.resolve("worker.yaml"), "claudeSkills: [graphify]\n");
+        assertEquals(new OwnerPlugins.Lists(List.of(), List.of(), List.of("graphify")), OwnerPlugins.worker(config, dir).lists());
+
+        Files.writeString(config, "claudeSkills: [../graphify]\n");
+        AgentStartException error = assertThrows(AgentStartException.class, () -> OwnerPlugins.worker(config, dir).lists());
+
+        assertEquals("claudeSkills in " + config + ": ../graphify is not a directory name in ~/.claude/skills", error.getMessage());
+    }
+
+    @Test
+    void aListedSkillResolvesToItsDirectoryAndAMissingOneSaysWhatToDo() throws IOException {
+        Path graphify = Files.createDirectories(dir.resolve(".claude/skills/graphify"));
+        Files.writeString(graphify.resolve("SKILL.md"), "---\nname: graphify\ndescription: d\n---\n");
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    skills: [graphify]\n");
+
+        assertEquals(List.of(graphify), OwnerPlugins.instance(config, dir).resolve("claude", Map.of()).skills());
+
+        Files.writeString(config, "agents:\n  claude-code:\n    skills: [graphify, tdd]\n");
+        AgentStartException error = assertThrows(AgentStartException.class,
+                () -> OwnerPlugins.instance(config, dir).resolve("claude", Map.of()));
+        assertEquals("claude-code skill tdd is not in ~/.claude/skills on this computer: add it there or remove it from "
+                + "agents.claude-code.skills in " + config, error.getMessage());
+    }
+
+    /** Loaded as owner-skills:<name> (probed on Claude Code 2.1.287); a link, so an edit to the skill reaches the next run. */
+    @Test
+    void theSkillsPluginNamesEachSkillAfterItsDirectory() throws IOException {
+        Path graphify = Files.createDirectories(dir.resolve("skills/graphify"));
+        Files.writeString(graphify.resolve("SKILL.md"), "graphify's skill");
+
+        Path plugin = OwnerPlugins.skillsPlugin(dir.resolve("runs/1/1.skills"), List.of(graphify));
+
+        assertTrue(Files.readString(plugin.resolve(".claude-plugin/plugin.json")).contains("\"owner-skills\""));
+        assertEquals("graphify's skill", Files.readString(plugin.resolve("skills/graphify/SKILL.md")));
     }
 }

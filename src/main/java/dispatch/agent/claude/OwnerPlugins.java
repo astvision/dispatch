@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class OwnerPlugins {
 
-    private static final Lists NOTHING_LISTED = new Lists(List.of(), List.of());
+    private static final Lists NOTHING_LISTED = new Lists(List.of(), List.of(), List.of());
     /** No lists: every run's command line as before. */
     public static final OwnerPlugins NONE = new OwnerPlugins(null, false, null, Duration.ZERO);
 
@@ -36,30 +36,33 @@ public final class OwnerPlugins {
     private static final java.util.regex.Pattern SKILL_NAME = java.util.regex.Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
     private static final Duration LIST_TIMEOUT = Duration.ofSeconds(60);
 
-    /** The two lists as the file has them now. */
-    public record Lists(List<String> plugins, List<String> mcpServers) {
+    /** The lists as the file has them now. */
+    public record Lists(List<String> plugins, List<String> mcpServers, List<String> skills) {
 
         public Lists {
             plugins = List.copyOf(plugins);
             mcpServers = List.copyOf(mcpServers);
+            skills = List.copyOf(skills);
         }
 
         public boolean isEmpty() {
-            return plugins.isEmpty() && mcpServers.isEmpty();
+            return plugins.isEmpty() && mcpServers.isEmpty() && skills.isEmpty();
         }
     }
 
     /**
-     * What one run loads: the plugin directories, the --mcp-config JSON (null when there is no server), and the variables
-     * its servers' {@code env} and {@code headers} values travel in, for the agent's environment.
+     * What one run loads: the plugin directories, the --mcp-config JSON (null when there is no server), the variables
+     * its servers' {@code env} and {@code headers} values travel in, for the agent's environment, and the directories of
+     * the owner's own skills.
      */
-    public record Resolved(List<Path> pluginDirs, String mcpConfig, Map<String, String> environment) {
+    public record Resolved(List<Path> pluginDirs, String mcpConfig, Map<String, String> environment, List<Path> skills) {
 
-        public static final Resolved NONE = new Resolved(List.of(), null, Map.of());
+        public static final Resolved NONE = new Resolved(List.of(), null, Map.of(), List.of());
 
         public Resolved {
             pluginDirs = List.copyOf(pluginDirs);
             environment = Map.copyOf(environment);
+            skills = List.copyOf(skills);
         }
     }
 
@@ -105,6 +108,10 @@ public final class OwnerPlugins {
         return instance ? "agents.claude-code.mcpServers" : "claudeMcpServers";
     }
 
+    String skillsKey() {
+        return instance ? "agents.claude-code.skills" : "claudeSkills";
+    }
+
     /**
      * The lists as the file has them now; empty when the file has none, or when it cannot be read and the last read that
      * worked listed nothing.
@@ -126,8 +133,15 @@ public final class OwnerPlugins {
             throw new AgentStartException("cannot read the plugin lists from " + file + ": " + e.getMessage(), e);
         }
         JsonNode at = root == null ? MissingNode.getInstance() : instance ? root.path("agents").path("claude-code") : root;
+        List<String> skills = names(at, instance ? "skills" : "claudeSkills", skillsKey());
+        for (String name : skills) {
+            if (!isSkillName(name)) {
+                throw new AgentStartException(skillsKey() + " in " + file + ": " + name
+                        + " is not a directory name in ~/.claude/skills", null);
+            }
+        }
         Lists lists = new Lists(names(at, instance ? "plugins" : "claudePlugins", pluginsKey()),
-                names(at, instance ? "mcpServers" : "claudeMcpServers", serversKey()));
+                names(at, instance ? "mcpServers" : "claudeMcpServers", serversKey()), skills);
         lastRead = lists;
         return lists;
     }
@@ -189,8 +203,17 @@ public final class OwnerPlugins {
                 add(servers, name, server);
             }
         }
+        List<Path> skills = new ArrayList<>();
+        for (String name : lists.skills()) {
+            Path skill = home.resolve(".claude").resolve("skills").resolve(name);
+            if (!Files.isRegularFile(skill.resolve("SKILL.md"))) {
+                throw new AgentStartException("claude-code skill " + name + " is not in ~/.claude/skills on this computer: "
+                        + "add it there or remove it from " + skillsKey() + " in " + file, null);
+            }
+            skills.add(skill);
+        }
         if (servers.isEmpty()) {
-            return new Resolved(dirs, null, Map.of());
+            return new Resolved(dirs, null, Map.of(), skills);
         }
         Map<String, String> values = new LinkedHashMap<>();
         for (JsonNode server : servers) {
@@ -199,7 +222,47 @@ public final class OwnerPlugins {
         }
         ObjectNode config = Json.MAPPER.createObjectNode();
         config.set("mcpServers", servers);
-        return new Resolved(dirs, Json.write(config), values);
+        return new Resolved(dirs, Json.write(config), values, skills);
+    }
+
+    /**
+     * A plugin named {@code owner-skills} in {@code dir}, holding the owner's skills, so a run loads them as
+     * {@code owner-skills:<name>} (probed on Claude Code 2.1.287): each a link to the skill's own directory, so an edit
+     * reaches the next run, or a copy where this system allows no link (Windows without the privilege).
+     */
+    public static Path skillsPlugin(Path dir, List<Path> skills) {
+        try {
+            Files.createDirectories(dir.resolve(".claude-plugin"));
+            Files.writeString(dir.resolve(".claude-plugin").resolve("plugin.json"), "{\"name\": \"owner-skills\"}");
+            Path into = Files.createDirectories(dir.resolve("skills"));
+            for (Path skill : skills) {
+                Path link = into.resolve(skill.getFileName().toString());
+                if (Files.exists(link, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    continue;
+                }
+                try {
+                    Files.createSymbolicLink(link, skill);
+                } catch (UnsupportedOperationException | java.nio.file.FileSystemException e) {
+                    copy(skill, link);
+                }
+            }
+            return dir;
+        } catch (IOException e) {
+            throw new AgentStartException("cannot prepare the owner's skills in " + dir + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static void copy(Path from, Path to) throws IOException {
+        try (java.util.stream.Stream<Path> paths = Files.walk(from)) {
+            for (Path path : (Iterable<Path>) paths::iterator) {
+                Path target = to.resolve(from.relativize(path).toString());
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(target);
+                } else {
+                    Files.copy(path, target);
+                }
+            }
+        }
     }
 
     /**
