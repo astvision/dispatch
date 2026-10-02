@@ -3,6 +3,7 @@ package dispatch.store;
 import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
 import dispatch.worker.Readiness;
+import dispatch.worker.WorkerProtocol;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
@@ -121,6 +122,17 @@ public final class Workers {
     }
 
     /** How many runs this computer takes at once, as its last poll said; {@link Runs#claimNext} counts on it. */
+    /** What {@code workerId} said it speaks on this poll; 0 when it said nothing, as a worker from before the protocol. */
+    public static void saveProtocol(Tx tx, long workerId, int protocol) {
+        tx.update("UPDATE worker SET protocol = ? WHERE id = ?", protocol, workerId);
+    }
+
+    /** Whether {@code workerId} is known to speak another protocol than this team machine; unknown until it polls. */
+    private static boolean speaksAnotherProtocol(Tx tx, long workerId) {
+        return tx.one("SELECT protocol FROM worker WHERE id = ? AND protocol IS NOT NULL AND protocol <> ?",
+                row -> row.intValue("protocol"), workerId, WorkerProtocol.VERSION).isPresent();
+    }
+
     public static void saveCapacity(Tx tx, long workerId, int maxRuns) {
         tx.update("UPDATE worker SET max_runs = ? WHERE id = ?", maxRuns, workerId);
     }
@@ -171,7 +183,10 @@ public final class Workers {
             if ((pinnedWorkerId != null && worker.id() != pinnedWorkerId) || !isLive(tx, worker.id(), seenSince)) {
                 continue;
             }
-            Optional<Readiness.Blocker> blocker = readiness(tx, worker.id()).blocker(project, agent, kind);
+            // A computer on another protocol is given no job at all (ADR 0039), whatever else it reports.
+            Optional<Readiness.Blocker> blocker = speaksAnotherProtocol(tx, worker.id())
+                    ? Optional.of(new Readiness.Blocker("version", null))
+                    : readiness(tx, worker.id()).blocker(project, agent, kind);
             if (blocker.isEmpty()) {
                 return Optional.empty();
             }

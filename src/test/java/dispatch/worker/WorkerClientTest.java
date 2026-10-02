@@ -67,4 +67,31 @@ class WorkerClientTest {
             server.stop(0);
         }
     }
+
+    @Test
+    void aTeamMachineOnAnotherProtocolIsRefusedSayingWhichSideToUpdate() throws Exception {
+        HttpServer team = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        team.createContext(WorkerApi.NEXT, exchange -> {
+            // A team machine from before the protocol: a job, and no number.
+            byte[] body = "{\"job\":null}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        team.start();
+        try {
+            WorkerClient client = new WorkerClient(HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + team.getAddress().getPort()), "some-key");
+
+            IllegalStateException refused = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                    () -> client.next(Readiness.READY, 1));
+
+            org.junit.jupiter.api.Assertions.assertTrue(refused.getMessage().contains("update Dispatch on the team machine"),
+                    refused.getMessage());
+        } finally {
+            team.stop(0);
+        }
+    }
 }

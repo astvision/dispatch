@@ -137,6 +137,24 @@ class WorkersReadinessTest {
     private static final Readiness CLAUDE_BROKEN =
             new Readiness(new Readiness.Check(false, "not installed"), new Readiness.Check(true, null), Map.of());
 
+    @Test
+    void aLiveComputerOnAnotherProtocolIsHeldForItsVersion() {
+        live(workerId, new Readiness(new Readiness.Check(true, "2.1.280"), new Readiness.Check(true, null), Map.of()));
+        db.transaction(tx -> Workers.saveProtocol(tx, workerId, 0));
+
+        assertEquals("version", blockerOf(null, "alm", RunKind.PLAN).orElseThrow().code());
+
+        db.transaction(tx -> Workers.saveProtocol(tx, workerId, dispatch.worker.WorkerProtocol.VERSION));
+        assertTrue(blockerOf(null, "alm", RunKind.PLAN).isEmpty(), "updated, it takes work again");
+    }
+
+    @Test
+    void aComputerThatHasNotPolledSinceTheProtocolExistsIsNotHeld() {
+        live(workerId, new Readiness(new Readiness.Check(true, "2.1.280"), new Readiness.Check(true, null), Map.of()));
+
+        assertTrue(blockerOf(null, "alm", RunKind.PLAN).isEmpty(), "its next poll says what it speaks");
+    }
+
     private void live(long worker, Readiness readiness) {
         db.transaction(tx -> Workers.touch(tx, worker, NOW));
         db.transaction(tx -> Workers.saveReadiness(tx, worker, readiness, NOW));

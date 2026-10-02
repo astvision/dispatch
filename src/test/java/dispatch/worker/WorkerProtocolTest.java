@@ -47,7 +47,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
         String key = pair();
         offer(job("Implement the approved plan"));
 
-        JsonNode answer = Json.read(post(WorkerApi.NEXT, key, "{}").body());
+        JsonNode answer = Json.read(post(WorkerApi.NEXT, key, poll("{}")).body());
 
         Job job = Json.MAPPER.treeToValue(answer.get("job"), Job.class);
         assertEquals(7, job.taskId());
@@ -60,7 +60,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void nextAnswersNothingWhenTheMemberHasNoWork() throws Exception {
         String key = pair();
 
-        JsonNode answer = Json.read(post(WorkerApi.NEXT, key, "{}").body());
+        JsonNode answer = Json.read(post(WorkerApi.NEXT, key, poll("{}")).body());
 
         assertTrue(answer.get("job").isNull(), answer.toString());
     }
@@ -69,10 +69,10 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void nextCarriesTheWorkersReadinessAndItIsStored() throws Exception {
         String key = pair();
 
-        post(WorkerApi.NEXT, key, """
+        post(WorkerApi.NEXT, key, poll("""
                 {"readiness": {"claude": {"ok": true, "detail": "2.1.280"},
                                "gh": {"ok": false, "detail": "not logged in"},
-                               "projects": {"alm": {"ok": true}}}}""");
+                               "projects": {"alm": {"ok": true}}}}"""));
 
         Readiness stored = db.transactionReturning(tx ->
                 Workers.readiness(tx, Workers.ofMember(tx, BOLD.ref()).getFirst().id()));
@@ -87,11 +87,11 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void nextCarriesEachOtherAgentsReadinessToo() throws Exception {
         String key = pair();
 
-        post(WorkerApi.NEXT, key, """
+        post(WorkerApi.NEXT, key, poll("""
                 {"readiness": {"claude": {"ok": false, "detail": "cannot run claude"},
                                "gh": {"ok": true},
                                "projects": {},
-                               "agents": {"codex": {"ok": true, "detail": "codex-cli 0.155.1"}, "gemini": {"ok": false}}}}""");
+                               "agents": {"codex": {"ok": true, "detail": "codex-cli 0.155.1"}, "gemini": {"ok": false}}}}"""));
 
         Readiness stored = db.transactionReturning(tx ->
                 Workers.readiness(tx, Workers.ofMember(tx, BOLD.ref()).getFirst().id()));
@@ -104,9 +104,9 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void nextCarriesHowManyRunsTheComputerTakesAtOnceAndANonsenseCountIsRefused() throws Exception {
         String key = pair();
 
-        assertEquals(200, post(WorkerApi.NEXT, key, "{\"maxConcurrentRuns\": 2}").statusCode());
-        assertEquals(400, post(WorkerApi.NEXT, key, """
-                {"maxConcurrentRuns": 0, "readiness": {"claude": {"ok": false, "detail": "cannot run claude"}}}""")
+        assertEquals(200, post(WorkerApi.NEXT, key, poll("{\"maxConcurrentRuns\": 2}")).statusCode());
+        assertEquals(400, post(WorkerApi.NEXT, key, poll("""
+                {"maxConcurrentRuns": 0, "readiness": {"claude": {"ok": false, "detail": "cannot run claude"}}}"""))
                 .statusCode());
 
         assertEquals("2", SqlRows.single(dir.resolve("dispatch.db"), "SELECT max_runs FROM worker").get("max_runs"),
@@ -120,7 +120,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
         // An older worker sends "{}"; it must keep working rather than being treated as broken.
         String key = pair();
 
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         Readiness stored = db.transactionReturning(tx ->
                 Workers.readiness(tx, Workers.ofMember(tx, BOLD.ref()).getFirst().id()));
@@ -141,7 +141,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
             public void agentStarted(Long pid, Instant processStart) {
             }
         });
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         // /next set the lease to now+60s (RemoteWorkers.LEASE). Advance 50s (still inside it) and post progress: if
         // that renews the lease, a second post at +100s total — past the original 60s — must still be accepted.
@@ -167,7 +167,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void aResultEndsTheJobAndALateOneGetsConflict() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
         String body = resultBody(7, 2);
 
         HttpResponse<String> first = post(WorkerApi.RESULT, key, body);
@@ -184,7 +184,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void aResultWithAnUnknownFieldIsRefusedAsInvalid() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         HttpResponse<String> answer = post(WorkerApi.RESULT, key,
                 "{\"taskId\":7,\"seq\":2,\"result\":{\"outcome\":\"SUCCEEDED\",\"unexpectedField\":true}}");
@@ -197,7 +197,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void aResultWithAWrongFieldTypeIsRefusedAsInvalid() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         HttpResponse<String> answer = post(WorkerApi.RESULT, key,
                 "{\"taskId\":7,\"seq\":2,\"result\":{\"outcome\":\"SUCCEEDED\",\"files\":\"not-a-list\"}}");
@@ -210,7 +210,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void aStepNoDispatchWouldSendIsRefusedAsInvalid() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         for (String step : java.util.List.of(
                 "{\"n\":1,\"kind\":\"DANCE\",\"round\":1,\"startedAt\":\"2026-09-30T10:00:00Z\"}",
@@ -228,7 +228,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void aNonNumericTaskIdOrSeqIsRefusedAsInvalidNotMisreadAsZero() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         HttpResponse<String> badTaskId = post(WorkerApi.PROGRESS, key, "{\"taskId\":\"seven\",\"seq\":2}");
         HttpResponse<String> badSeq = post(WorkerApi.PROGRESS, key, "{\"taskId\":7,\"seq\":\"two\"}");
@@ -243,7 +243,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void anAttachmentIsFetchedOnceAndNoCopyIsKeptHere() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         HttpResponse<byte[]> answer = http.send(HttpRequest.newBuilder(uri(WorkerApi.ATTACHMENT))
                         .header("Authorization", "Bearer " + key)
@@ -263,7 +263,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void aFileTheJobNeverMentionedIsNotServed() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         HttpResponse<String> answer = post(WorkerApi.ATTACHMENT, key, "{\"taskId\":7,\"fileRef\":\"someone-elses-file\"}");
 
@@ -275,7 +275,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void aDownloadFailureIsLoggedNotEchoedAndAnswers500() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
         // A real Telegram-backed AttachmentSource's exception message routinely carries the download URL, which
         // carries the bot token as a query parameter — that must never reach the worker's HTTP response.
         AttachmentSource failing = (fileRef, target) -> {
@@ -324,7 +324,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
         String sameMemberOtherComputer = pair(BOLD, "ann-desktop");
         String otherMemberKey = pair(ALI, "bob-laptop");
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         for (String foreignKey : List.of(sameMemberOtherComputer, otherMemberKey)) {
             HttpResponse<String> progress = post(WorkerApi.PROGRESS, foreignKey, "{\"taskId\":7,\"seq\":2}");
@@ -341,7 +341,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
     void aWorkerFloodingConcurrentRequestsIsRefusedBeyondTheLimit() throws Exception {
         String key = pair();
         offer(job("Implement the approved plan"));
-        post(WorkerApi.NEXT, key, "{}");
+        post(WorkerApi.NEXT, key, poll("{}"));
 
         int cap = WorkerApi.MAX_IN_FLIGHT_PER_WORKER;
         int attempts = cap + 2;
@@ -427,5 +427,25 @@ class WorkerProtocolTest extends WorkerApiFixture {
                 "opus", "high", 1_800_000L, new BigDecimal("2.50"),
                 List.of(new Attachment("photo-id", "1-photo.jpg", 3L)), "dispatch #7: Fix the login timeout",
                 List.of("Requested-by: Bold"), null);
+    }
+
+    /** A poll as a worker on this protocol sends it. */
+    private static String poll(String body) {
+        return ((com.fasterxml.jackson.databind.node.ObjectNode) Json.read(body)).put("protocol", WorkerProtocol.VERSION).toString();
+    }
+
+    @Test
+    void aPollOnAnotherProtocolGetsNoJobAndHearsTheTeamsNumber() throws Exception {
+        String key = pair();
+        offer(job("Implement the approved plan"));
+
+        JsonNode older = Json.read(post(WorkerApi.NEXT, key, "{}").body());
+        JsonNode newer = Json.read(post(WorkerApi.NEXT, key, "{\"protocol\": " + (WorkerProtocol.VERSION + 1) + "}").body());
+
+        assertTrue(older.get("job").isNull(), "a worker from before the protocol is given nothing it might misread");
+        assertTrue(newer.get("job").isNull());
+        assertEquals(WorkerProtocol.VERSION, older.get("protocol").asInt(), "so the worker can say which side to update");
+        assertEquals(7, Json.MAPPER.treeToValue(Json.read(post(WorkerApi.NEXT, key, poll("{}")).body()).get("job"), Job.class).taskId(),
+                "the job waits for a computer that speaks this protocol");
     }
 }

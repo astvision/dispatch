@@ -219,6 +219,22 @@ public final class RemoteWorkers implements Worker {
     }
 
     /**
+     * The answer to a poll that may take no job: empty, after the long-poll bound, so a computer that is given nothing
+     * polls at the pace of one that is waiting for work.
+     */
+    public Optional<Job> nothing() throws InterruptedException {
+        long deadlineNanos = System.nanoTime() + longPoll.toNanos();
+        synchronized (lock) {
+            long remaining = deadlineNanos - System.nanoTime();
+            while (!closed && remaining > 0) {
+                lock.wait(Math.max(1, remaining / 1_000_000));
+                remaining = deadlineNanos - System.nanoTime();
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Waits under {@link #lock} for a matching offer and reserves it there, atomically with the match: two computers
      * polling at once can never both reserve the same offer.
      *

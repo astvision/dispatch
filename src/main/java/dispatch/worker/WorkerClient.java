@@ -126,9 +126,16 @@ public class WorkerClient {
      * so does how many runs this computer takes at once, which the team machine claims its member's runs by.
      */
     public Optional<Job> next(Readiness readiness, int maxConcurrentRuns) {
-        ObjectNode poll = Json.object().put("maxConcurrentRuns", maxConcurrentRuns);
+        ObjectNode poll = Json.object().put("maxConcurrentRuns", maxConcurrentRuns).put("protocol", WorkerProtocol.VERSION);
         poll.set("readiness", Json.MAPPER.valueToTree(readiness));
         JsonNode answer = call(WorkerApi.NEXT, Json.write(poll), POLL_TIMEOUT);
+        // A team machine from before the protocol says nothing: 0, which no version is (ADR 0039).
+        int team = answer.path("protocol").asInt(0);
+        if (team != WorkerProtocol.VERSION) {
+            throw new IllegalStateException("this computer speaks worker protocol " + WorkerProtocol.VERSION
+                    + " and the team machine " + team + ": update Dispatch on "
+                    + (team < WorkerProtocol.VERSION ? "the team machine" : "this computer") + ", then start the worker again");
+        }
         if (answer.get("job").isNull()) {
             return Optional.empty();
         }

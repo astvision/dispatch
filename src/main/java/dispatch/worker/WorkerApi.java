@@ -276,14 +276,18 @@ public final class WorkerApi implements AutoCloseable {
                 // Read, and refused if bad, before anything is stored: one poll's report lands whole or not at all.
                 Optional<Readiness> readiness = readiness(body);
                 Integer capacity = capacity(body);
+                // A worker from before the protocol says nothing: 0, which no version is.
+                int protocol = body.path("protocol").asInt(0);
                 db.transaction(tx -> {
+                    Workers.saveProtocol(tx, worker.id(), protocol);
                     readiness.ifPresent(reported -> Workers.saveReadiness(tx, worker.id(), reported, clock.instant()));
                     if (capacity != null) {
                         Workers.saveCapacity(tx, worker.id(), capacity);
                     }
                 });
-                Optional<Job> job = workers.next(worker);
-                ObjectNode answer = Json.object();
+                // Work passes only between equal protocols (ADR 0039): another one waits as any poll does, and gets nothing.
+                Optional<Job> job = protocol == WorkerProtocol.VERSION ? workers.next(worker) : workers.nothing();
+                ObjectNode answer = Json.object().put("protocol", WorkerProtocol.VERSION);
                 if (job.isPresent()) {
                     answer.set("job", Json.MAPPER.<JsonNode>valueToTree(job.get()));
                 } else {

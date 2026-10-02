@@ -22,7 +22,7 @@ public record Readiness(Check claude, Check gh, Map<String, Check> projects, Map
     public record Check(boolean ok, String detail) {
     }
 
-    /** @param code one of "claude", "codex", "gemini", "gh", "clone"; the Renderer turns it into words */
+    /** @param code one of "version", "claude", "codex", "gemini", "gh", "clone"; the Renderer turns it into words */
     public record Blocker(String code, String detail) {
     }
 
