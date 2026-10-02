@@ -541,4 +541,45 @@ class TaskCommandsTest {
         assertEquals(List.of(), chatsOf("PLAN_READY"));
         assertEquals("answered", row("SELECT reason FROM task_event WHERE task_id = ? ORDER BY id DESC LIMIT 1", id).get("reason"));
     }
+
+    @Test
+    void aReplyToAnAnswerPlansAgainInsteadOfExecuting() {
+        long id = given(BOLD, "5");
+        transitions.planSucceeded(id, claimFor(id).seq(), ANSWER, planResult());
+
+        assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.FollowUp(id, " Why 30? ", new Origin("telegram:100/9"))));
+
+        assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals(Map.of("kind", "PLAN", "cause", "FOLLOW_UP", "instruction", "Why 30?"),
+                row("SELECT kind, cause, instruction FROM run WHERE task_id = ? ORDER BY seq DESC LIMIT 1", id));
+        assertEquals(List.of(BOLD.ref()), chatsOf("FOLLOW_UP_QUEUED"));
+    }
+
+    @Test
+    void aReplyToAnAnsweredTaskWhoseFollowUpFailedIsStillTaken() {
+        long id = given(BOLD, "5");
+        transitions.planSucceeded(id, claimFor(id).seq(), ANSWER, planResult());
+        run(BOLD, new TaskCommand.FollowUp(id, "Why 30?", new Origin("telegram:100/9")));
+        transitions.failed(id, claimFor(id).seq(), FailureReason.AGENT, "boom", planResult());
+
+        assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.FollowUp(id, "Try again", new Origin("telegram:100/10"))));
+
+        assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+    }
+
+    @Test
+    void afterAnAnswerBecameAPlanAndExecutedItsFollowUpExecutesAsToday() {
+        long id = given(BOLD, "5");
+        transitions.planSucceeded(id, claimFor(id).seq(), ANSWER, planResult());
+        run(BOLD, new TaskCommand.FollowUp(id, "Now make it 60", new Origin("telegram:100/9")));
+        transitions.planSucceeded(id, claimFor(id).seq(), PLAN, planResult());
+        run(BOLD, new TaskCommand.Approve(id, 2));
+        ClaimedRun execution = claimFor(id);
+        transitions.agentStarted(id, execution.seq(), null, null);
+        transitions.completed(id, execution.seq(), executionResult(), List.of("src/AuthClient.java"), "https://github.com/acme/alm/pull/8");
+
+        run(BOLD, new TaskCommand.FollowUp(id, "Also log it", new Origin("telegram:100/11")));
+
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+    }
 }

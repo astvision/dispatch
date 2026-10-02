@@ -1452,6 +1452,24 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void aReplyToAnAnswerIsAFollowUp() {
+        long id = task("Where is the timeout set?");
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.planSucceeded(run.taskId(), run.seq(), new dispatch.domain.Plan("Where?", List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), dispatch.domain.Plan.Result.ANSWER, "In AuthClient.java"), null);
+        long answered = Long.parseLong(row("SELECT id FROM outbox WHERE kind = 'ANSWER_READY'").get("id"));
+        db.transaction(tx -> Outbox.markSent(tx, answered, 1, "telegram:100/2200", clock.instant()));
+
+        handler.handle(message(558, 58, 100, "Bold", 100L, "private", "Why 30?", """
+                {"message_id":2200,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":100,"type":"private"},
+                 "date":1789640000,"text":"answer"}"""));
+
+        assertEquals("PLANNING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("FOLLOW_UP", row("SELECT cause FROM run WHERE task_id = ? ORDER BY seq DESC LIMIT 1", id).get("cause"));
+    }
+
+
+    @Test
     void aFollowUpToATaskThatNeverExecutedNamesTheRetryToType() {
         long id = task("Fix it");
         ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();

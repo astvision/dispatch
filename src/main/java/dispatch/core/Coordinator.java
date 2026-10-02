@@ -132,8 +132,9 @@ public final class Coordinator {
 
     private Job planJob(Task task, Run run, Config.Project project) {
         Config.RunLimits limits = planLimits.apply(project);
-        // A task that already has a plan is being corrected: this run's instruction is the member's reply.
-        String prompt = task.planJson() == null ? Prompts.plan(task) : Prompts.correction(task, run);
+        // A task that already has a plan is being corrected, or, after an answer, continued: the run's instruction is the reply.
+        String prompt = task.planJson() == null ? Prompts.plan(task)
+                : Plan.answers(task.planJson()) ? Prompts.answerFollowUp(task, run) : Prompts.correction(task, run);
         return newJob(task, run, project, task.sessionId(), agentStartedBefore(task.id(), RunKind.PLAN, run.seq()), prompt,
                 project.planModel(), project.planEffort(), limits.timeout().toMillis(), limits.budgetUsd(),
                 attachments(task.id()), null, null, null);

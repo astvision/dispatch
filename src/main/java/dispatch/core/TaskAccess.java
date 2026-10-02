@@ -2,6 +2,7 @@ package dispatch.core;
 
 import dispatch.Json;
 import dispatch.domain.Phase;
+import dispatch.domain.Plan;
 import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
 import dispatch.domain.Task;
@@ -255,8 +256,9 @@ public final class TaskAccess {
                 if (phase != Phase.COMPLETED && phase != Phase.FAILED) {
                     yield Optional.of(Refusal.WRONG_PHASE);
                 }
+                // An answered task never executes: its reply is planned again (spec: answers).
                 boolean executed = Runs.agentStartedBefore(tx, task.id(), RunKind.EXECUTE, Integer.MAX_VALUE);
-                yield executed ? Optional.empty() : Optional.of(Refusal.NOT_EXECUTED);
+                yield executed || Plan.answers(task.planJson()) ? Optional.empty() : Optional.of(Refusal.NOT_EXECUTED);
             }
             case MERGE -> mergeRefusal(task);
             case STEER -> phase == Phase.EXECUTING ? Optional.empty() : Optional.of(Refusal.WRONG_PHASE);

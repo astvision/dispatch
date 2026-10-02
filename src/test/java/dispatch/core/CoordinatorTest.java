@@ -504,4 +504,19 @@ class CoordinatorTest {
         assertEquals(RunKind.PLAN, given.get().kind());
         assertEquals(List.of(), given.get().picks(), "a plan run chooses picks; it never loads them");
     }
+
+    @Test
+    void aReplyToAnAnswerIsPlannedWithTheFollowUpPrompt() {
+        long id = queue("Where is the timeout set?");
+        Projects configured = projects(List.of(ALM));
+        String answer = new Plan("Where?", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                Plan.Result.ANSWER, "In AuthClient.java").toJson();
+        coordinator(configured, remember(JobResult.succeeded(agentResult(answer)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.FollowUp(id, "Why 30?", new Origin("telegram:100/9"))));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(answer)))).execute(claim());
+
+        assertEquals(RunKind.PLAN, given.get().kind());
+        assertTrue(given.get().prompt().contains("<reply>\nWhy 30?\n</reply>"), given.get().prompt());
+    }
 }

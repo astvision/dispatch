@@ -102,4 +102,22 @@ class PromptsTest {
         assertTrue(prompt.contains("set result to \"answer\""), prompt);
         assertTrue(prompt.contains("set result to \"plan\""), prompt);
     }
+
+    @Test
+    void aReplyToAnAnswerQuotesTheAnswerAndTheReplyAndAllowsEitherResult() {
+        Instant now = Instant.parse("2026-10-01T10:00:00Z");
+        String answerJson = new dispatch.domain.Plan("u", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                dispatch.domain.Plan.Result.ANSWER, "add() subtracts.").toJson();
+        Task answered = new Task(1, "calc", "Why -1?", "Why does add(2, 3) return -1?", Phase.COMPLETED, Priority.NORMAL,
+                new Requester("telegram:100", "Bold"), "telegram:100/1", "telegram:100", UUID.randomUUID(), null, "main",
+                null, null, answerJson, null, null, null, null, now, null, now, now, null);
+        Run reply = new Run(1, 2, RunKind.PLAN, RunCause.FOLLOW_UP, RunStatus.RUNNING, "Why does it subtract?",
+                "telegram:100", "Bold", null, null, null, null, null, null, null, null);
+
+        String prompt = Prompts.answerFollowUp(answered, reply);
+
+        assertTrue(prompt.contains("<answer>\nadd() subtracts.\n</answer>"), prompt);
+        assertTrue(prompt.contains("<reply>\nWhy does it subtract?\n</reply>"), prompt);
+        assertTrue(prompt.contains("set result to \"answer\""), "ends with the plan format: " + prompt);
+    }
 }

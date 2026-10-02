@@ -72,7 +72,7 @@ public final class UpdateHandler {
     private static final Set<String> JOINED_STATUSES = Set.of("member", "administrator");
     /** Messages about a task's outcome; a reply to one is a follow-up (ADR 0006). */
     private static final Set<OutboxKind> RESULTS = Set.of(OutboxKind.TASK_COMPLETED, OutboxKind.TASK_COMPLETED_SHORT,
-            OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT);
+            OutboxKind.TASK_FAILED, OutboxKind.TASK_FAILED_SHORT, OutboxKind.ANSWER_READY);
     private static final Set<String> COMMANDS =
             Set.of("task", "status", "history", "stats", "cancel", "retry", "teleport", "worker", "manage", "new", "projects", "help",
                     "start");

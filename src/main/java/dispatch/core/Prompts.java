@@ -2,6 +2,7 @@ package dispatch.core;
 
 import dispatch.domain.Attachment;
 import dispatch.domain.CuratedPlugins;
+import dispatch.domain.Plan;
 import dispatch.domain.Run;
 import dispatch.domain.Task;
 import java.nio.file.Path;
@@ -228,6 +229,32 @@ final class Prompts {
                 </instruction>
 
                 """.formatted(task.id(), failure(task), instruction) + EXECUTE_RULES;
+    }
+
+    /** @param run the planning run whose instruction is the requester's reply to the task's answer (spec: answers) */
+    static String answerFollowUp(Task task, Run run) {
+        return """
+                The requester replied to your answer for this task. Investigate read-only again where needed and do not \
+                modify anything. Nobody can answer questions while you work, so do not ask for confirmation or permission.
+
+                Task #%d from %s:
+                <task>
+                %s
+                </task>
+
+                Your answer:
+                <answer>
+                %s
+                </answer>
+
+                Reply from %s:
+                <reply>
+                %s
+                </reply>
+
+                If the reply asks something, answer it. If it asks for a change, plan that change.
+                """.formatted(task.id(), task.requester().name(), task.description(),
+                Plan.parse(task.planJson()).answer(), run.requestedByName(), run.instruction()) + PLAN_FORMAT;
     }
 
     /** A follow-up continues the building session, which already has the task, the plan and what was done. */

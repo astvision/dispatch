@@ -291,6 +291,19 @@ public final class TaskCommands {
             }
             return given;
         }
+        if (Plan.answers(task.planJson())) {
+            // The reply to an answer is planned in the answer's own session: another answer, or a plan to approve.
+            changePhase(tx, task, task.phase(), Phase.PLANNING, now);
+            int seq = Runs.nextSeq(tx, task.id());
+            Runs.insert(tx, new Runs.NewRun(task.id(), seq, RunKind.PLAN, RunCause.FOLLOW_UP, followUp.text().strip(), who), now);
+            Events.record(tx, task.id(), seq, who.ref(), task.phase(), Phase.PLANNING, "follow-up", now);
+            Outbox.enqueueForRequester(tx, task, OutboxKind.FOLLOW_UP_QUEUED,
+                    Json.object().put("taskId", task.id()).put("by", who.name()), now);
+            tx.afterCommit(wakeOutbox);
+            tx.afterCommit(wakeScheduler);
+            logTransition(tx, task.id(), task.phase(), Phase.PLANNING, who.ref());
+            return new CommandResult.Done(task.id(), isRequester(who, task));
+        }
         changePhase(tx, task, task.phase(), Phase.EXECUTING, now);
         int seq = Runs.nextSeq(tx, task.id());
         Runs.insert(tx, new Runs.NewRun(task.id(), seq, RunKind.EXECUTE, RunCause.FOLLOW_UP, followUp.text().strip(), who), now);
