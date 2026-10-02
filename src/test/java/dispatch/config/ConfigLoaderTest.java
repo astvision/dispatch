@@ -699,6 +699,29 @@ class ConfigLoaderTest {
                     - crm
             """;
 
+    @Test
+    void claudeCodeListsThePluginsAndMcpServersItsRunsLoad() throws IOException {
+        Config config = ConfigLoader.load(write(VALID.replace("    command: /usr/local/bin/claude\n",
+                "    command: /usr/local/bin/claude\n    plugins: [frontend-design@claude-plugins-official]\n"
+                        + "    mcpServers: [mongodb]\n")), ENV);
+
+        assertEquals(List.of("frontend-design@claude-plugins-official"), config.agents().get("claude-code").plugins());
+        assertEquals(List.of("mongodb"), config.agents().get("claude-code").mcpServers());
+    }
+
+    @Test
+    void onlyClaudeCodeListsPluginsAndMcpServersAndNeverABlankName() throws IOException {
+        ConfigException codex = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(VALID.replace(
+                "    command: /usr/local/bin/claude\n",
+                "    command: /usr/local/bin/claude\n  codex:\n    command: codex\n    plugins: [x@y]\n")), ENV));
+        ConfigException blank = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(VALID.replace(
+                "    command: /usr/local/bin/claude\n", "    command: /usr/local/bin/claude\n    mcpServers: ['']\n")), ENV));
+
+        assertTrue(codex.getMessage().contains("agents.codex: plugins and mcpServers are for claude-code only"), codex.getMessage());
+        assertTrue(blank.getMessage().contains("agents.claude-code: plugins and mcpServers must list names, without blank entries"),
+                blank.getMessage());
+    }
+
     private Path write(String yaml) throws IOException {
         Path file = dir.resolve("backend.yaml");
         Files.writeString(file, yaml);

@@ -34,7 +34,8 @@ public final class WorkerConfigLoader {
 
     /** The YAML file's shape; the key is never in it — it lives in worker.env. */
     record WorkerFile(String team, String name, Integer maxConcurrentRuns, String claudeCommand, String ghCommand,
-                      String stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand, String sandbox) {
+                      String stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand, String sandbox,
+                      List<String> claudePlugins, List<String> claudeMcpServers) {
 
         record Project(String path, String model, String effort) {
         }
@@ -75,6 +76,11 @@ public final class WorkerConfigLoader {
         Optional<SandboxSetting> sandbox = SandboxSetting.fromConfig(raw.sandbox());
         if (sandbox.isEmpty()) {
             errors.add("sandbox: auto or off, not " + raw.sandbox());
+        }
+        boolean blank = java.util.stream.Stream.of(raw.claudePlugins(), raw.claudeMcpServers()).filter(java.util.Objects::nonNull)
+                .flatMap(List::stream).anyMatch(name -> name == null || name.isBlank());
+        if (blank) {
+            errors.add("claudePlugins and claudeMcpServers: list names, without blank entries");
         }
         if (!errors.isEmpty()) {
             throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));

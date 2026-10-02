@@ -105,6 +105,26 @@ class WorkerConfigLoaderTest {
         assertTrue(error.getMessage().contains(file.toString()), error.getMessage());
     }
 
+    @Test
+    void aWorkerListsThePluginsAndMcpServersItsRunsLoadAndNeverABlankName() throws Exception {
+        WorkerConfigLoader.load(write("""
+                team: https://team.example.com
+                name: ann-laptop
+                claudePlugins: [frontend-design@claude-plugins-official]
+                claudeMcpServers: [mongodb]
+                """));
+        Path blank = write("""
+                team: https://team.example.com
+                name: ann-laptop
+                claudePlugins: ['']
+                """);
+
+        ConfigException error = assertThrows(ConfigException.class, () -> WorkerConfigLoader.load(blank));
+
+        assertTrue(error.getMessage().contains("claudePlugins and claudeMcpServers: list names, without blank entries"),
+                error.getMessage());
+    }
+
     private Path write(String yaml) throws Exception {
         Path file = dir.resolve("worker.yaml");
         Files.writeString(file, yaml);
