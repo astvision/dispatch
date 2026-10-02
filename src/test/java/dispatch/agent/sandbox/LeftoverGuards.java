@@ -16,10 +16,9 @@ public final class LeftoverGuards {
         Path original = Files.writeString(Files.createDirectories(home).resolve(".claude.json"), "{}");
         Path logBase = stateDir.resolve("runs/7/2");
         Path copy = Path.of(logBase + ".claude.json");
-        SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of());
         SandboxPolicy policy = new SandboxPolicy(home, null, null, List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(new SandboxPolicy.FileCopy(original, copy)), List.of(), List.of(), List.of());
-        RunGuard.start(policy, home, policies.quarantineFor(logBase), logBase, policies.guardManifestFor(logBase));
+        RunGuard.start(policy, home, stateDir, logBase);
         return copy;
     }
 }

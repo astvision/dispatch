@@ -34,8 +34,7 @@ public final class GeminiAgent implements Agent {
      * What Gemini CLI keeps in the owner's home: never copy-on-write, since it renames files into place (spec: agent state
      * guard). The loaders are Gemini CLI 0.61.0's.
      */
-    public static final AgentState STATE = new AgentState(".gemini", false, List.of(), List.of(),
-            List.of(".gemini/settings.json", ".gemini/.env", ".gemini/GEMINI.md", ".gemini/extensions", ".gemini/commands",
+    public static final AgentState STATE = new AgentState(".gemini", List.of(".gemini/settings.json", ".gemini/.env", ".gemini/GEMINI.md", ".gemini/extensions", ".gemini/commands",
                     ".gemini/skills", ".gemini/agents", ".gemini/policies", ".gemini/acknowledgments",
                     ".gemini/trustedFolders.json"));
 

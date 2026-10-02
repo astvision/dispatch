@@ -5,7 +5,6 @@ import dispatch.Redactor;
 import dispatch.agent.Agent;
 import dispatch.agent.sandbox.Confinement;
 import dispatch.agent.sandbox.RunGuard;
-import dispatch.agent.sandbox.SandboxPolicies;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Job;
 import dispatch.core.JobEvents;
@@ -128,7 +127,7 @@ public final class WorkerLoop implements Runnable {
     public void run() {
         agents.killOrphans(Duration.ofSeconds(10));
         // After the orphan kill: nothing a crashed run left running can plant after this sweep.
-        RunGuard.closeLeftovers(SandboxPolicies.guardsDir(config.stateDir()));
+        RunGuard.closeLeftovers(config.stateDir());
         Log.info("worker.started", "team", config.team(), "name", config.name(),
                 "max_concurrent_runs", config.maxConcurrentRuns());
         while (!stopped) {

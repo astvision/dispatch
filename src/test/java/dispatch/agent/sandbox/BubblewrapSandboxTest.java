@@ -59,8 +59,7 @@ class BubblewrapSandboxTest {
 
     private static final AgentState CLAUDE = new AgentState(".claude", true, ".claude/projects",
             List.of(".claude/.credentials.json"), List.of(".claude.json"), List.of(".claude/agents"), List.of(".claude/session-env"));
-    private static final AgentState CODEX = new AgentState(".codex", false, List.of(), List.of(),
-            List.of(".codex/AGENTS.md", ".codex/hooks.json"));
+    private static final AgentState CODEX = new AgentState(".codex", List.of(".codex/AGENTS.md", ".codex/hooks.json"));
 
     private String runConfined(AgentState state, String script, String... args) throws Exception {
         return runConfined(sandbox, state, script, args);
@@ -192,7 +191,7 @@ class BubblewrapSandboxTest {
         script.toFile().setExecutable(true);
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
                 .forRun(new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
-                        worktree.resolve("run")), new AgentState(".claude", false, List.of(), List.of(), List.of()));
+                        worktree.resolve("run")), new AgentState(".claude", List.of()));
 
         Process process = new ProcessBuilder(sandbox.wrap(List.of(script.toString(), home.toString()), policy))
                 .directory(worktree.toFile()).redirectErrorStream(true).start();
@@ -256,6 +255,24 @@ class BubblewrapSandboxTest {
             assertEquals(List.of(), running(marker), "left running in the sandbox");
         } finally {
             // Without the fix the sleep and the sandbox's init outlive the test: end them, whatever the assertions said.
+            running(marker).forEach(ProcessHandle::destroyForcibly);
+        }
+    }
+
+    /** A process in the sandbox that kills the shell around the command must not keep the rest of the sandbox alive. */
+    @Test
+    void killingTheShellAroundTheCommandLeavesNothingRunning() throws Exception {
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
+                .forRun(new RunRequest(RunKind.PLAN, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
+                        worktree.resolve("run")), AgentState.NONE);
+        String marker = "sleep 298." + java.util.concurrent.ThreadLocalRandom.current().nextInt(100_000, 1_000_000);
+        Process process = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c", "(" + marker + " &); kill -KILL $PPID"), policy))
+                .redirectErrorStream(true).start();
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "bwrap did not return");
+
+            assertEquals(List.of(), running(marker), "left running in the sandbox");
+        } finally {
             running(marker).forEach(ProcessHandle::destroyForcibly);
         }
     }

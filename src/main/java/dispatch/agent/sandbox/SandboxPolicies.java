@@ -65,26 +65,9 @@ public final class SandboxPolicies {
         return home;
     }
 
-    /** Where each run's guard records what it must undo; what a crash leaves there is closed at the next start. */
-    public static Path guardsDir(Path stateDir) {
-        return stateDir.resolve("guards");
-    }
-
-    /** The run's guard manifest, named after its log base, e.g. {@code guards/7-2.fix-1.json}. */
-    public Path guardManifestFor(Path logBase) {
-        return guardsDir(stateDir).resolve(runName(logBase) + ".json");
-    }
-
-    /** Where the run guard moves what a run planted: per run, named after its log base, e.g. {@code quarantine/7-2.fix-1}. */
-    public Path quarantineFor(Path logBase) {
-        return stateDir.resolve("quarantine").resolve(runName(logBase));
-    }
-
-    /** {@code runs/7/2.fix-1} is {@code 7-2.fix-1}. */
-    private static String runName(Path logBase) {
-        Path base = logBase.toAbsolutePath().normalize();
-        String parent = base.getParent() == null ? "" : base.getParent().getFileName() + "-";
-        return parent + base.getFileName();
+    /** Where the run guard keeps its manifests and quarantine. */
+    public Path stateDir() {
+        return stateDir;
     }
 
     /** As {@link #forRun(RunRequest, AgentState, Map, boolean)} without copy-on-write, for an environment without XDG_RUNTIME_DIR. */
@@ -187,18 +170,16 @@ public final class SandboxPolicies {
         // Only a task's worktree has a git dir. A split's or the assistant's workdir is agent-writable and no worktree:
         // a .git an earlier run planted there would otherwise mount any configured clone read-write.
         GitLink git = IN_WORKTREE.contains(request.kind()) ? gitLink(workdir) : null;
-        if (git == null) {
-            return new SandboxPolicy(workdir, null, null, readOnly, writable, hidden, overlays, persisted, copies, watched, tmpfs,
-                    created);
+        if (git != null) {
+            // Mounted after the workdir and the git dir: the agent cannot point the next run's mounts somewhere else, nor
+            // plant config (core.fsmonitor, filters, remotes) or hooks that Dispatch's own git runs outside the sandbox.
+            readOnly.add(workdir.resolve(".git"));
+            GIT_CONTROL.forEach(name -> readOnly.add(git.commonDir().resolve(name)));
+            // Other worktrees' admin dirs: a rewritten commondir there would redirect Dispatch's git in that worktree.
+            readOnly.add(git.commonDir().resolve("worktrees"));
         }
-        // Mounted after the workdir and the git dir: the agent cannot point the next run's mounts somewhere else, nor
-        // plant config (core.fsmonitor, filters, remotes) or hooks that Dispatch's own git runs outside the sandbox.
-        readOnly.add(workdir.resolve(".git"));
-        GIT_CONTROL.forEach(name -> readOnly.add(git.commonDir().resolve(name)));
-        // Other worktrees' admin dirs: a rewritten commondir there would redirect Dispatch's git in that worktree.
-        readOnly.add(git.commonDir().resolve("worktrees"));
-        return new SandboxPolicy(workdir, git.commonDir(), git.worktreeAdmin(), readOnly, writable, hidden, overlays, persisted,
-                copies, watched, tmpfs, created);
+        return new SandboxPolicy(workdir, git == null ? null : git.commonDir(), git == null ? null : git.worktreeAdmin(),
+                readOnly, writable, hidden, overlays, persisted, copies, watched, tmpfs, created);
     }
 
     /**

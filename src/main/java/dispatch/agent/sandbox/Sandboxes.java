@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /** Picks this machine's sandbox once, at startup (spec: "Detection"). */
 public final class Sandboxes {
@@ -30,13 +31,14 @@ public final class Sandboxes {
             return new NoSandbox("bubblewrap (bwrap) is not installed");
         }
         // The same namespaces a run needs: Ubuntu 24's AppArmor rule, for one, refuses them to unprivileged users.
-        Probe.Trial trial = probe.trial(List.of(bwrap.get().toString(), "--ro-bind", "/", "/", "--unshare-pid", "--proc", "/proc", "true"));
+        List<String> sandbox = List.of(bwrap.get().toString(), "--ro-bind", "/", "/", "--unshare-pid", "--proc", "/proc");
+        Probe.Trial trial = probe.trial(Stream.concat(sandbox.stream(), Stream.of("true")).toList());
         if (trial.exitCode() != 0) {
             return new NoSandbox("bwrap cannot create a sandbox here: " + trial.output().strip().lines().findFirst().orElse("exit " + trial.exitCode()));
         }
         // Copy-on-write state (spec: agent state guard) needs bwrap 0.10+ and overlayfs in a user namespace; a trial answers both.
-        Probe.Trial overlay = probe.trial(List.of(bwrap.get().toString(), "--ro-bind", "/", "/", "--unshare-pid", "--proc", "/proc",
-                "--overlay-src", "/etc", "--tmp-overlay", "/etc", "true"));
+        Probe.Trial overlay = probe.trial(Stream.concat(sandbox.stream(),
+                Stream.of("--overlay-src", "/etc", "--tmp-overlay", "/etc", "true")).toList());
         return new Bubblewrap(bwrap.get().toString(), overlay.exitCode() == 0);
     }
 }

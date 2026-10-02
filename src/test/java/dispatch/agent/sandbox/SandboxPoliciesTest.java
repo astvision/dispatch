@@ -50,7 +50,7 @@ class SandboxPoliciesTest {
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir));
 
         SandboxPolicy policy = policies.forRun(request(RunKind.EXECUTE, worktree, List.of(attachments)),
-                new AgentState(".claude", false, List.of(), List.of(), List.of()),
+                new AgentState(".claude", List.of()),
                 Map.of("XDG_RUNTIME_DIR", root.resolve("no-runtime-dir").toString()));
 
         assertEquals(worktree, policy.workdir());
@@ -71,7 +71,7 @@ class SandboxPoliciesTest {
         // bwrap cannot create a mount point on the read-only root, so hiding ~/.gnupg that does not exist would fail the run.
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(root.resolve("no-such-clone")));
 
-        SandboxPolicy policy = policies.forRun(request(RunKind.PLAN, stateDir, List.of()), new AgentState(".codex", false, List.of(), List.of(), List.of()));
+        SandboxPolicy policy = policies.forRun(request(RunKind.PLAN, stateDir, List.of()), new AgentState(".codex", List.of()));
 
         assertFalse(policy.hidden().contains(home.resolve(".gnupg")));
         assertFalse(policy.hidden().contains(root.resolve("no-such-clone")));
@@ -86,7 +86,7 @@ class SandboxPoliciesTest {
         Files.writeString(worktree.resolve(".git"), "gitdir: " + gitDir);
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir, clone), List.of(clone));
 
-        SandboxPolicy policy = policies.forRun(request(RunKind.EXECUTE, worktree, List.of()), new AgentState(".claude", false, List.of(), List.of(), List.of()));
+        SandboxPolicy policy = policies.forRun(request(RunKind.EXECUTE, worktree, List.of()), new AgentState(".claude", List.of()));
 
         assertTrue(policy.hidden().contains(clone));
         assertEquals(clone.resolve(".git"), policy.gitCommonDir());
@@ -155,7 +155,7 @@ class SandboxPoliciesTest {
         Path assistantHome = Files.createDirectories(stateDir.resolve("assistant"));
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(configDir, stateDir));
 
-        SandboxPolicy policy = policies.forRun(request(RunKind.ASSISTANT, assistantHome, List.of()), new AgentState(".claude", false, List.of(), List.of(), List.of()));
+        SandboxPolicy policy = policies.forRun(request(RunKind.ASSISTANT, assistantHome, List.of()), new AgentState(".claude", List.of()));
 
         // dispatch ask reads the state file; SQLite needs -wal and -shm writable even to read.
         assertTrue(policy.writable().containsAll(List.of(stateDir.resolve("dispatch.db"),
@@ -169,7 +169,7 @@ class SandboxPoliciesTest {
         Path worktree = Files.createDirectories(stateDir.resolve("worktrees/7"));
         SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(stateDir));
 
-        SandboxPolicy policy = policies.forRun(request(RunKind.PLAN, worktree, List.of()), new AgentState(".claude", false, List.of(), List.of(), List.of()));
+        SandboxPolicy policy = policies.forRun(request(RunKind.PLAN, worktree, List.of()), new AgentState(".claude", List.of()));
 
         assertFalse(policy.writable().contains(stateDir.resolve("dispatch.db")));
         assertFalse(policy.readOnly().contains(stateDir.resolve("assistant-bin")));
@@ -225,7 +225,7 @@ class SandboxPoliciesTest {
         RunRequest request = new RunRequest(RunKind.REVIEW, worktree, "prompt", UUID.randomUUID(), false, List.of(), null, null, null,
                 logBase);
 
-        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, new AgentState(".codex", false, List.of(), List.of(), List.of()));
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, new AgentState(".codex", List.of()));
 
         assertTrue(policy.readOnly().contains(Path.of(logBase + ".schema.json")), policy.readOnly().toString());
         assertFalse(policy.readOnly().contains(stateDir.resolve("runs/7")), policy.readOnly().toString());
@@ -239,7 +239,7 @@ class SandboxPoliciesTest {
         RunRequest request = new RunRequest(RunKind.ASSISTANT, assistantHome, "prompt", UUID.randomUUID(), false, List.of(), null, null,
                 null, logs.resolve("42-1"));
 
-        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, new AgentState(".claude", false, List.of(), List.of(), List.of()));
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir)).forRun(request, new AgentState(".claude", List.of()));
 
         assertTrue(Stream.concat(policy.readOnly().stream(), policy.writable().stream()).noneMatch(path -> path.startsWith(logs)),
                 policy.readOnly() + " " + policy.writable());
@@ -253,7 +253,7 @@ class SandboxPoliciesTest {
         Files.writeString(home.resolve(".codex/config.toml"), "model = 'x'");
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())
                 .forRun(request(RunKind.EXECUTE, stateDir, List.of()),
-                        new AgentState(".codex", false, List.of(), List.of(), List.of(".codex/config.toml")));
+                        new AgentState(".codex", List.of(".codex/config.toml")));
 
         assertTrue(policy.writable().contains(home.resolve(".codex")), policy.writable().toString());
         assertTrue(policy.readOnly().containsAll(List.of(home.resolve(".codex/config.toml"), home.resolve(".gradle/init.d"),
@@ -269,7 +269,7 @@ class SandboxPoliciesTest {
             Path workdir = Files.createDirectories(stateDir.resolve(kind.name().toLowerCase()));
             Files.writeString(workdir.resolve(".git"), "gitdir: " + clone.resolve(".git/worktrees/1"));
 
-            SandboxPolicy policy = policies.forRun(request(kind, workdir, List.of()), new AgentState(".claude", false, List.of(), List.of(), List.of()));
+            SandboxPolicy policy = policies.forRun(request(kind, workdir, List.of()), new AgentState(".claude", List.of()));
 
             assertNull(policy.gitCommonDir(), kind.name());
             assertNull(policy.worktreeAdmin(), kind.name());
@@ -285,7 +285,7 @@ class SandboxPoliciesTest {
         RunRequest request = new RunRequest(RunKind.REVIEW, workdir, "prompt", UUID.randomUUID(), false, List.of(), null, null,
                 null, workdir.resolve("run"), Map.of(), List.of(plugin));
 
-        SandboxPolicy policy = policies.forRun(request, new AgentState(".claude", false, List.of(), List.of(), List.of()));
+        SandboxPolicy policy = policies.forRun(request, new AgentState(".claude", List.of()));
 
         assertTrue(policy.readOnly().contains(plugin), policy.readOnly().toString());
         assertFalse(policy.writable().contains(plugin), policy.writable().toString());
@@ -295,8 +295,7 @@ class SandboxPoliciesTest {
     private static final AgentState CLAUDE = new AgentState(".claude", true, ".claude/projects",
             List.of(".claude/.credentials.json"), List.of(".claude.json"), List.of(".claude/CLAUDE.md", ".claude/agents"),
             List.of(".claude/session-env", ".claude/plugins/store"));
-    private static final AgentState CODEX = new AgentState(".codex", false, List.of(), List.of(),
-            List.of(".codex/AGENTS.md", ".codex/hooks.json"));
+    private static final AgentState CODEX = new AgentState(".codex", List.of(".codex/AGENTS.md", ".codex/hooks.json"));
 
     @Test
     void aCopyOnWriteAgentGetsItsDirAsAnOverlayWithItsPersistedPathsAndACopy() throws IOException {
@@ -386,14 +385,6 @@ class SandboxPoliciesTest {
         assertTrue(policy.readOnly().containsAll(List.of(home.resolve(".gradle/init.d"), home.resolve(".gradle/gradle.properties"),
                 home.resolve(".m2/settings.xml"))), policy.readOnly().toString());
         assertFalse(policy.writable().stream().anyMatch(path -> path.startsWith(home.resolve(".claude"))));
-    }
-
-    @Test
-    void aRunsQuarantineIsNamedAfterItsLogBase() {
-        SandboxPolicies policies = new SandboxPolicies(home, stateDir, List.of(stateDir));
-
-        assertEquals(stateDir.resolve("quarantine/7-2.fix-1"), policies.quarantineFor(stateDir.resolve("runs/7/2.fix-1")));
-        assertEquals(home, policies.home());
     }
 
     /** Claude Code 2.1.286 names a working dir's project dir so; a mismatch would put transcripts in the throwaway layer. */

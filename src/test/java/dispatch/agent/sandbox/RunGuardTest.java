@@ -171,7 +171,7 @@ class RunGuardTest {
         Files.createDirectories(watched);
         // Dispatch dies here: nothing closes the guard.
 
-        String logged = capturingLog(() -> RunGuard.closeLeftovers(manifest().getParent()));
+        String logged = capturingLog(() -> RunGuard.closeLeftovers(root.resolve("state")));
 
         assertFalse(Files.exists(watched));
         assertTrue(Files.isDirectory(quarantine().resolve(".codex/prompts")));
@@ -195,7 +195,7 @@ class RunGuardTest {
 
     @Test
     void noLeftoversDirIsNothingToClose() {
-        String logged = capturingLog(() -> RunGuard.closeLeftovers(root.resolve("state/guards")));
+        String logged = capturingLog(() -> RunGuard.closeLeftovers(root.resolve("state")));
 
         assertEquals("", logged);
     }
@@ -212,8 +212,15 @@ class RunGuardTest {
         assertFalse(Files.exists(manifest()), "a run that never started has nothing to undo");
     }
 
+    @Test
+    void aRunsQuarantineIsNamedAfterItsLogBase() {
+        Path stateDir = root.resolve("state");
+
+        assertEquals(stateDir.resolve("quarantine/7-2.fix-1"), RunGuard.quarantineFor(stateDir, stateDir.resolve("runs/7/2.fix-1")));
+    }
+
     private RunGuard start(SandboxPolicy policy, Path home) {
-        return RunGuard.start(policy, home, quarantine(), root.resolve("state/runs/7/2"), manifest());
+        return RunGuard.start(policy, home, root.resolve("state"), root.resolve("state/runs/7/2"));
     }
 
     private Path quarantine() {

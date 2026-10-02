@@ -19,7 +19,7 @@ public record AgentState(String dir, boolean copyOnWrite, String projectsDir, Li
                          List<String> loaders, List<String> scratch) {
 
     /** A command with no agent state of its own, such as the verify loop's test command. */
-    public static final AgentState NONE = new AgentState(null, false, List.of(), List.of(), List.of());
+    public static final AgentState NONE = new AgentState(null, List.of());
 
     public AgentState {
         persisted = List.copyOf(persisted);
@@ -28,8 +28,8 @@ public record AgentState(String dir, boolean copyOnWrite, String projectsDir, Li
         scratch = List.copyOf(scratch);
     }
 
-    /** An agent with no per-project dirs and no scratch dirs, such as Codex or Gemini CLI. */
-    public AgentState(String dir, boolean copyOnWrite, List<String> persisted, List<String> runCopies, List<String> loaders) {
-        this(dir, copyOnWrite, null, persisted, runCopies, loaders, List.of());
+    /** An agent whose dir is never copy-on-write and that declares only its loaders, such as Codex or Gemini CLI. */
+    public AgentState(String dir, List<String> loaders) {
+        this(dir, false, null, List.of(), List.of(), loaders, List.of());
     }
 }

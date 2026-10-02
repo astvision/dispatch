@@ -52,10 +52,10 @@ is never silent. When bwrap itself fails to start a run, the run fails as `AGENT
 A run's sandbox ends with its command (amended 2026-10-01). bwrap returns when the command exits, but its own init waits
 for every process still inside, so a Gradle daemon an agent or a test command started lived on with the run's mounts,
 outside Dispatch's process tree, where neither a cancel nor the orphan kill reached it; a later run's build reached it
-through the shared `~/.gradle` and failed (`could not setcwd()`). The command now runs under `/bin/sh`, which, once the
-command exits, kills every other process in the sandbox (`kill -1` in its pid namespace reaches nothing outside it),
-waits up to five seconds for bwrap's init to reap them, and exits with the command's status. A build's daemon starts
-afresh in each run.
+through the shared `~/.gradle` and failed (`could not setcwd()`). The command now runs under `/bin/sh` as the
+sandbox's pid 1 (`--as-pid-1`): when the command exits, the shell exits with its status, and the kernel kills and reaps
+every other process in the sandbox before bwrap returns. Nothing inside can signal pid 1, so no process in the sandbox
+can end it early and leave the rest running. A build's daemon starts afresh in each run.
 
 We chose a wrapper Dispatch builds itself over each agent's own sandbox (three behaviours, no single policy), a
 user-written wrapper command (nobody would get a sandbox by default) and Docker (an image per project, logins inside the

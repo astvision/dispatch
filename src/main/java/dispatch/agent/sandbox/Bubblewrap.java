@@ -12,14 +12,13 @@ import java.util.List;
 public final class Bubblewrap implements Sandbox {
 
     /**
-     * Runs the command, then ends whatever it left running, then exits with the command's status. bwrap returns when its
-     * command exits, but its init waits for every process still in the sandbox: a Gradle daemon would live on with the
-     * run's mounts, outside Dispatch's process tree, and a later run's build would reach it. {@code kill -1} reaches only
-     * the sandbox's own processes, since they are all a pid namespace holds; the wait, at most 5 s, lets bwrap's init
-     * reap them, so nothing of the run is left once bwrap has returned.
+     * The sandbox's pid 1 (--as-pid-1): runs the command, reaps what it orphans, and exits with its status. When pid 1
+     * exits, the kernel kills and reaps everything left in the pid namespace before bwrap returns, so a Gradle daemon a
+     * run starts cannot live on with the run's mounts for a later run's build to reach. Nothing inside can signal pid 1,
+     * and from outside only SIGKILL reaches it: a cancel's SIGTERM ends the command, and the sandbox with it. Not
+     * {@code exec}: with a second command the shell cannot replace itself with the first.
      */
-    static final String END_WITH_COMMAND = "\"$@\"; s=$?; kill -KILL -1 2>/dev/null; n=0; "
-            + "while kill -0 -1 2>/dev/null && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done; exit $s";
+    static final String END_WITH_COMMAND = "\"$@\"; exit $?";
 
     private final String command;
     private final boolean overlay;
@@ -58,7 +57,8 @@ public final class Bubblewrap implements Sandbox {
                 // crashed Dispatch is ended by the orphan kill (recorded pid and start time) and systemd's cgroup.
                 // --new-session: the agent cannot inject input into Dispatch's terminal.
                 // --unshare-ipc: no SysV IPC or POSIX message queues shared with the owner's processes.
-                "--unshare-pid", "--unshare-ipc", "--new-session",
+                // --as-pid-1: the shell below, not bwrap's own init, is pid 1 (END_WITH_COMMAND).
+                "--unshare-pid", "--as-pid-1", "--unshare-ipc", "--new-session",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"));
         for (Path hidden : policy.hidden()) {
             args.addAll(List.of("--tmpfs", hidden.toString()));

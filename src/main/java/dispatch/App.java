@@ -6,7 +6,6 @@ import dispatch.agent.sandbox.Confinements;
 import dispatch.agent.sandbox.Probe;
 import dispatch.agent.sandbox.RunGuard;
 import dispatch.agent.sandbox.Sandbox;
-import dispatch.agent.sandbox.SandboxPolicies;
 import dispatch.agent.sandbox.Sandboxes;
 import dispatch.config.Config;
 import dispatch.config.GroupWriter;
@@ -187,7 +186,7 @@ public final class App {
 
         new Recovery(db, transitions, Duration.ofSeconds(10)).run();
         // After Recovery's orphan kill: nothing a crashed run left running can plant after this sweep.
-        RunGuard.closeLeftovers(SandboxPolicies.guardsDir(stateDir));
+        RunGuard.closeLeftovers(stateDir);
         db.transaction(tasks::failInterruptedSplits);
         Git slowGit = git.withTimeout(Duration.ofMinutes(30));
         for (Config.Project project : projects.all()) {

@@ -48,8 +48,7 @@ public final class CodexAgent implements Agent {
      * What Codex keeps in the owner's home: never copy-on-write, since its databases live in the dir's root (spec: agent
      * state guard). The loaders are Codex 0.152.0's; its .env sets the environment of every command it runs.
      */
-    public static final AgentState STATE = new AgentState(".codex", false, List.of(), List.of(),
-            List.of(".codex/config.toml", ".codex/.env", ".codex/AGENTS.md", ".codex/AGENTS.override.md", ".codex/hooks.json",
+    public static final AgentState STATE = new AgentState(".codex", List.of(".codex/config.toml", ".codex/.env", ".codex/AGENTS.md", ".codex/AGENTS.override.md", ".codex/hooks.json",
                     ".codex/prompts", ".codex/skills", ".codex/plugins", ".codex/rules", ".codex/memories"));
 
     public CodexAgent(String command, Map<String, String> environment, Duration cancelGrace, Path sessionsDir) {

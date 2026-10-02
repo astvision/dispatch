@@ -67,25 +67,8 @@ class ClaudeCodeAgentTest {
 
     @Test
     void aConfinedAgentStartsThroughItsSandbox() throws Exception {
-        Sandbox recording = new Sandbox() {
-            @Override
-            public String name() {
-                return "recording";
-            }
-
-            @Override
-            public String unavailableReason() {
-                return null;
-            }
-
-            @Override
-            public List<String> wrap(List<String> commandLine, SandboxPolicy policy) {
-                // env runs the command unchanged, so the fake claude still answers; the marker proves the wrap happened.
-                List<String> wrapped = new ArrayList<>(List.of("env", "SANDBOXED_BY=recording"));
-                wrapped.addAll(commandLine);
-                return wrapped;
-            }
-        };
+        // env runs the command unchanged, so the fake claude still answers; the marker proves the wrap happened.
+        Sandbox recording = prefixing("recording", "env", "SANDBOXED_BY=recording");
         Confinement confinement = new Confinement(recording, new SandboxPolicies(workdir, workdir.resolve("state"), List.of()));
         ClaudeCodeAgent confined = new ClaudeCodeAgent(FakeClaude.install(Files.createDirectories(dir.resolve("confined"))).toString(),
                 FakeClaude.environment(), Duration.ofSeconds(2), confinement);
@@ -328,12 +311,12 @@ class ClaudeCodeAgentTest {
         }
     }
 
-    /** A sandbox that plants a loader path, then runs the agent, as a prompt-injected agent could. */
-    private Confinement planting(Path home, Path planted) {
-        Sandbox planter = new Sandbox() {
+    /** A sandbox that runs the agent's command line after {@code prefix}. */
+    private static Sandbox prefixing(String name, String... prefix) {
+        return new Sandbox() {
             @Override
             public String name() {
-                return "planting";
+                return name;
             }
 
             @Override
@@ -343,12 +326,17 @@ class ClaudeCodeAgentTest {
 
             @Override
             public List<String> wrap(List<String> commandLine, SandboxPolicy policy) {
-                List<String> wrapped = new ArrayList<>(List.of("sh", "-c", "mkdir -p \"$0\" && exec \"$@\"", planted.toString()));
+                List<String> wrapped = new ArrayList<>(List.of(prefix));
                 wrapped.addAll(commandLine);
                 return wrapped;
             }
         };
-        return new Confinement(planter, new SandboxPolicies(home, dir.resolve("state"), List.of()));
+    }
+
+    /** A sandbox that plants a loader path, then runs the agent, as a prompt-injected agent could. */
+    private Confinement planting(Path home, Path planted) {
+        return new Confinement(prefixing("planting", "sh", "-c", "mkdir -p \"$0\" && exec \"$@\"", planted.toString()),
+                new SandboxPolicies(home, dir.resolve("state"), List.of()));
     }
 
     @Test
@@ -384,26 +372,9 @@ class ClaudeCodeAgentTest {
 
     /** As a sandbox whose outer bwrap dies at once on SIGTERM while a process inside plants something before it is killed. */
     private Confinement plantingLate(Path home, Path planted) {
-        Sandbox planter = new Sandbox() {
-            @Override
-            public String name() {
-                return "planting-late";
-            }
-
-            @Override
-            public String unavailableReason() {
-                return null;
-            }
-
-            @Override
-            public List<String> wrap(List<String> commandLine, SandboxPolicy policy) {
-                List<String> wrapped = new ArrayList<>(List.of("sh", "-c",
-                        "( trap 'sleep 0.5; mkdir -p \"$0\"' TERM; while true; do sleep 0.1; done ) & exec \"$@\"", planted.toString()));
-                wrapped.addAll(commandLine);
-                return wrapped;
-            }
-        };
-        return new Confinement(planter, new SandboxPolicies(home, dir.resolve("state"), List.of()));
+        return new Confinement(prefixing("planting-late", "sh", "-c",
+                "( trap 'sleep 0.5; mkdir -p \"$0\"' TERM; while true; do sleep 0.1; done ) & exec \"$@\"", planted.toString()),
+                new SandboxPolicies(home, dir.resolve("state"), List.of()));
     }
 
     @Test
@@ -417,11 +388,8 @@ class ClaudeCodeAgentTest {
         awaitChildPid();
 
         handle.cancel();
+        // await() returns once the cancel has ended the whole tree and closed the guard.
         CompletableFuture.supplyAsync(() -> awaitQuietly(handle)).get(10, TimeUnit.SECONDS);
-        java.time.Instant deadline = java.time.Instant.now().plusSeconds(10);
-        while (!Files.isDirectory(dir.resolve("state/quarantine/1-3/.claude/agents")) && java.time.Instant.now().isBefore(deadline)) {
-            Thread.sleep(50);
-        }
 
         assertFalse(Files.exists(planted), "planted after the first sweep, swept once the sandbox was dead");
         assertTrue(Files.isDirectory(dir.resolve("state/quarantine/1-3/.claude/agents")));

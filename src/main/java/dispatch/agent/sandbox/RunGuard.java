@@ -5,6 +5,7 @@ import dispatch.Log;
 import dispatch.OwnerOnly;
 import dispatch.agent.AgentStartException;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -13,10 +14,11 @@ import java.util.stream.Stream;
 
 /**
  * What a sandboxed run leaves in the owner's home (spec: agent state guard). Before the run, the dirs and throwaway
- * copies the sandbox mounts are made, owner-only, and recorded in a manifest. After the process exits, every watched
- * loader path that now exists is moved to the run's quarantine: moved, not deleted, since the owner may have created it
- * meanwhile. Once the whole sandbox is gone the guard closes: a last sweep, then the copies and the manifest go. A
- * manifest a crash left behind is closed at the next start.
+ * copies the sandbox mounts are made, owner-only, and recorded in a manifest under {@code <stateDir>/guards}. After the
+ * process exits, every watched loader path that now exists is moved to the run's quarantine under
+ * {@code <stateDir>/quarantine}: moved, not deleted, since the owner may have created it meanwhile. Once the whole sandbox
+ * is gone the guard closes: a last sweep, then the copies and the manifest go. A manifest a crash left behind is closed
+ * at the next start.
  */
 public final class RunGuard {
 
@@ -45,10 +47,10 @@ public final class RunGuard {
     }
 
     /**
-     * Makes the run's dirs, records the run in {@code manifest}, then makes its copies; anything that cannot be made
-     * fails the run before its agent starts, and leaves nothing to undo.
+     * Makes the run's dirs, records the run in its manifest, then makes its copies; anything that cannot be made fails
+     * the run before its agent starts, and leaves nothing to undo.
      */
-    static RunGuard start(SandboxPolicy policy, Path home, Path quarantine, Path logBase, Path manifest) {
+    static RunGuard start(SandboxPolicy policy, Path home, Path stateDir, Path logBase) {
         // Kept after the run, so made before anything that must be undone.
         for (Path dir : policy.created()) {
             try {
@@ -62,7 +64,8 @@ public final class RunGuard {
             return NONE;
         }
         List<Path> copyPaths = policy.copies().stream().map(SandboxPolicy.FileCopy::copy).toList();
-        RunGuard guard = new RunGuard(copyPaths, policy.watched(), home, quarantine, logBase, manifest);
+        Path manifest = stateDir.resolve("guards").resolve(runName(logBase) + ".json");
+        RunGuard guard = new RunGuard(copyPaths, policy.watched(), home, quarantineFor(stateDir, logBase), logBase, manifest);
         // Before the copies: a crash while they are made still leaves a record of what to undo.
         try {
             guard.writeManifest();
@@ -72,16 +75,18 @@ public final class RunGuard {
         for (SandboxPolicy.FileCopy copy : policy.copies()) {
             try {
                 // Owner-only like the original: ~/.claude.json holds the owner's MCP environment and account.
-                OwnerOnly.createDirectories(copy.copy().getParent());
-                Files.deleteIfExists(copy.copy());
-                OwnerOnly.createFile(copy.copy());
-                Files.write(copy.copy(), Files.readAllBytes(copy.original()));
+                writeOwnerOnly(copy.copy(), Files.readAllBytes(copy.original()));
             } catch (IOException e) {
                 guard.close();
                 throw new AgentStartException("cannot copy " + copy.original() + " for the run: " + e, e);
             }
         }
         return guard;
+    }
+
+    /** Where a run's planted paths go: per run, named after its log base, e.g. {@code quarantine/7-2.fix-1}. */
+    static Path quarantineFor(Path stateDir, Path logBase) {
+        return stateDir.resolve("quarantine").resolve(runName(logBase));
     }
 
     /**
@@ -127,7 +132,8 @@ public final class RunGuard {
     }
 
     /** At startup, once the orphan kill has ended what a crashed Dispatch left running: closes the guards it left open. */
-    public static void closeLeftovers(Path guardsDir) {
+    public static void closeLeftovers(Path stateDir) {
+        Path guardsDir = stateDir.resolve("guards");
         if (!Files.isDirectory(guardsDir)) {
             return;
         }
@@ -156,31 +162,39 @@ public final class RunGuard {
     private void writeManifest() throws IOException {
         Manifest record = new Manifest(home.toString(), quarantine.toString(), logBase.toString(),
                 copies.stream().map(Path::toString).toList(), watched.stream().map(Path::toString).toList());
-        OwnerOnly.createDirectories(manifest.getParent());
-        Files.deleteIfExists(manifest);
-        OwnerOnly.createFile(manifest);
-        Files.writeString(manifest, Json.MAPPER.writeValueAsString(record));
+        writeOwnerOnly(manifest, Json.write(record).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Replaced whole, and owner-only before anything is written to it. */
+    private static void writeOwnerOnly(Path file, byte[] content) throws IOException {
+        OwnerOnly.createDirectories(file.getParent());
+        Files.deleteIfExists(file);
+        OwnerOnly.createFile(file);
+        Files.write(file, content);
     }
 
     private void quarantine(Path path) {
         Path target = unused(quarantine.resolve(home.relativize(path).toString()));
-        IOException failure;
         try {
             OwnerOnly.createDirectories(target.getParent());
             Files.move(path, target);
             Log.warn("sandbox.quarantined", "path", path, "to", target, "run", logBase);
-            return;
         } catch (IOException e) {
-            failure = e;
+            renameAside(path, e);
         }
-        // A non-empty dir cannot move to another filesystem. Renamed beside itself, to a name no agent loads, it is out
-        // of reach all the same, and the next run does not take it for the owner's.
+    }
+
+    /**
+     * A non-empty dir cannot move to another filesystem. Renamed beside itself, to a name no agent loads, it is out of
+     * reach all the same, and the next run does not take it for the owner's.
+     */
+    private void renameAside(Path path, IOException failure) {
         Path aside = unused(path.resolveSibling(path.getFileName() + ".dispatch-quarantined-" + quarantine.getFileName()));
         try {
             Files.move(path, aside);
             Log.error("sandbox.quarantined_in_place", failure, "path", path, "to", aside, "run", logBase);
         } catch (IOException e) {
-            Log.error("sandbox.quarantine_failed", e, "path", path, "error", e.toString(), "run", logBase);
+            Log.error("sandbox.quarantine_failed", e, "path", path, "run", logBase);
         }
     }
 
@@ -191,5 +205,12 @@ public final class RunGuard {
             candidate = path.resolveSibling(path.getFileName() + "." + n);
         }
         return candidate;
+    }
+
+    /** {@code runs/7/2.fix-1} is {@code 7-2.fix-1}. */
+    private static String runName(Path logBase) {
+        Path base = logBase.toAbsolutePath().normalize();
+        String parent = base.getParent() == null ? "" : base.getParent().getFileName() + "-";
+        return parent + base.getFileName();
     }
 }
