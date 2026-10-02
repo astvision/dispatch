@@ -33,7 +33,7 @@ public record Plan(String understanding, List<String> findings, List<String> ste
     public static final int MAX_OPTIONS = 4;
     public static final int MAX_OPTION_LENGTH = 40;
     public static final int MAX_ALTERNATIVES = 3;
-    private static final Set<String> FIELDS = Set.of("understanding", "findings", "steps", "risks", "questions", "decisions",
+    static final Set<String> FIELDS = Set.of("understanding", "findings", "steps", "risks", "questions", "decisions",
             "plugins", "result", "answer");
 
     public Plan {
@@ -81,6 +81,11 @@ public record Plan(String understanding, List<String> findings, List<String> ste
         } catch (JsonProcessingException e) {
             throw new InvalidPlanException("plan is not valid JSON: " + e.getOriginalMessage());
         }
+        return of(node);
+    }
+
+    /** As {@link #parse}, from JSON already read: every reader of a stored plan goes through here. */
+    public static Plan of(JsonNode node) {
         if (node == null || !node.isObject()) {
             throw new InvalidPlanException("plan must be a JSON object");
         }
@@ -112,6 +117,20 @@ public record Plan(String understanding, List<String> findings, List<String> ste
     }
 
     public String toJson() {
+        ObjectNode json = tree();
+        if (result == Result.ANSWER) {
+            // Only an answer says so: a plan stays readable by a jar from before answers, which a rollback runs.
+            json.put("result", result.json()).put("answer", answer);
+        }
+        return json.toString();
+    }
+
+    /** The plan as the pages get it: every field, {@code result} and {@code answer} always present. */
+    public ObjectNode view() {
+        return tree().put("result", result.json()).put("answer", answer);
+    }
+
+    private ObjectNode tree() {
         ObjectNode json = Json.object().put("understanding", understanding);
         findings.forEach(json.putArray("findings")::add);
         steps.forEach(json.putArray("steps")::add);
@@ -128,11 +147,7 @@ public record Plan(String understanding, List<String> findings, List<String> ste
             decision.alternatives().forEach(alternatives::add);
         }
         plugins.forEach(json.putArray("plugins")::add);
-        if (result == Result.ANSWER) {
-            // Only an answer says so: a plan stays readable by a jar from before answers, which a rollback runs.
-            json.put("result", result.json()).put("answer", answer);
-        }
-        return json.toString();
+        return json;
     }
 
     /**

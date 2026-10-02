@@ -5,6 +5,8 @@ import dispatch.core.TaskAccess;
 import dispatch.core.TaskCommand;
 import dispatch.core.VerifyLoop;
 import dispatch.domain.OutboxKind;
+import dispatch.domain.Plan;
+import dispatch.domain.PlanDecision;
 import dispatch.domain.Priority;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -14,8 +16,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.ResourceBundle;
 
 /** Turns outbox payloads into Telegram HTML. Every piece of task or agent text is escaped. */
@@ -588,18 +592,18 @@ public final class Renderer {
      */
     private Rendered plan(JsonNode payload) {
         String taskId = taskId(payload);
-        JsonNode plan = payload.path("plan");
         String title = format("plan.title", taskId, escape(payload.path("project").asText()));
         String view = payload.path("view").asText("summary");
         if (view.equals("updating")) {
             return plain(format("plan.titleUpdating", taskId, escape(payload.path("project").asText())) + "\n\n"
                     + format("plan.correction", escapeWithin(payload.path("correction").asText(), SUMMARY_LIMIT)));
         }
+        Plan plan = Plan.of(payload.path("plan"));
         long id = payload.path("taskId").asLong();
         int planSeq = payload.path("planSeq").asInt();
         // The buttons are task access's: no Start while the plan asks questions (G-1d, ADR 0027); either way the answers
         // come back as a correction.
-        List<TaskAccess.Action> actions = TaskAccess.decisions(plan.path("questions").size());
+        List<TaskAccess.Action> actions = TaskAccess.decisions(plan.questionItems().size());
         List<List<Button>> keyboard = new ArrayList<>();
         if (actions.contains(TaskAccess.Action.APPROVE)) {
             keyboard.add(List.of(Button.primary(text("button.start"), new Callback.Approve(id, planSeq).data())));
@@ -607,13 +611,13 @@ public final class Renderer {
         Button reject = new Button(text("button.reject"), new Callback.Reject(id, planSeq).data());
         Button edit = new Button(text("button.edit"), new Callback.EditPlan(id, planSeq).data());
 
-        String details = planHtml(payload, title, "details");
+        String details = planHtml(payload, plan, title, "details");
         if (details.length() > MESSAGE_LIMIT) {
             keyboard.add(List.of(edit, reject));
             String caption = truncate(title + "\n" + text("plan.document"), CAPTION_LIMIT);
-            return new Rendered(caption, keyboard, new Document("plan-" + taskId + ".md", markdown(payload)));
+            return new Rendered(caption, keyboard, new Document("plan-" + taskId + ".md", markdown(payload, plan)));
         }
-        int decisions = plan.path("decisions").size();
+        int decisions = plan.decisions().size();
         Button decisionsButton = new Button(format("button.decisions", decisions), new Callback.PlanView(id, planSeq, Callback.View.DECISIONS).data());
         switch (view) {
             case "details" -> {
@@ -629,16 +633,16 @@ public final class Renderer {
             }
             case "decisions" -> {
                 int number = 1;
-                for (JsonNode decision : plan.path("decisions")) {
+                for (PlanDecision decision : plan.decisions()) {
                     int alternative = 0;
-                    for (JsonNode label : decision.path("alternatives")) {
-                        keyboard.add(List.of(new Button(label(number + " · " + label.asText()),
+                    for (String label : decision.alternatives()) {
+                        keyboard.add(List.of(new Button(label(number + " · " + label),
                                 new Callback.Decide(id, planSeq, number, alternative++).data())));
                     }
                     number++;
                 }
                 keyboard.add(List.of(new Button(text("button.back"), new Callback.PlanView(id, planSeq, Callback.View.SUMMARY).data())));
-                return new Rendered(planHtml(payload, title, "decisions"), keyboard, null);
+                return new Rendered(planHtml(payload, plan, title, "decisions"), keyboard, null);
             }
             default -> {
                 List<Button> row = new ArrayList<>();
@@ -648,7 +652,7 @@ public final class Renderer {
                 row.add(edit);
                 row.add(new Button(text("button.details"), new Callback.PlanView(id, planSeq, Callback.View.DETAILS).data()));
                 keyboard.add(row);
-                return new Rendered(planHtml(payload, title, "summary"), keyboard, null);
+                return new Rendered(planHtml(payload, plan, title, "summary"), keyboard, null);
             }
         }
     }
@@ -671,38 +675,37 @@ public final class Renderer {
                 new Document("answer-" + taskId(payload) + ".md", answer));
     }
 
-    private String planHtml(JsonNode payload, String title, String view) {
-        JsonNode plan = payload.path("plan");
-        StringBuilder html = new StringBuilder(title).append("\n\n").append(escape(plan.path("understanding").asText()));
-        int steps = plan.path("steps").size();
+    private String planHtml(JsonNode payload, Plan plan, String title, String view) {
+        StringBuilder html = new StringBuilder(title).append("\n\n").append(escape(plan.understanding()));
+        int steps = plan.steps().size();
         if (steps > 0) {
             html.append('\n').append(format("plan.stepsCount", steps));
         }
         html.append('\n');
         switch (view) {
             case "details" -> {
-                foldedSection(html, "plan.stepsSection", plan.path("steps"), true);
-                foldedSection(html, "plan.findingsSection", plan.path("findings"), false);
-                htmlSection(html, "plan.risks", plan.path("risks"), false);
-                decisionLines(html, plan.path("decisions"));
-                pluginLine(html, plan.path("plugins"));
+                foldedSection(html, "plan.stepsSection", plan.steps(), true);
+                foldedSection(html, "plan.findingsSection", plan.findings(), false);
+                htmlSection(html, "plan.risks", plan.risks(), false);
+                decisionLines(html, plan.decisions());
+                pluginLine(html, plan.plugins());
             }
             case "decisions" -> {
                 html.append('\n').append(text("plan.decisionsHeader"));
                 int number = 1;
-                for (JsonNode decision : plan.path("decisions")) {
-                    html.append('\n').append(format("plan.decisionItem", number++, escape(decision.path("text").asText()),
-                            escape(decision.path("chosen").asText())));
+                for (PlanDecision decision : plan.decisions()) {
+                    html.append('\n').append(format("plan.decisionItem", number++, escape(decision.text()),
+                            escape(decision.chosen())));
                 }
                 html.append('\n');
             }
             default -> {
-                decisionLines(html, plan.path("decisions"));
-                pluginLine(html, plan.path("plugins"));
+                decisionLines(html, plan.decisions());
+                pluginLine(html, plan.plugins());
             }
         }
-        if (!plan.path("questions").isEmpty()) {
-            htmlSection(html, "plan.questions", plan.path("questions"), true);
+        if (!plan.questions().isEmpty()) {
+            htmlSection(html, "plan.questions", plan.questions(), true);
             html.append("<i>").append(text("plan.questionsHint")).append("</i>\n");
         }
         html.append("\n<i>").append(modelPrefix(payload)).append(format("plan.footer", money(payload.path("costUsd")),
@@ -711,36 +714,34 @@ public final class Renderer {
         return html.toString();
     }
 
-    private void decisionLines(StringBuilder html, JsonNode decisions) {
+    private void decisionLines(StringBuilder html, List<PlanDecision> decisions) {
         if (decisions.isEmpty()) {
             return;
         }
         html.append('\n');
-        for (JsonNode decision : decisions) {
-            html.append(format("plan.decisionLine", escape(decision.path("text").asText()), escape(decision.path("chosen").asText())))
-                    .append('\n');
+        for (PlanDecision decision : decisions) {
+            html.append(format("plan.decisionLine", escape(decision.text()), escape(decision.chosen()))).append('\n');
         }
     }
 
     /** The official plugins the execution will load (spec: plugin picks), on one line; nothing when the plan picked none. */
-    private void pluginLine(StringBuilder html, JsonNode plugins) {
+    private void pluginLine(StringBuilder html, List<String> plugins) {
         if (plugins.isEmpty()) {
             return;
         }
-        List<String> names = new ArrayList<>();
-        plugins.forEach(name -> names.add(escape(name.asText())));
-        html.append('\n').append(format("plan.plugins", String.join(", ", names))).append('\n');
+        // Names from Dispatch's own list (CuratedPlugins), so nothing to escape.
+        html.append('\n').append(format("plan.plugins", String.join(", ", plugins))).append('\n');
     }
 
     /** A section as a Telegram quote that shows its first lines and opens on a tap, so a long one does not bury the rest. */
-    private void foldedSection(StringBuilder html, String labelKey, JsonNode items, boolean numbered) {
+    private void foldedSection(StringBuilder html, String labelKey, List<String> items, boolean numbered) {
         if (items.isEmpty()) {
             return;
         }
         html.append("\n<blockquote expandable>").append(format(labelKey, items.size()));
         int number = 1;
-        for (JsonNode item : items) {
-            html.append('\n').append(numbered ? number++ + ". " : "• ").append(escape(itemText(item)));
+        for (String item : items) {
+            html.append('\n').append(numbered ? number++ + ". " : "• ").append(escape(item));
         }
         html.append("</blockquote>\n");
     }
@@ -829,45 +830,41 @@ public final class Renderer {
     }
 
     /** A plan item's text; a question may be an object with answer options (G-1d). */
-    private static String itemText(JsonNode item) {
-        return item.isObject() ? item.path("text").asText() : item.asText();
-    }
-
-    private void htmlSection(StringBuilder html, String labelKey, JsonNode items, boolean numbered) {
+    private void htmlSection(StringBuilder html, String labelKey, List<String> items, boolean numbered) {
         if (items.isEmpty()) {
             return;
         }
         html.append("\n<b>").append(text(labelKey)).append("</b>\n");
         int number = 1;
-        for (JsonNode item : items) {
-            html.append(numbered ? number++ + ". " : "• ").append(escape(itemText(item))).append('\n');
+        for (String item : items) {
+            html.append(numbered ? number++ + ". " : "• ").append(escape(item)).append('\n');
         }
     }
 
-    private String markdown(JsonNode payload) {
-        JsonNode plan = payload.path("plan");
+    private String markdown(JsonNode payload, Plan plan) {
         StringBuilder md = new StringBuilder("# #").append(taskId(payload)).append(' ')
                 .append(payload.path("project").asText()).append("\n\n## ").append(text("plan.understanding")).append("\n\n")
-                .append(plan.path("understanding").asText()).append('\n');
-        for (String[] section : new String[][] {{"plan.findings", "findings"}, {"plan.steps", "steps"},
-                {"plan.risks", "risks"}, {"plan.questions", "questions"}}) {
-            JsonNode items = plan.path(section[1]);
+                .append(plan.understanding()).append('\n');
+        Map<String, List<String>> sections = new LinkedHashMap<>();
+        sections.put("plan.findings", plan.findings());
+        sections.put("plan.steps", plan.steps());
+        sections.put("plan.risks", plan.risks());
+        sections.put("plan.questions", plan.questions());
+        sections.forEach((label, items) -> {
             if (items.isEmpty()) {
-                continue;
+                return;
             }
-            md.append("\n## ").append(text(section[0])).append("\n\n");
+            md.append("\n## ").append(text(label)).append("\n\n");
             int number = 1;
-            for (JsonNode item : items) {
-                md.append(number++).append(". ").append(itemText(item)).append('\n');
+            for (String item : items) {
+                md.append(number++).append(". ").append(item).append('\n');
             }
-        }
-        JsonNode decisions = plan.path("decisions");
-        if (!decisions.isEmpty()) {
+        });
+        if (!plan.decisions().isEmpty()) {
             md.append("\n## ").append(text("plan.decisions")).append("\n\n");
             int number = 1;
-            for (JsonNode decision : decisions) {
-                md.append(number++).append(". ").append(decision.path("text").asText()).append(" → ")
-                        .append(decision.path("chosen").asText()).append('\n');
+            for (PlanDecision decision : plan.decisions()) {
+                md.append(number++).append(". ").append(decision.text()).append(" → ").append(decision.chosen()).append('\n');
             }
         }
         return md.toString();

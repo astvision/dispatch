@@ -688,4 +688,18 @@ class TasksApiTest {
         assertEquals("answer", plan.path("result").asText());
         assertEquals("In `AuthClient.java`", plan.path("answer").asText());
     }
+
+    /** The Java half of the plan view's contract; ui/src/contract/planView.test.ts is the TypeScript half. */
+    @Test
+    void thePlanViewIsExactlyTheContractThePagesAreTypedAgainst() throws Exception {
+        long taskId = planned(ALI, new Plan("Make the timeout configurable", List.of("AuthClient.java:14 hard-codes 30s"),
+                List.of("Read auth.timeout", "Add a test"), List.of("Sessions end sooner in staging"),
+                List.of(new PlanQuestion("Which environments?", List.of("staging", "prod"))),
+                List.of(new dispatch.domain.PlanDecision("Default when unset?", "30 s", List.of("60 s"))),
+                List.of("playwright")));
+
+        JsonNode plan = api.detail(ALI_CALLER, Json.object().put("taskId", taskId)).path("plan");
+
+        assertEquals(Json.read(java.nio.file.Files.readString(java.nio.file.Path.of("ui/src/contract/plan-view.json"))), plan);
+    }
 }

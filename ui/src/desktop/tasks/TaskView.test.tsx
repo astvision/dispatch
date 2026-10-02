@@ -22,7 +22,7 @@ const waiting: TaskDetail = {
   createdAt: "2026-09-28T06:22:00Z", completedAt: null, costUsd: "0.42", requester: "Bold", priority: "URGENT",
   actions: ["approve", "correct", "reject", "priority", "cancel"],
   plan: { planSeq: 1, current: 0, understanding: "Make the timeout configurable", steps: ["Read auth.timeout", "Add a test"],
-    risks: [], findings: [], questions: [], plugins: [], result: "plan", answer: "" },
+    risks: [], findings: [], questions: [], decisions: [], plugins: [], result: "plan", answer: "" },
 };
 
 test("your own waiting plan shows its steps and is approved from here", async () => {
@@ -57,6 +57,15 @@ test("an answered task shows its answer instead of steps", async () => {
 
   expect(await screen.findByText("In AuthClient.java: 30 s")).toBeInTheDocument();
   expect(screen.getByText("Answer")).toBeInTheDocument();
+});
+
+test("a plan's decisions show what was chosen", async () => {
+  vi.mocked(api.getTaskDetail).mockResolvedValue({ ...waiting,
+    plan: { ...waiting.plan!, decisions: [{ text: "Default when unset?", chosen: "30 s", alternatives: ["60 s"] }] } });
+
+  render(<TaskView taskId={14} />);
+
+  expect(await screen.findByText("Default when unset? → 30 s")).toBeInTheDocument();
 });
 
 test("a correction is written here and sent against the plan it was written for", async () => {

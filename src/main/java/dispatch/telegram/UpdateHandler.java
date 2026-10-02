@@ -30,6 +30,8 @@ import dispatch.core.TaskService;
 import dispatch.domain.Attachment;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
+import dispatch.domain.Plan;
+import dispatch.domain.PlanDecision;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Task;
@@ -792,18 +794,20 @@ public final class UpdateHandler {
                 }));
             }
             case Callback.Decide decide -> {
-                JsonNode decision = plan.get().path("plan").path("decisions").path(decide.decision() - 1);
-                JsonNode alternative = decision.path("alternatives").path(decide.alternative());
-                if (!alternative.isTextual()) {
+                List<PlanDecision> decisions = Plan.of(plan.get().path("plan")).decisions();
+                PlanDecision decision = decide.decision() >= 1 && decide.decision() <= decisions.size()
+                        ? decisions.get(decide.decision() - 1) : null;
+                if (decision == null || decide.alternative() < 0 || decide.alternative() >= decision.alternatives().size()) {
                     answer(tx, callbackId, "callback.unknown");
                     return;
                 }
-                String question = decision.path("text").asText();
-                String correction = renderer.format("plan.decisionCorrection", question, decision.path("chosen").asText(), alternative.asText());
+                String alternative = decision.alternatives().get(decide.alternative());
+                String question = decision.text();
+                String correction = renderer.format("plan.decisionCorrection", question, decision.chosen(), alternative);
                 CommandResult result = commands.run(tx, who, new TaskCommand.Correct(decide.taskId(), OptionalInt.of(decide.planSeq()), correction));
                 notice(tx, callbackId, result, "callback.decided");
                 if (result instanceof CommandResult.Done) {
-                    showCorrected(tx, planRef, question + " → " + alternative.asText());
+                    showCorrected(tx, planRef, question + " → " + alternative);
                 }
             }
             case Callback.EditPlan edit -> {

@@ -1,0 +1,20 @@
+import { expect, test } from "vitest";
+import type { PlanDecisionView, PlanQuestionView, PlanView } from "../api";
+import golden from "./plan-view.json";
+
+// The TypeScript half of the plan view's contract; TasksApiTest asserts the server produces plan-view.json exactly.
+// One entry per field of each type: tsc fails when a type gains or loses a field, and this test when the server does.
+const PLAN: Record<keyof PlanView, true> = {
+  planSeq: true, current: true, understanding: true, findings: true, steps: true, risks: true, questions: true,
+  decisions: true, plugins: true, result: true, answer: true,
+};
+const QUESTION: Record<keyof PlanQuestionView, true> = { index: true, text: true, options: true, answer: true };
+const DECISION: Record<keyof PlanDecisionView, true> = { text: true, chosen: true, alternatives: true };
+
+const fields = (value: object) => Object.keys(value).sort();
+
+test("the server's plan view has exactly the fields the pages are typed against", () => {
+  expect(fields(golden)).toEqual(fields(PLAN));
+  expect(fields(golden.questions[0])).toEqual(fields(QUESTION));
+  expect(fields(golden.decisions[0])).toEqual(fields(DECISION));
+});

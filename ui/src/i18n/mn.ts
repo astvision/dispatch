@@ -284,6 +284,7 @@ export const mn: Record<Key, string> = {
   "tasks.openOverview": "Тойм нээх",
   "tasks.plan": "Төлөвлөгөө",
   "tasks.risks": "Эрсдэл",
+  "tasks.decisions": "Шийдвэрүүд",
   "tasks.plugins": "Плагин",
   "tasks.answer": "Хариулт",
   "tasks.question": "Асуулт {index}/{count}",

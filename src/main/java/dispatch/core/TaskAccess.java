@@ -1,6 +1,5 @@
 package dispatch.core;
 
-import dispatch.Json;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
 import dispatch.domain.RunKind;
@@ -192,11 +191,10 @@ public final class TaskAccess {
         boolean admin = groups.isAdmin(memberRef);
         // Only a plan waiting for a decision has questions and answers that matter, and only for a member who sees it in
         // full: every lesser sight is refused before the phase rules run, and the admin-cancel rule reads neither the
-        // questions nor the current question. The questions are counted, not re-validated: a plan stored before
-        // questions had options holds them as plain strings.
+        // questions nor the current question.
         boolean awaiting = task != null && sight == Sight.FULL && task.phase() == Phase.AWAITING_APPROVAL;
         int planSeq = awaiting ? Runs.latestSucceededPlanSeq(tx, task.id()).orElse(0) : 0;
-        int questions = awaiting && task.planJson() != null ? Json.read(task.planJson()).path("questions").size() : 0;
+        int questions = awaiting && task.planJson() != null ? Plan.parse(task.planJson()).questionItems().size() : 0;
         Set<Integer> answered = planSeq > 0 ? PlanAnswers.of(tx, task.id(), planSeq).keySet() : Set.of();
         int current = firstOpen(questions, answered);
         Map<Action, Refusal> refusals = new EnumMap<>(Action.class);

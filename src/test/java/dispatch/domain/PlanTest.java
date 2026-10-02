@@ -240,4 +240,28 @@ class PlanTest {
         assertFalse(json.contains("\"result\""), json);
         assertFalse(json.contains("\"answer\""), json);
     }
+
+    @Test
+    void theSchemaListsExactlyTheFieldsAPlanReads() {
+        java.util.Set<String> properties = new java.util.TreeSet<>();
+        Json.read(Schemas.PLAN).path("properties").fieldNames().forEachRemaining(properties::add);
+
+        assertEquals(new java.util.TreeSet<>(Plan.FIELDS), properties);
+    }
+
+    @Test
+    void aPlansViewAlwaysNamesItsResultWhileItsStoredJsonNamesOnlyAnAnswer() {
+        Plan plan = new Plan("u", List.of(), List.of("s"), List.of(), List.of());
+
+        assertEquals("plan", plan.view().path("result").asText());
+        assertEquals("", plan.view().path("answer").asText());
+        assertEquals(Json.read(plan.toJson()).path("steps"), plan.view().path("steps"));
+    }
+
+    @Test
+    void aPlanReadsFromATreeAsFromText() {
+        Plan plan = new Plan("u", List.of("f"), List.of("s"), List.of(), List.of());
+
+        assertEquals(plan, Plan.of(Json.read(plan.toJson())));
+    }
 }

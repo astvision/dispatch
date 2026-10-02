@@ -283,6 +283,7 @@ export const en = {
   "tasks.openOverview": "Open the overview",
   "tasks.plan": "Plan",
   "tasks.risks": "Risks",
+  "tasks.decisions": "Decisions",
   "tasks.plugins": "Plugins",
   "tasks.answer": "Answer",
   "tasks.question": "Question {index} of {count}",

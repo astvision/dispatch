@@ -1,0 +1,17 @@
+{
+  "planSeq": 1,
+  "current": 1,
+  "understanding": "Make the timeout configurable",
+  "findings": ["AuthClient.java:14 hard-codes 30s"],
+  "steps": ["Read auth.timeout", "Add a test"],
+  "risks": ["Sessions end sooner in staging"],
+  "questions": [
+    {"index": 1, "text": "Which environments?", "options": ["staging", "prod"], "answer": null}
+  ],
+  "decisions": [
+    {"text": "Default when unset?", "chosen": "30 s", "alternatives": ["60 s"]}
+  ],
+  "plugins": ["playwright"],
+  "result": "plan",
+  "answer": ""
+}

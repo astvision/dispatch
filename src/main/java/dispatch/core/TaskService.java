@@ -867,12 +867,8 @@ public final class TaskService {
         }
         Plan plan = Plan.parse(found.get().planJson());
         Map<Integer, String> answers = PlanAnswers.of(tx, taskId, planSeq.getAsInt());
-        ObjectNode payload = Json.object().put("planSeq", planSeq.getAsInt()).put("understanding", plan.understanding());
-        plan.steps().forEach(payload.putArray("steps")::add);
-        plan.risks().forEach(payload.putArray("risks")::add);
-        plan.findings().forEach(payload.putArray("findings")::add);
-        plan.plugins().forEach(payload.putArray("plugins")::add);
-        payload.put("result", plan.result().json()).put("answer", plan.answer());
+        // Every field of the plan, so a new one reaches the pages from Plan alone; each question gains its number and answer.
+        ObjectNode payload = plan.view().put("planSeq", planSeq.getAsInt());
         ArrayNode questions = payload.putArray("questions");
         for (int index = 1; index <= plan.questionItems().size(); index++) {
             PlanQuestion question = plan.questionItems().get(index - 1);

@@ -398,6 +398,14 @@ export interface PlanQuestionView {
   answer: string | null;
 }
 
+/** A choice the agent made itself, which the requester may want otherwise; the pages show what was chosen. */
+export interface PlanDecisionView {
+  text: string;
+  chosen: string;
+  alternatives: string[];
+}
+
+/** The server's view of a plan; ui/src/contract/plan-view.json pins its fields on both sides. */
 export interface PlanView {
   planSeq: number;
   /** The question to answer now, 1-based; 0 when none is open. */
@@ -413,6 +421,7 @@ export interface PlanView {
   /** The answer in markdown; empty for a plan. */
   answer: string;
   questions: PlanQuestionView[];
+  decisions: PlanDecisionView[];
 }
 
 /** The requester's own task with its latest plan, as the Mini App's task sheet shows it; the desk shows any task so (D-2). */

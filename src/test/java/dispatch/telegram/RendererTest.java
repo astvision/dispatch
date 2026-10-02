@@ -280,7 +280,7 @@ class RendererTest {
         assertTrue(planHtml.contains(java.text.MessageFormat.format(messages.getString("run.modelDiffers"), "haiku", "sonnet-5")), planHtml);
         assertTrue(completedHtml.contains("haiku-4-5 · 2 файл"), "the date in a model id is left out: " + completedHtml);
         assertFalse(completedHtml.contains("⚠️"), completedHtml);
-        assertFalse(renderer.render(OutboxKind.PLAN_READY, planPayload(List.of(), List.of())).html().contains(" · Зардал"),
+        assertFalse(renderer.render(OutboxKind.PLAN_READY, planPayload(List.of("Do it"), List.of())).html().contains(" · Зардал"),
                 "a plan from before models were recorded has the footer it had");
     }
 

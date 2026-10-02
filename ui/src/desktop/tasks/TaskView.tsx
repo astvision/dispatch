@@ -78,6 +78,14 @@ export default function TaskView({ taskId, layout = "panel", onChanged, onDetail
                   <ul className="task-steps">{plan.risks.map((risk, index) => <li key={index}>{risk}</li>)}</ul>
                 </>
               )}
+              {plan.decisions.length > 0 && (
+                <>
+                  <Typography.Text type="secondary" className="task-label">{t("tasks.decisions")}</Typography.Text>
+                  <ul className="task-steps">
+                    {plan.decisions.map((decision, index) => <li key={index}>{decision.text} → {decision.chosen}</li>)}
+                  </ul>
+                </>
+              )}
               {plan.plugins.length > 0 && (
                 <>
                   <Typography.Text type="secondary" className="task-label">{t("tasks.plugins")}</Typography.Text>
