@@ -31,6 +31,7 @@ class BubblewrapTest {
 
         assertEquals(List.of("/usr/bin/bwrap",
                 "--unshare-pid", "--as-pid-1", "--unshare-ipc", "--new-session",
+                "--unsetenv", "DISPLAY", "--unsetenv", "WAYLAND_DISPLAY", "--unsetenv", "XAUTHORITY",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
                 "--tmpfs", "/home/ann/.ssh",
                 "--tmpfs", "/state",
@@ -63,6 +64,7 @@ class BubblewrapTest {
 
         assertEquals(List.of("bwrap",
                 "--unshare-pid", "--as-pid-1", "--unshare-ipc", "--new-session",
+                "--unsetenv", "DISPLAY", "--unsetenv", "WAYLAND_DISPLAY", "--unsetenv", "XAUTHORITY",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
                 "--bind", "/state/splits/3", "/state/splits/3",
                 "--chdir", "/state/splits/3", "--", "/bin/sh", "-c", Bubblewrap.END_WITH_COMMAND, "sh", "claude"), wrapped);

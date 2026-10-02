@@ -205,7 +205,8 @@ under `agents.claude-code` (`plugins: [frontend-design@claude-plugins-official]`
 member's `worker.yaml` (`claudePlugins`, `claudeMcpServers`). Each run reads the lists again, so an edit applies without
 a restart; something listed and missing fails the run and `dispatch check` says what to do. Nothing unlisted loads: not
 your other plugins, your claude.ai connectors, or a repository's `.mcp.json`. Listed servers run in the sandbox, which
-has no display: Playwright's server connects, but its browser cannot open a window there.
+has no display: a browser server such as Playwright's runs headless there, and the agent sees pages through its
+screenshots.
 
 ### Watch and steer a run
 

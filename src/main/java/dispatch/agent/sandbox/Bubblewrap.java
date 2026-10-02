@@ -59,6 +59,9 @@ public final class Bubblewrap implements Sandbox {
                 // --unshare-ipc: no SysV IPC or POSIX message queues shared with the owner's processes.
                 // --as-pid-1: the shell below, not bwrap's own init, is pid 1 (END_WITH_COMMAND).
                 "--unshare-pid", "--as-pid-1", "--unshare-ipc", "--new-session",
+                // The display's sockets are hidden below (/tmp, XDG_RUNTIME_DIR), so the run is not told of one: a
+                // browser then runs headless, and an agent sees it through screenshots, instead of failing to open a window.
+                "--unsetenv", "DISPLAY", "--unsetenv", "WAYLAND_DISPLAY", "--unsetenv", "XAUTHORITY",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"));
         for (Path hidden : policy.hidden()) {
             args.addAll(List.of("--tmpfs", hidden.toString()));

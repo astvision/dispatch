@@ -206,6 +206,24 @@ class BubblewrapSandboxTest {
         assertFalse(Files.exists(home.resolve("escaped")));
     }
 
+    /** Its sockets are hidden, so a run is not told of a display: a browser runs headless instead of failing to open a window. */
+    @Test
+    void aRunIsNotToldOfADisplayItCannotReach() throws Exception {
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(new RunRequest(RunKind.EXECUTE, worktree, "p", UUID.randomUUID(), false, List.of(), null, null, null,
+                        worktree.resolve("run")), new AgentState(".claude", List.of()));
+        ProcessBuilder builder = new ProcessBuilder(sandbox.wrap(List.of("sh", "-c",
+                "echo \"${DISPLAY-unset} ${WAYLAND_DISPLAY-unset} ${XAUTHORITY-unset} ${KEPT-unset}\""), policy))
+                .directory(worktree.toFile()).redirectErrorStream(true);
+        builder.environment().putAll(Map.of("DISPLAY", ":0", "WAYLAND_DISPLAY", "wayland-0",
+                "XAUTHORITY", "/run/user/1000/.Xauthority", "KEPT", "kept"));
+
+        Process process = builder.start();
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS));
+
+        assertEquals("unset unset unset kept", new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip());
+    }
+
     @Test
     void cancellingEndsTheSandboxAndEverythingInIt() throws Exception {
         SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of())

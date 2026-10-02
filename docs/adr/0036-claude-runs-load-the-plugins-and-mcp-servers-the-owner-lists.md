@@ -23,6 +23,8 @@ We chose this over:
 
 Consequences: a listed server's tools and credentials are the agent's, so a prompt-injected agent can use them; listing
 is the owner's decision, per machine. A plugin's hooks and servers run inside the sandbox, and one that needs what the
-sandbox hides fails (`agent.mcp_failed`). The sandbox has no display: Playwright's server connects, but its browser
-cannot open a window there. Only user-scope servers can be listed. A team machine's lists never reach a member's
+sandbox hides fails (`agent.mcp_failed`). The sandbox has no display and unsets `DISPLAY`, `WAYLAND_DISPLAY` and
+`XAUTHORITY`, so a browser server such as Playwright's runs headless there, and the agent sees pages through its
+screenshots. A listed server's `env` and `headers` values reach Claude Code through its environment, as `${VAR}`
+references in the configuration, never on its command line. Only user-scope servers can be listed. A team machine's lists never reach a member's
 computer. Each run pays one `claude plugin list --json`.
