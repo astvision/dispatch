@@ -482,7 +482,7 @@ class ChecksTest {
                 FakeClaude.environment()).orElseThrow();
 
         assertEquals(Checks.Level.OK, finding.level());
-        assertEquals("claude-code: 1 listed plugin(s) and 0 MCP server(s) found", finding.message().english());
+        assertEquals("claude-code: 1 listed plugin(s), 0 MCP server(s) and 0 skill(s) found", finding.message().english());
         assertTrue(Checks.ownerPlugins(OwnerPlugins.instance(none, dir), claude.toString(), FakeClaude.environment()).isEmpty());
     }
 
@@ -497,5 +497,19 @@ class ChecksTest {
 
         assertTrue(findings.stream().anyMatch(f -> f.level() == Checks.Level.FAIL && f.area().equals("claude-code")
                 && f.message().english().startsWith("cannot list Claude Code plugins")), findings.toString());
+    }
+
+    @Test
+    void aListedSkillThatIsMissingFailsTheCheckAndAFoundOneIsCounted() throws IOException {
+        Path config = Files.writeString(dir.resolve("skills.yaml"), "agents:\n  claude-code:\n    skills: [graphify]\n");
+
+        Checks.Finding missing = Checks.ownerPlugins(OwnerPlugins.instance(config, dir), "claude", Map.of()).orElseThrow();
+        Files.writeString(Files.createDirectories(dir.resolve(".claude/skills/graphify")).resolve("SKILL.md"), "a skill");
+        Checks.Finding found = Checks.ownerPlugins(OwnerPlugins.instance(config, dir), "claude", Map.of()).orElseThrow();
+
+        assertEquals(Checks.Level.FAIL, missing.level());
+        assertTrue(missing.message().english().startsWith("claude-code skill graphify is not in ~/.claude/skills"),
+                missing.message().english());
+        assertEquals("claude-code: 0 listed plugin(s), 0 MCP server(s) and 1 skill(s) found", found.message().english());
     }
 }

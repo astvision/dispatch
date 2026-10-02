@@ -130,7 +130,7 @@ public final class Checks {
             }
             owner.resolve(command, ProcessRun.agentEnvironment(environment));
             return Optional.of(new Finding(Level.OK, "claude-code",
-                    Text.of("check.ownerPlugins", lists.plugins().size(), lists.mcpServers().size())));
+                    Text.of("check.ownerPlugins", lists.plugins().size(), lists.mcpServers().size(), lists.skills().size())));
         } catch (AgentStartException e) {
             return Optional.of(new Finding(Level.FAIL, "claude-code", Text.raw(e.getMessage())));
         }
