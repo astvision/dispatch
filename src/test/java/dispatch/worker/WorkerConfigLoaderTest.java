@@ -112,16 +112,20 @@ class WorkerConfigLoaderTest {
                 name: ann-laptop
                 claudePlugins: [frontend-design@claude-plugins-official]
                 claudeMcpServers: [mongodb]
+                claudeSkills: [graphify]
                 """));
         Path blank = write("""
                 team: https://team.example.com
                 name: ann-laptop
                 claudePlugins: ['']
+                claudeSkills: [.hidden]
                 """);
 
         ConfigException error = assertThrows(ConfigException.class, () -> WorkerConfigLoader.load(blank));
 
-        assertTrue(error.getMessage().contains("claudePlugins and claudeMcpServers: list names, without blank entries"),
+        assertTrue(error.getMessage().contains("claudePlugins, claudeMcpServers and claudeSkills: list names, without blank entries"),
+                error.getMessage());
+        assertTrue(error.getMessage().contains("claudeSkills: .hidden is not a directory name in ~/.claude/skills"),
                 error.getMessage());
     }
 

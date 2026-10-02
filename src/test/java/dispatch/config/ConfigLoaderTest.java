@@ -710,6 +710,18 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void claudeCodeListsTheOwnersSkillsByTheirDirectoryNamesAndNeverAPath() throws IOException {
+        Config config = ConfigLoader.load(write(VALID.replace("    command: /usr/local/bin/claude\n",
+                "    command: /usr/local/bin/claude\n    skills: [graphify, spec-plan]\n")), ENV);
+        ConfigException path = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(VALID.replace(
+                "    command: /usr/local/bin/claude\n", "    command: /usr/local/bin/claude\n    skills: [../graphify]\n")), ENV));
+
+        assertEquals(List.of("graphify", "spec-plan"), config.agents().get("claude-code").skills());
+        assertTrue(path.getMessage().contains("agents.claude-code.skills: ../graphify is not a directory name in ~/.claude/skills"),
+                path.getMessage());
+    }
+
+    @Test
     void onlyClaudeCodeListsPluginsAndMcpServersAndNeverABlankName() throws IOException {
         ConfigException codex = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(VALID.replace(
                 "    command: /usr/local/bin/claude\n",
@@ -717,8 +729,9 @@ class ConfigLoaderTest {
         ConfigException blank = assertThrows(ConfigException.class, () -> ConfigLoader.load(write(VALID.replace(
                 "    command: /usr/local/bin/claude\n", "    command: /usr/local/bin/claude\n    mcpServers: ['']\n")), ENV));
 
-        assertTrue(codex.getMessage().contains("agents.codex: plugins and mcpServers are for claude-code only"), codex.getMessage());
-        assertTrue(blank.getMessage().contains("agents.claude-code: plugins and mcpServers must list names, without blank entries"),
+        assertTrue(codex.getMessage().contains("agents.codex: plugins, mcpServers and skills are for claude-code only"),
+                codex.getMessage());
+        assertTrue(blank.getMessage().contains("agents.claude-code: plugins, mcpServers and skills must list names, without blank entries"),
                 blank.getMessage());
     }
 

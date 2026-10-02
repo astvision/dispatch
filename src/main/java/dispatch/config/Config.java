@@ -164,17 +164,23 @@ public record Config(
     /**
      * @param plugins    Claude Code plugins its runs load, by id (spec: owner plugins); runs read them again from the file
      * @param mcpServers user-scope MCP servers its runs load, by name; likewise
+     * @param skills     the owner's own skills its runs load, by their directory under ~/.claude/skills; likewise
      */
-    public record Agent(String command, List<String> plugins, List<String> mcpServers) {
+    public record Agent(String command, List<String> plugins, List<String> mcpServers, List<String> skills) {
 
         public Agent {
             // A null entry (an empty YAML item) becomes "" for validateAgents to report, never a NullPointerException.
-            plugins = plugins == null ? List.of() : plugins.stream().map(name -> name == null ? "" : name).toList();
-            mcpServers = mcpServers == null ? List.of() : mcpServers.stream().map(name -> name == null ? "" : name).toList();
+            plugins = names(plugins);
+            mcpServers = names(mcpServers);
+            skills = names(skills);
         }
 
         public Agent(String command) {
-            this(command, List.of(), List.of());
+            this(command, List.of(), List.of(), List.of());
+        }
+
+        private static List<String> names(List<String> names) {
+            return names == null ? List.of() : names.stream().map(name -> name == null ? "" : name).toList();
         }
     }
 

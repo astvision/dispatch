@@ -1,5 +1,6 @@
 package dispatch.worker;
 
+import dispatch.agent.claude.OwnerPlugins;
 import dispatch.agent.sandbox.SandboxSetting;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -35,7 +36,7 @@ public final class WorkerConfigLoader {
     /** The YAML file's shape; the key is never in it — it lives in worker.env. */
     record WorkerFile(String team, String name, Integer maxConcurrentRuns, String claudeCommand, String ghCommand,
                       String stateDir, Map<String, Project> projects, String codexCommand, String geminiCommand, String sandbox,
-                      List<String> claudePlugins, List<String> claudeMcpServers) {
+                      List<String> claudePlugins, List<String> claudeMcpServers, List<String> claudeSkills) {
 
         record Project(String path, String model, String effort) {
         }
@@ -77,10 +78,14 @@ public final class WorkerConfigLoader {
         if (sandbox.isEmpty()) {
             errors.add("sandbox: auto or off, not " + raw.sandbox());
         }
-        boolean blank = java.util.stream.Stream.of(raw.claudePlugins(), raw.claudeMcpServers()).filter(java.util.Objects::nonNull)
-                .flatMap(List::stream).anyMatch(name -> name == null || name.isBlank());
+        boolean blank = java.util.stream.Stream.of(raw.claudePlugins(), raw.claudeMcpServers(), raw.claudeSkills())
+                .filter(java.util.Objects::nonNull).flatMap(List::stream).anyMatch(name -> name == null || name.isBlank());
         if (blank) {
-            errors.add("claudePlugins and claudeMcpServers: list names, without blank entries");
+            errors.add("claudePlugins, claudeMcpServers and claudeSkills: list names, without blank entries");
+        }
+        if (raw.claudeSkills() != null) {
+            raw.claudeSkills().stream().filter(name -> name != null && !name.isBlank() && !OwnerPlugins.isSkillName(name))
+                    .forEach(name -> errors.add("claudeSkills: " + name + " is not a directory name in ~/.claude/skills"));
         }
         if (!errors.isEmpty()) {
             throw new ConfigException(file + " is invalid:\n  - " + String.join("\n  - ", errors));

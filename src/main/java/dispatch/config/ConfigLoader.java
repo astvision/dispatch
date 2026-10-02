@@ -1,5 +1,6 @@
 package dispatch.config;
 
+import dispatch.agent.claude.OwnerPlugins;
 import dispatch.agent.sandbox.SandboxSetting;
 import dispatch.Text;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -342,10 +343,15 @@ public final class ConfigLoader {
                 errors.add(Text.of("config.agentsUnsupported", type, supported));
             } else if (agent == null || isBlank(agent.command())) {
                 errors.add(Text.of("config.agentsCommand", type));
-            } else if (!type.equals("claude-code") && (!agent.plugins().isEmpty() || !agent.mcpServers().isEmpty())) {
+            } else if (!type.equals("claude-code")
+                    && (!agent.plugins().isEmpty() || !agent.mcpServers().isEmpty() || !agent.skills().isEmpty())) {
                 errors.add(Text.of("config.agentsClaudeOnlyLists", type));
-            } else if (java.util.stream.Stream.concat(agent.plugins().stream(), agent.mcpServers().stream()).anyMatch(String::isBlank)) {
+            } else if (java.util.stream.Stream.of(agent.plugins(), agent.mcpServers(), agent.skills()).flatMap(List::stream)
+                    .anyMatch(String::isBlank)) {
                 errors.add(Text.of("config.agentsListEntry", type));
+            } else {
+                agent.skills().stream().filter(name -> !OwnerPlugins.isSkillName(name))
+                        .forEach(name -> errors.add(Text.of("config.agentsSkillName", type, name)));
             }
         });
     }

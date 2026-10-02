@@ -32,6 +32,8 @@ public final class OwnerPlugins {
     public static final OwnerPlugins NONE = new OwnerPlugins(null, false, null, Duration.ZERO);
 
     private static final YAMLMapper YAML = new YAMLMapper();
+    /** A directory directly under ~/.claude/skills: never a path, nor a hidden directory. */
+    private static final java.util.regex.Pattern SKILL_NAME = java.util.regex.Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
     private static final Duration LIST_TIMEOUT = Duration.ofSeconds(60);
 
     /** The two lists as the file has them now. */
@@ -88,6 +90,11 @@ public final class OwnerPlugins {
     /** For tests: how long {@code claude plugin list --json} may take. */
     OwnerPlugins withListTimeout(Duration timeout) {
         return new OwnerPlugins(file, instance, home, timeout);
+    }
+
+    /** Whether {@code name} can name one of the owner's skills: a plain directory name under ~/.claude/skills. */
+    public static boolean isSkillName(String name) {
+        return name != null && SKILL_NAME.matcher(name).matches();
     }
 
     String pluginsKey() {
