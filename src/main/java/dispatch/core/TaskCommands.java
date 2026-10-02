@@ -201,32 +201,37 @@ public final class TaskCommands {
             instruction = step.instruction();
         }
         Phase to = kind == RunKind.PLAN ? Phase.PLANNING : Phase.EXECUTING;
-        changePhase(tx, task, Phase.FAILED, to, now);
+        return queueRun(tx, who, task, to, kind, RunCause.RETRY, instruction, "retry of run " + step.seq(), true,
+                OutboxKind.RETRY_QUEUED, now);
+    }
+
+    /**
+     * Queues a run of {@code task} and moves it to the run's phase: every command that starts work does these steps, in
+     * this order, and nothing else. The requester hears {@code news}; the scheduler and the outbox wake once it commits.
+     *
+     * @param reason        the task's event, in words
+     * @param eventNamesRun whether that event belongs to the new run (a retry, a follow-up) or to the plan it acts on
+     */
+    private CommandResult queueRun(Tx tx, Requester who, Task task, Phase to, RunKind kind, RunCause cause, String instruction,
+                                   String reason, boolean eventNamesRun, OutboxKind news, Instant now) {
+        Phase from = task.phase();
+        changePhase(tx, task, from, to, now);
         int seq = Runs.nextSeq(tx, task.id());
-        Runs.insert(tx, new Runs.NewRun(task.id(), seq, kind, RunCause.RETRY, instruction, who), now);
-        Events.record(tx, task.id(), seq, who.ref(), Phase.FAILED, to, "retry of run " + step.seq(), now);
-        Outbox.enqueueForRequester(tx, task, OutboxKind.RETRY_QUEUED,
+        Runs.insert(tx, new Runs.NewRun(task.id(), seq, kind, cause, instruction, who), now);
+        Events.record(tx, task.id(), eventNamesRun ? seq : null, who.ref(), from, to, reason, now);
+        Outbox.enqueueForRequester(tx, task, news,
                 Json.object().put("taskId", task.id()).put("by", who.name()).put("kind", kind.name()), now);
         tx.afterCommit(wakeOutbox);
         tx.afterCommit(wakeScheduler);
-        logTransition(tx, task.id(), Phase.FAILED, to, who.ref());
+        logTransition(tx, task.id(), from, to, who.ref());
         return new CommandResult.Done(task.id(), isRequester(who, task));
     }
 
     /** Queues the approved plan's execution; the requester hears it is queued. */
     private CommandResult approve(Tx tx, Requester who, Task task, int planSeq) {
-        Instant now = clock.instant();
-        changePhase(tx, task, Phase.AWAITING_APPROVAL, Phase.EXECUTING, now);
         // The run carries the plan it implements, so what was approved stays on record.
-        Runs.insert(tx, new Runs.NewRun(task.id(), Runs.nextSeq(tx, task.id()), RunKind.EXECUTE, RunCause.APPROVAL, task.planJson(),
-                who), now);
-        Events.record(tx, task.id(), null, who.ref(), Phase.AWAITING_APPROVAL, Phase.EXECUTING, "approved plan " + planSeq, now);
-        Outbox.enqueueForRequester(tx, task, OutboxKind.EXECUTION_QUEUED,
-                Json.object().put("taskId", task.id()).put("by", who.name()), now);
-        tx.afterCommit(wakeOutbox);
-        tx.afterCommit(wakeScheduler);
-        logTransition(tx, task.id(), Phase.AWAITING_APPROVAL, Phase.EXECUTING, who.ref());
-        return new CommandResult.Done(task.id(), isRequester(who, task));
+        return queueRun(tx, who, task, Phase.EXECUTING, RunKind.EXECUTE, RunCause.APPROVAL, task.planJson(),
+                "approved plan " + planSeq, false, OutboxKind.EXECUTION_QUEUED, clock.instant());
     }
 
     /** Ends the task: its chat hears who rejected it, and a group message that gave it shows it ended (G-1e). */
@@ -259,16 +264,8 @@ public final class TaskCommands {
 
     /** The requester's correction: the task is planned again in its planning session, with it as the run's instruction. */
     private CommandResult correct(Tx tx, Requester who, Task task, int planSeq, String text) {
-        Instant now = clock.instant();
-        changePhase(tx, task, Phase.AWAITING_APPROVAL, Phase.PLANNING, now);
-        Runs.insert(tx, new Runs.NewRun(task.id(), Runs.nextSeq(tx, task.id()), RunKind.PLAN, RunCause.CORRECTION, text, who), now);
-        Events.record(tx, task.id(), null, who.ref(), Phase.AWAITING_APPROVAL, Phase.PLANNING, "correction of plan " + planSeq, now);
-        Outbox.enqueueForRequester(tx, task, OutboxKind.CORRECTION_QUEUED,
-                Json.object().put("taskId", task.id()).put("by", who.name()), now);
-        tx.afterCommit(wakeOutbox);
-        tx.afterCommit(wakeScheduler);
-        logTransition(tx, task.id(), Phase.AWAITING_APPROVAL, Phase.PLANNING, who.ref());
-        return new CommandResult.Done(task.id(), isRequester(who, task));
+        return queueRun(tx, who, task, Phase.PLANNING, RunKind.PLAN, RunCause.CORRECTION, text,
+                "correction of plan " + planSeq, false, OutboxKind.CORRECTION_QUEUED, clock.instant());
     }
 
     /**
@@ -291,29 +288,11 @@ public final class TaskCommands {
             }
             return given;
         }
-        if (Plan.answers(task.planJson())) {
-            // The reply to an answer is planned in the answer's own session: another answer, or a plan to approve.
-            changePhase(tx, task, task.phase(), Phase.PLANNING, now);
-            int seq = Runs.nextSeq(tx, task.id());
-            Runs.insert(tx, new Runs.NewRun(task.id(), seq, RunKind.PLAN, RunCause.FOLLOW_UP, followUp.text().strip(), who), now);
-            Events.record(tx, task.id(), seq, who.ref(), task.phase(), Phase.PLANNING, "follow-up", now);
-            Outbox.enqueueForRequester(tx, task, OutboxKind.FOLLOW_UP_QUEUED,
-                    Json.object().put("taskId", task.id()).put("by", who.name()), now);
-            tx.afterCommit(wakeOutbox);
-            tx.afterCommit(wakeScheduler);
-            logTransition(tx, task.id(), task.phase(), Phase.PLANNING, who.ref());
-            return new CommandResult.Done(task.id(), isRequester(who, task));
-        }
-        changePhase(tx, task, task.phase(), Phase.EXECUTING, now);
-        int seq = Runs.nextSeq(tx, task.id());
-        Runs.insert(tx, new Runs.NewRun(task.id(), seq, RunKind.EXECUTE, RunCause.FOLLOW_UP, followUp.text().strip(), who), now);
-        Events.record(tx, task.id(), seq, who.ref(), task.phase(), Phase.EXECUTING, "follow-up", now);
-        Outbox.enqueueForRequester(tx, task, OutboxKind.FOLLOW_UP_QUEUED,
-                Json.object().put("taskId", task.id()).put("by", who.name()), now);
-        tx.afterCommit(wakeOutbox);
-        tx.afterCommit(wakeScheduler);
-        logTransition(tx, task.id(), task.phase(), Phase.EXECUTING, who.ref());
-        return new CommandResult.Done(task.id(), isRequester(who, task));
+        // The reply to an answer is planned in the answer's own session: another answer, or a plan to approve. Any other
+        // finished task continues in its building session, without a new plan (ADR 0006).
+        boolean answered = Plan.answers(task.planJson());
+        return queueRun(tx, who, task, answered ? Phase.PLANNING : Phase.EXECUTING, answered ? RunKind.PLAN : RunKind.EXECUTE,
+                RunCause.FOLLOW_UP, followUp.text().strip(), "follow-up", true, OutboxKind.FOLLOW_UP_QUEUED, now);
     }
 
     /**
