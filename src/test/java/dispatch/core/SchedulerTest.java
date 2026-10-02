@@ -333,6 +333,52 @@ class SchedulerTest {
         assertEquals(taskId, claim(onCodex).orElseThrow().taskId(), "Claude Code is not what this project needs");
     }
 
+    /**
+     * Where a run may start is stated twice: in the claim query, and in the blocker the requester is told. Every state of a
+     * member's one live computer must read the same in both, or a run is held without a reason or reported held while it runs.
+     */
+    @Test
+    void theClaimQueryAndTheReportedBlockerAgreeForEveryStateOfAComputer() {
+        boolean[] either = {true, false};
+        Integer[] protocols = {null, dispatch.worker.WorkerProtocol.VERSION, 0};
+        int member = 5000;
+        // A project per agent, so a run held in one round stays held in the next.
+        Map<String, String> agentOf = Map.of("alm", "claude-code", "crm", "codex");
+        for (String project : java.util.List.of("alm", "crm")) {
+            String agent = agentOf.get(project);
+            for (boolean claudeOk : either) {
+                for (boolean codexOk : either) {
+                    for (boolean cloneOk : either) {
+                        for (Integer protocol : protocols) {
+                            Requester requester = new Requester("telegram:" + member++, "Ann");
+                            long taskId = queuedPlanFor(requester, project);
+                            long workerId = pairedWorkerFor(requester);
+                            db.transaction(tx -> Workers.touch(tx, workerId, clock.instant()));
+                            db.transaction(tx -> Workers.saveReadiness(tx, workerId,
+                                    new Readiness(new Readiness.Check(claudeOk, "claude"), new Readiness.Check(true, null),
+                                            Map.of(project, new Readiness.Check(cloneOk, "clone")),
+                                            Map.of("codex", new Readiness.Check(codexOk, "codex"))), clock.instant()));
+                            if (protocol != null) {
+                                db.transaction(tx -> Workers.saveProtocol(tx, workerId, protocol));
+                            }
+                            String state = agent + " claude=" + claudeOk + " codex=" + codexOk + " clone=" + cloneOk
+                                    + " protocol=" + protocol;
+
+                            Optional<Readiness.Blocker> blocker = db.transactionReturning(tx -> Workers.blockerOf(tx,
+                                    requester.ref(), null, clock.instant().minus(Workers.SEEN_WITHIN), project, agent, RunKind.PLAN));
+                            Optional<ClaimedRun> claimed = db.transactionReturning(tx -> Runs.claimNext(tx, 1000, clock.instant(),
+                                    clock.instant().minus(Workers.SEEN_WITHIN), agentOf));
+
+                            assertEquals(blocker.isEmpty(), claimed.isPresent(),
+                                    state + ": blocker " + blocker.map(Readiness.Blocker::code).orElse("none"));
+                            claimed.ifPresent(run -> assertEquals(taskId, run.taskId(), state));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private Optional<ClaimedRun> claim(Map<String, String> agentOf) {
         return db.transactionReturning(tx -> Runs.claimNext(tx, 2, clock.instant(), clock.instant().minus(Workers.SEEN_WITHIN),
                 agentOf));
