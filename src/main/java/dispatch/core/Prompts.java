@@ -1,6 +1,7 @@
 package dispatch.core;
 
 import dispatch.domain.Attachment;
+import dispatch.domain.CuratedPlugins;
 import dispatch.domain.Run;
 import dispatch.domain.Task;
 import java.nio.file.Path;
@@ -67,6 +68,18 @@ final class Prompts {
      * What each agent call is told to use from the dispatch plugin (spec: agent skills). The machine that runs the agent
      * adds it, never the team machine, so a machine without the plugin is never told to use one.
      */
+    /** After a Claude Code plan prompt: the official plugins its plan may pick for the execution (spec: plugin picks). */
+    static final String PLUGIN_NOTE = pluginNote();
+
+    private static String pluginNote() {
+        StringBuilder note = new StringBuilder("\nPlugins you may pick for the execution, in the plan's plugins field. Pick "
+                + "only what this task needs, and none when nothing fits:\n");
+        for (CuratedPlugins.Entry entry : CuratedPlugins.ALL) {
+            note.append("- ").append(entry.name()).append(": when ").append(entry.when()).append('\n');
+        }
+        return note.toString();
+    }
+
     enum SkillNote {
         PLAN("Load the dispatch:ponytail skill and plan the smallest change that works. If the task reports a bug, use "
                 + "the dispatch:systematic-debugging skill to investigate its root cause before you plan; change nothing. Put "

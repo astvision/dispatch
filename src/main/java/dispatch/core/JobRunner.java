@@ -470,9 +470,18 @@ public final class JobRunner implements Worker {
     }
 
     private RunRequest request(Job job, Path worktree, TaskFiles files, List<Path> plugins) {
-        return new RunRequest(job.kind(), worktree, job.prompt() + files.note() + skillNote(job.kind(), plugins),
+        return new RunRequest(job.kind(), worktree,
+                job.prompt() + files.note() + pluginNote(job) + skillNote(job.kind(), plugins),
                 job.sessionId(), job.resume(), files.dirs(), job.budgetUsd(), job.model(), job.effort(),
                 workspaces.runLogBase(job.taskId(), job.seq()), Map.of(), plugins);
+    }
+
+    /**
+     * The plugins a Claude Code plan may pick (spec: plugin picks), before the skill note; the other agents load no
+     * plugins, so they are offered none. Package-private: JobRunnerTest reaches it directly.
+     */
+    static String pluginNote(Job job) {
+        return job.kind() == RunKind.PLAN && job.project().agent().equals("claude-code") ? Prompts.PLUGIN_NOTE : "";
     }
 
     /** No copyFiles here: planning needs no local secrets, and whatever the agent reads may be quoted in the group. */

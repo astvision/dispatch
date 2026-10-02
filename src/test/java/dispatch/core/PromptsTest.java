@@ -3,6 +3,7 @@ package dispatch.core;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dispatch.domain.CuratedPlugins;
 import dispatch.domain.Phase;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
@@ -84,5 +85,13 @@ class PromptsTest {
     private static Run reply() {
         return new Run(1, 2, RunKind.PLAN, RunCause.CORRECTION, RunStatus.RUNNING, "Also add a test for add(2, 3).",
                 "telegram:100", "Bold", null, null, null, null, null, null, null, null);
+    }
+
+    @Test
+    void thePluginNoteNamesEveryCuratedPluginAndWhenToPickIt() {
+        for (CuratedPlugins.Entry entry : CuratedPlugins.ALL) {
+            assertTrue(Prompts.PLUGIN_NOTE.contains("- " + entry.name() + ": when " + entry.when()), Prompts.PLUGIN_NOTE);
+        }
+        assertTrue(Prompts.PLUGIN_NOTE.contains("plugins field"), Prompts.PLUGIN_NOTE);
     }
 }

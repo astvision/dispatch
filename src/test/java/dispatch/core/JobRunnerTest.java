@@ -116,7 +116,9 @@ class JobRunnerTest {
         assertTrue(events.pid > 0, "the agent's process is recorded for orphan detection");
         assertFalse(events.processStart.isBefore(before), "the pid's own start time, which Recovery matches against the live process");
         assertFalse(events.processStart.isAfter(Instant.now()), "the pid's own start time, which Recovery matches against the live process");
-        assertEquals("Plan this: fix the login timeout", Files.readString(worktree.resolve("fake-claude.prompt")));
+        // fake-claude.sh reads the prompt with $(cat), which drops the plugin note's trailing newline.
+        assertEquals("Plan this: fix the login timeout" + Prompts.PLUGIN_NOTE.stripTrailing(),
+                Files.readString(worktree.resolve("fake-claude.prompt")));
         assertEquals(SESSION.toString(), valueAfter(Files.readAllLines(worktree.resolve("fake-claude.args")), "--session-id"));
         assertTrue(Files.exists(repos.stateDir.resolve("runs/" + TASK + "/1.jsonl")));
     }
@@ -988,5 +990,30 @@ class JobRunnerTest {
         public void stepEnded(int n, dispatch.domain.RunStep.Outcome outcome, String detail) {
             steps.set(n - 1, steps.get(n - 1) + " → " + outcome);
         }
+    }
+
+    @Test
+    void aClaudeCodePlanIsOfferedTheCuratedPluginsBeforeItsSkillNote() throws Exception {
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+
+        runner.run(withSkills(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null)), events, control);
+
+        String prompt = Files.readString(Path.of(events.worktree).resolve("fake-claude.prompt"));
+        assertTrue(prompt.contains("- frontend-design: when the task builds or reshapes a user interface"), prompt);
+        assertTrue(prompt.endsWith(Prompts.SkillNote.PLAN.text()), "the skill note stays last: " + prompt);
+    }
+
+    @Test
+    void onlyAClaudeCodePlanIsOfferedPlugins() {
+        Job plan = job(RunKind.PLAN, 1, "Plan this", null, null, null);
+        Job.Project p = plan.project();
+        Job codexPlan = new Job(plan.taskId(), plan.seq(), plan.kind(), new Job.Project(p.name(), p.repo(), p.path(),
+                p.baseBranch(), "codex", p.copyFiles()), plan.baseBranch(), plan.baseSha(), plan.worktree(), plan.prUrl(),
+                plan.sessionId(), plan.resume(), plan.prompt(), plan.model(), plan.effort(), plan.timeoutMillis(),
+                plan.budgetUsd(), plan.attachments(), plan.commitSubject(), plan.commitTrailers(), plan.deliverySummary());
+
+        assertEquals(Prompts.PLUGIN_NOTE, JobRunner.pluginNote(plan));
+        assertEquals("", JobRunner.pluginNote(codexPlan), "Codex loads no plugins, so it is offered none");
+        assertEquals("", JobRunner.pluginNote(job(RunKind.EXECUTE, 2, "Implement", null, null, null)), "only a plan picks");
     }
 }
