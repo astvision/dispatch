@@ -1458,4 +1458,23 @@ class RendererTest {
         assertTrue(html.contains("🧪 ❌ Тест унасан хэвээр (1 удаа)"), html);
         assertFalse(html.contains("<pre>"), html);
     }
+
+    @Test
+    void thePlansPicksShowAsOneLineInItsSummaryAndItsDetails() {
+        ObjectNode payload = planPayload(List.of("Do it"), List.of());
+        ((ObjectNode) payload.get("plan")).putArray("plugins").add("frontend-design").add("playwright");
+
+        String summary = renderer.render(OutboxKind.PLAN_READY, payload).html();
+        String details = renderer.render(OutboxKind.PLAN_READY, payload.deepCopy().put("view", "details")).html();
+
+        assertTrue(summary.contains("🧩 Плагин: frontend-design, playwright"), summary);
+        assertTrue(details.contains("🧩 Плагин: frontend-design, playwright"), details);
+    }
+
+    @Test
+    void aPlanWithoutPicksHasNoPluginLine() {
+        String html = renderer.render(OutboxKind.PLAN_READY, planPayload(List.of("Do it"), List.of())).html();
+
+        assertFalse(html.contains("Плагин"), html);
+    }
 }

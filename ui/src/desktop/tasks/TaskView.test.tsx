@@ -22,7 +22,7 @@ const waiting: TaskDetail = {
   createdAt: "2026-09-28T06:22:00Z", completedAt: null, costUsd: "0.42", requester: "Bold", priority: "URGENT",
   actions: ["approve", "correct", "reject", "priority", "cancel"],
   plan: { planSeq: 1, current: 0, understanding: "Make the timeout configurable", steps: ["Read auth.timeout", "Add a test"],
-    risks: [], findings: [], questions: [] },
+    risks: [], findings: [], questions: [], plugins: [] },
 };
 
 test("your own waiting plan shows its steps and is approved from here", async () => {
@@ -38,6 +38,15 @@ test("your own waiting plan shows its steps and is approved from here", async ()
 
   await vi.waitFor(() => expect(api.approvePlan).toHaveBeenCalledWith(14, 1));
   await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+});
+
+test("a plan's picked plugins are listed under it", async () => {
+  vi.mocked(api.getTaskDetail).mockResolvedValue({ ...waiting, plan: { ...waiting.plan!, plugins: ["playwright"] } });
+
+  render(<TaskView taskId={14} />);
+
+  expect(await screen.findByText("playwright")).toBeInTheDocument();
+  expect(screen.getByText("Plugins")).toBeInTheDocument();
 });
 
 test("a correction is written here and sent against the plan it was written for", async () => {

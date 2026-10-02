@@ -871,6 +871,7 @@ public final class TaskService {
         plan.steps().forEach(payload.putArray("steps")::add);
         plan.risks().forEach(payload.putArray("risks")::add);
         plan.findings().forEach(payload.putArray("findings")::add);
+        plan.plugins().forEach(payload.putArray("plugins")::add);
         ArrayNode questions = payload.putArray("questions");
         for (int index = 1; index <= plan.questionItems().size(); index++) {
             PlanQuestion question = plan.questionItems().get(index - 1);

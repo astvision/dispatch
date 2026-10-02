@@ -109,6 +109,7 @@ export const planWithQuestions: PlanView = {
   steps: ["Read auth.timeout", "Default to 30 minutes"],
   risks: ["Sessions end sooner in staging"],
   findings: [],
+  plugins: [],
   current: 1,
   questions: [
     { index: 1, text: "Which environments?", options: ["staging", "prod"], answer: null },

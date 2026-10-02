@@ -71,6 +71,12 @@ export default function TaskView({ taskId, layout = "panel", onChanged, onDetail
               <ul className="task-steps">{plan.risks.map((risk, index) => <li key={index}>{risk}</li>)}</ul>
             </>
           )}
+          {plan.plugins.length > 0 && (
+            <>
+              <Typography.Text type="secondary" className="task-label">{t("tasks.plugins")}</Typography.Text>
+              <ul className="task-steps">{plan.plugins.map((plugin) => <li key={plugin}>{plugin}</li>)}</ul>
+            </>
+          )}
         </section>
       ) : task.phase === "PLANNING" && <Typography.Text type="secondary">{t("tasks.noPlan")}</Typography.Text>}
       {plan && question && can("answer") && (

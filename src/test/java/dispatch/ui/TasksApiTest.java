@@ -667,4 +667,14 @@ class TasksApiTest {
         assertFalse(routes.contains("/api/tasks/new"));
         assertFalse(routes.contains("/api/tasks/spend"));
     }
+
+    @Test
+    void theRequestersPlanShowsItsPicks() {
+        long taskId = planned(ALI, new Plan("Make the timeout configurable", List.of(), List.of("Read auth.timeout"),
+                List.of(), List.of(), List.of(), List.of("playwright")));
+
+        JsonNode plan = api.detail(ALI_CALLER, Json.object().put("taskId", taskId)).path("plan");
+
+        assertEquals("[\"playwright\"]", plan.path("plugins").toString());
+    }
 }

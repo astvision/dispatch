@@ -122,6 +122,7 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
             )}
             <PlanList title="Алхмууд" items={plan.steps} ordered />
             <PlanList title="Эрсдэл" items={plan.risks} />
+            <PlanList title="Плагин" items={plan.plugins} />
             <PlanList title="Олдвор" items={plan.findings} />
           </>
         )}

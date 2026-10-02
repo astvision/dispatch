@@ -664,6 +664,7 @@ public final class Renderer {
                 foldedSection(html, "plan.findingsSection", plan.path("findings"), false);
                 htmlSection(html, "plan.risks", plan.path("risks"), false);
                 decisionLines(html, plan.path("decisions"));
+                pluginLine(html, plan.path("plugins"));
             }
             case "decisions" -> {
                 html.append('\n').append(text("plan.decisionsHeader"));
@@ -674,7 +675,10 @@ public final class Renderer {
                 }
                 html.append('\n');
             }
-            default -> decisionLines(html, plan.path("decisions"));
+            default -> {
+                decisionLines(html, plan.path("decisions"));
+                pluginLine(html, plan.path("plugins"));
+            }
         }
         if (!plan.path("questions").isEmpty()) {
             htmlSection(html, "plan.questions", plan.path("questions"), true);
@@ -695,6 +699,16 @@ public final class Renderer {
             html.append(format("plan.decisionLine", escape(decision.path("text").asText()), escape(decision.path("chosen").asText())))
                     .append('\n');
         }
+    }
+
+    /** The official plugins the execution will load (spec: plugin picks), on one line; nothing when the plan picked none. */
+    private void pluginLine(StringBuilder html, JsonNode plugins) {
+        if (plugins.isEmpty()) {
+            return;
+        }
+        List<String> names = new ArrayList<>();
+        plugins.forEach(name -> names.add(escape(name.asText())));
+        html.append('\n').append(format("plan.plugins", String.join(", ", names))).append('\n');
     }
 
     /** A section as a Telegram quote that shows its first lines and opens on a tap, so a long one does not bury the rest. */

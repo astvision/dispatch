@@ -406,6 +406,8 @@ export interface PlanView {
   steps: string[];
   risks: string[];
   findings: string[];
+  /** The official plugins the execution loads (spec: plugin picks); empty when the plan picked none. */
+  plugins: string[];
   questions: PlanQuestionView[];
 }
 
