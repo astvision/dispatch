@@ -11,6 +11,7 @@ import dispatch.cli.ProjectProbe;
 import dispatch.cli.SecretsFile;
 import dispatch.cli.Setup;
 import dispatch.config.ConfigException;
+import dispatch.domain.AgentKind;
 import dispatch.workspace.Git;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -133,7 +134,7 @@ public final class WorkerChecks {
      * missing only warns when another agent is here, since that agent's projects still run (the same rule as worker init).
      */
     private static void checkClaude(WorkerConfig config, Consumer<Checks.Finding> add) {
-        boolean otherAgent = config.agentCommands().keySet().stream().anyMatch(agent -> !agent.equals("claude-code"));
+        boolean otherAgent = config.agentCommands().keySet().stream().anyMatch(agent -> !agent.equals(AgentKind.CLAUDE_CODE.id()));
         Optional<String> version = Setup.claudeVersion(config.claudeCommand());
         add.accept(version
                 .map(line -> new Checks.Finding(Checks.Level.OK, "claude", Text.raw("claude: " + line)))
@@ -141,7 +142,7 @@ public final class WorkerChecks {
                         Text.raw("claude: cannot run " + config.claudeCommand() + "; install Claude Code, or set claudeCommand"
                                 + " to its full path" + (otherAgent ? " (only Claude Code projects wait for it)" : "")))));
         config.agentCommands().forEach((agent, command) -> {
-            if (agent.equals("claude-code")) {
+            if (agent.equals(AgentKind.CLAUDE_CODE.id())) {
                 return;
             }
             add.accept(Setup.claudeVersion(command)
@@ -224,7 +225,7 @@ public final class WorkerChecks {
         // Claude Code is always checked (its command defaults to "claude"); another agent only when this computer has one.
         Map<String, Readiness.Check> agents = new LinkedHashMap<>();
         config.agentCommands().forEach((agent, command) -> {
-            if (!agent.equals("claude-code")) {
+            if (!agent.equals(AgentKind.CLAUDE_CODE.id())) {
                 agents.put(agent, Setup.claudeVersion(command).map(line -> new Readiness.Check(true, line))
                         .orElseGet(() -> new Readiness.Check(false, "cannot run " + command)));
             }

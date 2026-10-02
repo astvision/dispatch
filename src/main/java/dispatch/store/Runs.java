@@ -1,5 +1,6 @@
 package dispatch.store;
 
+import dispatch.domain.AgentKind;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
 import dispatch.domain.Priority;
@@ -107,7 +108,7 @@ public final class Runs {
                                         AND (t.worker_id IS NULL OR t.worker_id = w.id)
                                         -- The agent the run's project runs on holds it, no other one (ADR 0026).
                                         -- NULL claude_ok means the worker reported nothing, which counts as ready.
-                                        AND (w.claude_ok IS NULL OR w.claude_ok = 1 OR %1$s <> 'claude-code')
+                                        AND (w.claude_ok IS NULL OR w.claude_ok = 1 OR %1$s <> '%3$s')
                                         AND NOT EXISTS (SELECT 1 FROM worker_agent a
                                                          WHERE a.worker_id = w.id AND a.agent = %1$s AND a.ok = 0)
                                         -- Stated the same way round as Readiness.blocker: gh holds ONLY the kinds that
@@ -126,7 +127,7 @@ public final class Runs {
                                OR (SELECT count(*) FROM run pinned_run JOIN task pinned_task ON pinned_task.id = pinned_run.task_id
                                    WHERE pinned_run.status = ? AND pinned_task.worker_id = t.worker_id)
                                   < (SELECT COALESCE(pinned.max_runs, 1) FROM worker pinned WHERE pinned.id = t.worker_id))
-                """.formatted(agentOfProject(agentOf), WorkerProtocol.VERSION);
+                """.formatted(agentOfProject(agentOf), WorkerProtocol.VERSION, AgentKind.CLAUDE_CODE.id());
         List<Object> params = new ArrayList<>(List.of(RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE,
                 RunKind.DELIVER));
         if (workerSeenSince != null) {
@@ -164,8 +165,9 @@ public final class Runs {
 
     /** {@code t.project}'s agent as an SQL expression, one WHEN per configured project; its values are {@link #agentOfProjectParams}. */
     private static String agentOfProject(Map<String, String> agentOf) {
-        return agentOf.isEmpty() ? "'claude-code'" : "(CASE t.project" + " WHEN ? THEN ?".repeat(agentOf.size())
-                + " ELSE 'claude-code' END)";
+        String claudeCode = "'" + AgentKind.CLAUDE_CODE.id() + "'";
+        return agentOf.isEmpty() ? claudeCode : "(CASE t.project" + " WHEN ? THEN ?".repeat(agentOf.size())
+                + " ELSE " + claudeCode + " END)";
     }
 
     /** In the same order as {@link #agentOfProject}'s WHENs: a {@code Map} iterates the same way twice. */

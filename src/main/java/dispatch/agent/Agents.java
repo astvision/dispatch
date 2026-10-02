@@ -5,6 +5,7 @@ import dispatch.agent.claude.OwnerPlugins;
 import dispatch.agent.codex.CodexAgent;
 import dispatch.agent.gemini.GeminiAgent;
 import dispatch.agent.sandbox.Confinement;
+import dispatch.domain.AgentKind;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -41,11 +42,10 @@ public final class Agents {
     public static Map<String, Agent> create(Map<String, String> commands, Map<String, String> environment, Path stateDir,
                                             Confinement confinement, OwnerPlugins ownerPlugins) {
         Map<String, Agent> agents = new LinkedHashMap<>();
-        commands.forEach((type, command) -> agents.put(type, switch (type) {
-            case "claude-code" -> new ClaudeCodeAgent(command, environment, CANCEL_GRACE, confinement, ownerPlugins);
-            case "codex" -> new CodexAgent(command, environment, CANCEL_GRACE, stateDir.resolve("agent-sessions").resolve("codex"), confinement);
-            case "gemini" -> new GeminiAgent(command, environment, CANCEL_GRACE, confinement);
-            default -> throw new IllegalArgumentException("unsupported agent type: " + type);
+        commands.forEach((type, command) -> agents.put(type, switch (AgentKind.of(type)) {
+            case CLAUDE_CODE -> new ClaudeCodeAgent(command, environment, CANCEL_GRACE, confinement, ownerPlugins);
+            case CODEX -> new CodexAgent(command, environment, CANCEL_GRACE, stateDir.resolve("agent-sessions").resolve(AgentKind.CODEX.id()), confinement);
+            case GEMINI -> new GeminiAgent(command, environment, CANCEL_GRACE, confinement);
         }));
         return Map.copyOf(agents);
     }

@@ -2,6 +2,7 @@ package dispatch.cli;
 
 import dispatch.config.Config;
 import dispatch.core.Teleport;
+import dispatch.domain.AgentKind;
 import dispatch.domain.Task;
 import dispatch.store.Database;
 import dispatch.store.Tasks;
@@ -32,8 +33,8 @@ public final class TeleportCommand {
         Target target;
         try (Database db = Database.open(config.stateDir().resolve("dispatch.db"))) {
             String agent = config.projects().stream().filter(project -> project.name().equals(projectOf(db, teleport.taskId())))
-                    .map(Config.Project::agent).findFirst().orElse("claude-code");
-            Config.Agent claude = config.agents().get("claude-code");
+                    .map(Config.Project::agent).findFirst().orElse(AgentKind.CLAUDE_CODE.id());
+            Config.Agent claude = config.agents().get(AgentKind.CLAUDE_CODE.id());
             String command = claude == null || claude.command() == null ? "claude" : claude.command();
             target = db.transactionReturning(tx -> target(tx, teleport.taskId(), teleport.plan(), agent, command));
         }

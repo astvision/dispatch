@@ -7,6 +7,7 @@ import dispatch.agent.RunRequest;
 import dispatch.agent.Schemas;
 import dispatch.agent.sandbox.AgentState;
 import dispatch.agent.sandbox.Confinement;
+import dispatch.domain.AgentKind;
 import dispatch.domain.RunKind;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -88,7 +89,7 @@ public final class ClaudeCodeAgent implements Agent {
         RunRequest run = ownerDirs.isEmpty() ? request : request.withPluginDirs(ownerDirs);
         Map<String, String> runEnvironment = new HashMap<>(environment);
         runEnvironment.putAll(owner.environment());
-        return ProcessRun.start("claude-code", commandLine(run, permissionMode, owner), run, runEnvironment, run.prompt(),
+        return ProcessRun.start(AgentKind.CLAUDE_CODE.id(), commandLine(run, permissionMode, owner), run, runEnvironment, run.prompt(),
                 new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE);
     }
 

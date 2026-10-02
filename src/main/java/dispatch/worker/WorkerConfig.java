@@ -1,6 +1,7 @@
 package dispatch.worker;
 
 import dispatch.agent.sandbox.SandboxSetting;
+import dispatch.domain.AgentKind;
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -48,12 +49,12 @@ public record WorkerConfig(String team, String name, int maxConcurrentRuns, Stri
     /** The agents this computer can run, by type, as the team's projects name them. */
     public Map<String, String> agentCommands() {
         Map<String, String> commands = new java.util.LinkedHashMap<>();
-        commands.put("claude-code", claudeCommand);
+        commands.put(AgentKind.CLAUDE_CODE.id(), claudeCommand);
         if (codexCommand != null) {
-            commands.put("codex", codexCommand);
+            commands.put(AgentKind.CODEX.id(), codexCommand);
         }
         if (geminiCommand != null) {
-            commands.put("gemini", geminiCommand);
+            commands.put(AgentKind.GEMINI.id(), geminiCommand);
         }
         return commands;
     }

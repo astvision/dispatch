@@ -7,6 +7,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.agent.AgentStartException;
+import dispatch.domain.AgentKind;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -132,7 +133,7 @@ public final class OwnerPlugins {
             }
             throw new AgentStartException("cannot read the plugin lists from " + file + ": " + e.getMessage(), e);
         }
-        JsonNode at = root == null ? MissingNode.getInstance() : instance ? root.path("agents").path("claude-code") : root;
+        JsonNode at = root == null ? MissingNode.getInstance() : instance ? root.path("agents").path(AgentKind.CLAUDE_CODE.id()) : root;
         List<String> skills = names(at, instance ? "skills" : "claudeSkills", skillsKey());
         for (String name : skills) {
             if (!isSkillName(name)) {

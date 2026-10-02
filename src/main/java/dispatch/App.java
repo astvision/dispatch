@@ -31,6 +31,7 @@ import dispatch.core.Signal;
 import dispatch.core.Splitter;
 import dispatch.core.TaskService;
 import dispatch.core.Worker;
+import dispatch.domain.AgentKind;
 import dispatch.store.Database;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.OutboxSender;
@@ -156,7 +157,7 @@ public final class App {
         Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir, confinement,
                 dispatch.agent.claude.OwnerPlugins.instance(configFile, Path.of(System.getProperty("user.home"))));
         // Splitting and the assistant need Claude Code (ADR 0013, A-1); without it they are simply not offered (ADR 0026).
-        Agent claude = agents.get("claude-code");
+        Agent claude = agents.get(AgentKind.CLAUDE_CODE.id());
         WorkerKeys workerKeys = null;
         Worker worker;
         WorkerApi workerApi = null;

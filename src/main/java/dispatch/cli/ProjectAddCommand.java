@@ -5,6 +5,7 @@ import dispatch.config.ConfigFile;
 import dispatch.config.ConfigText;
 import dispatch.config.ConfigEdit;
 import dispatch.config.ConfigException;
+import dispatch.domain.AgentKind;
 import dispatch.workspace.Git;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -78,7 +79,7 @@ public final class ProjectAddCommand {
                     // Found on PATH by its usual name, as claude is; dispatch check says if it is not there. An agent type
                     // Dispatch does not know is refused by the validation of the edited file (ADR 0026).
                     withAgent = ConfigEdit.set(text, ConfigEdit.At.of("agents", agent, "command"),
-                            agent.equals("claude-code") ? "claude" : agent);
+                            AgentKind.find(agent).map(AgentKind::defaultCommand).orElse(agent));
                 }
                 List<String> lines = projectLines(new Project(name, options.alias(), probe.folder(), probe.originUrl(), base,
                         agent, options.model(), options.effort()));
@@ -165,8 +166,8 @@ public final class ProjectAddCommand {
 
     /** Without --agent: Claude Code when configured, as before other agents existed, else the only agent there is. */
     private static String defaultAgent(Config config) {
-        if (config.agents().containsKey("claude-code")) {
-            return "claude-code";
+        if (config.agents().containsKey(AgentKind.CLAUDE_CODE.id())) {
+            return AgentKind.CLAUDE_CODE.id();
         }
         if (config.agents().size() == 1) {
             return config.agents().keySet().iterator().next();

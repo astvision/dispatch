@@ -1,5 +1,6 @@
 package dispatch.worker;
 
+import dispatch.domain.AgentKind;
 import dispatch.domain.RunKind;
 import java.util.Map;
 import java.util.Optional;
@@ -41,7 +42,7 @@ public record Readiness(Check claude, Check gh, Map<String, Check> projects, Map
      * At most one blocker is reported, the one that holds the most, so a member gets one message rather than three.
      */
     public Optional<Blocker> blocker(String project, String agent, RunKind kind) {
-        boolean claudeCode = agent.equals("claude-code");
+        boolean claudeCode = agent.equals(AgentKind.CLAUDE_CODE.id());
         Check runs = claudeCode ? claude : agents.get(agent);
         // An agent the worker never reported on is not held, as a project is not: the run fails saying what to add.
         if (runs != null && !runs.ok()) {

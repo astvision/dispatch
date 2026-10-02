@@ -3,6 +3,7 @@ package dispatch.cli;
 import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.config.Config;
 import dispatch.config.ConfigException;
+import dispatch.domain.AgentKind;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
@@ -451,13 +452,13 @@ public final class InitCommand {
         String model = terminal.choose("Model", MODELS, 0);
         String effort = terminal.choose("Effort", EFFORTS, 0);
         if (!advanced) {
-            return Optional.of(new ProjectAddCommand.Project(name, null, probe.folder(), probe.originUrl(), base, "claude-code", model, effort));
+            return Optional.of(new ProjectAddCommand.Project(name, null, probe.folder(), probe.originUrl(), base, AgentKind.CLAUDE_CODE.id(), model, effort));
         }
         String alias = terminal.ask("Alias, a short name to use in tasks (blank for none)", null).strip();
         Config.PhaseSettings plan = phase("Planning");
         Config.PhaseSettings execute = phase("Execution");
         return Optional.of(new ProjectAddCommand.Project(name, alias.isEmpty() ? null : alias, probe.folder(), probe.originUrl(), base,
-                "claude-code", model, effort, plan, execute));
+                AgentKind.CLAUDE_CODE.id(), model, effort, plan, execute));
     }
 
     /** A phase's own model and effort; null when both stay as chosen for both phases. */

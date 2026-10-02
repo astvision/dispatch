@@ -40,12 +40,15 @@ class WireContractTest {
             agent.SandboxUse: name unsandboxedReason
             core.Verification$Tests = PASSED FAILING UNVERIFIED NO_COMMAND NOT_RUN SKIPPED
             core.Verification$ReviewState = OK FINDINGS FIXED_UNREVIEWED FAILED NOT_RUN SKIPPED
-            core.Review$Finding: severity file line text""";
+            core.Review$Finding: severity file line text
+            agents = claude-code codex gemini""";
 
     @Test
     void theWireIsWhatThisProtocolVersionSaysItIs() {
+        // A job names its project's agent as text: a kind the other side does not know cannot run there either.
         assertEquals(WIRE, "protocol " + WorkerProtocol.VERSION + "\n" + describe(Job.class, JobResult.class,
-                Readiness.class, RemoteWorkers.Progress.class, RemoteWorkers.Reply.class));
+                Readiness.class, RemoteWorkers.Progress.class, RemoteWorkers.Reply.class)
+                + "\nagents = " + String.join(" ", dispatch.domain.AgentKind.ids()));
     }
 
     /** Every record reachable from {@code roots}, one line each: its name and its fields in order. */

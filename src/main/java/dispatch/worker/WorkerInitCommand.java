@@ -12,6 +12,7 @@ import dispatch.cli.Terminal;
 import dispatch.config.ConfigException;
 import dispatch.config.ConfigLoader;
 import dispatch.config.ConfigText;
+import dispatch.domain.AgentKind;
 import dispatch.workspace.Git;
 import dispatch.workspace.WorkspaceException;
 import java.io.IOException;
@@ -295,7 +296,7 @@ public final class WorkerInitCommand {
             String effort = null;
             // Sonnet, Opus and Max mean nothing to another agent, which keeps the team's model and effort (ADR 0026).
             // A team machine too old to name its agent is asked as before: WorkerLoop keeps the answers off other agents.
-            if (project.agent() == null || project.agent().equals("claude-code")) {
+            if (AgentKind.find(project.agent()).map(AgentKind::takesAComputersOwnModel).orElse(false)) {
                 model = terminal.choose("Model on this computer", MODELS, 0);
                 effort = terminal.choose("Effort on this computer", EFFORTS, 0);
             } else {
@@ -445,8 +446,8 @@ public final class WorkerInitCommand {
     private static Set<String> neededAgents(List<WorkerClient.ProjectInfo> team, Set<String> setUp) {
         Set<String> needed = new TreeSet<>(); // "claude-code" sorts first
         team.stream().filter(project -> setUp.contains(project.name()))
-                .forEach(project -> needed.add(project.agent() == null ? "claude-code" : project.agent()));
-        return needed.isEmpty() ? Set.of("claude-code") : needed;
+                .forEach(project -> needed.add(AgentKind.find(project.agent()).map(AgentKind::id).orElse(project.agent())));
+        return needed.isEmpty() ? Set.of(AgentKind.CLAUDE_CODE.id()) : needed;
     }
 
     /**
@@ -457,7 +458,7 @@ public final class WorkerInitCommand {
         Map<String, String> commands = new LinkedHashMap<>();
         List<String> failed = new ArrayList<>();
         for (String agent : needed) {
-            boolean claudeCode = agent.equals("claude-code");
+            boolean claudeCode = agent.equals(AgentKind.CLAUDE_CODE.id());
             Optional<Path> found = claudeCode ? Setup.findClaude(environment) : Optional.empty();
             if (claudeCode && found.isEmpty()) {
                 terminal.say("claude was not found; install Claude Code, or give the full path to claude.");
@@ -524,16 +525,16 @@ public final class WorkerInitCommand {
                 .append("name: ").append(ConfigText.quoted(paired.name())).append('\n')
                 .append("maxConcurrentRuns: 1\n")
                 .append("stateDir: ").append(ConfigText.quoted(stateDir.toString())).append('\n');
-        String claude = agents.getOrDefault("claude-code", "claude");
+        String claude = agents.getOrDefault(AgentKind.CLAUDE_CODE.id(), "claude");
         if (!claude.equals("claude")) {
             yaml.append("claudeCommand: ").append(ConfigText.quoted(claude)).append('\n');
         }
         // Another agent's command is always written: without it, this computer has none (WorkerConfig).
-        if (agents.containsKey("codex")) {
-            yaml.append("codexCommand: ").append(ConfigText.quoted(agents.get("codex"))).append('\n');
+        if (agents.containsKey(AgentKind.CODEX.id())) {
+            yaml.append("codexCommand: ").append(ConfigText.quoted(agents.get(AgentKind.CODEX.id()))).append('\n');
         }
-        if (agents.containsKey("gemini")) {
-            yaml.append("geminiCommand: ").append(ConfigText.quoted(agents.get("gemini"))).append('\n');
+        if (agents.containsKey(AgentKind.GEMINI.id())) {
+            yaml.append("geminiCommand: ").append(ConfigText.quoted(agents.get(AgentKind.GEMINI.id()))).append('\n');
         }
         if (!gh.equals("gh")) {
             yaml.append("ghCommand: ").append(ConfigText.quoted(gh)).append('\n');

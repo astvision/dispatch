@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.config.Config;
+import dispatch.domain.AgentKind;
 import dispatch.domain.Attachment;
 import dispatch.domain.Draft;
 import dispatch.domain.GroupAck;
@@ -673,7 +674,7 @@ public final class TaskService {
             }
             String requesterRef = task.get().requester().ref();
             Optional<Readiness.Blocker> blocker = Workers.blockerOf(tx, requesterRef, Tasks.workerOf(tx, run.taskId()).orElse(null),
-                    workerSeenSince, run.project(), agentOf.getOrDefault(run.project(), "claude-code"), run.kind());
+                    workerSeenSince, run.project(), agentOf.getOrDefault(run.project(), AgentKind.CLAUDE_CODE.id()), run.kind());
             if (blocker.isEmpty()) {
                 Tasks.setBlockedReason(tx, run.taskId(), null);
                 continue;
@@ -836,7 +837,7 @@ public final class TaskService {
      */
     public ObjectNode teleportPayload(Tx tx, long taskId) {
         String agent = Tasks.find(tx, taskId).flatMap(task -> projects.byName(task.project())).map(Config.Project::agent)
-                .orElse("claude-code");
+                .orElse(AgentKind.CLAUDE_CODE.id());
         Teleport teleport = Teleport.of(tx, taskId, false, agent);
         ObjectNode payload = Json.object().put("taskId", taskId).put("command", "dispatch teleport " + taskId)
                 .put("reason", teleport.refusal() == null ? null : teleport.refusal().name())

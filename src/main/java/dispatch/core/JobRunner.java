@@ -11,6 +11,7 @@ import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.sandbox.Confinement;
 import dispatch.config.Config;
+import dispatch.domain.AgentKind;
 import dispatch.domain.Attachment;
 import dispatch.domain.FailureReason;
 import dispatch.domain.RunKind;
@@ -481,7 +482,7 @@ public final class JobRunner implements Worker {
      * plugins, so they are offered none. Package-private: JobRunnerTest reaches it directly.
      */
     static String pluginNote(Job job) {
-        return job.kind() == RunKind.PLAN && job.project().agent().equals("claude-code") ? Prompts.PLUGIN_NOTE : "";
+        return job.kind() == RunKind.PLAN && AgentKind.of(job.project().agent()).loadsPlugins() ? Prompts.PLUGIN_NOTE : "";
     }
 
     /** No copyFiles here: planning needs no local secrets, and whatever the agent reads may be quoted in the group. */

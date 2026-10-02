@@ -13,6 +13,7 @@ import dispatch.cli.Setup;
 import dispatch.config.Config;
 import dispatch.config.ConfigException;
 import dispatch.config.ConfigLoader;
+import dispatch.domain.AgentKind;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.workspace.Git;
@@ -339,7 +340,7 @@ public final class SetupApi {
             String model = choice(item, "model", MODELS);
             String effort = choice(item, "effort", EFFORTS);
             projects.add(new ProjectAddCommand.Project(name, optionalText(item, "alias"), probe.folder(), probe.originUrl(),
-                    text(item, "baseBranch"), "claude-code", model, effort, phase(item.path("plan")), phase(item.path("execute"))));
+                    text(item, "baseBranch"), AgentKind.CLAUDE_CODE.id(), model, effort, phase(item.path("plan")), phase(item.path("execute"))));
         }
         if (projects.isEmpty()) {
             throw new CliException(Text.of("setup.addAt"));

@@ -1,5 +1,6 @@
 package dispatch.core;
 
+import dispatch.domain.AgentKind;
 import dispatch.domain.RunStatus;
 import dispatch.domain.Task;
 import dispatch.store.Runs;
@@ -44,7 +45,7 @@ public record Teleport(long taskId, Path workdir, UUID session, Refusal refusal,
         if (active) {
             return new Teleport(taskId, workdir, session, Refusal.RUNNING, null);
         }
-        if (!agent.equals("claude-code")) {
+        if (!AgentKind.of(agent).teleports()) {
             return new Teleport(taskId, workdir, session, Refusal.NOT_CLAUDE, null);
         }
         Optional<Long> worker = Tasks.workerOf(tx, taskId);

@@ -12,6 +12,7 @@ import dispatch.core.JobResult;
 import dispatch.core.JobRunner;
 import dispatch.core.TestCommand;
 import dispatch.core.TestRunner;
+import dispatch.domain.AgentKind;
 import dispatch.domain.FailureReason;
 import dispatch.domain.RunStep;
 import dispatch.workspace.Delivery;
@@ -223,7 +224,7 @@ public final class WorkerLoop implements Runnable {
         if (mine == null) {
             return Optional.empty();
         }
-        boolean claudeCode = job.project().agent().equals("claude-code");
+        boolean claudeCode = AgentKind.of(job.project().agent()).takesAComputersOwnModel();
         if (!claudeCode && (mine.model() != null || mine.effort() != null)) {
             Log.warn("worker.override_ignored", "task", job.taskId(), "project", job.project().name(),
                     "agent", job.project().agent());

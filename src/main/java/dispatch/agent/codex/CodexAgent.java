@@ -12,6 +12,7 @@ import dispatch.agent.RunRequest;
 import dispatch.agent.Schemas;
 import dispatch.agent.sandbox.AgentState;
 import dispatch.agent.sandbox.Confinement;
+import dispatch.domain.AgentKind;
 import dispatch.domain.RunKind;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -100,7 +101,7 @@ public final class CodexAgent implements Agent {
             args.add(thread);
         }
         args.add("-");
-        ProcessRun run = ProcessRun.start("codex", args, request, environment, request.prompt(),
+        ProcessRun run = ProcessRun.start(AgentKind.CODEX.id(), args, request, environment, request.prompt(),
                 new CodexParser(plan, request.model(), request.workdir()), cancelGrace, confinement, STATE);
         return request.resume() ? run : new RememberingRun(run, request.sessionId());
     }

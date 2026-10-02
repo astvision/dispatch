@@ -12,6 +12,7 @@ import dispatch.Redactor;
 import dispatch.Text;
 import dispatch.config.Config;
 import dispatch.config.ConfigException;
+import dispatch.domain.AgentKind;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
 import dispatch.worker.WorkerApi;
@@ -98,7 +99,7 @@ public final class Checks {
         checkBot(run, config.secrets().telegramBotToken());
         boolean team = config.workers() != null;
         config.agents().forEach((name, agent) -> checkAgent(run, name, agent.command(), configFile, team));
-        Config.Agent claude = config.agents().get("claude-code");
+        Config.Agent claude = config.agents().get(AgentKind.CLAUDE_CODE.id());
         if (claude != null && !team) {
             // A team machine runs no task's agent; its members' computers check their own lists.
             ownerPlugins(OwnerPlugins.instance(configFile, Path.of(System.getProperty("user.home"))), claude.command(),
@@ -129,10 +130,10 @@ public final class Checks {
                 return Optional.empty();
             }
             owner.resolve(command, ProcessRun.agentEnvironment(environment));
-            return Optional.of(new Finding(Level.OK, "claude-code",
+            return Optional.of(new Finding(Level.OK, AgentKind.CLAUDE_CODE.id(),
                     Text.of("check.ownerPlugins", lists.plugins().size(), lists.mcpServers().size(), lists.skills().size())));
         } catch (AgentStartException e) {
-            return Optional.of(new Finding(Level.FAIL, "claude-code", Text.raw(e.getMessage())));
+            return Optional.of(new Finding(Level.FAIL, AgentKind.CLAUDE_CODE.id(), Text.raw(e.getMessage())));
         }
     }
 
@@ -206,9 +207,9 @@ public final class Checks {
 
     /** What to install for each agent type (ADR 0026). */
     private static final Map<String, Text> AGENT_INSTALLS = Map.of(
-            "claude-code", Text.of("check.installClaude"),
-            "codex", Text.of("check.installCodex"),
-            "gemini", Text.of("check.installGemini"));
+            AgentKind.CLAUDE_CODE.id(), Text.of("check.installClaude"),
+            AgentKind.CODEX.id(), Text.of("check.installCodex"),
+            AgentKind.GEMINI.id(), Text.of("check.installGemini"));
 
     private static void checkAgent(Run run, String name, String command, Path configFile, boolean team) {
         Optional<Git.Result> version = command(List.of(command, "--version"), configFile);
@@ -221,7 +222,7 @@ public final class Checks {
             return;
         }
         String shown = version.get().stdout().strip().lines().findFirst().orElse(command);
-        if (name.equals("codex") && !team) {
+        if (name.equals(AgentKind.CODEX.id()) && !team) {
             // Its runs fail at once without a login, which --version does not reveal.
             Optional<Git.Result> login = command(List.of(command, "login", "status"), configFile);
             if (login.isEmpty() || login.get().exitCode() != 0) {

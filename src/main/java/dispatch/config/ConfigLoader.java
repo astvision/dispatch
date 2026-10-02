@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import dispatch.domain.AgentKind;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URI;
@@ -34,7 +35,7 @@ public final class ConfigLoader {
     // (stateDir/repos/<name>), where either would resolve to a directory it does not own.
     private static final Pattern PROJECT_KEY = Pattern.compile("(?!\\.{1,2}$)[A-Za-z0-9._-]+");
     /** The CLIs Dispatch can drive (ADR 0026), in the order error messages name them. */
-    private static final List<String> SUPPORTED_AGENTS = List.of("claude-code", "codex", "gemini");
+    private static final List<String> SUPPORTED_AGENTS = AgentKind.ids();
     static final int MAX_GROUP_NAME = 40;
     /** Claude Code's --effort levels, in its own order. */
     private static final List<String> EFFORT_LEVELS = List.of("low", "medium", "high", "xhigh", "max");
@@ -343,7 +344,7 @@ public final class ConfigLoader {
                 errors.add(Text.of("config.agentsUnsupported", type, supported));
             } else if (agent == null || isBlank(agent.command())) {
                 errors.add(Text.of("config.agentsCommand", type));
-            } else if (!type.equals("claude-code")
+            } else if (!AgentKind.of(type).loadsPlugins()
                     && (!agent.plugins().isEmpty() || !agent.mcpServers().isEmpty() || !agent.skills().isEmpty())) {
                 errors.add(Text.of("config.agentsClaudeOnlyLists", type));
             } else if (java.util.stream.Stream.of(agent.plugins(), agent.mcpServers(), agent.skills()).flatMap(List::stream)
@@ -361,13 +362,13 @@ public final class ConfigLoader {
         if (effort == null) {
             return;
         }
-        switch (agent == null ? "claude-code" : agent) {
-            case "codex" -> {
+        switch (AgentKind.find(agent).orElse(AgentKind.CLAUDE_CODE)) {
+            case CODEX -> {
                 if (!CODEX_EFFORT_LEVELS.contains(effort)) {
                     errors.add(Text.of("config.codexTakes", at, effort));
                 }
             }
-            case "gemini" -> errors.add(Text.of("config.geminiHas", at));
+            case GEMINI -> errors.add(Text.of("config.geminiHas", at));
             default -> {
                 if (!EFFORT_LEVELS.contains(effort)) {
                     errors.add(Text.of("config.effortLevel", at, String.join(", ", EFFORT_LEVELS), effort));

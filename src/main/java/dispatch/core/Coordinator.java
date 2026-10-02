@@ -3,6 +3,7 @@ package dispatch.core;
 import dispatch.Log;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
+import dispatch.domain.AgentKind;
 import dispatch.domain.Attachment;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
@@ -176,7 +177,7 @@ public final class Coordinator {
      * so a worker from before the skills still reads it.
      */
     private static Boolean skills(Config.Project project) {
-        return project.skillsOn() && "claude-code".equals(project.agent()) ? Boolean.TRUE : null;
+        return project.skillsOn() && AgentKind.of(project.agent()).loadsPlugins() ? Boolean.TRUE : null;
     }
 
     /** Null for a PLAN job, which neither builds on the branch nor pushes it, so an older worker still reads it. */

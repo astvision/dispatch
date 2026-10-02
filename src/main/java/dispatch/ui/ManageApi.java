@@ -17,6 +17,7 @@ import dispatch.config.ConfigException;
 import dispatch.config.ConfigFile;
 import dispatch.config.ConfigText;
 import dispatch.config.GroupWriter;
+import dispatch.domain.AgentKind;
 import dispatch.telegram.BotApi;
 import dispatch.workspace.Git;
 import java.io.IOException;
@@ -67,7 +68,7 @@ public final class ManageApi {
     /** Claude Code accepts both short names (opus) and full model ids (claude-opus-5); only the shape is checked here. */
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._-]{1,100}");
     /** The agents a project can run on (ADR 0026). */
-    private static final Set<String> AGENTS = Set.of("claude-code", "codex", "gemini");
+    private static final Set<String> AGENTS = Set.copyOf(AgentKind.ids());
 
     public record Phase(String model, String effort) {
     }
@@ -170,7 +171,7 @@ public final class ManageApi {
 
     /** Null when no project runs on Claude Code and none is configured (ADR 0026). */
     private static String claudeCommand(Config config) {
-        Config.Agent claude = config.agents().get("claude-code");
+        Config.Agent claude = config.agents().get(AgentKind.CLAUDE_CODE.id());
         return claude == null ? null : claude.command();
     }
 
@@ -200,7 +201,7 @@ public final class ManageApi {
             edited = change(edited, At.of("delivery", "authorName"), config.delivery().authorName(), authorName, authorName);
             edited = change(edited, At.of("delivery", "authorEmail"), config.delivery().authorEmail(), authorEmail, authorEmail);
             edited = change(edited, At.of("delivery", "ghCommand"), config.delivery().ghCommand(), gh, gh);
-            Config.Agent current = config.agents().get("claude-code");
+            Config.Agent current = config.agents().get(AgentKind.CLAUDE_CODE.id());
             if (claude == null) {
                 // Without Claude Code (projects on Codex or Gemini only, ADR 0026) the page shows no command to keep.
                 if (current != null) {
@@ -208,8 +209,8 @@ public final class ManageApi {
                 }
                 return edited;
             }
-            return current == null ? ConfigEdit.set(edited, At.of("agents", "claude-code", "command"), claude)
-                    : change(edited, At.of("agents", "claude-code", "command"), current.command(), claude, claude);
+            return current == null ? ConfigEdit.set(edited, At.of("agents", AgentKind.CLAUDE_CODE.id(), "command"), claude)
+                    : change(edited, At.of("agents", AgentKind.CLAUDE_CODE.id(), "command"), current.command(), claude, claude);
         });
     }
 
@@ -243,8 +244,8 @@ public final class ManageApi {
      * name. The config's map keeps no order, and the Агент row switches the project afterwards (ADR 0026).
      */
     private static String defaultAgent(Config config) {
-        if (config.agents().containsKey("claude-code")) {
-            return "claude-code";
+        if (config.agents().containsKey(AgentKind.CLAUDE_CODE.id())) {
+            return AgentKind.CLAUDE_CODE.id();
         }
         return new TreeSet<>(config.agents().keySet()).first();
     }
@@ -280,7 +281,7 @@ public final class ManageApi {
     private static String switchAgent(String text, At at, Config config, Config.Project project, String agent) {
         String edited = text;
         if (!config.agents().containsKey(agent)) {
-            edited = ConfigEdit.set(edited, At.of("agents", agent, "command"), agent.equals("claude-code") ? "claude" : agent);
+            edited = ConfigEdit.set(edited, At.of("agents", agent, "command"), AgentKind.find(agent).map(AgentKind::defaultCommand).orElse(agent));
         }
         edited = ConfigEdit.set(edited, at.key("agent"), agent);
         edited = change(edited, at.key("model"), project.model(), null, null);

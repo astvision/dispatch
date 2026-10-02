@@ -5,6 +5,7 @@ import dispatch.agent.ProcessRun;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.Schemas;
+import dispatch.domain.AgentKind;
 import dispatch.domain.RunKind;
 import dispatch.agent.sandbox.AgentState;
 import dispatch.agent.sandbox.Confinement;
@@ -77,7 +78,7 @@ public final class GeminiAgent implements Agent {
                     String.join(",", request.readOnlyDirs().stream().map(Path::toString).toList())));
         }
         args.addAll(List.of("-p", request.kind() == RunKind.REVIEW ? REVIEW_ANSWER : plan ? PLAN_ANSWER : EXECUTE_ANSWER));
-        return ProcessRun.start("gemini", args, request, environment, request.prompt(),
+        return ProcessRun.start(AgentKind.GEMINI.id(), args, request, environment, request.prompt(),
                 new GeminiParser(plan, request.model(), request.workdir()), cancelGrace, confinement, STATE);
     }
 }
