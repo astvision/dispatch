@@ -42,12 +42,10 @@ public record RunRequest(
         picks = picks == null ? List.of() : List.copyOf(picks);
     }
 
-    /** This request with {@code more} plugin directories after its own; the sandbox binds them all read-only. */
-    public RunRequest withPluginDirs(List<Path> more) {
-        List<Path> dirs = new java.util.ArrayList<>(pluginDirs);
-        dirs.addAll(more);
+    /** This request loading {@code all} plugin directories, its own among them; the sandbox binds them all read-only. */
+    public RunRequest loading(List<Path> all) {
         return new RunRequest(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase,
-                environment, dirs, picks);
+                environment, all, picks);
     }
 
     /**

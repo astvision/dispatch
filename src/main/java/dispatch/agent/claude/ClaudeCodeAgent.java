@@ -81,15 +81,14 @@ public final class ClaudeCodeAgent implements Agent {
         OwnerPlugins.Resolved owner = OWNER_KINDS.contains(request.kind())
                 ? ownerPlugins.resolve(command, ProcessRun.agentEnvironment(environment), request.picks())
                 : OwnerPlugins.Resolved.NONE;
-        List<Path> ownerDirs = new ArrayList<>(owner.pluginDirs());
-        if (!owner.skills().isEmpty()) {
-            ownerDirs.add(OwnerPlugins.skillsPlugin(Path.of(request.logBase() + ".skills"), owner.skills()));
-        }
-        // Through the request, so the sandbox binds them read-only like the dispatch plugin.
-        RunRequest run = ownerDirs.isEmpty() ? request : request.withPluginDirs(ownerDirs);
+        Path ownerSkills = owner.skills().isEmpty() ? null
+                : OwnerPlugins.skillsPlugin(Path.of(request.logBase() + ".skills"), owner.skills());
+        Loadout loadout = Loadout.of(request, owner, ownerSkills);
+        // Through the request, so the sandbox binds every plugin read-only.
+        RunRequest run = request.loading(loadout.pluginDirs());
         Map<String, String> runEnvironment = new HashMap<>(environment);
-        runEnvironment.putAll(owner.environment());
-        return ProcessRun.start(AgentKind.CLAUDE_CODE.id(), commandLine(run, permissionMode, owner), run, runEnvironment, run.prompt(),
+        runEnvironment.putAll(loadout.environment());
+        return ProcessRun.start(AgentKind.CLAUDE_CODE.id(), commandLine(run, permissionMode, loadout), run, runEnvironment, run.prompt(),
                 new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE);
     }
 
@@ -103,7 +102,7 @@ public final class ClaudeCodeAgent implements Agent {
         };
     }
 
-    private List<String> commandLine(RunRequest request, String permissionMode, OwnerPlugins.Resolved owner) {
+    private List<String> commandLine(RunRequest request, String permissionMode, Loadout loadout) {
         List<String> args = new ArrayList<>(List.of(command, "-p",
                 "--output-format", "stream-json", "--verbose",
                 "--permission-mode", permissionMode,
@@ -111,10 +110,10 @@ public final class ClaudeCodeAgent implements Agent {
                 // The assistant's home is Dispatch's own directory; nothing local to a person's checkout applies there.
                 "--setting-sources", request.kind() == RunKind.ASSISTANT ? "project" : "project,local",
                 "--strict-mcp-config"));
-        if (owner.mcpConfig() != null) {
+        if (loadout.mcpConfig() != null) {
             // Inline, as --json-schema is: nothing written to disk. --mcp-config takes every following argument that is
             // not a flag, and a flag always follows here.
-            args.addAll(List.of("--mcp-config", owner.mcpConfig()));
+            args.addAll(List.of("--mcp-config", loadout.mcpConfig()));
         }
         if (request.budgetUsd() != null) {
             args.addAll(List.of("--max-budget-usd", request.budgetUsd().toPlainString()));
@@ -140,15 +139,14 @@ public final class ClaudeCodeAgent implements Agent {
         // plugins); nothing else the owner has enabled (--setting-sources). Also a working directory: a plan or review run may not
         // read a skill's supporting files outside its own, and nobody answers the prompt to allow it (probed on Claude Code
         // 2.1.286). The sandbox keeps it read-only.
-        for (Path dir : request.pluginDirs()) {
+        for (Path dir : loadout.pluginDirs()) {
             args.addAll(List.of("--plugin-dir", dir.toString(), "--add-dir", dir.toString()));
         }
         // The owner's skills are links in their plugin: what they point to must be readable too.
-        for (Path dir : owner.skills()) {
+        for (Path dir : loadout.skillDirs()) {
             args.addAll(List.of("--add-dir", dir.toString()));
         }
-        // A listed skill cannot be invoked without the Skill tool (probed on Claude Code 2.1.286).
-        String skill = request.pluginDirs().isEmpty() ? "" : ",Skill";
+        String skill = loadout.skillTool() ? ",Skill" : "";
         switch (request.kind()) {
             // Read-only investigation: no subagents or schedulers, just reading files and read-only shell commands.
             case PLAN -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", PLAN_SCHEMA));
