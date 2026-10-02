@@ -13,7 +13,7 @@ task, Playwright's browser to check a page, the owner's MongoDB server for a dat
 
 In scope: two lists per machine, in the instance's `dispatch.yaml` and in a worker's `worker.yaml`; resolving them
 before each run with that machine's own Claude Code; loading each listed plugin with `--plugin-dir`; one MCP
-configuration file per run, built by Dispatch from the listed servers and the listed plugins' own servers, with
+configuration per run, built by Dispatch from the listed servers and the listed plugins' own servers, with
 `--strict-mcp-config` kept; `dispatch check`; ADR 0036.
 
 Out of scope:
@@ -38,8 +38,7 @@ Out of scope:
 4. A worker loads its own `claudePlugins` and `claudeMcpServers` from its own Claude Code, whatever the team machine
    lists.
 5. With both lists empty or absent, every run's command line is exactly what it is today.
-6. The MCP configuration file exists only while its run does: owner-only, read-only inside the sandbox, and deleted
-   when the run ends or, after a crash, at the next start.
+6. The run's MCP configuration travels on its command line, as one line of JSON, and is never written to disk.
 7. An edit to either list in `dispatch.yaml` or `worker.yaml` applies to the next run, with no restart.
 
 ## Configuration
@@ -93,10 +92,10 @@ For Claude Code PLAN, EXECUTE (fix rounds included) and REVIEW runs, the command
 - per listed plugin: `--plugin-dir <installPath>` and `--add-dir <installPath>`, so that plan and review runs may read the
   plugin's skill files, as for the dispatch plugin (ADR 0034);
 - `Skill` in `--tools` when any plugin is listed, as it already is with `skills: on`;
-- `--mcp-config <logBase>.mcp.json` when any server is listed or brought by a listed plugin. `--strict-mcp-config`
-  stays, so nothing outside that file starts.
+- `--mcp-config <the configuration, as one line of JSON>` when any server is listed or brought by a listed plugin.
+  `--strict-mcp-config` stays, so nothing outside it starts.
 
-The MCP configuration file:
+The MCP configuration:
 
 ```json
 {"mcpServers": {
@@ -111,14 +110,13 @@ The MCP configuration file:
 - `${CLAUDE_PLUGIN_ROOT}` in a plugin's server definition is replaced with the plugin's directory. Other `${VAR}`
   placeholders are left for Claude Code to fill from the agent's environment: the service's environment without
   Dispatch's own secrets.
-- Written owner-only at `<logBase>.mcp.json`, in the hidden state dir beside the run's logs, before the process starts;
-  mounted read-only into the sandbox when it is a regular file outside the workdir, as Codex's `<logBase>.schema.json`
-  is; deleted by the run guard when the run ends, and recorded in its manifest so that a crash's file is deleted at
-  the next start (spec: agent state guard).
+- Passed inline, compacted to one line as `--json-schema` is (Claude Code's `--mcp-config` takes files or strings):
+  nothing is written to disk, mounted into the sandbox, or left behind by a crash. Dispatch never logs a run's command
+  line.
 
 ## Sandbox
 
-Nothing new is mounted but the MCP configuration file:
+Nothing new is mounted:
 
 - A plugin's directory is under `~/.claude/plugins`: readable through the copy-on-write overlay, or read-only as one of
   Claude Code's loader paths without overlays. What a plugin writes under `~/.claude` ends with the run.
@@ -141,8 +139,6 @@ Nothing new is mounted but the MCP configuration file:
 - **A plugin's MCP file cannot be read, or is not JSON:** the run fails as `AGENT`, naming the plugin and the file.
 - **Two servers get one name:** the run fails as `AGENT`, naming both.
 - **A server fails to start inside the run:** the run goes on without it; `agent.mcp_failed` (WARN).
-- **The MCP file cannot be written or deleted:** as the run guard's copies are (`AGENT` before the run; `sandbox.copy_left`
-  after it).
 
 ## Limits
 
@@ -165,10 +161,9 @@ Nothing new is mounted but the MCP configuration file:
   id or server fails the run as `AGENT` with the text above, before any process starts.
 - **The command line:** `--plugin-dir` and `--add-dir` per plugin, `Skill` in `--tools`, `--mcp-config` and
   `--strict-mcp-config` together; unchanged with empty lists; splits and assistant turns unchanged.
-- **The MCP file:** a listed server copied as it is; a plugin's servers from `.mcp.json` (bare map) and from the file
-  `plugin.json` names (under `mcpServers`), named `plugin_<plugin>_<server>`, with `${CLAUDE_PLUGIN_ROOT}` replaced;
-  owner-only; deleted when the run ends and by the next start's leftover close.
-- **The sandbox:** the file is read-only in the policy and never taken from the workdir.
+- **The MCP configuration:** a listed server copied as it is; a plugin's servers from `.mcp.json` (bare map) and from
+  the file `plugin.json` names (under `mcpServers`), named `plugin_<plugin>_<server>`, with `${CLAUDE_PLUGIN_ROOT}`
+  replaced; on the command line right after `--mcp-config`, followed by a flag; a server's credentials never in the log.
 - **`dispatch check`:** a FAIL line per missing plugin or server, on the instance and on a worker.
 - **Live, opt-in** (`DISPATCH_LIVE_CLAUDE=1`): real Claude Code in the real sandbox with Playwright listed: its server
   is connected in the init event, and the agent calls one of its tools.
@@ -176,7 +171,7 @@ Nothing new is mounted but the MCP configuration file:
 ## Documentation
 
 - ADR 0036, amending ADR 0034 and the strict MCP configuration: Claude Code runs load the plugins and MCP servers the
-  machine's owner lists, through a configuration file Dispatch builds; the options not taken (everything the owner has
+  machine's owner lists, through an MCP configuration Dispatch builds and passes inline; the options not taken (everything the owner has
   enabled, the repository deciding, letting Claude Code start a plugin's servers itself with the claude.ai connectors
   switched off).
 - SECURITY.md: a listed server's tools and credentials are the agent's; plugin hooks run inside the sandbox.
