@@ -132,8 +132,10 @@ Nothing new is mounted:
   remove it from <key> in <file>`, likewise for a server (`claude mcp add --scope user`). `dispatch check`, on the
   instance and on a worker, fails with the same line.
 - **The configuration file cannot be read or parsed when a run starts** (say, half saved): the run fails as `AGENT`,
-  naming the file and the error; a retry reads it again. Startup and `dispatch check` report the same file as they do
-  today.
+  naming the file and the error; a retry reads it again. When the last read that worked listed nothing, the run goes on
+  as it did before the lists and logs `agent.owner_lists_unreadable` (final review I-2: an owner who lists nothing must
+  not have runs fail on a save that mattered only at the next start). Startup and `dispatch check` report the same file
+  as they do today.
 - **`claude plugin list --json` fails** (a Claude Code without it, a broken install): the run fails as `AGENT` with its
   error, only when a plugin is listed.
 - **A plugin's MCP file cannot be read, or is not JSON:** the run fails as `AGENT`, naming the plugin and the file.
@@ -156,7 +158,8 @@ Nothing new is mounted:
 
 - **Configuration:** both lists read from `dispatch.yaml` and `worker.yaml`; absent lists are empty; lists under
   `codex` or `gemini` are refused; a list edited in the file between two runs reaches the second run without a restart;
-  a file that cannot be parsed when a run starts fails that run as `AGENT`.
+  a file that cannot be parsed when a run starts fails that run as `AGENT` when the last read listed something, and
+  leaves it as it was when nothing was listed.
 - **Resolving:** a fake Claude Code answering `plugin list --json`; a listed id resolves to its `installPath`; a missing
   id or server fails the run as `AGENT` with the text above, before any process starts.
 - **The command line:** `--plugin-dir` and `--add-dir` per plugin, `Skill` in `--tools`, `--mcp-config` and

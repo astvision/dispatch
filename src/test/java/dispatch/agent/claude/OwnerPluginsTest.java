@@ -57,10 +57,13 @@ class OwnerPluginsTest {
     }
 
     @Test
-    void aFileThatCannotBeParsedFailsTheRunNamingIt() throws IOException {
-        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code: [\n");
+    void aFileThatBreaksWhileItListsSomethingFailsTheRunNamingIt() throws IOException {
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    plugins: [a@m]\n");
+        OwnerPlugins owner = OwnerPlugins.instance(config, dir);
+        owner.lists();
+        Files.writeString(config, "agents:\n  claude-code: [\n");
 
-        AgentStartException error = assertThrows(AgentStartException.class, () -> OwnerPlugins.instance(config, dir).lists());
+        AgentStartException error = assertThrows(AgentStartException.class, owner::lists);
 
         assertTrue(error.getMessage().startsWith("cannot read the plugin lists from " + config + ": "), error.getMessage());
     }

@@ -526,4 +526,19 @@ class ClaudeCodeAgentTest {
         assertTrue(error.getMessage().startsWith("claude-code plugin frontend-design@claude-plugins-official is not installed"));
         assertFalse(Files.exists(workdir.resolve("fake-claude.args")), "the agent never started");
     }
+
+    /** Before the lists, the file was read only at startup: an owner who lists nothing keeps today's runs through a bad save. */
+    @Test
+    void aConfigThatBreaksWhileNothingIsListedLeavesTheRunAsItWas() throws Exception {
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    command: claude\n");
+        ClaudeCodeAgent owned = owning(config, dir, Map.of());
+        awaitQuietly(owned.start(plan("Plan it")));
+        Files.writeString(config, "agents:\n  claude-code: [\n");
+
+        String logged = capturingLog(() -> awaitQuietly(owned.start(plan("Plan it"))));
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertFalse(args.contains("--mcp-config") || args.contains("--plugin-dir"), args.toString());
+        assertTrue(logged.contains("event=agent.owner_lists_unreadable"), logged);
+    }
 }

@@ -27,6 +27,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class OwnerPlugins {
 
+    private static final Lists NOTHING_LISTED = new Lists(List.of(), List.of());
     /** No lists: every run's command line as before. */
     public static final OwnerPlugins NONE = new OwnerPlugins(null, false, null, Duration.ZERO);
 
@@ -64,6 +65,8 @@ public final class OwnerPlugins {
     private final boolean instance;
     private final Path home;
     private final Duration listTimeout;
+    /** The lists at the last read that worked: whether a file that cannot be read fails a run depends on them. */
+    private volatile Lists lastRead = NOTHING_LISTED;
 
     private OwnerPlugins(Path file, boolean instance, Path home, Duration listTimeout) {
         this.file = file;
@@ -95,20 +98,31 @@ public final class OwnerPlugins {
         return instance ? "agents.claude-code.mcpServers" : "claudeMcpServers";
     }
 
-    /** The lists as the file has them now; empty when the file has none. */
+    /**
+     * The lists as the file has them now; empty when the file has none, or when it cannot be read and the last read that
+     * worked listed nothing.
+     */
     public Lists lists() {
         if (file == null) {
-            return new Lists(List.of(), List.of());
+            return NOTHING_LISTED;
         }
         JsonNode root;
         try {
             root = YAML.readTree(file.toFile());
         } catch (IOException e) {
+            if (lastRead.isEmpty()) {
+                // Nothing was listed: the run goes on as before the lists, when a bad save mattered only at the next start.
+                Log.warn("agent.owner_lists_unreadable", "file", file,
+                        "error", String.valueOf(e.getMessage()).lines().findFirst().orElse(""));
+                return NOTHING_LISTED;
+            }
             throw new AgentStartException("cannot read the plugin lists from " + file + ": " + e.getMessage(), e);
         }
         JsonNode at = root == null ? MissingNode.getInstance() : instance ? root.path("agents").path("claude-code") : root;
-        return new Lists(names(at, instance ? "plugins" : "claudePlugins", pluginsKey()),
+        Lists lists = new Lists(names(at, instance ? "plugins" : "claudePlugins", pluginsKey()),
                 names(at, instance ? "mcpServers" : "claudeMcpServers", serversKey()));
+        lastRead = lists;
+        return lists;
     }
 
     private List<String> names(JsonNode at, String field, String key) {
