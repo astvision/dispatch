@@ -50,6 +50,16 @@ public record RunRequest(
                 environment, dirs, picks);
     }
 
+    /**
+     * Another call of the same run: where it works and what it loads stay, and only what the call itself is changes. The
+     * verify loop's fixes and its reviewer are made so, and cannot lose what the execution was given.
+     */
+    public RunRequest as(RunKind otherKind, String otherPrompt, UUID otherSession, boolean otherResume, BigDecimal otherBudgetUsd,
+                         Path otherLogBase) {
+        return new RunRequest(otherKind, workdir, otherPrompt, otherSession, otherResume, readOnlyDirs, otherBudgetUsd, model,
+                effort, otherLogBase, environment, pluginDirs, picks);
+    }
+
     /** Without picks. */
     public RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId, boolean resume, List<Path> readOnlyDirs,
                       BigDecimal budgetUsd, String model, String effort, Path logBase, Map<String, String> environment,

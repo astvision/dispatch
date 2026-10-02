@@ -112,6 +112,20 @@ public record Job(
         return plugins == null ? List.of() : plugins;
     }
 
+    /** This job for another clone of its project: every copy of a job is made here, so none can lose a field. */
+    public Job withProject(Project other) {
+        return new Job(taskId, seq, kind, other, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model,
+                effort, timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch,
+                reviewPrompt, expectedHead, plugins);
+    }
+
+    /** This job with the model and effort of the computer that runs it. */
+    public Job withModel(String otherModel, String otherEffort) {
+        return new Job(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt,
+                otherModel, otherEffort, timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers,
+                deliverySummary, branch, reviewPrompt, expectedHead, plugins);
+    }
+
     /** The task's branch: the team's prefix when it sent one, else dispatch/<task>. */
     @JsonIgnore
     public String branchName() {
@@ -137,6 +151,11 @@ public record Job(
         public Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles,
                        String test, Boolean loop) {
             this(name, repo, path, baseBranch, agent, copyFiles, test, loop, null);
+        }
+
+        /** This project at the clone a member's computer keeps. */
+        public Project withPath(String otherPath) {
+            return new Project(name, repo, otherPath, baseBranch, agent, copyFiles, test, loop, skills);
         }
 
         /** Null, a job from an older team machine, keeps today's behaviour. */

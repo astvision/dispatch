@@ -793,11 +793,8 @@ class JobRunnerTest {
     /** A copy of {@code job} whose project has skills on, as the team machine sends a Claude Code project's job. */
     private static Job withSkills(Job job) {
         Job.Project p = job.project();
-        return new Job(job.taskId(), job.seq(), job.kind(), new Job.Project(p.name(), p.repo(), p.path(), p.baseBranch(),
-                p.agent(), p.copyFiles(), p.test(), p.loop(), true), job.baseBranch(), job.baseSha(), job.worktree(),
-                job.prUrl(), job.sessionId(), job.resume(), job.prompt(), job.model(), job.effort(), job.timeoutMillis(),
-                job.budgetUsd(), job.attachments(), job.commitSubject(), job.commitTrailers(), job.deliverySummary(),
-                job.branch(), job.reviewPrompt(), job.expectedHead());
+        return job.withProject(new Job.Project(p.name(), p.repo(), p.path(), p.baseBranch(), p.agent(), p.copyFiles(),
+                p.test(), p.loop(), true));
     }
 
     /** Plans with fake claude for a worktree, then runs an EXECUTE job with the loop on or off, a test command and a review prompt. */
@@ -930,11 +927,12 @@ class JobRunnerTest {
                 "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null);
     }
 
-    /** A copy of {@code job} with its team-sent branch set, through the 20-arg constructor. */
+    /** A copy of {@code job} with its team-sent branch set. */
     private static Job withBranch(Job job, String branch) {
         return new Job(job.taskId(), job.seq(), job.kind(), job.project(), job.baseBranch(), job.baseSha(), job.worktree(),
                 job.prUrl(), job.sessionId(), job.resume(), job.prompt(), job.model(), job.effort(), job.timeoutMillis(),
-                job.budgetUsd(), job.attachments(), job.commitSubject(), job.commitTrailers(), job.deliverySummary(), branch);
+                job.budgetUsd(), job.attachments(), job.commitSubject(), job.commitTrailers(), job.deliverySummary(), branch,
+                job.reviewPrompt(), job.expectedHead(), job.plugins());
     }
 
     private Job.Project project(List<String> copyFiles) {
