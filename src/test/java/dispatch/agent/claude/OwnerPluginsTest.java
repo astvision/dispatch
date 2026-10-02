@@ -289,4 +289,22 @@ class OwnerPluginsTest {
 
         assertEquals(List.of(), resolved.pluginDirs());
     }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void aPickTheOwnerListsFromAnotherMarketplaceLoadsOnceAsListed() throws IOException {
+        Path claude = FakeClaude.install(Files.createDirectories(dir.resolve("bin")));
+        Path home = Files.createDirectories(dir.resolve("home"));
+        OwnerPluginsFixture.marketplace(home, Map.of("playwright", "{\"playwright\": {\"command\": \"npx\"}}"));
+        Path fork = OwnerPluginsFixture.plugin(dir.resolve("cache/playwright"), "{\"playwright\": {\"command\": \"fork-mcp\"}}");
+        OwnerPluginsFixture.installed(claude, Map.of("playwright@some-fork", fork));
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    plugins: [playwright@some-fork]\n");
+
+        OwnerPlugins.Resolved resolved = OwnerPlugins.instance(config, home)
+                .resolve(claude.toString(), FakeClaude.environment(), List.of("playwright"));
+
+        assertEquals(List.of(fork), resolved.pluginDirs());
+        JsonNode servers = Json.MAPPER.readTree(resolved.mcpConfig()).get("mcpServers");
+        assertEquals("fork-mcp", servers.path("plugin_playwright_playwright").path("command").asText(), "the owner's copy wins");
+    }
 }

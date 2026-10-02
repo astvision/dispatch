@@ -6,6 +6,7 @@ import dispatch.Log;
 import dispatch.domain.CuratedPlugins;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -65,7 +66,14 @@ final class OfficialPlugins {
                 skipped(pick, "its marketplace source is not a directory in the marketplace");
                 return null;
             }
-            Path dir = marketplace.resolve(source.asText()).normalize();
+            Path dir;
+            try {
+                dir = marketplace.resolve(source.asText()).normalize();
+            } catch (InvalidPathException e) {
+                // A source that is no path on this system, such as a URL on Windows: an install would fetch it.
+                skipped(pick, "its marketplace source " + source.asText() + " is not a path here: " + e.getMessage());
+                return null;
+            }
             if (!dir.startsWith(marketplace)) {
                 skipped(pick, "its marketplace source " + source.asText() + " is outside the marketplace");
                 return null;

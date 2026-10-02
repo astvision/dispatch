@@ -33,7 +33,8 @@ class OfficialPluginsTest {
                   {"name": "context7", "source": {"source": "url", "url": "https://example.com/context7.git"}},
                   {"name": "escape", "source": "../../outside"},
                   {"name": "absolute", "source": "/etc"},
-                  {"name": "gone", "source": "./plugins/gone"}
+                  {"name": "gone", "source": "./plugins/gone"},
+                  {"name": "unpathable", "source": "./plugins/a\\u0000b"}
                 ]}""");
     }
 
@@ -48,7 +49,7 @@ class OfficialPluginsTest {
     @Test
     void aPickThisMachineCannotLoadAsADirectoryInTheMarketplaceIsSkipped() {
         Map<String, Path> found = OfficialPlugins.find(home,
-                List.of("context7", "escape", "absolute", "gone", "unknown", "frontend-design"));
+                List.of("context7", "escape", "absolute", "gone", "unpathable", "unknown", "frontend-design"));
 
         assertEquals(List.of("frontend-design"), List.copyOf(found.keySet()), "a fetched source, an escape, a missing dir");
     }

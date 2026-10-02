@@ -34,14 +34,14 @@ when to pick it, written for the plan prompt.
 |---|---|---|
 | `frontend-design` | a skill | the task builds or reshapes a user interface |
 | `playwright` | an MCP server (`npx @playwright/mcp@latest`) | the change should be checked in a real browser |
-| `context7` | an MCP server (remote HTTP, no key) | the task depends on a library's current API or configuration |
 
 A plugin joins the list only if it works in an unattended, sandboxed run: no hook that waits for a person or calls a
 model of its own, no credentials, no tool Dispatch's runs lack. Rejected on that ground: `code-simplifier` and
 `pr-review-toolkit` (subagents; runs have no `Agent` tool), `security-guidance` (its SessionStart hook installs the
 Agent SDK, and its Stop hook runs its own model review), the messaging bridges (`telegram`, `discord`, `imessage`),
 `github` and `gitlab` (they would push around Dispatch's `git push` and `gh` ban), and servers that need credentials
-(`linear`, `asana`, `firebase`, `terraform`). Changing the list is a Dispatch commit.
+(`linear`, `asana`, `firebase`, `terraform`), and `context7`, whose plugin's server asks for an OAuth sign-in (found
+in the final review: the plugin's URL answers 401). Changing the list is a Dispatch commit.
 
 ## Success criteria
 
@@ -115,8 +115,9 @@ each picked plugin directory is bound read-only like the owner's. Playwright run
   from npm, so its code is whatever npm serves at that moment.
 - **Upstream changes.** The marketplace copy updates with Claude Code. A plugin moved or renamed there is skipped until
   the list is updated.
-- **Older workers.** A job with picks carries a field an older worker cannot read (`FAIL_ON_UNKNOWN_PROPERTIES`):
-  members upgrade their workers before the team machine's plans pick anything.
+- **Upgrade together.** Every plan now has a `plugins` field, which a team machine from before this version refuses in a
+  newer worker's plan, and a job with picks carries a field an older worker cannot read (`FAIL_ON_UNKNOWN_PROPERTIES`):
+  the team machine and its workers upgrade together.
 - **Cost.** One read of `marketplace.json` per execution or review run with picks. Playwright adds its server's startup
   (an `npx` resolve) to each such run.
 

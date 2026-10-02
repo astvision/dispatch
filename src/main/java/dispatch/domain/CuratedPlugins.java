@@ -7,7 +7,8 @@ import java.util.Optional;
 /**
  * The official plugins a plan may pick for its execution (spec: plugin picks, ADR 0037): hosted in Anthropic's
  * claude-plugins-official marketplace, and fit for an unattended, sandboxed run. None has a hook that waits for a person
- * or calls a model of its own, none needs credentials, and none needs a tool Dispatch's runs lack.
+ * or calls a model of its own, none needs credentials or a sign-in, and none needs a tool Dispatch's runs lack. Context7
+ * is left out: its plugin's server asks for an OAuth sign-in, which nobody answers in a run.
  */
 public final class CuratedPlugins {
 
@@ -20,8 +21,7 @@ public final class CuratedPlugins {
 
     public static final List<Entry> ALL = List.of(
             new Entry("frontend-design", "the task builds or reshapes a user interface"),
-            new Entry("playwright", "the change should be checked in a real browser"),
-            new Entry("context7", "the task depends on a library's current API or configuration"));
+            new Entry("playwright", "the change should be checked in a real browser"));
 
     private CuratedPlugins() {
     }

@@ -161,7 +161,7 @@ class PlanTest {
 
     @Test
     void picksSurviveTheStoredJson() {
-        Plan plan = new Plan("u", List.of(), List.of("s"), List.of(), List.of(), List.of(), List.of("context7"));
+        Plan plan = new Plan("u", List.of(), List.of("s"), List.of(), List.of(), List.of(), List.of("playwright"));
 
         assertEquals(plan, Plan.parse(plan.toJson()));
     }
@@ -172,5 +172,12 @@ class PlanTest {
 
         assertTrue(schema.path("required").toString().contains("\"plugins\""), schema.toString());
         assertEquals("array", schema.path("properties").path("plugins").path("type").asText());
+    }
+
+    @Test
+    void aPluginWhoseServerNeedsSignInIsNotOnTheList() {
+        assertTrue(CuratedPlugins.match("context7").isEmpty(), "its server asks for OAuth, which nobody answers in a run");
+        assertEquals(List.of(), Plan.parse("{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],"
+                + "\"questions\":[],\"plugins\":[\"context7\"]}").plugins());
     }
 }

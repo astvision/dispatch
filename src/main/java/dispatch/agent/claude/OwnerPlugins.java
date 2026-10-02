@@ -7,7 +7,6 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.agent.AgentStartException;
-import dispatch.domain.CuratedPlugins;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -176,8 +175,8 @@ public final class OwnerPlugins {
 
     /**
      * As {@link #resolve(String, Map)}, plus the official plugins the task's plan picked (spec: plugin picks), found in
-     * this machine's marketplace copy with their servers in the same configuration. A pick the owner also lists loads
-     * once, as listed. A pick this machine lacks is skipped.
+     * this machine's marketplace copy with their servers in the same configuration. A pick the owner also lists, from any
+     * marketplace, loads once, as listed: the owner's copy wins. A pick this machine lacks is skipped.
      */
     public Resolved resolve(String claudeCommand, Map<String, String> environment, List<String> picks) {
         Lists lists = lists();
@@ -198,7 +197,7 @@ public final class OwnerPlugins {
             addServers(servers, id.contains("@") ? id.substring(0, id.indexOf('@')) : id, dir);
         }
         List<String> unlisted = picks.stream()
-                .filter(pick -> !lists.plugins().contains(pick + "@" + CuratedPlugins.MARKETPLACE)).toList();
+                .filter(pick -> lists.plugins().stream().noneMatch(id -> id.equals(pick) || id.startsWith(pick + "@"))).toList();
         for (Map.Entry<String, Path> pick : OfficialPlugins.find(home, unlisted).entrySet()) {
             dirs.add(pick.getValue());
             addServers(servers, pick.getKey(), pick.getValue());

@@ -210,8 +210,7 @@ has no display: a browser server such as Playwright's runs headless there, and t
 screenshots.
 
 A plan can also pick official plugins for its task from a short list Dispatch ships (ADR 0037): `frontend-design` for
-interface work, `playwright` to check a change in a browser, `context7` for a library's current documentation. The plan
-message shows them (🧩), and the execution and review load them from the official marketplace copy Claude Code already
+interface work and `playwright` to check a change in a browser. The plan message shows them (🧩), and the execution and review load them from the official marketplace copy Claude Code already
 keeps, without installing anything. A machine that lacks one skips it.
 
 ### Watch and steer a run
