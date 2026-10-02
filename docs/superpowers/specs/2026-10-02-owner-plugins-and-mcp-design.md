@@ -40,6 +40,7 @@ Out of scope:
 5. With both lists empty or absent, every run's command line is exactly what it is today.
 6. The MCP configuration file exists only while its run does: owner-only, read-only inside the sandbox, and deleted
    when the run ends or, after a crash, at the next start.
+7. An edit to either list in `dispatch.yaml` or `worker.yaml` applies to the next run, with no restart.
 
 ## Configuration
 
@@ -66,9 +67,14 @@ added it at user scope (`claude mcp add --scope user <name> ...`). The lists cov
 runs, and each machine's own lists apply to the runs on it: a team machine's lists never reach a member's computer.
 `plugins` or `mcpServers` under any agent but `claude-code` is a configuration error.
 
+Unlike every other setting, which Dispatch reads once at startup, the two lists are read again from the file on disk
+before each run, so adding or removing a plugin or server applies to the next run without a restart. The desktop UI does
+not edit them: they are edited in the file.
+
 ## Resolving the lists
 
-Before each plan, execution (with its fix rounds) and review run, when either list is not empty:
+Before each plan, execution (with its fix rounds) and review run, Dispatch reads the two lists from the instance's
+`dispatch.yaml` or the worker's `worker.yaml` as the file is at that moment, and, when either list is not empty:
 
 - **Plugins:** `<claude> plugin list --json` on that machine; each listed id must be among its entries, and the entry's
   `installPath` is the plugin's directory. Installed is enough: whether the owner has it enabled interactively is not
@@ -127,6 +133,9 @@ Nothing new is mounted but the MCP configuration file:
   starts: `claude-code plugin <id> is not installed on this computer: install it (claude plugin install <id>) or
   remove it from <key> in <file>`, likewise for a server (`claude mcp add --scope user`). `dispatch check`, on the
   instance and on a worker, fails with the same line.
+- **The configuration file cannot be read or parsed when a run starts** (say, half saved): the run fails as `AGENT`,
+  naming the file and the error; a retry reads it again. Startup and `dispatch check` report the same file as they do
+  today.
 - **`claude plugin list --json` fails** (a Claude Code without it, a broken install): the run fails as `AGENT` with its
   error, only when a plugin is listed.
 - **A plugin's MCP file cannot be read, or is not JSON:** the run fails as `AGENT`, naming the plugin and the file.
@@ -143,12 +152,15 @@ Nothing new is mounted but the MCP configuration file:
 - **User scope only:** a server added at project or local scope, or a claude.ai connector, cannot be listed.
 - **A plugin's own data:** what a plugin writes under `~/.claude/plugins` is thrown away with the overlay, or refused
   without overlays.
-- **Cost:** one `claude plugin list --json` per run that lists plugins, one to two seconds.
+- **Cost:** one `claude plugin list --json` per run that lists plugins, one to two seconds, and one read of the
+  configuration file per run.
+- **Only these lists are read per run:** every other setting still applies at the next start.
 
 ## Testing
 
 - **Configuration:** both lists read from `dispatch.yaml` and `worker.yaml`; absent lists are empty; lists under
-  `codex` or `gemini` are refused.
+  `codex` or `gemini` are refused; a list edited in the file between two runs reaches the second run without a restart;
+  a file that cannot be parsed when a run starts fails that run as `AGENT`.
 - **Resolving:** a fake Claude Code answering `plugin list --json`; a listed id resolves to its `installPath`; a missing
   id or server fails the run as `AGENT` with the text above, before any process starts.
 - **The command line:** `--plugin-dir` and `--add-dir` per plugin, `Skill` in `--tools`, `--mcp-config` and
