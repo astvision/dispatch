@@ -51,6 +51,7 @@ flowchart LR
 | 🧪 **Шалгалт** | Хэрэгжүүлсний дараа Dispatch тестийг өөрөө ажиллуулж, унасныг агентад засуулна (3 хүртэл удаа), дараа нь шинэ review хийлгэнэ. Үр дүн нь PR дээр бичигдэнэ |
 | 🔒 **Sandbox** | Linux дээр агент бүр bubblewrap дотор: зөвхөн өөрийн worktree-д бичнэ, `~/.ssh`, `gh`, Dispatch-ийн нууцыг харахгүй |
 | 🧩 **Skills** | Claude-ийн ажилд шалгагдсан skill-үүд ачаалагдана: ажилладаг хамгийн энгийн өөрчлөлт (ponytail), эхлээд унах тест (TDD), алдааны үндсэн шалтгааныг олох, дуусгахаасаа өмнө шалгах, review-ийн жагсаалт. Орхисон зүйлсээ дүгнэлтэд `skipped:` мөрөөр бичнэ. Төлөвлөгөө, гүйцэтгэл бүрт «Speed matters» — хурдан ажилла. `skills: off` (instance эсвэл төсөл) skill-үүдийг унтраана. Өөрийн plugin, MCP сервер, ~/.claude/skills доторх skill-үүдийг dispatch.yaml-ийн agents.claude-code-д (plugins, mcpServers, skills), worker.yaml-д (claudePlugins, claudeMcpServers, claudeSkills) жагсааж болно; ажил бүр жагсаалтыг дахин уншина (ADR 0036). |
+| 🔌 **Plugin** | Төлөвлөгөө ажилд хэрэгтэй албан ёсны plugin-ийг жагсаалтаас сонгоно (`frontend-design`, `playwright`, `context7`); хэрэгжүүлэлт ба review тэдгээрийг юу ч суулгалгүй ачаална |
 | 🚀 **Teleport** | `dispatch teleport N` — даалгаврын агентын яриаг terminal-д үргэлжлүүлнэ (Claude Code) |
 
 ## ⚡ 3 алхамаар эхлэх

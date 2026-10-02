@@ -3,6 +3,9 @@
 Amends ADR 0034 (the owner's own plugins never load into a run). A split and the assistant (ADR 0024) still load none
 of the owner's plugins or MCP servers.
 
+Amended by ADR 0037: a task's plan may also pick plugins from a short list Dispatch ships, which its execution and review
+runs load from the official marketplace copy.
+
 A machine's owner names, in `dispatch.yaml` (`agents.claude-code.plugins`, `agents.claude-code.mcpServers`) or a member's
 `worker.yaml` (`claudePlugins`, `claudeMcpServers`), the plugins and user-scope MCP servers that Claude Code plan,
 execution and review runs on that machine load; the agent picks what fits the task, such as frontend-design for a page.

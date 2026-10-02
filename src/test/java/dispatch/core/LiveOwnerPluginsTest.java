@@ -21,6 +21,7 @@ import dispatch.agent.sandbox.Sandbox;
 import dispatch.agent.sandbox.SandboxPolicies;
 import dispatch.agent.sandbox.SandboxSetting;
 import dispatch.agent.sandbox.Sandboxes;
+import dispatch.domain.Plan;
 import dispatch.domain.RunKind;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -30,6 +31,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
@@ -121,6 +123,41 @@ class LiveOwnerPluginsTest {
         assertEquals(AgentOutcome.SUCCEEDED, result.outcome(), result.error());
         assertTrue(succeeded(events, "Skill", "owner-skills:graphify"), "the skill loaded");
         assertTrue(succeeded(events, "Read", "references/query.md"), "a file beside it read through the link");
+    }
+
+    /** A plan picks frontend-design for a page, and an execution with that pick invokes its skill (spec: plugin picks). */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "DISPATCH_LIVE_CLAUDE", matches = "1")
+    void aPlanPicksFrontendDesignForAPageAndAnExecutionLoadsIt() throws Exception {
+        Sandbox sandbox = Sandboxes.detect(SandboxSetting.AUTO, Probe.system(System.getenv()));
+        assumeTrue(sandbox instanceof Bubblewrap, "needs bwrap");
+        Path home = Path.of(System.getProperty("user.home"));
+        assumeTrue(Files.isDirectory(home.resolve(".claude/plugins/marketplaces/claude-plugins-official/plugins/frontend-design")),
+                "needs the official marketplace copy");
+        Path root = Files.createTempDirectory(Path.of("target").toAbsolutePath(), "live-picks");
+        Path stateDir = Files.createDirectories(root.resolve("state"));
+        Path workdir = Files.createDirectories(root.resolve("work"));
+        Files.writeString(workdir.resolve("index.html"), "<!doctype html><title>Settings</title><body></body>\n");
+        Path config = Files.writeString(root.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    command: claude\n");
+        ClaudeCodeAgent claude = new ClaudeCodeAgent("claude", System.getenv(), Duration.ofSeconds(10),
+                new Confinement(sandbox, new SandboxPolicies(home, stateDir, List.of(stateDir))), OwnerPlugins.instance(config, home));
+
+        AgentResult plan = claude.start(new RunRequest(RunKind.PLAN, workdir,
+                "Add a settings page to index.html with a form for the user's name and email." + Prompts.PLUGIN_NOTE,
+                UUID.randomUUID(), false, List.of(), null, "sonnet", null, stateDir.resolve("runs/1/1"))).await();
+        System.out.println("LIVE plugin picks, plan: " + plan.outcome() + " " + plan.structuredOutput());
+        assertEquals(AgentOutcome.SUCCEEDED, plan.outcome(), plan.error());
+        List<String> picks = Plan.parse(plan.structuredOutput()).plugins();
+        assertTrue(picks.contains("frontend-design"), "picked: " + picks);
+
+        Path logBase = stateDir.resolve("runs/1/2");
+        AgentResult execute = claude.start(new RunRequest(RunKind.EXECUTE, workdir,
+                "Load the frontend-design:frontend-design skill with the Skill tool, then reply done. Change no file.",
+                UUID.randomUUID(), false, List.of(), null, "sonnet", null, logBase, Map.of(), List.of(), picks)).await();
+        List<JsonNode> events = Files.readAllLines(Path.of(logBase + ".jsonl")).stream().map(Json::read).toList();
+        System.out.println("LIVE plugin picks, execute: " + execute.outcome());
+        assertEquals(AgentOutcome.SUCCEEDED, execute.outcome(), execute.error());
+        assertTrue(succeeded(events, "Skill", "frontend-design"), "the picked skill loaded");
     }
 
     /** Whether a call of {@code tool} whose input mentions {@code mentioning} returned without an error. */

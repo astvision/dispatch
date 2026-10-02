@@ -209,6 +209,11 @@ your other plugins, your claude.ai connectors, or a repository's `.mcp.json`. Li
 has no display: a browser server such as Playwright's runs headless there, and the agent sees pages through its
 screenshots.
 
+A plan can also pick official plugins for its task from a short list Dispatch ships (ADR 0037): `frontend-design` for
+interface work, `playwright` to check a change in a browser, `context7` for a library's current documentation. The plan
+message shows them (🧩), and the execution and review load them from the official marketplace copy Claude Code already
+keeps, without installing anything. A machine that lacks one skips it.
+
 ### Watch and steer a run
 
 Open a task in the Mini App and its latest run shows as a rail of steps, refreshed every 2 seconds while it runs: each

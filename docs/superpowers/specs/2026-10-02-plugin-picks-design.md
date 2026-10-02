@@ -70,8 +70,7 @@ so there is no migration.
 Only a Claude Code plan run is offered the list: `JobRunner` appends `Prompts.PluginNote`, the table above as text,
 beside the skill note, when the job's agent is `claude-code`. Codex and Gemini CLI plans get no list and return `[]`.
 
-The Telegram plan message gets one line after the risks, `plan.plugins` in both languages ("Plugins: frontend-design,
-playwright"), absent when there are none. The Mini App's plan payload (`TaskService`) gains `plugins`, and the plan
+The Telegram plan message gets one line after the risks, `plan.plugins` ("🧩 Плагин: frontend-design, playwright"; Telegram messages are Mongolian only), absent when there are none. The Mini App's plan payload (`TaskService`) gains `plugins`, and the plan
 screen shows the same line.
 
 ## A run
@@ -126,7 +125,7 @@ each picked plugin directory is bound read-only like the owner's. Playwright run
 - **Plan:** `plugins` parsed; absent reads as empty; names outside the list dropped and logged; duplicates removed; a
   plan written back keeps them.
 - **Prompt:** a Claude Code plan run's prompt holds the list; a Codex plan run's does not.
-- **Rendering:** the plan message line in both languages, absent with no picks; the Mini App payload field.
+- **Rendering:** the plan message line, absent with no picks; the Mini App payload field.
 - **Job:** `executeJob` copies the picks; the worker API round-trips them; plan and delivery jobs, and execution
   jobs without picks, leave the field out of their JSON.
 - **Resolving:** a temporary marketplace directory; a pick resolves to its source directory; each skip case logs and
