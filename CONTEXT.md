@@ -44,6 +44,10 @@ _Avoid_: Severity, importance, rank
 The agent's read-only analysis of a task: the cause and the changes it intends to make, sent to the requester. No code changes until the requester approves the plan.
 _Avoid_: Proposal, analysis
 
+**Answer**:
+What a plan run returns instead of a plan when the task only asks for information; the task completes with it, without an approval, and a reply plans again (ADR 0038).
+_Avoid_: Reply, report
+
 **Assistant**:
 The bot's side of a member's private conversation: it answers questions about their tasks and code and proposes changes, but never makes one. Each member has their own, which forgets after `/new` or 12 hours of silence.
 _Avoid_: Agent (that runs tasks), chatbot, AI

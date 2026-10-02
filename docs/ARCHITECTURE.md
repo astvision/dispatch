@@ -150,6 +150,7 @@ Finished runs are never modified; a retry or follow-up creates a new run. All ti
                             | follow-up            | /retry, or a follow-up after an execution
                             +----> EXECUTING <-----+
 
+PLANNING --answer posted--> COMPLETED; a follow-up of an answered task -> PLANNING (ADR 0038)
 planning failure -> FAILED; /retry re-plans
 /cancel from PLANNING / AWAITING_APPROVAL / EXECUTING -> CANCELLED
 REJECTED and CANCELLED are terminal. Plans never expire.
@@ -196,7 +197,7 @@ A transition that loses a race updates 0 rows and is logged.
 **Plan run.**
 1. `git fetch origin <base>`, then `git worktree add -b dispatch/<id> worktrees/<id> origin/<base>`. Record `base_sha`. `copyFiles` are **not** copied: planning needs no local secrets, and whatever the agent can read may be quoted in a plan posted to the group.
 2. Run the agent read-only, requiring the plan JSON schema.
-3. On success, store `plan_json` and move to AWAITING_APPROVAL. The outbox sends the plan to the requester:
+3. On success, store `plan_json`. A plan whose `result` is `answer` moves the task straight to COMPLETED and sends the answer to the requester alone (`ANSWER_READY`, ADR 0038); otherwise move to AWAITING_APPROVAL. The outbox sends the plan to the requester:
    - `[Approve]` and `[Reject]`, where the button data (`Callback.Approve`, `Callback.Reject`) carries the plan's run seq so a stale button is refused;
    - if `questions` is non-empty, no Approve button: the requester answers them, which is a correction (see **Plan questions**);
    - plans over 4096 chars go as a message plus `plan-<id>.md`.

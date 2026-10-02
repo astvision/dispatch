@@ -213,6 +213,10 @@ A plan can also pick official plugins for its task from a short list Dispatch sh
 interface work and `playwright` to check a change in a browser. The plan message shows them (🧩), and the execution and review load them from the official marketplace copy Claude Code already
 keeps, without installing anything. A machine that lacks one skips it.
 
+A task that only asks something, such as "why is the login slow?" or "which tests cover payments?", is answered by its
+plan run (ADR 0038): no approval, no pull request, the answer in your private chat (as a file when it is long). Reply to
+it to ask more, or say "fix it" to get a plan to approve.
+
 ### Watch and steer a run
 
 Open a task in the Mini App and its latest run shows as a rail of steps, refreshed every 2 seconds while it runs: each

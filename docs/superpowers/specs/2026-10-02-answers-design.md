@@ -83,15 +83,16 @@ No execution run starts, and the worktree the plan run made is left for the idle
 
 ## The follow-up of an answered task
 
-An answered task is a COMPLETED task whose `buildSessionId` is null: it never executed. `TaskCommands.followUp` checks
-that before today's path:
+An answered task is one whose stored plan is an answer (`Plan.answers(planJson)`): it never executed. `TaskAccess` allows
+its follow-up, which it refuses today for a task that never executed, and `ANSWER_READY` joins the messages whose replies
+are follow-ups (`UpdateHandler.RESULTS`). `TaskCommands.followUp` checks it before today's path:
 
 - answered: the task goes COMPLETED → PLANNING, and a PLAN run is inserted with cause `FOLLOW_UP` and the reply as its
   instruction; the requester gets `FOLLOW_UP_QUEUED` as today;
 - executed: unchanged (an EXECUTE run in the building session, ADR 0006); a merged task's follow-up stays a new task.
 
 `Coordinator.planJob` picks the prompt: no plan yet → `Prompts.plan`; the latest plan is an answer →
-`Prompts.followUp(task, run)`; otherwise → `Prompts.correction`. `Prompts.followUp` says the requester replied to the
+`Prompts.answerFollowUp(task, run)`; otherwise → `Prompts.correction`. `Prompts.answerFollowUp` says the requester replied to the
 answer, quotes the reply, and asks for an answer or, if the reply asks for a change, a plan; it ends with
 `PLAN_FORMAT`. The run resumes the planning session, so the agent remembers what it found.
 
@@ -147,11 +148,11 @@ The timeline shows `💬 Хариулсан` for the "answered" event.
 
 - **Plan:** an answer; a blank answer; an unknown result; a stored plan without `result`; a plan's `answer` ignored;
   JSON round trip.
-- **Prompts:** `PLAN_FORMAT` names both results; `Prompts.followUp` quotes the reply and ends with `PLAN_FORMAT`.
+- **Prompts:** `PLAN_FORMAT` names both results; `Prompts.answerFollowUp` quotes the reply and ends with `PLAN_FORMAT`.
 - **Answered branch:** phase COMPLETED, `completedAt`, no execution run, event "answered", `ANSWER_READY` for the
   requester only, the group's short line.
 - **Follow-up routing:** an answered task → PLANNING and a PLAN run with cause `FOLLOW_UP`; an executed task → EXECUTE
-  as today; `Coordinator.planJob` picks `Prompts.followUp` after an answer and `Prompts.correction` after a plan.
+  as today; `Coordinator.planJob` picks `Prompts.answerFollowUp` after an answer and `Prompts.correction` after a plan.
 - **Converter:** each construct; nested and adjacent; unclosed fence, backtick and `**`; HTML in the text; balanced tags
   over random input.
 - **Rendering:** the message; the document past 4096; the caption.
