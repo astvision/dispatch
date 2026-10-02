@@ -46,13 +46,17 @@ public final class OwnerPlugins {
         }
     }
 
-    /** What one run loads: the plugin directories, and the --mcp-config JSON, null when there is no server. */
-    public record Resolved(List<Path> pluginDirs, String mcpConfig) {
+    /**
+     * What one run loads: the plugin directories, the --mcp-config JSON (null when there is no server), and the variables
+     * its servers' {@code env} and {@code headers} values travel in, for the agent's environment.
+     */
+    public record Resolved(List<Path> pluginDirs, String mcpConfig, Map<String, String> environment) {
 
-        public static final Resolved NONE = new Resolved(List.of(), null);
+        public static final Resolved NONE = new Resolved(List.of(), null, Map.of());
 
         public Resolved {
             pluginDirs = List.copyOf(pluginDirs);
+            environment = Map.copyOf(environment);
         }
     }
 
@@ -165,11 +169,38 @@ public final class OwnerPlugins {
             }
         }
         if (servers.isEmpty()) {
-            return new Resolved(dirs, null);
+            return new Resolved(dirs, null, Map.of());
+        }
+        Map<String, String> values = new LinkedHashMap<>();
+        for (JsonNode server : servers) {
+            moveToEnvironment(server.get("env"), values);
+            moveToEnvironment(server.get("headers"), values);
         }
         ObjectNode config = Json.MAPPER.createObjectNode();
         config.set("mcpServers", servers);
-        return new Resolved(dirs, Json.write(config));
+        return new Resolved(dirs, Json.write(config), values);
+    }
+
+    /**
+     * Each literal value becomes a {@code ${DISPATCH_MCP_<n>}} reference, and the value goes to {@code environment}: any
+     * local user can read a process's command line, only the owner its environment (SECURITY.md). Claude Code expands the
+     * reference from its own environment (probed on 2.1.287); a value that already holds one stays as written.
+     */
+    private static void moveToEnvironment(JsonNode values, Map<String, String> environment) {
+        if (!(values instanceof ObjectNode object)) {
+            return;
+        }
+        List<String> names = new ArrayList<>();
+        object.fieldNames().forEachRemaining(names::add);
+        for (String name : names) {
+            JsonNode value = object.get(name);
+            if (!value.isTextual() || value.asText().contains("${")) {
+                continue;
+            }
+            String variable = "DISPATCH_MCP_" + (environment.size() + 1);
+            environment.put(variable, value.asText());
+            object.put(name, "${" + variable + "}");
+        }
     }
 
     private static void add(ObjectNode servers, String name, JsonNode server) {

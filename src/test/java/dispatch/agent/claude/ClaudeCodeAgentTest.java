@@ -491,6 +491,8 @@ class ClaudeCodeAgentTest {
         assertTrue(args.get(mcp + 2).startsWith("--"), "a flag ends --mcp-config's values: " + args);
         assertTrue(args.contains("--strict-mcp-config"));
         assertFalse(logged.contains(FAKE_SECRET), "a server's credentials never reach the log");
+        assertFalse(String.join(" ", args).contains(FAKE_SECRET), "nor a command line, which any local user can read");
+        assertTrue(Files.readString(workdir.resolve("fake-claude.env")).contains(FAKE_SECRET), "they travel in claude's environment");
 
         Files.writeString(config, "agents:\n  claude-code:\n    command: claude\n");
         awaitQuietly(owned.start(plan("Plan it")));

@@ -180,4 +180,31 @@ class OwnerPluginsTest {
 
         assertEquals(OwnerPlugins.Resolved.NONE, OwnerPlugins.instance(config, dir).resolve("claude", Map.of()));
     }
+
+    /** Off the command line (SECURITY.md): Claude Code expands each ${VAR} from its own environment (probed on 2.1.287). */
+    @Test
+    void aServersEnvAndHeadersValuesTravelInTheEnvironmentAndTheConfigOnlyNamesThem() throws IOException {
+        Files.writeString(dir.resolve(".claude.json"), "{\"mcpServers\": {"
+                + "\"mongodb\": {\"command\": \"mongodb-mcp-server\", \"env\": {\"MDB_MCP_CONNECTION_STRING\": \"fake-connection\", "
+                + "\"CACHE\": \"${HOME}/.cache\"}},"
+                + "\"remote\": {\"type\": \"http\", \"url\": \"https://mcp.example.com\", \"headers\": {\"X-Api-Key\": \"fake-key\"}}}}");
+        Path config = Files.writeString(dir.resolve("worker.yaml"), "claudeMcpServers: [mongodb, remote]\n");
+
+        OwnerPlugins.Resolved resolved = OwnerPlugins.worker(config, dir).resolve("claude", Map.of());
+
+        assertFalse(resolved.mcpConfig().contains("fake-connection") || resolved.mcpConfig().contains("fake-key"),
+                resolved.mcpConfig());
+        JsonNode servers = Json.MAPPER.readTree(resolved.mcpConfig()).get("mcpServers");
+        assertEquals("fake-connection", resolved.environment().get(variable(servers.get("mongodb").get("env").get("MDB_MCP_CONNECTION_STRING"))));
+        assertEquals("fake-key", resolved.environment().get(variable(servers.get("remote").get("headers").get("X-Api-Key"))));
+        assertEquals("${HOME}/.cache", servers.get("mongodb").get("env").get("CACHE").asText(), "a reference stays as written");
+        assertEquals(2, resolved.environment().size(), resolved.environment().toString());
+    }
+
+    /** The NAME in a {@code ${NAME}} reference. */
+    private static String variable(JsonNode reference) {
+        String text = reference.asText();
+        assertTrue(text.startsWith("${") && text.endsWith("}"), text);
+        return text.substring(2, text.length() - 1);
+    }
 }

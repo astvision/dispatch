@@ -11,6 +11,7 @@ import dispatch.domain.RunKind;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -78,7 +79,9 @@ public final class ClaudeCodeAgent implements Agent {
         // Read and resolved now, on the machine that runs the agent: an edit or an install applies to this run.
         OwnerPlugins.Resolved owner = OWNER_KINDS.contains(request.kind())
                 ? ownerPlugins.resolve(command, ProcessRun.agentEnvironment(environment)) : OwnerPlugins.Resolved.NONE;
-        return ProcessRun.start("claude-code", commandLine(request, permissionMode, owner), request, environment, request.prompt(),
+        Map<String, String> runEnvironment = new HashMap<>(environment);
+        runEnvironment.putAll(owner.environment());
+        return ProcessRun.start("claude-code", commandLine(request, permissionMode, owner), request, runEnvironment, request.prompt(),
                 new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE);
     }
 
