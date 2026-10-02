@@ -18,13 +18,23 @@ import java.util.Set;
  * came later still, and plugin picks after them, so a stored plan may have neither.
  */
 public record Plan(String understanding, List<String> findings, List<String> steps, List<String> risks,
-                   List<PlanQuestion> questionItems, List<PlanDecision> decisions, List<String> plugins) {
+                   List<PlanQuestion> questionItems, List<PlanDecision> decisions, List<String> plugins, Result result,
+                   String answer) {
+
+    /** What the plan run returned (spec: answers): a plan to approve, or the answer to a task that only asks something. */
+    public enum Result {
+        PLAN, ANSWER;
+
+        public String json() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
 
     public static final int MAX_OPTIONS = 4;
     public static final int MAX_OPTION_LENGTH = 40;
     public static final int MAX_ALTERNATIVES = 3;
     private static final Set<String> FIELDS = Set.of("understanding", "findings", "steps", "risks", "questions", "decisions",
-            "plugins");
+            "plugins", "result", "answer");
 
     public Plan {
         findings = List.copyOf(findings);
@@ -33,6 +43,18 @@ public record Plan(String understanding, List<String> findings, List<String> ste
         questionItems = List.copyOf(questionItems);
         decisions = List.copyOf(decisions);
         plugins = List.copyOf(plugins);
+        answer = answer == null ? "" : answer;
+    }
+
+    /** A plan, not an answer. */
+    public Plan(String understanding, List<String> findings, List<String> steps, List<String> risks,
+                List<PlanQuestion> questionItems, List<PlanDecision> decisions, List<String> plugins) {
+        this(understanding, findings, steps, risks, questionItems, decisions, plugins, Result.PLAN, "");
+    }
+
+    /** Whether {@code planJson}, a task's stored plan, is an answer: such a task never executed (spec: answers). */
+    public static boolean answers(String planJson) {
+        return planJson != null && parse(planJson).result() == Result.ANSWER;
     }
 
     /** A plan without plugin picks. */
@@ -74,11 +96,19 @@ public record Plan(String understanding, List<String> findings, List<String> ste
         }
         List<String> steps = texts(node, "steps");
         List<PlanQuestion> questions = questions(node);
-        if (steps.isEmpty() && questions.isEmpty()) {
+        Result result = result(node);
+        String answer = "";
+        if (result == Result.ANSWER) {
+            JsonNode answerNode = node.get("answer");
+            if (answerNode == null || !answerNode.isTextual() || answerNode.asText().isBlank()) {
+                throw new InvalidPlanException("plan field 'answer' must be non-blank text when result is \"answer\"");
+            }
+            answer = answerNode.asText();
+        } else if (steps.isEmpty() && questions.isEmpty()) {
             throw new InvalidPlanException("plan has neither steps nor questions");
         }
         return new Plan(understandingNode.asText(), texts(node, "findings"), steps, texts(node, "risks"), questions,
-                decisions(node), plugins(node));
+                decisions(node), plugins(node), result, answer);
     }
 
     public String toJson() {
@@ -98,6 +128,7 @@ public record Plan(String understanding, List<String> findings, List<String> ste
             decision.alternatives().forEach(alternatives::add);
         }
         plugins.forEach(json.putArray("plugins")::add);
+        json.put("result", result.json()).put("answer", answer);
         return json.toString();
     }
 
@@ -187,6 +218,19 @@ public record Plan(String understanding, List<String> findings, List<String> ste
             }
         }
         return plugins;
+    }
+
+    /** Absent in a plan stored before answers, which is a plan. */
+    private static Result result(JsonNode plan) {
+        JsonNode result = plan.get("result");
+        if (result == null) {
+            return Result.PLAN;
+        }
+        return switch (result.asText("")) {
+            case "plan" -> Result.PLAN;
+            case "answer" -> Result.ANSWER;
+            default -> throw new InvalidPlanException("plan field 'result' must be \"plan\" or \"answer\"");
+        };
     }
 
     private static String buttonLabel(String label) {

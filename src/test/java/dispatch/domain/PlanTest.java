@@ -1,6 +1,7 @@
 package dispatch.domain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -179,5 +180,56 @@ class PlanTest {
         assertTrue(CuratedPlugins.match("context7").isEmpty(), "its server asks for OAuth, which nobody answers in a run");
         assertEquals(List.of(), Plan.parse("{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],"
                 + "\"questions\":[],\"plugins\":[\"context7\"]}").plugins());
+    }
+
+    @Test
+    void anAnswerNeedsNoStepsAndKeepsItsMarkdown() {
+        Plan plan = Plan.parse("""
+                {"understanding":"u","findings":[],"steps":[],"risks":[],"questions":[],"decisions":[],"plugins":[],
+                 "result":"answer","answer":"**Plan.parse** in `Plan.java:45`"}""");
+
+        assertEquals(Plan.Result.ANSWER, plan.result());
+        assertEquals("**Plan.parse** in `Plan.java:45`", plan.answer());
+    }
+
+    @Test
+    void anAnswerWithoutTextIsInvalid() {
+        assertThrows(InvalidPlanException.class, () -> Plan.parse(
+                "{\"understanding\":\"u\",\"findings\":[],\"steps\":[],\"risks\":[],\"questions\":[],\"result\":\"answer\",\"answer\":\" \"}"));
+    }
+
+    @Test
+    void anUnknownResultIsInvalid() {
+        assertThrows(InvalidPlanException.class, () -> Plan.parse(
+                "{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[],\"result\":\"report\",\"answer\":\"\"}"));
+    }
+
+    @Test
+    void aStoredPlanWithoutResultIsAPlanAndAPlansStrayAnswerIsDropped() {
+        String stored = "{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[]}";
+        Plan stray = Plan.parse(
+                "{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[],\"result\":\"plan\",\"answer\":\"x\"}");
+
+        assertEquals(Plan.Result.PLAN, Plan.parse(stored).result());
+        assertFalse(Plan.answers(stored));
+        assertFalse(Plan.answers(null));
+        assertEquals("", stray.answer());
+    }
+
+    @Test
+    void anAnswerSurvivesTheStoredJson() {
+        Plan plan = new Plan("u", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Plan.Result.ANSWER, "42");
+
+        assertEquals(plan, Plan.parse(plan.toJson()));
+        assertTrue(Plan.answers(plan.toJson()));
+    }
+
+    @Test
+    void theSchemaRequiresResultAndAnswer() {
+        JsonNode schema = Json.read(Schemas.PLAN);
+
+        assertTrue(schema.path("required").toString().contains("\"result\""), schema.toString());
+        assertTrue(schema.path("required").toString().contains("\"answer\""), schema.toString());
+        assertEquals("[\"plan\",\"answer\"]", schema.path("properties").path("result").path("enum").toString());
     }
 }

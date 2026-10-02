@@ -94,4 +94,12 @@ class PromptsTest {
         }
         assertTrue(Prompts.PLUGIN_NOTE.contains("plugins field"), Prompts.PLUGIN_NOTE);
     }
+
+    @Test
+    void thePlanFormatTellsTheAgentToAnswerAQuestionAndPlanAChange() {
+        String prompt = Prompts.plan(task());
+
+        assertTrue(prompt.contains("set result to \"answer\""), prompt);
+        assertTrue(prompt.contains("set result to \"plan\""), prompt);
+    }
 }

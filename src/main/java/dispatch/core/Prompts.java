@@ -17,6 +17,11 @@ final class Prompts {
      * Plan mode also tells the agent to save its plan to a file, and recorded runs then wrote each plan twice.
      */
     private static final String PLAN_FORMAT = """
+            If the task only asks for information (an explanation, a finding, a report, a number) and changes nothing, \
+            set result to "answer" and write the full answer in markdown in answer: lead with the conclusion, cite \
+            file:line for code, and plan nothing. If it asks for any change, set result to "plan", plan as usual and \
+            leave answer empty.
+
             Return the plan only as JSON matching the provided schema; do not write it to a plan file or anywhere else. \
             Its fields:
             - understanding: what the task asks for, in your own words
