@@ -27,13 +27,19 @@ class WireContractTest {
             worker.Readiness: claude gh projects agents
             worker.RemoteWorkers$Progress: taskId seq worktree baseSha agentStarted steps lastAction loopSteps
             worker.RemoteWorkers$Reply: cancel skipStep deliverNow pauseBeforeReview resume
+            domain.RunKind = PLAN EXECUTE DELIVER SPLIT ASSISTANT REVIEW
             core.Job$Project: name repo path baseBranch agent copyFiles test loop skills
             domain.Attachment: fileRef name size
+            core.JobResult$Outcome = SUCCEEDED FAILED CANCELLED
             agent.AgentResult: outcome exitCode sessionId structuredOutput summary costUsd turns denials error model requestedModel sandbox
+            domain.FailureReason = SETUP AGENT TIMEOUT BUDGET INTERRUPTED DELIVERY INTERNAL
             core.Verification: tests testRuns lastRunPassed testTail review findings reviewError stoppedBy
             worker.Readiness$Check: ok detail
             worker.RemoteWorkers$Step: n kind round startedAt endedAt outcome detail
+            agent.AgentOutcome = SUCCEEDED FAILED BUDGET_EXCEEDED
             agent.SandboxUse: name unsandboxedReason
+            core.Verification$Tests = PASSED FAILING UNVERIFIED NO_COMMAND NOT_RUN SKIPPED
+            core.Verification$ReviewState = OK FINDINGS FIXED_UNREVIEWED FAILED NOT_RUN SKIPPED
             core.Review$Finding: severity file line text""";
 
     @Test
@@ -49,6 +55,15 @@ class WireContractTest {
         List<String> lines = new ArrayList<>();
         while (!queue.isEmpty()) {
             Class<?> type = queue.removeFirst();
+            if (type.isEnum() && seen.add(type)) {
+                // A constant the other side does not know cannot be read there either.
+                List<String> constants = new ArrayList<>();
+                for (Object constant : type.getEnumConstants()) {
+                    constants.add(constant.toString());
+                }
+                lines.add(type.getName().replace("dispatch.", "") + " = " + String.join(" ", constants));
+                continue;
+            }
             if (!type.isRecord() || !seen.add(type)) {
                 continue;
             }

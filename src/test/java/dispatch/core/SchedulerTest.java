@@ -293,6 +293,22 @@ class SchedulerTest {
                 "a started run is held by nothing, so the next block is news again");
     }
 
+    /** ADR 0039: claimed for a computer that will be handed nothing, the run would only fail on its lease. */
+    @Test
+    void aRunWaitsWhileItsMembersOnlyComputerSpeaksAnotherProtocol() {
+        long taskId = queuedPlanFor(BOLD, "alm");
+        long workerId = pairedWorkerFor(BOLD);
+        db.transaction(tx -> Workers.touch(tx, workerId, clock.instant()));
+        db.transaction(tx -> Workers.saveProtocol(tx, workerId, 0));
+
+        assertTrue(claim().isEmpty(), "not claimed: nobody could take it");
+        assertEquals("version", db.transactionReturning(tx -> Workers.blockerOf(tx, BOLD.ref(), null,
+                clock.instant().minus(Workers.SEEN_WITHIN), "alm", "claude-code", RunKind.PLAN)).orElseThrow().code());
+
+        db.transaction(tx -> Workers.saveProtocol(tx, workerId, dispatch.worker.WorkerProtocol.VERSION));
+        assertEquals(taskId, claim().orElseThrow().taskId(), "updated, the run starts with no further action");
+    }
+
     /** ADR 0026: a Codex project's run is claimed on a computer without Claude Code, and held while Codex cannot run. */
     @Test
     void aRunIsHeldByTheAgentItsProjectRunsOn() {

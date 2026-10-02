@@ -121,7 +121,6 @@ public final class Workers {
                         workerId, agent, check.ok() ? 1 : 0, check.detail()));
     }
 
-    /** How many runs this computer takes at once, as its last poll said; {@link Runs#claimNext} counts on it. */
     /** What {@code workerId} said it speaks on this poll; 0 when it said nothing, as a worker from before the protocol. */
     public static void saveProtocol(Tx tx, long workerId, int protocol) {
         tx.update("UPDATE worker SET protocol = ? WHERE id = ?", protocol, workerId);
@@ -133,6 +132,7 @@ public final class Workers {
                 row -> row.intValue("protocol"), workerId, WorkerProtocol.VERSION).isPresent();
     }
 
+    /** How many runs this computer takes at once, as its last poll said; {@link Runs#claimNext} counts on it. */
     public static void saveCapacity(Tx tx, long workerId, int maxRuns) {
         tx.update("UPDATE worker SET max_runs = ? WHERE id = ?", maxRuns, workerId);
     }

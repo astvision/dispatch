@@ -448,4 +448,15 @@ class WorkerProtocolTest extends WorkerApiFixture {
         assertEquals(7, Json.MAPPER.treeToValue(Json.read(post(WorkerApi.NEXT, key, poll("{}")).body()).get("job"), Job.class).taskId(),
                 "the job waits for a computer that speaks this protocol");
     }
+
+    @Test
+    void aPollOnAnotherProtocolIsNotReadPastItsNumber() throws Exception {
+        String key = pair();
+
+        // A shape this version would refuse (maxConcurrentRuns 0) from a worker that speaks another protocol.
+        var answer = post(WorkerApi.NEXT, key, "{\"protocol\": 0, \"maxConcurrentRuns\": 0, \"readiness\": {\"claude\": {\"ok\": false}}}");
+
+        assertEquals(200, answer.statusCode(), "its fields may mean something else there: only its number is read");
+        assertEquals(WorkerProtocol.VERSION, Json.read(answer.body()).get("protocol").asInt());
+    }
 }

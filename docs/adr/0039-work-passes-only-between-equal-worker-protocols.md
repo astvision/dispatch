@@ -19,6 +19,8 @@ We chose this over:
   that changed nothing on the wire.
 
 Consequences: updating a team machine whose change raises the number stops its members' computers until they update;
-their queued runs wait and say why. The number is raised by hand, so a wire change that slips past the contract test
+their queued runs wait and say why. A team machine from before the
+number still hands a job to a newer worker, which will not take it: that one run fails when its lease runs out, and
+is retried once both sides are updated. The number is raised by hand, so a wire change that slips past the contract test
 (a renamed JSON key inside an untyped value) still needs someone to raise it. The per-field compatibility already in
 `Job`, `JobResult` and the worker API can be removed once every installation runs a version with the number.

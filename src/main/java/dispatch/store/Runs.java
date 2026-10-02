@@ -8,6 +8,7 @@ import dispatch.domain.Run;
 import dispatch.domain.RunCause;
 import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
+import dispatch.worker.WorkerProtocol;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -100,6 +101,9 @@ public final class Runs {
                           AND EXISTS (SELECT 1 FROM worker w
                                       WHERE w.member_ref = t.requester_ref AND w.revoked_at IS NULL
                                         AND w.last_seen_at > ?
+                                        -- A computer on another worker protocol is handed nothing (ADR 0039); NULL
+                                        -- means it has not polled since the protocol, which holds nothing.
+                                        AND (w.protocol IS NULL OR w.protocol = %2$d)
                                         AND (t.worker_id IS NULL OR t.worker_id = w.id)
                                         -- The agent the run's project runs on holds it, no other one (ADR 0026).
                                         -- NULL claude_ok means the worker reported nothing, which counts as ready.
@@ -114,14 +118,15 @@ public final class Runs {
                                         AND NOT EXISTS (SELECT 1 FROM worker_project p
                                                          WHERE p.worker_id = w.id AND p.project = t.project AND p.ok = 0))
                           AND (SELECT COALESCE(SUM(COALESCE(live.max_runs, 1)), 0) FROM worker live
-                               WHERE live.member_ref = t.requester_ref AND live.revoked_at IS NULL AND live.last_seen_at > ?)
+                               WHERE live.member_ref = t.requester_ref AND live.revoked_at IS NULL AND live.last_seen_at > ?
+                                 AND (live.protocol IS NULL OR live.protocol = %2$d))
                               > (SELECT count(*) FROM run member_run JOIN task member_task ON member_task.id = member_run.task_id
                                  WHERE member_task.requester_ref = t.requester_ref AND member_run.status = ?)
                           AND (t.worker_id IS NULL
                                OR (SELECT count(*) FROM run pinned_run JOIN task pinned_task ON pinned_task.id = pinned_run.task_id
                                    WHERE pinned_run.status = ? AND pinned_task.worker_id = t.worker_id)
                                   < (SELECT COALESCE(pinned.max_runs, 1) FROM worker pinned WHERE pinned.id = t.worker_id))
-                """.formatted(agentOfProject(agentOf));
+                """.formatted(agentOfProject(agentOf), WorkerProtocol.VERSION);
         List<Object> params = new ArrayList<>(List.of(RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE,
                 RunKind.DELIVER));
         if (workerSeenSince != null) {
