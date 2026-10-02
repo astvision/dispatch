@@ -1,5 +1,8 @@
 package dispatch.cli;
 
+import dispatch.agent.AgentStartException;
+import dispatch.agent.ProcessRun;
+import dispatch.agent.claude.OwnerPlugins;
 import dispatch.agent.sandbox.Probe;
 import dispatch.agent.sandbox.Sandbox;
 import dispatch.agent.sandbox.Sandboxes;
@@ -95,6 +98,12 @@ public final class Checks {
         checkBot(run, config.secrets().telegramBotToken());
         boolean team = config.workers() != null;
         config.agents().forEach((name, agent) -> checkAgent(run, name, agent.command(), configFile, team));
+        Config.Agent claude = config.agents().get("claude-code");
+        if (claude != null && !team) {
+            // A team machine runs no task's agent; its members' computers check their own lists.
+            ownerPlugins(OwnerPlugins.instance(configFile, Path.of(System.getProperty("user.home"))), claude.command(),
+                    prepared.environment()).ifPresent(finding -> run.add(finding.level(), finding.area(), finding.message()));
+        }
         Finding sandbox = sandbox(Sandboxes.detect(config.sandbox(), Probe.system(prepared.environment())));
         run.add(sandbox.level(), sandbox.area(), sandbox.message());
         Workspaces workspaces = new Workspaces(config.stateDir(), new Git("git", null, COMMAND_TIMEOUT));
@@ -110,6 +119,21 @@ public final class Checks {
         checkMiniApp(run, config.miniApp());
         checkOtherInstances(run, configFile, config, processEnvironment);
         return run.findings;
+    }
+
+    /** The plugins and MCP servers listed for Claude Code runs, resolved as the next run will resolve them (spec: owner plugins). */
+    public static Optional<Finding> ownerPlugins(OwnerPlugins owner, String command, Map<String, String> environment) {
+        try {
+            OwnerPlugins.Lists lists = owner.lists();
+            if (lists.isEmpty()) {
+                return Optional.empty();
+            }
+            owner.resolve(command, ProcessRun.agentEnvironment(environment));
+            return Optional.of(new Finding(Level.OK, "claude-code",
+                    Text.of("check.ownerPlugins", lists.plugins().size(), lists.mcpServers().size())));
+        } catch (AgentStartException e) {
+            return Optional.of(new Finding(Level.FAIL, "claude-code", Text.raw(e.getMessage())));
+        }
     }
 
     /** Which sandbox this machine's agents run in; never a failure, since runs go ahead without one (spec). */

@@ -1,5 +1,6 @@
 package dispatch.worker;
 
+import dispatch.agent.claude.OwnerPlugins;
 import dispatch.agent.sandbox.Probe;
 import dispatch.agent.sandbox.Sandboxes;
 import dispatch.Text;
@@ -68,6 +69,8 @@ public final class WorkerChecks {
                 Text.raw("worker: " + config.name() + ", team " + config.team() + " (" + workerFile + ")")));
         Optional<WorkerClient.Setup> team = checkPairing(workerFile, config, environment, add);
         checkClaude(config, add);
+        Checks.ownerPlugins(OwnerPlugins.worker(workerFile, Path.of(System.getProperty("user.home"))), config.claudeCommand(),
+                processEnvironment).ifPresent(add);
         add.accept(Checks.sandbox(Sandboxes.detect(config.sandbox(), Probe.system(environment.values()))));
         checkGh(config, add);
         checkProjects(config, team, add);

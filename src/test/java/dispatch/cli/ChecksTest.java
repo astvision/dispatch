@@ -7,9 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
+import dispatch.agent.claude.OwnerPlugins;
 import dispatch.telegram.BotApi;
+import dispatch.testing.FakeClaude;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.GitFixture;
+import dispatch.testing.OwnerPluginsFixture;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -450,5 +453,49 @@ class ChecksTest {
         assertTrue(finding.message().english().contains("without overlays"), finding.message().english());
         assertTrue(finding.message().english().contains("Claude Code's state"), "MessageFormat keeps the apostrophe: "
                 + finding.message().english());
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void aListedPluginThatIsMissingFailsTheCheckWithTheRunsText() throws IOException {
+        Path claude = FakeClaude.install(Files.createDirectories(dir.resolve("bin")));
+        OwnerPluginsFixture.installed(claude, Map.of());
+        Path config = Files.writeString(dir.resolve("plugins.yaml"), "agents:\n  claude-code:\n    plugins: [a@m]\n");
+
+        Checks.Finding finding = Checks.ownerPlugins(OwnerPlugins.instance(config, dir), claude.toString(),
+                FakeClaude.environment()).orElseThrow();
+
+        assertEquals(Checks.Level.FAIL, finding.level());
+        assertTrue(finding.message().english().startsWith("claude-code plugin a@m is not installed on this computer"),
+                finding.message().english());
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void listedPluginsThatAreAllFoundPassAndNoListsSayNothing() throws IOException {
+        Path claude = FakeClaude.install(Files.createDirectories(dir.resolve("bin")));
+        OwnerPluginsFixture.installed(claude, Map.of("a@m", OwnerPluginsFixture.plugin(dir.resolve("cache/a"), null)));
+        Path listed = Files.writeString(dir.resolve("plugins.yaml"), "agents:\n  claude-code:\n    plugins: [a@m]\n");
+        Path none = Files.writeString(dir.resolve("none.yaml"), "agents:\n  claude-code:\n    command: claude\n");
+
+        Checks.Finding finding = Checks.ownerPlugins(OwnerPlugins.instance(listed, dir), claude.toString(),
+                FakeClaude.environment()).orElseThrow();
+
+        assertEquals(Checks.Level.OK, finding.level());
+        assertEquals("claude-code: 1 listed plugin(s) and 0 MCP server(s) found", finding.message().english());
+        assertTrue(Checks.ownerPlugins(OwnerPlugins.instance(none, dir), claude.toString(), FakeClaude.environment()).isEmpty());
+    }
+
+    /** Resolved as the next run will resolve them, so what is missing shows before a task fails on it (spec: owner plugins). */
+    @Test
+    void dispatchCheckResolvesThisInstancesListedPlugins() throws IOException {
+        writeConfig();
+        Files.writeString(config, Files.readString(config).replace("agents:\n  claude-code:\n",
+                "agents:\n  claude-code:\n    plugins: [a@m]\n"));
+
+        List<Checks.Finding> findings = checks().run(config, Map.of(), finding -> { });
+
+        assertTrue(findings.stream().anyMatch(f -> f.level() == Checks.Level.FAIL && f.area().equals("claude-code")
+                && f.message().english().startsWith("cannot list Claude Code plugins")), findings.toString());
     }
 }

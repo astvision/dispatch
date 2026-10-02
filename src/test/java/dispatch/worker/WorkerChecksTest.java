@@ -233,4 +233,14 @@ class WorkerChecksTest extends WorkerApiFixture {
     private static java.util.List<String> lines(java.util.List<Checks.Finding> findings) {
         return findings.stream().map(WorkerChecksTest::line).toList();
     }
+
+    @Test
+    void aWorkerChecksItsOwnListedPlugins() throws Exception {
+        Path workerFile = writeWorker(pair(), repos.repo("alm").toString(), JAVA, "claudePlugins: [a@m]\n");
+
+        List<Checks.Finding> findings = WorkerChecks.run(workerFile, Map.of(), finding -> { });
+
+        assertTrue(findings.stream().anyMatch(f -> f.level() == Checks.Level.FAIL && f.area().equals("claude-code")
+                && f.message().english().startsWith("cannot list Claude Code plugins")), findings.toString());
+    }
 }
