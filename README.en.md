@@ -202,8 +202,9 @@ Code 2.1.76 or later. Codex and Gemini CLI projects are unchanged.
 
 A machine can add its own Claude Code plugins and MCP servers to those runs (ADR 0036): list them in `dispatch.yaml`
 under `agents.claude-code` (`plugins: [frontend-design@claude-plugins-official]`, `mcpServers: [mongodb]`) or in a
-member's `worker.yaml` (`claudePlugins`, `claudeMcpServers`). Each run reads the lists again, so an edit applies without
-a restart; something listed and missing fails the run and `dispatch check` says what to do. Nothing unlisted loads: not
+member's `worker.yaml` (`claudePlugins`, `claudeMcpServers`), and your own skills from `~/.claude/skills` by name
+(`skills: [graphify]`, `claudeSkills`), which runs load as `owner-skills:<name>`. Each run reads the lists again, so an
+edit applies without a restart; something listed and missing fails the run and `dispatch check` says what to do. Nothing unlisted loads: not
 your other plugins, your claude.ai connectors, or a repository's `.mcp.json`. Listed servers run in the sandbox, which
 has no display: a browser server such as Playwright's runs headless there, and the agent sees pages through its
 screenshots.

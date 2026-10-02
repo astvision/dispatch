@@ -28,3 +28,15 @@ sandbox hides fails (`agent.mcp_failed`). The sandbox has no display and unsets 
 screenshots. A listed server's `env` and `headers` values reach Claude Code through its environment, as `${VAR}`
 references in the configuration, never on its command line. Only user-scope servers can be listed. A team machine's lists never reach a member's
 computer. Each run pays one `claude plugin list --json`.
+
+## Amended 2026-10-02: the owner's own skills
+
+A third list names skills the owner keeps outside any plugin, by their directory under `~/.claude/skills`:
+`agents.claude-code.skills` in `dispatch.yaml`, `claudeSkills` in `worker.yaml`. `--setting-sources project,local` keeps
+those skills out of a run, as it keeps out the rest of the owner's setup, so Dispatch puts the listed ones in a plugin of
+their own, `owner-skills`, beside the run's logs (`<logBase>.skills`): each a link to the skill's directory, so an edit
+reaches the next run, or a copy where the system allows no link. The run loads them as `owner-skills:<name>`, may read
+the directories they link to (`--add-dir`), and the sandbox binds the plugin read-only. A name is a plain directory
+name, never a path; one that is missing fails the run before its agent starts, as a missing plugin does, and `dispatch
+check` reports it. The list is explicit for the reason the plugins are: many personal skills ask the person at the
+keyboard, and nobody answers in a run.

@@ -93,6 +93,54 @@ class LiveOwnerPluginsTest {
         }
     }
 
+    /** A plan run, the strictest: the owner's skill loads, and a file beside it reads through the link (spec: owner plugins). */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "DISPATCH_LIVE_CLAUDE", matches = "1")
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    void aListedSkillLoadsAndItsOwnFilesReadInAPlanRunInTheRealSandbox() throws Exception {
+        Sandbox sandbox = Sandboxes.detect(SandboxSetting.AUTO, Probe.system(System.getenv()));
+        assumeTrue(sandbox instanceof Bubblewrap, "needs bwrap");
+        Path home = Path.of(System.getProperty("user.home"));
+        assumeTrue(Files.isRegularFile(home.resolve(".claude/skills/graphify/references/query.md")), "needs the graphify skill");
+        Path root = Files.createTempDirectory(Path.of("target").toAbsolutePath(), "live-skills");
+        Path stateDir = Files.createDirectories(root.resolve("state"));
+        Path workdir = Files.createDirectories(root.resolve("work"));
+        Path config = Files.writeString(root.resolve("dispatch.yaml"),
+                "agents:\n  claude-code:\n    command: claude\n    skills: [graphify]\n");
+        ClaudeCodeAgent claude = new ClaudeCodeAgent("claude", System.getenv(), Duration.ofSeconds(10),
+                new Confinement(sandbox, new SandboxPolicies(home, stateDir, List.of(stateDir))), OwnerPlugins.instance(config, home));
+        Path logBase = stateDir.resolve("runs/1/1");
+
+        AgentResult result = claude.start(new RunRequest(RunKind.PLAN, workdir,
+                "Load the owner-skills:graphify skill with the Skill tool. Then use the Read tool on the file references/query.md "
+                        + "in that skill's directory, and plan nothing else: your plan is that file's first heading.",
+                UUID.randomUUID(), false, List.of(), null, "sonnet", null, logBase)).await();
+
+        List<JsonNode> events = Files.readAllLines(Path.of(logBase + ".jsonl")).stream().map(Json::read).toList();
+        System.out.println("LIVE owner skills: " + result.outcome() + " " + result.structuredOutput());
+        assertEquals(AgentOutcome.SUCCEEDED, result.outcome(), result.error());
+        assertTrue(succeeded(events, "Skill", "owner-skills:graphify"), "the skill loaded");
+        assertTrue(succeeded(events, "Read", "references/query.md"), "a file beside it read through the link");
+    }
+
+    /** Whether a call of {@code tool} whose input mentions {@code mentioning} returned without an error. */
+    private static boolean succeeded(List<JsonNode> events, String tool, String mentioning) {
+        java.util.Set<String> calls = new java.util.HashSet<>();
+        for (JsonNode event : events) {
+            for (JsonNode block : event.path("message").path("content")) {
+                if (block.path("type").asText().equals("tool_use") && block.path("name").asText().equals(tool)
+                        && block.path("input").toString().contains(mentioning)) {
+                    calls.add(block.path("id").asText());
+                }
+                if (block.path("type").asText().equals("tool_result") && calls.contains(block.path("tool_use_id").asText())
+                        && !block.path("is_error").asBoolean()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /** A page that is nothing but its background colour. */
     private static HttpServer colourPage(String colour) throws Exception {
         byte[] body = ("<!doctype html><body style=\"margin:0;height:100vh;background:" + colour + "\"></body>")
