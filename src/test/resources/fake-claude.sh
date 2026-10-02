@@ -9,6 +9,12 @@ if [ "$1" = "--version" ]; then
   echo "2.1.280 (Claude Code)"
   exit 0
 fi
+# Dispatch lists the owner's installed plugins before a run (spec: owner plugins); answer from beside this script,
+# without recording anything.
+if [ "$1" = "plugin" ]; then
+  cat "$(dirname "$0")/fake-claude.plugins.json" 2>/dev/null || echo '[]'
+  exit 0
+fi
 printf '%s\n' "$@" > fake-claude.args
 env > fake-claude.env
 prompt=$(cat)

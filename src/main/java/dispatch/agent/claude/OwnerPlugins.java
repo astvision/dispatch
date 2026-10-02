@@ -2,13 +2,23 @@ package dispatch.agent.claude;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import dispatch.Json;
+import dispatch.Log;
 import dispatch.agent.AgentStartException;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * The plugins and MCP servers a machine's owner lists for Claude Code runs (spec: owner plugins). The lists are read
@@ -36,6 +46,16 @@ public final class OwnerPlugins {
         }
     }
 
+    /** What one run loads: the plugin directories, and the --mcp-config JSON, null when there is no server. */
+    public record Resolved(List<Path> pluginDirs, String mcpConfig) {
+
+        public static final Resolved NONE = new Resolved(List.of(), null);
+
+        public Resolved {
+            pluginDirs = List.copyOf(pluginDirs);
+        }
+    }
+
     private final Path file;
     private final boolean instance;
     private final Path home;
@@ -56,6 +76,11 @@ public final class OwnerPlugins {
     /** A member's {@code worker.yaml}: {@code claudePlugins} and {@code claudeMcpServers}. */
     public static OwnerPlugins worker(Path workerYaml, Path home) {
         return new OwnerPlugins(workerYaml, false, home, LIST_TIMEOUT);
+    }
+
+    /** For tests: how long {@code claude plugin list --json} may take. */
+    OwnerPlugins withListTimeout(Duration timeout) {
+        return new OwnerPlugins(file, instance, home, timeout);
     }
 
     String pluginsKey() {
@@ -98,5 +123,152 @@ public final class OwnerPlugins {
             names.add(name.asText());
         }
         return names;
+    }
+
+    /**
+     * What a run loads, resolved on this machine now: each listed plugin's directory, and one MCP configuration holding
+     * the listed servers and the listed plugins' own. Fails the run before its agent starts when something listed is
+     * missing.
+     */
+    public Resolved resolve(String claudeCommand, Map<String, String> environment) {
+        Lists lists = lists();
+        if (lists.isEmpty()) {
+            return Resolved.NONE;
+        }
+        ObjectNode servers = Json.MAPPER.createObjectNode();
+        List<Path> dirs = new ArrayList<>();
+        Map<String, Path> installed = lists.plugins().isEmpty() ? Map.of() : installed(claudeCommand, environment);
+        for (String id : lists.plugins()) {
+            Path dir = installed.get(id);
+            if (dir == null) {
+                throw new AgentStartException("claude-code plugin " + id + " is not installed on this computer: install it "
+                        + "(claude plugin install " + id + ") or remove it from " + pluginsKey() + " in " + file, null);
+            }
+            dirs.add(dir);
+            // Named as Claude Code names a plugin's server in the owner's own sessions, so its tools are called the same.
+            String plugin = id.contains("@") ? id.substring(0, id.indexOf('@')) : id;
+            for (Iterator<Map.Entry<String, JsonNode>> it = pluginServers(dir); it.hasNext(); ) {
+                Map.Entry<String, JsonNode> server = it.next();
+                add(servers, "plugin_" + plugin + "_" + server.getKey(), withRoot(server.getValue(), dir));
+            }
+        }
+        if (!lists.mcpServers().isEmpty()) {
+            JsonNode defined = userServers();
+            for (String name : lists.mcpServers()) {
+                JsonNode server = defined.get(name);
+                if (server == null) {
+                    throw new AgentStartException("claude-code MCP server " + name + " is not defined on this computer: add it "
+                            + "(claude mcp add --scope user " + name + " ...) or remove it from " + serversKey() + " in " + file,
+                            null);
+                }
+                add(servers, name, server);
+            }
+        }
+        if (servers.isEmpty()) {
+            return new Resolved(dirs, null);
+        }
+        ObjectNode config = Json.MAPPER.createObjectNode();
+        config.set("mcpServers", servers);
+        return new Resolved(dirs, Json.write(config));
+    }
+
+    private static void add(ObjectNode servers, String name, JsonNode server) {
+        if (servers.has(name)) {
+            throw new AgentStartException("two MCP servers are named " + name + "; rename one of them", null);
+        }
+        servers.set(name, server);
+    }
+
+    /** The plugins installed on this machine, by id; asked of its own Claude Code, outside any sandbox. */
+    private Map<String, Path> installed(String claudeCommand, Map<String, String> environment) {
+        Path out = null;
+        try {
+            // A file, not a pipe: a CLI that hangs without output must not block the wait below.
+            out = Files.createTempFile("dispatch-plugins", ".json");
+            ProcessBuilder builder = new ProcessBuilder(claudeCommand, "plugin", "list", "--json").redirectOutput(out.toFile());
+            builder.environment().clear();
+            builder.environment().putAll(environment);
+            Process process = builder.start();
+            if (!process.waitFor(listTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                process.destroyForcibly();
+                throw new AgentStartException("claude plugin list --json did not answer within " + listTimeout.toSeconds() + " s",
+                        null);
+            }
+            if (process.exitValue() != 0) {
+                String error = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+                throw new AgentStartException("cannot list Claude Code plugins (claude plugin list --json): " + error, null);
+            }
+            Map<String, Path> installed = new LinkedHashMap<>();
+            for (JsonNode plugin : Json.MAPPER.readTree(out.toFile())) {
+                installed.put(plugin.path("id").asText(), Path.of(plugin.path("installPath").asText()));
+            }
+            return installed;
+        } catch (IOException e) {
+            throw new AgentStartException("cannot list Claude Code plugins (claude plugin list --json): " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AgentStartException("interrupted while listing Claude Code plugins", e);
+        } finally {
+            deleteQuietly(out);
+        }
+    }
+
+    private static void deleteQuietly(Path file) {
+        if (file == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            Log.warn("agent.temp_left", "path", file, "error", e.toString());
+        }
+    }
+
+    /** The owner's user-scope servers, as {@code claude mcp add --scope user} keeps them. */
+    private JsonNode userServers() {
+        Path config = home.resolve(".claude.json");
+        try {
+            JsonNode servers = Files.isRegularFile(config) ? Json.MAPPER.readTree(config.toFile()).get("mcpServers") : null;
+            return servers != null && servers.isObject() ? servers : Json.MAPPER.createObjectNode();
+        } catch (IOException e) {
+            throw new AgentStartException("cannot read the MCP servers in " + config + ": " + e.getMessage(), e);
+        }
+    }
+
+    /** A plugin's servers: from the file its plugin.json names, inline there, or from its .mcp.json; none when absent. */
+    private static Iterator<Map.Entry<String, JsonNode>> pluginServers(Path dir) {
+        Path manifest = dir.resolve(".claude-plugin/plugin.json");
+        Path source = dir.resolve(".mcp.json");
+        try {
+            JsonNode declared = Files.isRegularFile(manifest) ? Json.MAPPER.readTree(manifest.toFile()).get("mcpServers") : null;
+            JsonNode servers;
+            if (declared != null && declared.isObject()) {
+                servers = declared;
+            } else {
+                if (declared != null && declared.isTextual()) {
+                    source = dir.resolve(declared.asText()).normalize();
+                }
+                if (!Files.isRegularFile(source)) {
+                    return Collections.emptyIterator();
+                }
+                servers = Json.MAPPER.readTree(source.toFile());
+            }
+            JsonNode map = servers.has("mcpServers") ? servers.get("mcpServers") : servers;
+            return map.fields();
+        } catch (IOException e) {
+            throw new AgentStartException("cannot read the MCP servers of the plugin in " + dir + " (" + source + "): "
+                    + e.getMessage(), e);
+        }
+    }
+
+    /** {@code ${CLAUDE_PLUGIN_ROOT}} set to the plugin's directory, JSON-escaped (a Windows path has backslashes). */
+    private static JsonNode withRoot(JsonNode server, Path dir) {
+        String escaped = Json.write(dir.toString());
+        String text = Json.write(server).replace("${CLAUDE_PLUGIN_ROOT}", escaped.substring(1, escaped.length() - 1));
+        try {
+            return Json.MAPPER.readTree(text);
+        } catch (IOException e) {
+            throw new IllegalStateException("cannot read back a server definition: " + text, e);
+        }
     }
 }
