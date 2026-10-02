@@ -149,6 +149,7 @@ public final class Renderer {
             case DRAFT_EXPIRED -> plain(text("draft.expired")
                     + (payload.hasNonNull("title") ? "\n" + escapeWithin(payload.get("title").asText(), TITLE_LIMIT) : ""));
             case PLAN_READY -> throw new IllegalStateException("rendered above");
+            case ANSWER_READY -> answer(payload);
             case PLAN_QUESTION -> planQuestion(payload);
             case TELEPORT -> teleport(payload);
             case PLAN_EDIT_PROMPT -> new Rendered(format("plan.editPrompt", taskId(payload)), List.of(), null,
@@ -159,7 +160,9 @@ public final class Renderer {
             case CORRECTION_QUEUED -> plain(format("task.correctionQueued", taskId(payload)));
             case TASK_COMPLETED -> completed(payload);
             case TASK_COMPLETED_SHORT -> plain(format("task.completed", taskId(payload), escape(payload.path("project").asText()))
-                    + "\n" + (payload.path("filesChanged").asInt() == 0
+                    + "\n" + (payload.path("answered").asBoolean()
+                            ? text("task.answered")
+                            : payload.path("filesChanged").asInt() == 0
                             ? text("task.completedNoChanges")
                             : format("task.completedPr", escape(payload.path("prUrl").asText()))));
             case TASK_FAILED_SHORT -> plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText()))));
@@ -648,6 +651,24 @@ public final class Renderer {
                 return new Rendered(planHtml(payload, title, "summary"), keyboard, null);
             }
         }
+    }
+
+    /**
+     * An answer (spec: answers): its markdown converted, with the run's footer. Past one message, the converted text (which
+     * escaping makes longer) is not sent: a caption goes with the raw markdown as a document.
+     */
+    private Rendered answer(JsonNode payload) {
+        String title = format("answer.title", taskId(payload), escape(payload.path("project").asText()));
+        String footer = "<i>" + modelPrefix(payload) + format("plan.footer", money(payload.path("costUsd")),
+                duration(Duration.ofSeconds(payload.path("durationSeconds").asLong()))) + "</i>" + modelWarning(payload)
+                + sandboxWarning(payload);
+        String answer = payload.path("answer").asText();
+        String html = title + "\n\n" + TelegramMarkdown.toHtml(answer) + "\n\n" + footer;
+        if (html.length() <= MESSAGE_LIMIT) {
+            return new Rendered(html, List.of(), null);
+        }
+        return new Rendered(truncate(title + "\n" + text("answer.document") + "\n\n" + footer, CAPTION_LIMIT), List.of(),
+                new Document("answer-" + taskId(payload) + ".md", answer));
     }
 
     private String planHtml(JsonNode payload, String title, String view) {

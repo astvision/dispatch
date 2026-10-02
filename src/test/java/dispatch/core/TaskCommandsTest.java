@@ -3,6 +3,7 @@ package dispatch.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -56,6 +57,8 @@ class TaskCommandsTest {
     /** Never cloned: a task given there is refused as unavailable. */
     private static final Config.Project CRM = new Config.Project("crm", null, "https://github.com/acme/crm.git", null, "develop",
             "claude-code", null, null, List.of(), null, null, null);
+    private static final Plan ANSWER = new Plan("Where is the timeout set?", List.of(), List.of(), List.of(), List.of(),
+            List.of(), List.of(), Plan.Result.ANSWER, "In `AuthClient.java:14`: **30 s**.");
     private static final Plan PLAN = new Plan("Make the auth timeout configurable", List.of("AuthClient.java:14 hard-codes 30s"),
             List.of("Read auth.timeout"), List.of(), List.of());
     private static final Plan PLAN_WITH_TWO_QUESTIONS = new Plan("Make the auth timeout configurable", List.of(),
@@ -522,5 +525,20 @@ class TaskCommandsTest {
 
     private Map<String, String> row(String sql, Object... params) {
         return SqlRows.single(dbFile, sql, params);
+    }
+
+    @Test
+    void anAnsweredTaskCompletesWithoutApprovalAndOnlyItsRequesterGetsTheAnswer() {
+        long id = given(BOLD, "5");
+        transitions.planSucceeded(id, claimFor(id).seq(), ANSWER, planResult());
+
+        Map<String, String> task = row("SELECT phase, completed_at, pr_url FROM task WHERE id = ?", id);
+        assertEquals("COMPLETED", task.get("phase"));
+        assertNotNull(task.get("completed_at"));
+        assertNull(task.get("pr_url"));
+        assertEquals("1", row("SELECT count(*) AS n FROM run WHERE task_id = ?", id).get("n"), "no execution run");
+        assertEquals(List.of(BOLD.ref()), chatsOf("ANSWER_READY"));
+        assertEquals(List.of(), chatsOf("PLAN_READY"));
+        assertEquals("answered", row("SELECT reason FROM task_event WHERE task_id = ? ORDER BY id DESC LIMIT 1", id).get("reason"));
     }
 }

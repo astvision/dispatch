@@ -184,6 +184,15 @@ public final class Tasks {
                 Phase.AWAITING_APPROVAL, planJson, now, id, Phase.PLANNING) == 1;
     }
 
+    /** A task its plan run answered (spec: answers): completed without an execution, its answer kept as its plan. */
+    public static boolean answered(Tx tx, long id, String planJson, Instant now) {
+        return tx.update("""
+                        UPDATE task SET phase = ?, plan_json = ?, failure_reason = NULL, failure_detail = NULL,
+                                        completed_at = ?, updated_at = ?
+                        WHERE id = ? AND phase = ?""",
+                Phase.COMPLETED, planJson, now, now, id, Phase.PLANNING) == 1;
+    }
+
     /**
      * A retried or followed-up task that failed before no longer carries that failure.
      *

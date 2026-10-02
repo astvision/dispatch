@@ -1303,6 +1303,7 @@ class RendererTest {
                     .put("prUrl", "https://github.com/acme/alm/pull/7").put("filesChanged", 2);
             case TASK_FAILED_SHORT -> Json.object().put("taskId", 1).put("reason", "DELIVERY");
             case PLAN_READY -> planPayload(List.of("Do it"), List.of());
+            case ANSWER_READY -> answerPayload("In `Plan.java`");
             case TASK_FAILED -> Json.object().put("taskId", 1).put("reason", "AGENT").put("detail", "boom");
             case TASK_REJECTED, TASK_CANCELLED, EXECUTION_QUEUED, CORRECTION_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");
             case TASK_COMPLETED -> completedPayload("https://github.com/acme/alm/pull/7", 1, List.of("Bash: gh pr list"));
@@ -1476,5 +1477,39 @@ class RendererTest {
         String html = renderer.render(OutboxKind.PLAN_READY, planPayload(List.of("Do it"), List.of())).html();
 
         assertFalse(html.contains("Плагин"), html);
+    }
+
+    private static ObjectNode answerPayload(String answer) {
+        return Json.object().put("taskId", 42).put("project", "alm").put("answer", answer)
+                .put("costUsd", "0.05").put("durationSeconds", 40).put("model", "claude-sonnet-5");
+    }
+
+    @Test
+    void anAnswerIsOneMessageWithItsMarkdownConvertedAndTheRunsFooter() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.ANSWER_READY, answerPayload("In `Plan.java`: **parse**"));
+
+        assertTrue(rendered.html().startsWith("💬 <b>#42</b> · alm\n\nIn <code>Plan.java</code>: <b>parse</b>"), rendered.html());
+        assertTrue(rendered.html().contains("Зардал"), rendered.html());
+        assertNull(rendered.document());
+    }
+
+    @Test
+    void anAnswerPastOneMessageGoesAsAMarkdownDocumentEvenWhenEscapingGrowsIt() {
+        String answer = "<>&".repeat(1200);
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.ANSWER_READY, answerPayload(answer));
+
+        assertEquals("answer-42.md", rendered.document().fileName());
+        assertEquals(answer, rendered.document().markdown(), "the raw markdown, unconverted");
+        assertTrue(rendered.html().length() <= Renderer.CAPTION_LIMIT, rendered.html());
+    }
+
+    @Test
+    void aGroupHearsAnAnswerAsAnsweredNotAsAChangeWithoutAPullRequest() {
+        String html = renderer.render(OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", 42).put("project", "alm")
+                .putNull("prUrl").put("filesChanged", 0).put("answered", true)).html();
+
+        assertTrue(html.contains("💬 Хариулсан"), html);
+        assertFalse(html.contains("pull request"), html);
     }
 }

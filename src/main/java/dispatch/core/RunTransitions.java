@@ -88,6 +88,10 @@ public final class RunTransitions {
             if (!finishRun(tx, run, RunStatus.SUCCEEDED, null, null, result, plan.toJson(), now)) {
                 return;
             }
+            if (plan.result() == Plan.Result.ANSWER) {
+                answered(tx, task, run, plan, result, now);
+                return;
+            }
             if (!Tasks.planned(tx, taskId, plan.toJson(), now)) {
                 ignoredResult(tx, task, seq);
                 return;
@@ -103,6 +107,23 @@ public final class RunTransitions {
             }
             logTransition(tx, taskId, seq, Phase.PLANNING, Phase.AWAITING_APPROVAL);
         });
+    }
+
+    /** The plan run answered the task (spec: answers): it completes now, and only its requester hears the answer. */
+    private void answered(Tx tx, Task task, Run run, Plan plan, AgentResult result, Instant now) {
+        long taskId = task.id();
+        if (!Tasks.answered(tx, taskId, plan.toJson(), now)) {
+            ignoredResult(tx, task, run.seq());
+            return;
+        }
+        Events.record(tx, taskId, run.seq(), ACTOR, Phase.PLANNING, Phase.COMPLETED, "answered", now);
+        ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("answer", plan.answer());
+        putRunDetails(payload, run, result, now);
+        enqueueForRequester(tx, task, OutboxKind.ANSWER_READY, payload, now);
+        enqueue(tx, task, OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", taskId).put("project", task.project())
+                .putNull("prUrl").put("filesChanged", 0).put("answered", true), now);
+        GroupAcks.react(tx, task, GroupReaction.COMPLETED, now);
+        logTransition(tx, taskId, run.seq(), Phase.PLANNING, Phase.COMPLETED);
     }
 
     /** An execution run whose changes were delivered, with the agent's own summary. */

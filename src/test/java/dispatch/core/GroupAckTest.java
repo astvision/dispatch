@@ -10,6 +10,7 @@ import dispatch.config.Config;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
 import dispatch.domain.GroupAck;
+import dispatch.domain.GroupReaction;
 import dispatch.domain.Plan;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
@@ -232,5 +233,20 @@ class GroupAckTest {
 
     private Map<String, String> row(String sql, Object... params) {
         return SqlRows.single(dbFile, sql, params);
+    }
+
+    @Test
+    void anAnsweredGroupTaskGetsTheCompletionReactionButTheAnswerGoesOnlyToItsRequester() {
+        long id = createFromMention("60");
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 10, clock.instant())).orElseThrow();
+        Plan answer = new Plan("Where?", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                Plan.Result.ANSWER, "In AuthClient.java");
+
+        transitions.planSucceeded(id, run.seq(), answer, planResult());
+
+        assertEquals(GroupReaction.COMPLETED.emoji(), lastReactionEmoji(id));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE task_id = ? AND kind = 'ANSWER_READY' AND chat_ref = ?",
+                id, GROUP).get("n"), "the answer never reaches the group");
+        assertEquals("1", row("SELECT count(*) AS n FROM outbox WHERE task_id = ? AND kind = 'ANSWER_READY'", id).get("n"));
     }
 }
