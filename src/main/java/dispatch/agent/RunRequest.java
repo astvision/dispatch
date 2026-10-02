@@ -38,6 +38,14 @@ public record RunRequest(
         pluginDirs = pluginDirs == null ? List.of() : List.copyOf(pluginDirs);
     }
 
+    /** This request with {@code more} plugin directories after its own; the sandbox binds them all read-only. */
+    public RunRequest withPluginDirs(List<Path> more) {
+        List<Path> dirs = new java.util.ArrayList<>(pluginDirs);
+        dirs.addAll(more);
+        return new RunRequest(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase,
+                environment, dirs);
+    }
+
     public RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId, boolean resume, List<Path> readOnlyDirs,
                       BigDecimal budgetUsd, String model, String effort, Path logBase, Map<String, String> environment) {
         this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, environment, List.of());

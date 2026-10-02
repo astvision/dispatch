@@ -79,9 +79,15 @@ public final class ClaudeCodeAgent implements Agent {
         // Read and resolved now, on the machine that runs the agent: an edit or an install applies to this run.
         OwnerPlugins.Resolved owner = OWNER_KINDS.contains(request.kind())
                 ? ownerPlugins.resolve(command, ProcessRun.agentEnvironment(environment)) : OwnerPlugins.Resolved.NONE;
+        List<Path> ownerDirs = new ArrayList<>(owner.pluginDirs());
+        if (!owner.skills().isEmpty()) {
+            ownerDirs.add(OwnerPlugins.skillsPlugin(Path.of(request.logBase() + ".skills"), owner.skills()));
+        }
+        // Through the request, so the sandbox binds them read-only like the dispatch plugin.
+        RunRequest run = ownerDirs.isEmpty() ? request : request.withPluginDirs(ownerDirs);
         Map<String, String> runEnvironment = new HashMap<>(environment);
         runEnvironment.putAll(owner.environment());
-        return ProcessRun.start("claude-code", commandLine(request, permissionMode, owner), request, runEnvironment, request.prompt(),
+        return ProcessRun.start("claude-code", commandLine(run, permissionMode, owner), run, runEnvironment, run.prompt(),
                 new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE);
     }
 
@@ -128,17 +134,19 @@ public final class ClaudeCodeAgent implements Agent {
         for (Path dir : request.readOnlyDirs()) {
             args.addAll(List.of("--add-dir", dir.toString()));
         }
-        // The dispatch plugin's vetted skills (spec: agent skills), then the plugins the owner lists (spec: owner plugins);
-        // nothing else the owner has enabled (--setting-sources). Also a working directory: a plan or review run may not
+        // The dispatch plugin's vetted skills (spec: agent skills), then the plugins and skills the owner lists (spec: owner
+        // plugins); nothing else the owner has enabled (--setting-sources). Also a working directory: a plan or review run may not
         // read a skill's supporting files outside its own, and nobody answers the prompt to allow it (probed on Claude Code
         // 2.1.286). The sandbox keeps it read-only.
-        List<Path> plugins = new ArrayList<>(request.pluginDirs());
-        plugins.addAll(owner.pluginDirs());
-        for (Path dir : plugins) {
+        for (Path dir : request.pluginDirs()) {
             args.addAll(List.of("--plugin-dir", dir.toString(), "--add-dir", dir.toString()));
         }
+        // The owner's skills are links in their plugin: what they point to must be readable too.
+        for (Path dir : owner.skills()) {
+            args.addAll(List.of("--add-dir", dir.toString()));
+        }
         // A listed skill cannot be invoked without the Skill tool (probed on Claude Code 2.1.286).
-        String skill = plugins.isEmpty() ? "" : ",Skill";
+        String skill = request.pluginDirs().isEmpty() ? "" : ",Skill";
         switch (request.kind()) {
             // Read-only investigation: no subagents or schedulers, just reading files and read-only shell commands.
             case PLAN -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", PLAN_SCHEMA));

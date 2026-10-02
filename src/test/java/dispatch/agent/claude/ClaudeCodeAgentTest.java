@@ -541,4 +541,44 @@ class ClaudeCodeAgentTest {
         assertFalse(args.contains("--mcp-config") || args.contains("--plugin-dir"), args.toString());
         assertTrue(logged.contains("event=agent.owner_lists_unreadable"), logged);
     }
+
+    /** The owner's skills, by link, under a plugin the sandbox binds read-only; what they link to stays readable. */
+    @Test
+    void listedSkillsReachTheRunAsAPluginTheSandboxBindsAndTheirOwnDirsStayReadable() throws Exception {
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Path graphify = Files.createDirectories(home.resolve(".claude/skills/graphify"));
+        Files.writeString(graphify.resolve("SKILL.md"), "---\nname: graphify\ndescription: d\n---\n");
+        Path config = Files.writeString(dir.resolve("dispatch.yaml"), "agents:\n  claude-code:\n    skills: [graphify]\n");
+        List<SandboxPolicy> policies = new ArrayList<>();
+        Sandbox recording = new Sandbox() {
+            @Override
+            public String name() {
+                return "recording";
+            }
+
+            @Override
+            public String unavailableReason() {
+                return null;
+            }
+
+            @Override
+            public List<String> wrap(List<String> commandLine, SandboxPolicy policy) {
+                policies.add(policy);
+                return commandLine;
+            }
+        };
+        ClaudeCodeAgent owned = new ClaudeCodeAgent(FakeClaude.install(Files.createDirectories(dir.resolve("owner"))).toString(),
+                FakeClaude.environment(), Duration.ofSeconds(2),
+                new Confinement(recording, new SandboxPolicies(home, dir.resolve("state"), List.of())),
+                OwnerPlugins.instance(config, home));
+
+        awaitQuietly(owned.start(plan("Plan it")));
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        Path plugin = Path.of(args.get(args.indexOf("--plugin-dir") + 1));
+        assertTrue(Files.isRegularFile(plugin.resolve("skills/graphify/SKILL.md")), args.toString());
+        assertTrue(policies.getFirst().readOnly().contains(plugin), "bound read-only: " + policies.getFirst().readOnly());
+        assertEquals(graphify.toString(), args.get(args.lastIndexOf("--add-dir") + 1), "what the link points to stays readable");
+        assertTrue(args.get(args.indexOf("--tools") + 1).endsWith(",Skill"), args.toString());
+    }
 }
