@@ -2,7 +2,6 @@ package dispatch.worker;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -33,7 +32,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
@@ -390,45 +388,6 @@ public final class WorkerApi implements AutoCloseable {
         }
     }
 
-
-    private static JsonNode required(JsonNode body, String field) {
-        if (!body.hasNonNull(field)) {
-            throw new ApiException(400, "invalid", Text.raw(field + ": required"));
-        }
-        return body.get(field);
-    }
-
-    private static long requiredLong(JsonNode body, String field) {
-        JsonNode value = required(body, field);
-        if (!value.isIntegralNumber()) {
-            throw new ApiException(400, "invalid", Text.raw(field + ": must be a whole number"));
-        }
-        return value.asLong();
-    }
-
-    private static int requiredInt(JsonNode body, String field) {
-        JsonNode value = required(body, field);
-        if (!value.isIntegralNumber()) {
-            throw new ApiException(400, "invalid", Text.raw(field + ": must be a whole number"));
-        }
-        return value.asInt();
-    }
-
-    /** As {@link #requiredInt}, but absent (rather than merely non-numeric) is a valid, meaningful {@code null}. */
-    private static Integer optionalInt(JsonNode body, String field) {
-        if (!body.hasNonNull(field)) {
-            return null;
-        }
-        JsonNode value = body.get(field);
-        if (!value.isIntegralNumber()) {
-            throw new ApiException(400, "invalid", Text.raw(field + ": must be a whole number"));
-        }
-        return value.asInt();
-    }
-
-    private static String text(JsonNode body, String field) {
-        return body.hasNonNull(field) ? body.get(field).asText() : null;
-    }
 
     private Workers.Paired authenticate(HttpExchange exchange) {
         String header = exchange.getRequestHeaders().getFirst("Authorization");

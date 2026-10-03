@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  * The edits of dispatch.yaml that must keep something true while they change it: each one carries its cascade and its
- * refusal, so the Mini App, the CLI and group linking cannot disagree about them. Each takes the file's text and the
+ * refusal, so every caller gets the same cascade and the same refusal. Each takes the file's text and the
  * configuration parsed from it, and answers the edited text or refuses with a {@link ConfigException} in the team's words.
  * Field edits with nothing to keep true go through {@link ConfigEdit} directly.
  */

@@ -147,7 +147,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
         // that renews the lease, a second post at +100s total — past the original 60s — must still be accepted.
         clock.advance(Duration.ofSeconds(50));
         JsonNode first = Json.read(post(WorkerApi.PROGRESS, key,
-                "{\"taskId\":7,\"seq\":2,\"agentStarted\":false,\"worktree\":\"/home/ann/alm-7\",\"baseSha\":\"6f3030a\",\"agentStarted\":true,"
+                "{\"taskId\":7,\"seq\":2,\"worktree\":\"/home/ann/alm-7\",\"baseSha\":\"6f3030a\",\"agentStarted\":true,"
                         + "\"steps\":9,\"lastAction\":\"Bash: git status\"}").body());
         assertFalse(first.get("cancel").asBoolean());
         assertEquals("/home/ann/alm-7", worktree.get());
