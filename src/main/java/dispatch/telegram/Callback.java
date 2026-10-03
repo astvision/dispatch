@@ -236,6 +236,14 @@ public sealed interface Callback {
         }
     }
 
+    /** A project picked after a bare /task, to be asked for the task next. */
+    record PickProject(String project) implements Callback {
+        @Override
+        public String data() {
+            return fit("tp:" + project);
+        }
+    }
+
     /** A plan's own buttons that redraw it in place: its summary, its full details, or its decisions to change. */
     record PlanView(long taskId, int planSeq, View view) implements Callback {
         @Override
@@ -315,6 +323,7 @@ public sealed interface Callback {
             case "link" -> parts.length == 3 ? link(number(parts[1]), parts[2]) : null;
             case "join" -> parts.length == 3 ? join(number(parts[1]), parts[2]) : null;
             case "help" -> parts.length == 2 ? new Help(parts[1]) : null;
+            case "tp" -> parts.length == 2 ? new PickProject(parts[1]) : null;
             case "pv" -> parts.length == 4 ? new PlanView(number(parts[1]), (int) number(parts[2]), View.of(parts[3])) : null;
             case "pd" -> parts.length == 5
                     ? new Decide(number(parts[1]), (int) number(parts[2]), (int) number(parts[3]), (int) number(parts[4])) : null;

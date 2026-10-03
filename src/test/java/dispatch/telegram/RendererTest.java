@@ -1320,6 +1320,11 @@ class RendererTest {
             case NOT_ALLOWED -> Json.object().put("name", "Sara");
             case TASK_USAGE -> Json.object();
             case TASK_PROMPT -> Json.object();
+            case TASK_PROJECT_PICK -> {
+                ObjectNode pick = Json.object();
+                pick.putArray("projects").add("alm").add("life");
+                yield pick;
+            }
             case PROJECTS -> {
                 ObjectNode payload = Json.object();
                 payload.putArray("projects").addObject().put("name", "crm").putNull("alias").put("baseBranch", "main")
@@ -1484,6 +1489,20 @@ class RendererTest {
     private static ObjectNode answerPayload(String answer) {
         return Json.object().put("taskId", 42).put("project", "alm").put("answer", answer)
                 .put("costUsd", "0.05").put("durationSeconds", 40).put("model", "claude-sonnet-5");
+    }
+
+    @Test
+    void theProjectPickIsOneButtonPerProjectAndTheChosenOnesPromptNamesIt() {
+        ObjectNode pick = Json.object();
+        pick.putArray("projects").add("alm").add("life");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.TASK_PROJECT_PICK, pick);
+        Renderer.Rendered prompt = renderer.render(OutboxKind.TASK_PROMPT, Json.object().put("project", "life"));
+
+        assertEquals(List.of("alm", "life"), rendered.keyboard().stream().map(row -> row.getFirst().text()).toList());
+        assertEquals("tp:life", rendered.keyboard().get(1).getFirst().data());
+        assertTrue(prompt.html().contains("<b>life</b>"), prompt.html());
+        assertNotNull(prompt.forceReply());
     }
 
     @Test

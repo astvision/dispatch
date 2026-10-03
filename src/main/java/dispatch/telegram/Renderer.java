@@ -192,7 +192,10 @@ public final class Renderer {
                     ? format("group.noProjects", escape(payload.get("names").asText()))
                     : text("noProjects"));
             case HELP -> help(payload);
-            case TASK_PROMPT -> new Rendered(text("help.writePrompt"), List.of(), null, text("help.writePlaceholder"));
+            case TASK_PROMPT -> new Rendered(payload.hasNonNull("project")
+                    ? format("task.writePromptFor", escape(payload.get("project").asText())) : text("help.writePrompt"),
+                    List.of(), null, text("help.writePlaceholder"));
+            case TASK_PROJECT_PICK -> projectPick(payload);
             case PROJECTS -> projects(payload.path("projects"));
             case WORKER_PAIRING -> workerPairing(payload);
             case WORKER_REVOKED -> plain(payload.path("found").asBoolean()
@@ -662,6 +665,15 @@ public final class Renderer {
      * An answer (spec: answers): its markdown converted, with the run's footer. Past one message, the converted text (which
      * escaping makes longer) is not sent: a caption goes with the raw markdown as a document.
      */
+    /** One button per project the member may give a task for, a row each so long names stay readable. */
+    private Rendered projectPick(JsonNode payload) {
+        List<List<Button>> rows = new ArrayList<>();
+        for (JsonNode project : payload.withArray("projects")) {
+            rows.add(List.of(new Button(project.asText(), new Callback.PickProject(project.asText()).data())));
+        }
+        return new Rendered(text("task.pickProject"), rows, null);
+    }
+
     private Rendered answer(JsonNode payload) {
         String title = format("answer.title", taskId(payload), escape(payload.path("project").asText()));
         String footer = "<i>" + modelPrefix(payload) + format("plan.footer", money(payload.path("costUsd")),

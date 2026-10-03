@@ -1854,6 +1854,59 @@ class UpdateHandlerTest {
     }
 
     @Test
+    void aBareTaskCommandOffersTheMembersProjectsAndTheChosenOneIsAskedForItsTask() throws Exception {
+        handler.handle(privateCommand(596, 100, "Bold", "/task"));
+
+        Map<String, String> pick = row("SELECT * FROM outbox WHERE kind = 'TASK_PROJECT_PICK'");
+        assertEquals("telegram:100", pick.get("chat_ref"));
+        JsonNode offered = Json.read(pick.get("payload")).get("projects");
+        assertEquals(List.of("autoland-management", "life"), List.of(offered.get(0).asText(), offered.get(1).asText()));
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_USAGE'").get("n"));
+
+        handler.handle(privateCallback(597, 100, "Bold", "tp:life"));
+
+        assertEquals(renderer.text("callback.done"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        Map<String, String> prompt = row("SELECT * FROM outbox WHERE kind = 'TASK_PROMPT'");
+        assertEquals("life", Json.read(prompt.get("payload")).get("project").asText());
+        db.transaction(tx -> Outbox.markSent(tx, Long.parseLong(prompt.get("id")), 1, "telegram:100/2001", clock.instant()));
+
+        handler.handle(message(598, 92, 100, "Bold", 100L, "private", "Add a sleep tracker", """
+                {"message_id":2001,"from":{"id":1,"is_bot":true,"first_name":"Dispatch"},"chat":{"id":100,"type":"private"},
+                 "date":1789640000,"text":"prompt"}"""));
+
+        Map<String, String> draft = row("SELECT description, project FROM draft");
+        assertEquals("Add a sleep tracker", draft.get("description"));
+        assertEquals("life", draft.get("project"));
+    }
+
+    @Test
+    void aBareTaskCommandWithOneProjectSkipsThePickAndAsksForTheTask() {
+        Config.Project alm = new Config.Project("autoland-management", "alm", "https://github.com/acme/alm.git", null, "main",
+                "claude-code", null, null, List.of(), null, null, null);
+        Projects one = new Projects(List.of(alm), project -> Optional.empty());
+        Groups oneGroup = new Groups(List.of(new Config.Group("backend", GROUP, List.of(new Config.Member(100, "Bold")),
+                List.of("autoland-management"))));
+        UpdateHandler oneProject = new UpdateHandler(db, new TaskService(oneGroup, one, new ActiveRuns(), clock, () -> { }, () -> { }),
+                null, oneGroup, one, api, renderer, dispatch.Redactor.patternsOnly(), FakeTelegram.BOT_USERNAME, clock, () -> { });
+
+        oneProject.handle(privateCommand(599, 100, "Bold", "/task"));
+
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_PROJECT_PICK'").get("n"));
+        assertEquals("autoland-management", Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_PROMPT'").get("payload"))
+                .get("project").asText());
+    }
+
+    @Test
+    void aProjectPickFromSomeoneElsesChatOrForAProjectNotTheirsIsRefused() throws Exception {
+        handler.handle(privateCallback(600, 200, "Ali", "tp:life"));
+
+        assertEquals(renderer.text("callback.notAllowed"),
+                telegram.awaitRequest("answerCallbackQuery", Duration.ofSeconds(2)).json().get("text").asText());
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_PROMPT'").get("n"));
+    }
+
+    @Test
     void cancelAndRetryWithoutANumberSayHowToUseThem() {
         handler.handle(privateCommand(594, 100, "Bold", "/cancel"));
         handler.handle(privateCommand(595, 100, "Bold", "/retry x"));

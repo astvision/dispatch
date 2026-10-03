@@ -339,7 +339,9 @@ public final class UpdateHandler {
                 reply(tx, who, more, commands.run(tx, who, more), origin, chatRef);
             }
             case ADD_TO_DRAFT -> addToDraft(tx, replied.get(), message, who);
-            case TASK_FROM_PROMPT, PRIVATE_TASK -> tasks.draft(tx, who, null, text(message), origin, attachments(message));
+            case TASK_FROM_PROMPT -> tasks.draft(tx, who, Json.read(replied.get().sent().payload()).path("project").asText(null),
+                    text(message), origin, attachments(message));
+            case PRIVATE_TASK -> tasks.draft(tx, who, null, text(message), origin, attachments(message));
             case FOLLOW_UP -> {
                 TaskCommand followUp = new TaskCommand.FollowUp(replied.get().sent().taskId(), text(message), new Origin(origin));
                 reply(tx, who, followUp, commands.run(tx, who, followUp), origin, chatRef);
@@ -411,8 +413,43 @@ public final class UpdateHandler {
         JsonNode repliedTo = message.path("reply_to_message");
         Optional<Config.Project> named = firstWordProject(args, groups.projectsOfMember(who.ref()));
         String own = named.isPresent() ? afterFirstWord(args) : args;
-        tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), withRepliedMessage(own, repliedTo), origin,
-                attachments(repliedTo, message));
+        String text = withRepliedMessage(own, repliedTo);
+        List<Attachment> files = attachments(repliedTo, message);
+        if (text.isBlank() && files.isEmpty() && named.isEmpty() && offerProjects(tx, who, origin)) {
+            return;
+        }
+        tasks.draft(tx, who, named.map(Config.Project::name).orElse(null), text, origin, files);
+    }
+
+    /**
+     * A bare /task: the member picks a project, then writes the task under the prompt that follows; with one project the
+     * pick is skipped. False for a member with no project, who is told so by the usual draft path.
+     */
+    private boolean offerProjects(Tx tx, Requester who, String origin) {
+        List<String> offered = groups.projectsOfMember(who.ref()).stream().sorted().toList();
+        if (offered.isEmpty()) {
+            return false;
+        }
+        if (offered.size() == 1) {
+            enqueue(tx, OutboxKind.TASK_PROMPT, who.ref(), origin, Json.object().put("project", offered.getFirst()));
+            return true;
+        }
+        ObjectNode payload = Json.object();
+        offered.forEach(payload.putArray("projects")::add);
+        enqueue(tx, OutboxKind.TASK_PROJECT_PICK, who.ref(), origin, payload);
+        return true;
+    }
+
+    /** A tap on a project after a bare /task: the task is asked for next, under a prompt naming that project. */
+    private void onPickProjectButton(Tx tx, JsonNode callback, Requester who, String project) {
+        String callbackId = callback.path("id").asText();
+        JsonNode message = callback.path("message");
+        if (!isPrivateChatOf(message.path("chat"), callback.path("from")) || !groups.projectsOfMember(who.ref()).contains(project)) {
+            answer(tx, callbackId, "callback.notAllowed");
+            return;
+        }
+        answer(tx, callbackId, "callback.done");
+        enqueue(tx, OutboxKind.TASK_PROMPT, Refs.chat(message.path("chat").path("id").asLong()), null, Json.object().put("project", project));
     }
 
     /** The project the first word of /task's arguments names, by name or alias, if it is one of {@code candidates}. */
@@ -857,6 +894,7 @@ public final class UpdateHandler {
             case Callback.JoinChoice join -> onJoinButton(tx, callback, who, join);
             case Callback.Stats stats -> onStatsButton(tx, callback, stats);
             case Callback.Help help -> onHelpButton(tx, callback, help.page());
+            case Callback.PickProject pick -> onPickProjectButton(tx, callback, who, pick.project());
             case Callback.PlanView _, Callback.Decide _, Callback.EditPlan _ -> onPlanButton(tx, callback, who, parsed.get());
         }
     }
@@ -868,7 +906,7 @@ public final class UpdateHandler {
      */
     private boolean pressableIn(Callback pressed, boolean servedChat, boolean privateChat) {
         return switch (pressed) {
-            case Callback.Help _ -> true;
+            case Callback.Help _, Callback.PickProject _ -> true;
             case Callback.Addition _ -> privateChat;
             case Callback.GroupLink _ -> groupLinks != null && privateChat;
             case Callback.Merge _ -> merges != null && privateChat;
