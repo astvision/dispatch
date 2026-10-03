@@ -78,6 +78,20 @@ class GroupsTest {
         assertEquals(Set.of("prop"), several.projectsOfChat("telegram:-300"));
     }
 
+    /** A group with announce: off hears nothing of tasks given elsewhere; one given in that very chat still gets its lines. */
+    @Test
+    void aGroupThatDoesNotAnnounceHearsOnlyOfTasksGivenInItsOwnChat() {
+        Groups quiet = new Groups(List.of(
+                new Config.Group("mine", -100L, List.of(new Config.Member(1, "Bold")), List.of("prop"), "off"),
+                new Config.Group("qa", -300L, List.of(new Config.Member(1, "Bold")), List.of("prop", "life"), null)));
+
+        assertEquals(java.util.Optional.empty(), new Groups(List.of(
+                new Config.Group("mine", -100L, List.of(new Config.Member(1, "Bold")), List.of("life"), "off")))
+                .chatOfTask("life", "telegram:1/5"), "given privately, the only group is quiet");
+        assertEquals(java.util.Optional.of("telegram:-300"), quiet.chatOfTask("prop", "telegram:1/5"), "the first group that announces");
+        assertEquals(java.util.Optional.of("telegram:-100"), quiet.chatOfTask("prop", "telegram:-100/12"), "given there");
+    }
+
     @Test
     void eachProjectHasTheChatOfItsGroup() {
         assertEquals(java.util.Optional.of("telegram:-200"), groups.chatOfTask("life", "telegram:1/5"));

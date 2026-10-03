@@ -63,19 +63,23 @@ public final class Groups {
 
     /**
      * The chat a task of {@code project} is announced in: the one it was given in when that is one of the project's group
-     * chats (a project may have several, ADR 0025), else the project's first. Empty when none of its groups has a chat
-     * (ADR 0014). Config validation guarantees some group owns the project.
+     * chats (a project may have several, ADR 0025), else the project's first group chat that announces tasks given
+     * elsewhere ({@code announce: off} keeps a chat out of it). Empty when no such chat exists (ADR 0014). Config validation
+     * guarantees some group owns the project.
      *
-     * @param originRef the message that gave the task, e.g. {@code telegram:-100/12}
+     * @param originRef the message that gave the task, e.g. {@code telegram:-100/12}; null for one given on the desk
      */
     public Optional<String> chatOfTask(String project, String originRef) {
-        List<String> chats = telegram.groups().stream().filter(group -> group.projects().contains(project))
-                .map(Config.Group::chatId).filter(java.util.Objects::nonNull).map(Groups::chatRef).toList();
+        List<Config.Group> owning = telegram.groups().stream()
+                .filter(group -> group.projects().contains(project) && group.chatId() != null).toList();
         if (telegram.groups().stream().noneMatch(group -> group.projects().contains(project))) {
             throw new IllegalArgumentException("project " + project + " belongs to no group");
         }
         String originChat = originRef == null ? "" : originRef.split("/", 2)[0];
-        return chats.contains(originChat) ? Optional.of(originChat) : chats.stream().findFirst();
+        if (owning.stream().anyMatch(group -> chatRef(group.chatId()).equals(originChat))) {
+            return Optional.of(originChat);
+        }
+        return owning.stream().filter(Config.Group::announces).map(group -> chatRef(group.chatId())).findFirst();
     }
 
     public boolean isMemberOfProjectGroup(String requesterRef, String project) {

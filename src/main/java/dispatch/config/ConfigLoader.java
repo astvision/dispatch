@@ -182,6 +182,9 @@ public final class ConfigLoader {
             } else if (!chats.add(group.chatId())) {
                 errors.add(Text.of("config.chatidIs", at, group.chatId()));
             }
+            if (group.announce() != null && !group.announce().equals("on") && !group.announce().equals("off")) {
+                errors.add(Text.of("config.onOff", at + ".announce", group.announce()));
+            }
             List<Config.Member> members = group.members() == null ? List.of() : group.members();
             validateMembers(at, members, errors);
             List<String> owned = group.projects() == null ? List.of() : group.projects();
@@ -200,7 +203,7 @@ public final class ConfigLoader {
                     listings.merge(name, 1, Integer::sum);
                 }
             }
-            normalized.add(new Config.Group(group.name(), group.chatId(), List.copyOf(members), List.copyOf(owned)));
+            normalized.add(new Config.Group(group.name(), group.chatId(), List.copyOf(members), List.copyOf(owned), group.announce()));
         }
         for (int i = 0; i < projects.size(); i++) {
             if (!listings.containsKey(projects.get(i).name())) {

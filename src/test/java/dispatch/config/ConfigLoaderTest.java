@@ -110,6 +110,18 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void aGroupAnnouncesByDefaultAndMayBeTurnedOffButNotToAnythingElse() throws Exception {
+        assertTrue(ConfigLoader.load(write(VALID), ENV).telegram().groups().getFirst().announces());
+
+        String off = VALID.replace("    - name: backend\n", "    - name: backend\n      announce: off\n");
+        assertFalse(ConfigLoader.load(write(off), ENV).telegram().groups().getFirst().announces());
+
+        Path bad = write(VALID.replace("    - name: backend\n", "    - name: backend\n      announce: quiet\n"));
+        ConfigException error = assertThrows(ConfigException.class, () -> ConfigLoader.load(bad, ENV));
+        assertTrue(error.getMessage().contains("telegram.groups[0].announce: on or off, not quiet"), error.getMessage());
+    }
+
+    @Test
     void aBlankTestCommandIsRefused() throws Exception {
         Path file = write(VALID.replace("- name: autoland-management\n", "- name: autoland-management\n    test: \"  \"\n"));
 

@@ -122,9 +122,19 @@ public record Config(
      * A group with its members and the projects it owns; every project belongs to at least one group (ADR 0012), and may belong to several, one per chat (ADR 0025). A
      * personal bot's group may link a chat too, for announcements (ADR 0014).
      *
-     * @param chatId the group chat for announcements; null when the group has none, so its tasks stay in private chats
+     * @param chatId   the group chat for announcements; null when the group has none, so its tasks stay in private chats
+     * @param announce "off" when the chat is not to hear of tasks given elsewhere (privately, on the desk, in another chat):
+     *                 nobody else's business there; null or "on" announces them as ADR 0012 set out
      */
-    public record Group(String name, Long chatId, List<Member> members, List<String> projects) {
+    public record Group(String name, Long chatId, List<Member> members, List<String> projects, String announce) {
+
+        public Group(String name, Long chatId, List<Member> members, List<String> projects) {
+            this(name, chatId, members, projects, null);
+        }
+
+        public boolean announces() {
+            return !"off".equals(announce);
+        }
     }
 
     public record Member(long id, String name) {
