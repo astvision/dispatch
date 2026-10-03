@@ -431,8 +431,9 @@ class TaskLifecycleTest {
         JsonNode payload = Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED'").get("payload"));
         assertTrue(payload.get("prUrl").isNull());
         assertEquals(0, payload.get("filesChanged").asInt());
-        assertEquals(0, Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("payload"))
-                .get("filesChanged").asInt());
+        JsonNode brief = Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("payload"));
+        assertEquals(0, brief.get("filesChanged").asInt());
+        assertFalse(brief.get("answered").asBoolean(), "the group line says the same things whatever ended the task");
     }
 
     @Test

@@ -96,16 +96,14 @@ public final class RunTransitions {
                 ignoredResult(tx, task, seq);
                 return;
             }
-            Events.record(tx, taskId, seq, ACTOR, Phase.PLANNING, Phase.AWAITING_APPROVAL, "plan ready", now);
             ObjectNode payload = Json.object().put("taskId", taskId).put("planSeq", seq).put("project", task.project());
             payload.set("plan", Json.read(plan.toJson()));
             putRunDetails(payload, run, result, now);
-            enqueueForRequester(tx, task, OutboxKind.PLAN_READY, payload, now);
+            end(tx, task, run, new Ending(Phase.AWAITING_APPROVAL, "plan ready", OutboxKind.PLAN_READY, payload, null, null), now);
             if (!plan.questionItems().isEmpty()) {
                 // One at a time: the next is sent once this one is answered (G-1d).
                 TaskCommands.enqueueQuestion(tx, task, seq, plan.questionItems(), 1, now);
             }
-            logTransition(tx, taskId, seq, Phase.PLANNING, Phase.AWAITING_APPROVAL);
         });
     }
 
@@ -116,14 +114,10 @@ public final class RunTransitions {
             ignoredResult(tx, task, run.seq());
             return;
         }
-        Events.record(tx, taskId, run.seq(), ACTOR, Phase.PLANNING, Phase.COMPLETED, "answered", now);
         ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("answer", plan.answer());
         putRunDetails(payload, run, result, now);
-        enqueueForRequester(tx, task, OutboxKind.ANSWER_READY, payload, now);
-        enqueue(tx, task, OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", taskId).put("project", task.project())
-                .putNull("prUrl").put("filesChanged", 0).put("answered", true), now);
-        GroupAcks.react(tx, task, GroupReaction.COMPLETED, now);
-        logTransition(tx, taskId, run.seq(), Phase.PLANNING, Phase.COMPLETED);
+        end(tx, task, run, new Ending(Phase.COMPLETED, "answered", OutboxKind.ANSWER_READY, payload,
+                completedLine(task, null, 0, true), GroupReaction.COMPLETED), now);
     }
 
     /** An execution run whose changes were delivered, with the agent's own summary. */
@@ -168,8 +162,6 @@ public final class RunTransitions {
                 ignoredResult(tx, task, seq);
                 return;
             }
-            Events.record(tx, taskId, seq, ACTOR, Phase.EXECUTING, Phase.COMPLETED,
-                    files.isEmpty() ? "no changes" : "delivered " + files.size() + " changed files", now);
             ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("prUrl", prUrl)
                     .put("filesChanged", files.size()).put("summary", summary);
             if (offerMerge && TaskAccess.mergeRefusal(task(tx, taskId)).isEmpty()) {
@@ -183,11 +175,9 @@ public final class RunTransitions {
             if (verification != null) {
                 payload.set("verification", Json.MAPPER.valueToTree(verification));
             }
-            enqueueForRequester(tx, task, OutboxKind.TASK_COMPLETED, payload, now);
-            enqueue(tx, task, OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", taskId).put("project", task.project())
-                    .put("prUrl", prUrl).put("filesChanged", files.size()), now);
-            GroupAcks.react(tx, task, GroupReaction.COMPLETED, now);
-            logTransition(tx, taskId, seq, Phase.EXECUTING, Phase.COMPLETED);
+            String event = files.isEmpty() ? "no changes" : "delivered " + files.size() + " changed files";
+            end(tx, task, run, new Ending(Phase.COMPLETED, event, OutboxKind.TASK_COMPLETED, payload,
+                    completedLine(task, prUrl, files.size(), false), GroupReaction.COMPLETED), now);
         });
     }
 
@@ -224,18 +214,48 @@ public final class RunTransitions {
                 ignoredResult(tx, task, seq);
                 return;
             }
-            Events.record(tx, taskId, seq, ACTOR, task.phase(), Phase.FAILED, reason + ": " + shortDetail, now);
-            enqueueForRequester(tx, task, OutboxKind.TASK_FAILED,
-                    Json.object().put("taskId", taskId).put("reason", reason.name()).put("detail", shortDetail), now);
-            enqueue(tx, task, OutboxKind.TASK_FAILED_SHORT, Json.object().put("taskId", taskId).put("reason", reason.name()), now);
-            GroupAcks.react(tx, task, GroupReaction.ENDED, now);
-            logTransition(tx, taskId, seq, task.phase(), Phase.FAILED);
+            end(tx, task, run, new Ending(Phase.FAILED, reason + ": " + shortDetail, OutboxKind.TASK_FAILED,
+                    Json.object().put("taskId", taskId).put("reason", reason.name()).put("detail", shortDetail),
+                    Json.object().put("taskId", taskId).put("reason", reason.name()), GroupReaction.ENDED), now);
         });
     }
 
     /** The member already cancelled the task; only the run's end is recorded. */
     public void cancelled(long taskId, int seq, AgentResult result) {
         db.transaction(tx -> finishRun(tx, run(tx, taskId, seq), RunStatus.CANCELLED, null, null, result, null, clock.instant()));
+    }
+
+    /**
+     * What differs between the endings of a task once its run is finished and its phase moved: where it went, the event's
+     * words, the requester's news, and the group's one line with its reaction (null for an ending the group does not hear
+     * of). Everything else about ending a task is the same and lives in {@link #end}.
+     */
+    private record Ending(Phase to, String event, OutboxKind news, ObjectNode payload, ObjectNode groupLine,
+            GroupReaction reaction) {
+
+        OutboxKind groupKind() {
+            return to == Phase.FAILED ? OutboxKind.TASK_FAILED_SHORT : OutboxKind.TASK_COMPLETED_SHORT;
+        }
+    }
+
+    /**
+     * The one tail of every ending. {@code task} was read before its phase moved, and each move is guarded on that phase,
+     * so it is the phase the event comes from.
+     */
+    private void end(Tx tx, Task task, Run run, Ending ending, Instant now) {
+        Events.record(tx, task.id(), run.seq(), ACTOR, task.phase(), ending.to(), ending.event(), now);
+        enqueueForRequester(tx, task, ending.news(), ending.payload(), now);
+        if (ending.groupLine() != null) {
+            enqueue(tx, task, ending.groupKind(), ending.groupLine(), now);
+            GroupAcks.react(tx, task, ending.reaction(), now);
+        }
+        logTransition(tx, task.id(), run.seq(), task.phase(), ending.to());
+    }
+
+    /** The group's line for a completed task, with the same keys whether it was answered or delivered. */
+    private static ObjectNode completedLine(Task task, String prUrl, int filesChanged, boolean answered) {
+        return Json.object().put("taskId", task.id()).put("project", task.project()).put("prUrl", prUrl)
+                .put("filesChanged", filesChanged).put("answered", answered);
     }
 
     private boolean finishRun(Tx tx, Run run, RunStatus status, FailureReason reason, String detail, AgentResult result,
