@@ -95,20 +95,27 @@ public final class Sweeper implements Runnable {
         return removed;
     }
 
+    /**
+     * Whether an idle worktree may go without losing anything, from what is known of its task: on a member's computer the
+     * phase is unknown (null) and nothing is merged, so only a clean, pushed worktree goes (ADR 0021).
+     *
+     * <p>A rejected or cancelled task's goes anyway: nothing in it was wanted. A merged task's delivered work is on the
+     * base branch while its own branch may be gone from origin, deleted by the merge; that excuses "not pushed" only, and
+     * changes never delivered (a follow-up refused at delivery) are kept.
+     */
+    public static boolean mayRemove(Phase phase, boolean merged, Workspaces.WorktreeState state) {
+        boolean abandoned = phase == Phase.REJECTED || phase == Phase.CANCELLED;
+        return abandoned || (merged && state.uncommitted().isEmpty()) || state.disposable();
+    }
+
     private boolean sweep(Task task, Path worktree) {
         Optional<Config.Project> project = projects.byName(task.project());
         if (project.isEmpty()) {
             Log.warn("sweeper.project_gone", "task", task.id(), "project", task.project(), "worktree", task.worktree());
             return false;
         }
-        String prefixed = Config.branchFor(branchPrefix, task.id());
-        String branch = prefixed == null ? Config.defaultBranch(task.id()) : prefixed;
-        Workspaces.WorktreeState state = workspaces.state(worktree, branch, task.baseSha());
-        boolean abandoned = task.phase() == Phase.REJECTED || task.phase() == Phase.CANCELLED;
-        // Merged: its delivered work is on the base branch, while its own branch may be gone from origin, deleted by the
-        // merge. That excuses "not pushed" only; changes never delivered (a follow-up refused at delivery) are kept.
-        boolean merged = task.mergedAt() != null && state.uncommitted().isEmpty();
-        if (!abandoned && !merged && !state.disposable()) {
+        Workspaces.WorktreeState state = workspaces.state(worktree, Config.taskBranch(branchPrefix, task.id()), task.baseSha());
+        if (!mayRemove(task.phase(), task.mergedAt() != null, state)) {
             Log.warn("sweeper.kept", "task", task.id(), "phase", task.phase(), "uncommitted", state.uncommitted().size(),
                     "pushed", state.pushed(), "worktree", task.worktree());
             return false;

@@ -3,6 +3,7 @@ package dispatch.worker;
 import dispatch.Log;
 import dispatch.core.ActiveRuns;
 import dispatch.core.Signal;
+import dispatch.core.Sweeper;
 import dispatch.workspace.Workspaces;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -123,7 +124,8 @@ public final class WorkerSweeper implements Runnable {
             return false;
         }
         Workspaces.WorktreeState state = workspaces.localOnlyState(worktree);
-        if (!state.disposable()) {
+        // The team machine's rule with what this side knows: no phase, nothing merged.
+        if (!Sweeper.mayRemove(null, false, state)) {
             Log.warn("worker_sweeper.kept", "task", taskId, "uncommitted", state.uncommitted().size(),
                     "pushed", state.pushed(), "worktree", worktree);
             return false;

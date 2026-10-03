@@ -64,6 +64,12 @@ public record Config(
         return branchPrefix == null || branchPrefix.equals("dispatch") ? null : branchPrefix + "/" + taskId;
     }
 
+    /** The branch a task's work is on in this instance's clones: the one spelling the sweeper and the jobs agree on. */
+    public static String taskBranch(String branchPrefix, long taskId) {
+        String prefixed = branchFor(branchPrefix, taskId);
+        return prefixed == null ? defaultBranch(taskId) : prefixed;
+    }
+
     /**
      * A team: admins decide who joins, or several people share it; its tasks run on their own computers (ADR 0021).
      * A personal bot has one member and no admins (ADR 0014), and its runs happen in this process even when it links
