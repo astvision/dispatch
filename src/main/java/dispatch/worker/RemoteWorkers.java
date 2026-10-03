@@ -379,19 +379,12 @@ public final class RemoteWorkers implements Worker {
      *                 but the run itself may be absent
      */
     public record Progress(long taskId, int seq, String worktree, String baseSha, boolean agentStarted, Integer steps,
-                           String lastAction,
-                           @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-                           List<Step> loopSteps) {
-
-        public Progress(long taskId, int seq, String worktree, String baseSha, boolean agentStarted, Integer steps,
-                        String lastAction) {
-            this(taskId, seq, worktree, baseSha, agentStarted, steps, lastAction, null);
-        }
+                           String lastAction, List<Step> loopSteps) {
     }
 
     /**
      * A run's step as a worker reports it (RM-2): the whole list travels on each progress, times as ISO-8601 text on the
-     * worker's clock. An older team machine ignores the field.
+     * worker's clock.
      */
     public record Step(int n, String kind, int round, String startedAt, String endedAt, String outcome, String detail) {
 

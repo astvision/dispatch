@@ -34,7 +34,7 @@ class WorkerClientTest {
             URI team = URI.create("http://127.0.0.1:" + proxyLike.getAddress().getPort() + "/dispatch");
             WorkerClient client = new WorkerClient(HttpClient.newHttpClient(), team, "some-key");
 
-            WorkerClient.Setup setup = client.setup();
+            Wire.Setup setup = client.setup();
 
             assertEquals("backend", setup.team());
             assertEquals("Dispatch (backend)", setup.authorName());
@@ -60,7 +60,7 @@ class WorkerClientTest {
             URI team = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/");
             WorkerClient client = new WorkerClient(HttpClient.newHttpClient(), team, "some-key");
 
-            WorkerClient.Setup setup = client.setup();
+            Wire.Setup setup = client.setup();
 
             assertEquals("backend", setup.team());
         } finally {

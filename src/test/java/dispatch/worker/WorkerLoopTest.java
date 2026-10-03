@@ -31,7 +31,7 @@ class WorkerLoopTest extends WorkerApiFixture {
         WorkerLoop loop = idleLoop("ann-laptop", repos.repo("alm"));
 
         Job ran = loop.withLocalClone(executeJob(new Job.Project("alm", "git@github.com:acme/alm.git", null, "main",
-                "claude-code", List.of(), "./mvnw -q test", true), "Review it")).orElseThrow();
+                "claude-code", List.of(), "./mvnw -q test", true, null), "Review it")).orElseThrow();
 
         assertEquals("./mvnw -q test", ran.project().test());
         assertTrue(ran.project().loopOn());
@@ -39,7 +39,7 @@ class WorkerLoopTest extends WorkerApiFixture {
         assertEquals(repos.repo("alm").toString(), ran.project().path(), "the member's own clone");
 
         Job older = loop.withLocalClone(executeJob(new Job.Project("alm", "git@github.com:acme/alm.git", null, "main",
-                "claude-code", List.of()), null)).orElseThrow();
+                "claude-code", List.of(), null, null, null), null)).orElseThrow();
         assertFalse(older.project().loopOn(), "a job without the loop stays off");
         assertNull(older.reviewPrompt());
     }
@@ -57,12 +57,12 @@ class WorkerLoopTest extends WorkerApiFixture {
     @Test
     void workerKeepsTheBranchsExpectedHead() throws Exception {
         WorkerLoop loop = idleLoop("ann-laptop", repos.repo("alm"));
-        Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of());
+        Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null);
         Job sent = executeJob(project, null);
         Job guarded = new Job(sent.taskId(), sent.seq(), sent.kind(), project, sent.baseBranch(), sent.baseSha(), sent.worktree(),
                 sent.prUrl(), sent.sessionId(), sent.resume(), sent.prompt(), sent.model(), sent.effort(), sent.timeoutMillis(),
                 sent.budgetUsd(), sent.attachments(), sent.commitSubject(), sent.commitTrailers(), sent.deliverySummary(),
-                sent.branch(), sent.reviewPrompt(), "9c1e2d4");
+                sent.branch(), sent.reviewPrompt(), "9c1e2d4", null);
 
         assertEquals("9c1e2d4", loop.withLocalClone(guarded).orElseThrow().expectedHead(), "dropped, the guard would check nothing");
     }
@@ -70,7 +70,7 @@ class WorkerLoopTest extends WorkerApiFixture {
     @Test
     void workerKeepsTheJobsPicks() throws Exception {
         WorkerLoop loop = idleLoop("ann-laptop", repos.repo("alm"));
-        Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of());
+        Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null);
         Job sent = executeJob(project, null);
         Job picked = new Job(sent.taskId(), sent.seq(), sent.kind(), project, sent.baseBranch(), sent.baseSha(), sent.worktree(),
                 sent.prUrl(), sent.sessionId(), sent.resume(), sent.prompt(), sent.model(), sent.effort(), sent.timeoutMillis(),
@@ -83,7 +83,7 @@ class WorkerLoopTest extends WorkerApiFixture {
     private static Job executeJob(Job.Project project, String reviewPrompt) {
         return new Job(TASK_ID, 2, RunKind.EXECUTE, project, "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false,
                 "Implement", null, null, 1000L, new BigDecimal("2"), List.of(), "dispatch #7: x", List.of(), null, null,
-                reviewPrompt);
+                reviewPrompt, null, null);
     }
 
     /** A sandboxed run's guard that a crash left open on this computer: undone before the loop takes a job. */

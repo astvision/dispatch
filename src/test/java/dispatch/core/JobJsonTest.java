@@ -23,11 +23,11 @@ class JobJsonTest {
     @Test
     void aJobSurvivesJsonUnchanged() throws Exception {
         Job job = new Job(7, 2, RunKind.EXECUTE,
-                new Job.Project("alm", "git@github.com:acme/alm.git", "/home/ann/work/alm", "main", "claude-code", List.of(".env")),
+                new Job.Project("alm", "git@github.com:acme/alm.git", "/home/ann/work/alm", "main", "claude-code", List.of(".env"), null, null, null),
                 "main", "6f3030a", "/var/lib/dispatch/worktrees/7", "https://github.com/acme/alm/pull/9",
                 UUID.fromString("11111111-2222-3333-4444-555555555555"), true, "Implement the approved plan", "opus", "low",
                 1_800_000L, new BigDecimal("2.50"), List.of(new Attachment("photo-id", "1-photo.jpg", 3L)),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Ali"), null);
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Ali"), null, null, null, null, null);
 
         assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
     }
@@ -44,9 +44,9 @@ class JobJsonTest {
     @Test
     void aDeliveryJobSurvivesJsonUnchanged() throws Exception {
         Job job = new Job(7, 3, RunKind.DELIVER,
-                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null),
                 "main", "6f3030a", "/var/lib/dispatch/worktrees/7", null, null, false, null, null, null, 0L, null, List.of(),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30");
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30", null, null, null, null);
 
         assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
     }
@@ -56,11 +56,11 @@ class JobJsonTest {
         // W-3's worker sends a job back with only the fields it actually has; a JSON payload that omits a list must
         // not NPE the receiving side's compact constructor.
         Job job = new Job(7, 2, RunKind.EXECUTE,
-                new Job.Project("alm", "git@github.com:acme/alm.git", "/home/ann/work/alm", "main", "claude-code", List.of(".env")),
+                new Job.Project("alm", "git@github.com:acme/alm.git", "/home/ann/work/alm", "main", "claude-code", List.of(".env"), null, null, null),
                 "main", "6f3030a", "/var/lib/dispatch/worktrees/7", "https://github.com/acme/alm/pull/9",
                 UUID.fromString("11111111-2222-3333-4444-555555555555"), true, "Implement the approved plan", "opus", "low",
                 1_800_000L, new BigDecimal("2.50"), List.of(new Attachment("photo-id", "1-photo.jpg", 3L)),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Ali"), null);
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Ali"), null, null, null, null, null);
         ObjectNode node = (ObjectNode) Json.MAPPER.valueToTree(job);
         node.remove("attachments");
         node.remove("commitTrailers");
@@ -83,21 +83,10 @@ class JobJsonTest {
     }
 
     @Test
-    void theDefaultBranchIsLeftOutSoOlderWorkersStillReadTheJob() throws Exception {
-        Job job = new Job(7, 1, RunKind.PLAN, new Job.Project("alm", "r", null, "main", "claude-code", List.of()), "main",
-                null, null, null, null, false, "p", null, null, 1000, BigDecimal.ONE, List.of(), "s", List.of(), null);
-
-        String json = Json.write(job);
-
-        assertFalse(json.contains("\"branch\""), json);
-        assertEquals("dispatch/7", Json.MAPPER.readValue(json, Job.class).branchName());
-    }
-
-    @Test
     void aTeamsOwnPrefixTravelsWithTheJob() throws Exception {
-        Job job = new Job(7, 1, RunKind.PLAN, new Job.Project("alm", "r", null, "main", "claude-code", List.of()), "main",
+        Job job = new Job(7, 1, RunKind.PLAN, new Job.Project("alm", "r", null, "main", "claude-code", List.of(), null, null, null), "main",
                 null, null, null, null, false, "p", null, null, 1000, BigDecimal.ONE, List.of(), "s", List.of(), null,
-                "dispatch/team/7");
+                "dispatch/team/7", null, null, null);
 
         assertEquals("dispatch/team/7", Json.MAPPER.readValue(Json.write(job), Job.class).branchName());
     }
@@ -141,10 +130,10 @@ class JobJsonTest {
     void aJobWithTheLoopSurvivesJsonUnchanged() throws Exception {
         Job job = new Job(7, 2, RunKind.EXECUTE,
                 new Job.Project("alm", "git@github.com:acme/alm.git", "/home/ann/work/alm", "main", "claude-code", List.of(),
-                        "./mvnw -q test", true),
+                        "./mvnw -q test", true, null),
                 "main", "6f3030a", "/var/lib/dispatch/worktrees/7", null, UUID.fromString("11111111-2222-3333-4444-555555555555"),
                 false, "Implement the approved plan", "opus", "low", 1_800_000L, new BigDecimal("2.50"), List.of(),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), null, null, "Review this change");
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), null, null, "Review this change", null, null);
 
         assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
     }
@@ -154,67 +143,37 @@ class JobJsonTest {
         Job on = new Job(7, 2, RunKind.EXECUTE,
                 new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, true),
                 "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false, "p", null, null, 1L, null, List.of(), "s", List.of(),
-                null, null);
+                null, null, null, null, null);
         assertEquals(on, Json.MAPPER.readValue(Json.write(on), Job.class));
 
         Job older = new Job(7, 2, RunKind.EXECUTE,
-                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null),
                 "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false, "p", null, null, 1L, null, List.of(), "s", List.of(),
-                null, null);
+                null, null, null, null, null);
         assertFalse(Json.MAPPER.readValue(Json.write(older), Job.class).project().skillsOn());
-    }
-
-    @Test
-    void aJobFromAnOlderTeamMachineHasTheLoopOff() throws Exception {
-        Job old = new Job(7, 2, RunKind.EXECUTE,
-                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),
-                "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false, "p", null, null, 1L, null, List.of(), "s", List.of(),
-                null, null);
-
-        Job read = Json.MAPPER.readValue(Json.write(old), Job.class);
-
-        assertFalse(read.project().loopOn());
-        assertNull(read.reviewPrompt());
-        assertFalse(Json.write(old).contains("\"loop\""), "an older worker must still read a job without the loop");
     }
 
     @Test
     void aJobWithAnExpectedHeadAndAResultWithAHeadSurviveJsonUnchanged() throws Exception {
         Job job = new Job(7, 3, RunKind.DELIVER,
-                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of()),
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null),
                 "main", "6f3030a", "/w/7", null, null, false, null, null, null, 0L, null, List.of(), "s", List.of(), "summary",
-                null, null, "9c1e2d4");
+                null, null, "9c1e2d4", null);
         JobResult result = JobResult.failed(FailureReason.DELIVERY, "git push failed", null).withHead("b7a0f11");
 
         assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
         assertEquals(result, Json.MAPPER.readValue(Json.write(result), JobResult.class));
     }
 
+    /** Since ADR 0039 both sides speak one protocol: a job's fields travel as they are, absent ones included. */
     @Test
-    void withNothingToCheckNeitherSideSendsAFieldTheOtherVersionWouldReject() throws Exception {
-        Job plan = new Job(7, 1, RunKind.PLAN, new Job.Project("alm", "r", null, "main", "claude-code", List.of()), "main",
-                null, null, null, null, false, "p", null, null, 1000, BigDecimal.ONE, List.of(), "s", List.of(), null);
-        JobResult delivered = JobResult.delivered(null, List.of("README.md"), "https://github.com/acme/alm/pull/9");
-
-        assertFalse(Json.write(plan).contains("\"expectedHead\""), "an older worker must still read a PLAN job");
-        assertFalse(Json.write(delivered).contains("\"head\""), "an older team machine must still read the result");
-        assertNull(Json.MAPPER.readValue(Json.write(plan), Job.class).expectedHead(), "an older team machine's job checks nothing");
-    }
-
-    @Test
-    void aJobsPicksSurviveJsonAndAJobWithoutPicksLeavesTheFieldOutForOlderWorkers() throws Exception {
-        Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of());
-        UUID session = UUID.fromString("11111111-2222-3333-4444-555555555555");
-        Job picked = new Job(7, 2, RunKind.EXECUTE, project, "main", "6f3030a", "/w/7", null, session, false, "Implement",
-                null, null, 1000L, new BigDecimal("2"), List.of(), "dispatch #7: x", List.of(), null, null, null, null,
+    void aJobWithPicksSurvivesJsonUnchanged() throws Exception {
+        Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null);
+        Job job = new Job(7, 2, RunKind.EXECUTE, project, "main", "6f3030a", "/w/7", null, UUID.fromString("11111111-2222-3333-4444-555555555555"),
+                false, "Implement", null, null, 1000L, new BigDecimal("2"), List.of(), "dispatch #7: x", List.of(), null, null, null, null,
                 List.of("playwright"));
-        Job none = new Job(7, 2, RunKind.EXECUTE, project, "main", "6f3030a", "/w/7", null, session, false, "Implement",
-                null, null, 1000L, new BigDecimal("2"), List.of(), "dispatch #7: x", List.of(), null, null, null, null,
-                List.of());
 
-        assertEquals(picked, Json.MAPPER.readValue(Json.write(picked), Job.class));
-        assertEquals(List.of("playwright"), picked.picks());
-        assertFalse(Json.write(none).contains("\"plugins\""), Json.write(none));
-        assertEquals(List.of(), none.picks());
+        assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
+        assertEquals(List.of("playwright"), job.picks());
     }
 }

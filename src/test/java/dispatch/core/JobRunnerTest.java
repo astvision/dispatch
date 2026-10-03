@@ -153,10 +153,10 @@ class JobRunnerTest {
     /** A member's computer without the project's agent (ADR 0026) fails the run with what to install, instead of crashing. */
     @Test
     void aProjectWhoseAgentIsNotConfiguredHereFailsAsAgentWithWhatToDo() {
-        Job job = new Job(TASK, 1, RunKind.PLAN, new Job.Project("alm", repos.origin.toString(), null, "main", "codex", List.of()),
+        Job job = new Job(TASK, 1, RunKind.PLAN, new Job.Project("alm", repos.origin.toString(), null, "main", "codex", List.of(), null, null, null),
                 "main", null, null, null, SESSION, false, "Plan this: fix the login timeout", null, null,
                 Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(), "dispatch #7: Fix the login timeout",
-                List.of("Requested-by: Bold"), null);
+                List.of("Requested-by: Bold"), null, null, null, null, null);
 
         JobResult result = runner.run(job, events, control);
 
@@ -172,7 +172,7 @@ class JobRunnerTest {
         Job job = new Job(TASK, 1, RunKind.PLAN, project(List.of()), "main", null, null, null, SESSION, false,
                 "Plan this: fix the login timeout", null, null, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"),
                 List.of(new dispatch.domain.Attachment("gone-id", "1-photo.jpg", 3L)), "dispatch #7: Fix the login timeout",
-                List.of("Requested-by: Bold"), null);
+                List.of("Requested-by: Bold"), null, null, null, null, null);
 
         JobResult result = runner.run(job, events, control);
 
@@ -213,7 +213,7 @@ class JobRunnerTest {
     void aTimeoutStopsTheAgentAndSaysHowLongItRan() throws Exception {
         Job job = new Job(TASK, 1, RunKind.PLAN, project(List.of()), "main", null, null, null, SESSION, false, "SCENARIO:sleep",
                 null, null, 700L, new BigDecimal("2"), List.of(), "dispatch #7: Fix the login timeout",
-                List.of("Requested-by: Bold"), null);
+                List.of("Requested-by: Bold"), null, null, null, null, null);
 
         JobResult result = runner.run(job, events, control);
 
@@ -247,7 +247,7 @@ class JobRunnerTest {
 
         Job job = new Job(TASK, 3, RunKind.DELIVER, project(List.of()), "main", events.baseSha, events.worktree, null, null,
                 false, null, null, null, 0L, null, List.of(), "dispatch #7: Fix the login timeout",
-                List.of("Requested-by: Bold", "Approved-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30");
+                List.of("Requested-by: Bold", "Approved-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30", null, null, null, null);
         JobResult result = runner.run(job, new Recorder(), new ActiveRuns().register(TASK, 3));
 
         assertEquals(List.of("README.md"), result.files());
@@ -690,7 +690,7 @@ class JobRunnerTest {
         return new Job(TASK, 3, RunKind.DELIVER, project(List.of()), "main", events.baseSha, events.worktree, null, null,
                 false, null, null, null, 0L, null, List.of(), "dispatch #7: Fix the login timeout",
                 List.of("Requested-by: Bold", "Approved-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30", null, null,
-                expectedHead);
+                expectedHead, null);
     }
 
     /**
@@ -924,7 +924,7 @@ class JobRunnerTest {
     private Job job(RunKind kind, int seq, String prompt, String worktree, String baseSha, List<String> copyFiles) {
         return new Job(TASK, seq, kind, project(copyFiles == null ? List.of() : copyFiles), "main", baseSha, worktree, null,
                 SESSION, false, prompt, null, null, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null);
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null, null, null, null);
     }
 
     /** A copy of {@code job} with its team-sent branch set. */
@@ -937,7 +937,7 @@ class JobRunnerTest {
 
     private Job.Project project(List<String> copyFiles) {
         // path null: the clone GitFixture made under the state directory's repos/, as Dispatch's own projects use.
-        return new Job.Project("alm", repos.origin.toString(), null, "main", "claude-code", copyFiles);
+        return new Job.Project("alm", repos.origin.toString(), null, "main", "claude-code", copyFiles, null, null, null);
     }
 
     private static String valueAfter(List<String> args, String flag) {
@@ -1008,9 +1008,9 @@ class JobRunnerTest {
         Job plan = job(RunKind.PLAN, 1, "Plan this", null, null, null);
         Job.Project p = plan.project();
         Job codexPlan = new Job(plan.taskId(), plan.seq(), plan.kind(), new Job.Project(p.name(), p.repo(), p.path(),
-                p.baseBranch(), "codex", p.copyFiles()), plan.baseBranch(), plan.baseSha(), plan.worktree(), plan.prUrl(),
+                p.baseBranch(), "codex", p.copyFiles(), null, null, null), plan.baseBranch(), plan.baseSha(), plan.worktree(), plan.prUrl(),
                 plan.sessionId(), plan.resume(), plan.prompt(), plan.model(), plan.effort(), plan.timeoutMillis(),
-                plan.budgetUsd(), plan.attachments(), plan.commitSubject(), plan.commitTrailers(), plan.deliverySummary());
+                plan.budgetUsd(), plan.attachments(), plan.commitSubject(), plan.commitTrailers(), plan.deliverySummary(), null, null, null, null);
 
         assertEquals(Prompts.PLUGIN_NOTE, JobRunner.pluginNote(plan));
         assertEquals("", JobRunner.pluginNote(codexPlan), "Codex loads no plugins, so it is offered none");

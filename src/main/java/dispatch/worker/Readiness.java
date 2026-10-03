@@ -12,7 +12,7 @@ import java.util.Optional;
  * <p>Pure: it reads no store, runs no process and speaks no language. A blocker is a code and a detail, never a
  * sentence — the bot's words live in messages_mn.properties.
  *
- * @param claude Claude Code's check, which every worker has reported since T-1 and an older team machine gates on
+ * @param claude Claude Code's check, in its own field because the claim query gates on it
  * @param agents the other agents this computer has, by type ("codex", "gemini"), each held only by its own (ADR 0026)
  */
 public record Readiness(Check claude, Check gh, Map<String, Check> projects, Map<String, Check> agents) {

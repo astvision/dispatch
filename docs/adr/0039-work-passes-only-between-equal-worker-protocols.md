@@ -24,3 +24,8 @@ number still hands a job to a newer worker, which will not take it: that one run
 is retried once both sides are updated. The number is raised by hand, so a wire change that slips past the contract test
 (a renamed JSON key inside an untyped value) still needs someone to raise it. The per-field compatibility already in
 `Job`, `JobResult` and the worker API can be removed once every installation runs a version with the number.
+
+Amended 2026-10-03 (protocol 2): the wire is `Wire`'s records plus `Job`, `JobResult`, `Readiness`, `Progress` and `Reply`,
+written and read by the same code on both sides. The per-field compatibility that preceded the number (constructors for
+earlier shapes, fields left out when unset, defaults for a side that said nothing) is gone: a side on another number is
+given nothing, so there is nothing for such fields to protect.

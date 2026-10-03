@@ -68,7 +68,7 @@ public final class WorkerChecks {
         }
         add.accept(new Checks.Finding(Checks.Level.OK, "worker",
                 Text.raw("worker: " + config.name() + ", team " + config.team() + " (" + workerFile + ")")));
-        Optional<WorkerClient.Setup> team = checkPairing(workerFile, config, environment, add);
+        Optional<Wire.Setup> team = checkPairing(workerFile, config, environment, add);
         checkClaude(config, add);
         Checks.ownerPlugins(OwnerPlugins.worker(workerFile, Path.of(System.getProperty("user.home"))), config.claudeCommand(),
                 processEnvironment).ifPresent(add);
@@ -95,7 +95,7 @@ public final class WorkerChecks {
      * The key, and what the team machine says about it. One real call decides all three cases: unreachable, revoked,
      * or paired — nothing about the files alone can tell those apart.
      */
-    private static Optional<WorkerClient.Setup> checkPairing(Path workerFile, WorkerConfig config,
+    private static Optional<Wire.Setup> checkPairing(Path workerFile, WorkerConfig config,
                                                              EnvironmentResult environment,
                                                              Consumer<Checks.Finding> add) {
         Path envFile = SecretsFile.beside(workerFile);
@@ -112,7 +112,7 @@ public final class WorkerChecks {
         WorkerClient client = new WorkerClient(HttpClient.newBuilder().connectTimeout(PROBE_TIMEOUT).build(),
                 URI.create(config.team()), key);
         try {
-            WorkerClient.Setup setup = client.setup();
+            Wire.Setup setup = client.setup();
             add.accept(new Checks.Finding(Checks.Level.OK, "team", Text.raw("team: " + config.team() + " answers")));
             add.accept(new Checks.Finding(Checks.Level.OK, "pairing",
                     Text.raw("pairing: paired with " + setup.team() + " as " + config.name())));
@@ -167,14 +167,14 @@ public final class WorkerChecks {
      * One finding per project: the team's list decides what must be here, this computer's config decides where. When
      * the team could not be reached there is no list to compare against, so only what is mapped here is checked.
      */
-    private static void checkProjects(WorkerConfig config, Optional<WorkerClient.Setup> team,
+    private static void checkProjects(WorkerConfig config, Optional<Wire.Setup> team,
                                       Consumer<Checks.Finding> add) {
         if (team.isEmpty()) {
             return;
         }
         Git git = new Git("git", null, Duration.ofSeconds(30));
         Set<String> known = new HashSet<>();
-        for (WorkerClient.ProjectInfo project : team.get().projects()) {
+        for (Wire.Project project : team.get().projects()) {
             known.add(project.name());
             String area = "project " + project.name();
             WorkerConfig.Project mine = config.projects().get(project.name());

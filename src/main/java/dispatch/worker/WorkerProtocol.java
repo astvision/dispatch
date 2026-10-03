@@ -7,7 +7,7 @@ package dispatch.worker;
  */
 public final class WorkerProtocol {
 
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
 
     private WorkerProtocol() {
     }

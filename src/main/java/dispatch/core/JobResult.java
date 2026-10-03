@@ -1,6 +1,5 @@
 package dispatch.core;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import dispatch.agent.AgentResult;
 import dispatch.domain.FailureReason;
 import java.util.List;
@@ -17,7 +16,7 @@ import java.util.List;
  * @param verification  what the verify loop found before the delivery; null when the loop did not run
  * @param head          the commit the task's branch is at once this run delivered or failed to (Dispatch's own commit even
  *                      when the push after it failed), which the store expects next; null when the job carried no
- *                      {@link Job#expectedHead}, so an older team machine never sees the field
+ *                      {@link Job#expectedHead}
  */
 public record JobResult(
         Outcome outcome,
@@ -26,8 +25,8 @@ public record JobResult(
         String prUrl,
         FailureReason failureReason,
         String failureDetail,
-        @JsonInclude(JsonInclude.Include.NON_NULL) Verification verification,
-        @JsonInclude(JsonInclude.Include.NON_NULL) String head) {
+        Verification verification,
+        String head) {
 
     public enum Outcome {
         SUCCEEDED,

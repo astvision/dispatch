@@ -248,7 +248,7 @@ public final class WorkerLoop implements Runnable {
             @Override
             public void worktreeCreated(String worktree, String baseSha) {
                 try {
-                    client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), worktree, baseSha, false, null, null));
+                    client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), worktree, baseSha, false, null, null, null));
                 } catch (RuntimeException e) {
                     Log.warn("worker.progress_failed", "task", job.taskId(), "error", e.getMessage());
                 }
@@ -260,7 +260,7 @@ public final class WorkerLoop implements Runnable {
                     agents.record(job.taskId(), job.seq(), pid, processStart);
                 }
                 try {
-                    client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, true, null, null));
+                    client.progress(new RemoteWorkers.Progress(job.taskId(), job.seq(), null, null, true, null, null, null));
                 } catch (RuntimeException e) {
                     Log.warn("worker.progress_failed", "task", job.taskId(), "error", e.getMessage());
                 }

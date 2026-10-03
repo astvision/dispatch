@@ -206,9 +206,9 @@ class RemoteWorkersTest {
 
         clock.advance(Duration.ofSeconds(50));
         assertFalse(remote.progress(ann, new RemoteWorkers.Progress(id, 1, "/home/ann/work/alm-7", "6f3030a", true, 12,
-                "Bash: git status")).cancel());
+                "Bash: git status", null)).cancel());
         clock.advance(Duration.ofSeconds(50));
-        assertFalse(remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, 14, "Edit: README.md")).cancel());
+        assertFalse(remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, 14, "Edit: README.md", null)).cancel());
 
         assertEquals("/home/ann/work/alm-7", row("SELECT worktree FROM task WHERE id = ?", id).get("worktree"));
         assertEquals("6f3030a", row("SELECT base_sha FROM task WHERE id = ?", id).get("base_sha"));
@@ -247,7 +247,7 @@ class RemoteWorkersTest {
         Workers.Paired ann = pair(BOLD, "ann-laptop");
         Thread run = coordinate();
         remote.next(ann).orElseThrow();
-        RemoteWorkers.Progress tick = new RemoteWorkers.Progress(id, 1, null, null, false, 3, "Bash: ls");
+        RemoteWorkers.Progress tick = new RemoteWorkers.Progress(id, 1, null, null, false, 3, "Bash: ls", null);
         assertEquals(new RemoteWorkers.Reply(false, 0, false, false, false), remote.progress(ann, tick));
 
         activeRuns.run(id).orElseThrow().pauseBeforeReview(true);
@@ -271,7 +271,7 @@ class RemoteWorkersTest {
 
         db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(id)));
 
-        assertTrue(remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, 3, "Bash: ls")).cancel());
+        assertTrue(remote.progress(ann, new RemoteWorkers.Progress(id, 1, null, null, false, 3, "Bash: ls", null)).cancel());
         remote.result(ann, id, 1, JobResult.cancelled(null));
         assertTrue(run.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");
         assertEquals("CANCELLED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
@@ -289,7 +289,7 @@ class RemoteWorkersTest {
         ApiException refused = assertThrows(ApiException.class,
                 () -> remote.result(bobs, id, 1, JobResult.succeeded(agentResult())));
         ApiException refusedProgress = assertThrows(ApiException.class,
-                () -> remote.progress(bobs, new RemoteWorkers.Progress(id, 1, null, null, false, 1, "Bash: ls")));
+                () -> remote.progress(bobs, new RemoteWorkers.Progress(id, 1, null, null, false, 1, "Bash: ls", null)));
 
         assertEquals(403, refused.status());
         assertEquals("not_your_run", refused.code());
@@ -433,7 +433,7 @@ class RemoteWorkersTest {
         assertTrue(run.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");
 
         ApiException refused = assertThrows(ApiException.class, () -> remote.progress(ann, new RemoteWorkers.Progress(id,
-                1, "/home/ann/work/alm-7", "6f3030a", true, 3, "Bash: ls")));
+                1, "/home/ann/work/alm-7", "6f3030a", true, 3, "Bash: ls", null)));
 
         assertEquals(409, refused.status());
         assertEquals("lease_expired", refused.code());
@@ -508,7 +508,7 @@ class RemoteWorkersTest {
                 ready.countDown();
                 awaitLatch(go);
                 remote.progress(ann, new RemoteWorkers.Progress(id, 1, "/home/ann/work/alm-7", "6f3030a", true, 1,
-                        "Bash: git status"));
+                        "Bash: git status", null));
             };
             Thread first = Thread.ofVirtual().start(post);
             Thread second = Thread.ofVirtual().start(post);
@@ -559,7 +559,7 @@ class RemoteWorkersTest {
         AtomicReference<RuntimeException> progressOutcome = new AtomicReference<>();
         Thread progressThread = Thread.ofVirtual().start(() -> {
             try {
-                remote.progress(ann, new RemoteWorkers.Progress(id, 1, "/home/ann/work/alm-7", "6f3030a", true, 1, "Bash: ls"));
+                remote.progress(ann, new RemoteWorkers.Progress(id, 1, "/home/ann/work/alm-7", "6f3030a", true, 1, "Bash: ls", null));
             } catch (RuntimeException e) {
                 progressOutcome.set(e);
             }
@@ -582,9 +582,9 @@ class RemoteWorkersTest {
 
     /** A minimal Job for tests that drive {@link RemoteWorkers#run} directly, without the full Coordinator. */
     private Job minimalJob(long taskId) {
-        Job.Project project = new Job.Project(ALM.name(), ALM.repo(), null, ALM.baseBranch(), ALM.agent(), List.of());
+        Job.Project project = new Job.Project(ALM.name(), ALM.repo(), null, ALM.baseBranch(), ALM.agent(), List.of(), null, null, null);
         return new Job(taskId, 1, RunKind.PLAN, project, "main", null, null, null, null, false, "prompt", null, null,
-                0L, null, List.of(), "subject", List.of(), null);
+                0L, null, List.of(), "subject", List.of(), null, null, null, null, null);
     }
 
     private Thread coordinate() {

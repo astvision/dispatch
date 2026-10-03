@@ -98,7 +98,7 @@ public final class WorkerInitCommand {
         terminal.step("1/5 Your team");
         Paired paired = pair(workerFile, envFile);
         WorkerClient client = new WorkerClient(HttpClient.newHttpClient(), URI.create(paired.teamUrl()), paired.key());
-        WorkerClient.Setup team;
+        Wire.Setup team;
         try {
             team = terminal.during("Asking " + paired.teamUrl() + " for your projects", client::setup);
         } catch (WorkerClient.RevokedException e) {
@@ -275,14 +275,14 @@ public final class WorkerInitCommand {
     }
 
     /** One entry per project the team says this member has; a project nobody maps here simply cannot run here. */
-    private Map<String, WorkerConfig.Project> projects(List<WorkerClient.ProjectInfo> team, Path stateDir) {
+    private Map<String, WorkerConfig.Project> projects(List<Wire.Project> team, Path stateDir) {
         if (team.isEmpty()) {
             terminal.warn("your team has no projects for you yet; add them later in " + stateDir.getParent());
             return Map.of();
         }
         Git git = new Git("git", null, Duration.ofSeconds(30));
         Map<String, WorkerConfig.Project> projects = new LinkedHashMap<>();
-        for (WorkerClient.ProjectInfo project : team) {
+        for (Wire.Project project : team) {
             terminal.say("");
             terminal.say("  " + project.name() + (project.repo() == null ? "" : " · " + project.repo())
                     + (project.baseBranch() == null ? "" : " · base " + project.baseBranch()));
@@ -308,7 +308,7 @@ public final class WorkerInitCommand {
         return projects;
     }
 
-    private Optional<Path> folderFor(WorkerClient.ProjectInfo project, Git git, Path stateDir) {
+    private Optional<Path> folderFor(Wire.Project project, Git git, Path stateDir) {
         List<Terminal.Option<String>> options = project.repo() == null
                 ? List.of(new Terminal.Option<>("A clone I already have", "give its folder", "existing"),
                         new Terminal.Option<>("Skip it", "you can add it later", "skip"))
@@ -337,7 +337,7 @@ public final class WorkerInitCommand {
         return Optional.empty();
     }
 
-    private Optional<Path> existingClone(WorkerClient.ProjectInfo project, Git git) {
+    private Optional<Path> existingClone(Wire.Project project, Git git) {
         String folder = required("Folder of your " + project.name() + " clone", null);
         ProjectProbe probe;
         try {
@@ -363,7 +363,7 @@ public final class WorkerInitCommand {
      * {@link #existingClone} already recovers to, so the member can pick "a clone I already have" or skip the
      * project instead of losing the whole wizard over one project's network hiccup.
      */
-    private Optional<Path> clone(WorkerClient.ProjectInfo project, Path stateDir) {
+    private Optional<Path> clone(Wire.Project project, Path stateDir) {
         Path target = stateDir.resolve("repos").resolve(project.name());
         // Only a directory this attempt itself creates is ever removed below: one already there is the member's own,
         // whatever put it there, and is never ours to delete.
@@ -443,7 +443,7 @@ public final class WorkerInitCommand {
      * The agents the projects set up here run on (ADR 0026), Claude Code first; Claude Code alone when none is set up
      * yet or the team machine is too old to name them.
      */
-    private static Set<String> neededAgents(List<WorkerClient.ProjectInfo> team, Set<String> setUp) {
+    private static Set<String> neededAgents(List<Wire.Project> team, Set<String> setUp) {
         Set<String> needed = new TreeSet<>(); // "claude-code" sorts first
         team.stream().filter(project -> setUp.contains(project.name()))
                 .forEach(project -> needed.add(AgentKind.find(project.agent()).map(AgentKind::id).orElse(project.agent())));

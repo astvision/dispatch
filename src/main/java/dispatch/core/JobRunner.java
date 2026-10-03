@@ -402,7 +402,7 @@ public final class JobRunner implements Worker {
         return e instanceof Delivery.CommittedException committed ? committed.commitSha() : start;
     }
 
-    /** {@code result} with the branch's head, only for a job that carried an expected head: an older team machine rejects the field. */
+    /** {@code result} with the branch's head, only for a job that carried an expected head to check it against. */
     private static JobResult guarded(Job job, JobResult result, String head) {
         return job.expectedHead() == null ? result : result.withHead(head);
     }

@@ -152,7 +152,7 @@ public final class WorkerCommand {
                 return 1;
             }
             WorkerClient client = new WorkerClient(HttpClient.newHttpClient(), URI.create(config.team()), key);
-            WorkerClient.Setup setup;
+            Wire.Setup setup;
             try {
                 setup = client.setup();
             } catch (WorkerClient.RevokedException e) {

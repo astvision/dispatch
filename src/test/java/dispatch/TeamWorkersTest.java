@@ -15,6 +15,7 @@ import dispatch.testing.FakeGh;
 import dispatch.testing.FakeTelegram;
 import dispatch.testing.GitFixture;
 import dispatch.testing.SqlRows;
+import dispatch.worker.Wire;
 import dispatch.worker.WorkerClient;
 import dispatch.worker.WorkerConfig;
 import dispatch.worker.WorkerLoop;
@@ -238,7 +239,7 @@ class TeamWorkersTest {
      * @param checkedClaude the claude its readiness checks look for; the agent itself always runs the fake one
      */
     private Thread startLoop(WorkerClient client, String name, String token, Path checkedClaude) throws Exception {
-        WorkerClient.Setup setup = client.setup();
+        Wire.Setup setup = client.setup();
         Path stateDir = dir.resolve("workers").resolve(name);
         Path clone = stateDir.resolve("repos").resolve("alm");
         Git git = new Git("git", null, Duration.ofSeconds(30));

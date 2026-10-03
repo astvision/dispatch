@@ -102,23 +102,18 @@ public class WorkerClient {
         return new Paired(answer.get("workerId").asLong(), answer.get("key").asText(), answer.get("team").asText());
     }
 
-    /** What this computer needs before it can run anything. */
-    public record Setup(String team, String authorName, String authorEmail, List<ProjectInfo> projects) {
+    public Wire.Setup setup() {
+        return read(call(WorkerApi.PROJECTS, "{}", CALL_TIMEOUT), Wire.Setup.class);
     }
 
-    /** @param agent the agent the team runs this project on; null from a team machine older than this field */
-    public record ProjectInfo(String name, String repo, String baseBranch, String agent, String model, String effort) {
-    }
-
-    public Setup setup() {
-        JsonNode answer = call(WorkerApi.PROJECTS, "{}", CALL_TIMEOUT);
-        List<ProjectInfo> projects = new ArrayList<>();
-        answer.get("projects").forEach(project -> projects.add(new ProjectInfo(project.path("name").asText(),
-                project.path("repo").asText(null), project.path("baseBranch").asText(null),
-                project.path("agent").asText(null), project.path("model").asText(null),
-                project.path("effort").asText(null))));
-        return new Setup(answer.get("team").asText(), answer.get("authorName").asText(),
-                answer.get("authorEmail").asText(), projects);
+    /** One of the wire's records, as the team machine wrote it; both sides speak one protocol, so anything else is a bug. */
+    private static <T> T read(JsonNode answer, Class<T> type) {
+        try {
+            return Json.MAPPER.treeToValue(answer, type);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("the team machine sent a " + type.getSimpleName() + " this version cannot read: "
+                    + e.getOriginalMessage(), e);
+        }
     }
 
     /**
@@ -126,9 +121,8 @@ public class WorkerClient {
      * so does how many runs this computer takes at once, which the team machine claims its member's runs by.
      */
     public Optional<Job> next(Readiness readiness, int maxConcurrentRuns) {
-        ObjectNode poll = Json.object().put("maxConcurrentRuns", maxConcurrentRuns).put("protocol", WorkerProtocol.VERSION);
-        poll.set("readiness", Json.MAPPER.valueToTree(readiness));
-        JsonNode answer = call(WorkerApi.NEXT, Json.write(poll), POLL_TIMEOUT);
+        JsonNode answer = call(WorkerApi.NEXT, Json.write(new Wire.Poll(WorkerProtocol.VERSION, maxConcurrentRuns, readiness)),
+                POLL_TIMEOUT);
         // A team machine from before the protocol says nothing: 0, which no version is (ADR 0039).
         int team = answer.path("protocol").asInt(0);
         if (team != WorkerProtocol.VERSION) {
@@ -136,36 +130,23 @@ public class WorkerClient {
                     + " and the team machine " + team + ": update Dispatch on "
                     + (team < WorkerProtocol.VERSION ? "the team machine" : "this computer") + ", then start the worker again");
         }
-        if (answer.get("job").isNull()) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(Json.MAPPER.treeToValue(answer.get("job"), Job.class));
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("the team machine sent a job this version cannot read: " + e.getOriginalMessage(), e);
-        }
+        return Optional.ofNullable(read(answer, Wire.Next.class).job());
     }
 
-    /** @return true when the member cancelled the task and the agent must stop */
-    /** A team machine older than the controls (RM-4, RM-5) answers with {@code cancel} alone: none of them. */
+    /** The team's answer: whether the member cancelled the task, and the run controls they pressed (RM-4, RM-5). */
     public RemoteWorkers.Reply progress(RemoteWorkers.Progress progress) {
-        JsonNode answer = call(WorkerApi.PROGRESS, Json.write(progress), CALL_TIMEOUT);
-        return new RemoteWorkers.Reply(answer.get("cancel").asBoolean(), answer.path("skipStep").asInt(0),
-                answer.path("deliverNow").asBoolean(false), answer.path("pauseBeforeReview").asBoolean(false),
-                answer.path("resume").asBoolean(false));
+        return read(call(WorkerApi.PROGRESS, Json.write(progress), CALL_TIMEOUT), RemoteWorkers.Reply.class);
     }
 
     public void result(long taskId, int seq, JobResult result) {
-        var body = Json.object().put("taskId", taskId).put("seq", seq);
-        body.set("result", Json.MAPPER.valueToTree(result));
-        call(WorkerApi.RESULT, Json.write(body), CALL_TIMEOUT);
+        call(WorkerApi.RESULT, Json.write(new Wire.Result(taskId, seq, result)), CALL_TIMEOUT);
     }
 
     public void attachment(long taskId, String fileRef, Path target) {
         HttpRequest request = authorized(HttpRequest.newBuilder(WorkerApi.url(team.toString(), WorkerApi.ATTACHMENT)).timeout(CALL_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(
-                        Json.write(Map.of("taskId", taskId, "fileRef", fileRef))))).build();
+                        Json.write(new Wire.Attachment(taskId, fileRef))))).build();
         acquireSlot();
         try {
             HttpResponse<Path> answer = http.send(request, HttpResponse.BodyHandlers.ofFile(target,

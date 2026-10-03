@@ -173,14 +173,13 @@ public final class Coordinator {
     }
 
     /**
-     * True only where the run's agent can load the dispatch plugin (spec: agent skills); null is left out of the job's JSON,
-     * so a worker from before the skills still reads it.
+     * True only where the run's agent can load the dispatch plugin (spec: agent skills); null means off.
      */
     private static Boolean skills(Config.Project project) {
         return project.skillsOn() && AgentKind.of(project.agent()).loadsPlugins() ? Boolean.TRUE : null;
     }
 
-    /** Null for a PLAN job, which neither builds on the branch nor pushes it, so an older worker still reads it. */
+    /** Null for a PLAN job, which neither builds on the branch nor pushes it: nothing to check. */
     private String expectedHead(long taskId, RunKind kind) {
         if (kind == RunKind.PLAN) {
             return null;

@@ -1,7 +1,6 @@
 package dispatch.core;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonInclude;
 import dispatch.config.Config;
 import dispatch.domain.Attachment;
 import dispatch.domain.RunKind;
@@ -30,13 +29,11 @@ import java.util.UUID;
  * @param commitTrailers  the delivery commit's trailers: who asked and who approved
  * @param deliverySummary DELIVER only: the failed run's summary, which becomes the commit body
  * @param branch          the task's branch, set by the team machine that made this job; null uses {@link Config#defaultBranch}
- *                        so an older worker that never heard of it (before M: several instances) still parses the job
  * @param reviewPrompt    the reviewer's prompt without the diff; null unless an EXECUTE job with the verify loop on
  * @param expectedHead    EXECUTE and DELIVER only: the commit Dispatch last left the task's branch at, which the run must find
  *                        it at before it builds on or pushes it; null when there is nothing to check (a PLAN job, a task from
- *                        before the guard, an older team machine), and then nothing is checked
- * @param plugins         EXECUTE only: the official plugins the plan picked (spec: plugin picks); null when there are none,
- *                        and then left out of the JSON, so an older worker still reads every job without picks
+ *                        before the guard), and then nothing is checked
+ * @param plugins         EXECUTE only: the official plugins the plan picked (spec: plugin picks); null when there are none
  */
 public record Job(
         long taskId,
@@ -58,10 +55,10 @@ public record Job(
         String commitSubject,
         List<String> commitTrailers,
         String deliverySummary,
-        @JsonInclude(JsonInclude.Include.NON_NULL) String branch,
-        @JsonInclude(JsonInclude.Include.NON_NULL) String reviewPrompt,
-        @JsonInclude(JsonInclude.Include.NON_NULL) String expectedHead,
-        @JsonInclude(JsonInclude.Include.NON_NULL) List<String> plugins) {
+        String branch,
+        String reviewPrompt,
+        String expectedHead,
+        List<String> plugins) {
 
     public Job {
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
@@ -69,44 +66,7 @@ public record Job(
         plugins = plugins == null || plugins.isEmpty() ? null : List.copyOf(plugins);
     }
 
-    /** Before plugin picks: none. */
-    public Job(long taskId, int seq, RunKind kind, Project project, String baseBranch, String baseSha, String worktree,
-            String prUrl, UUID sessionId, boolean resume, String prompt, String model, String effort, long timeoutMillis,
-            BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
-            String deliverySummary, String branch, String reviewPrompt, String expectedHead) {
-        this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
-                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch, reviewPrompt,
-                expectedHead, null);
-    }
-
-    /** Before the branch guard: no expected head, so nothing is checked. */
-    public Job(long taskId, int seq, RunKind kind, Project project, String baseBranch, String baseSha, String worktree,
-            String prUrl, UUID sessionId, boolean resume, String prompt, String model, String effort, long timeoutMillis,
-            BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
-            String deliverySummary, String branch, String reviewPrompt) {
-        this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
-                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch, reviewPrompt, null);
-    }
-
-    /** Before the verify loop: no review prompt. */
-    public Job(long taskId, int seq, RunKind kind, Project project, String baseBranch, String baseSha, String worktree,
-            String prUrl, UUID sessionId, boolean resume, String prompt, String model, String effort, long timeoutMillis,
-            BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
-            String deliverySummary, String branch) {
-        this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
-                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch, null, null);
-    }
-
-    /** Before {@code branch} existed: an older worker's job, always the default branch. */
-    public Job(long taskId, int seq, RunKind kind, Project project, String baseBranch, String baseSha, String worktree,
-            String prUrl, UUID sessionId, boolean resume, String prompt, String model, String effort, long timeoutMillis,
-            BigDecimal budgetUsd, List<Attachment> attachments, String commitSubject, List<String> commitTrailers,
-            String deliverySummary) {
-        this(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model, effort,
-                timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, null, null, null);
-    }
-
-    /** The plugins this run loads (spec: plugin picks); empty for a job without picks or from an older team machine. */
+    /** The plugins this run loads (spec: plugin picks); empty for a job without picks. */
     @JsonIgnore
     public List<String> picks() {
         return plugins == null ? List.of() : plugins;
@@ -134,23 +94,12 @@ public record Job(
 
     /** @param path the clone the run works from, null when the worker keeps its own under {@code repos/<name>} */
     public record Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles,
-                          @JsonInclude(JsonInclude.Include.NON_NULL) String test,
-                          @JsonInclude(JsonInclude.Include.NON_NULL) Boolean loop,
-                          @JsonInclude(JsonInclude.Include.NON_NULL) Boolean skills) {
+                          String test,
+                          Boolean loop,
+                          Boolean skills) {
 
         public Project {
             copyFiles = copyFiles == null ? List.of() : List.copyOf(copyFiles);
-        }
-
-        /** A project as a team machine from before the verify loop sends it: no test, loop and skills off. */
-        public Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles) {
-            this(name, repo, path, baseBranch, agent, copyFiles, null, null, null);
-        }
-
-        /** A project as a team machine from before the agent skills sends it: skills off. */
-        public Project(String name, String repo, String path, String baseBranch, String agent, List<String> copyFiles,
-                       String test, Boolean loop) {
-            this(name, repo, path, baseBranch, agent, copyFiles, test, loop, null);
         }
 
         /** This project at the clone a member's computer keeps. */
@@ -158,12 +107,12 @@ public record Job(
             return new Project(name, repo, otherPath, baseBranch, agent, copyFiles, test, loop, skills);
         }
 
-        /** Null, a job from an older team machine, keeps today's behaviour. */
+        /** Null means off. */
         public boolean loopOn() {
             return Boolean.TRUE.equals(loop);
         }
 
-        /** Whether the run loads the dispatch skills plugin; null (skills off, or an older team machine) means no. */
+        /** Whether the run loads the dispatch skills plugin; null (skills off) means no. */
         public boolean skillsOn() {
             return Boolean.TRUE.equals(skills);
         }

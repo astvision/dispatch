@@ -190,10 +190,10 @@ abstract class WorkerApiFixture {
     /** As {@link #planJob(String)}, on {@code agent} with the team's {@code model} and {@code effort} (null: its default). */
     Job planJob(String prompt, String agent, String model, String effort) {
         return new Job(TASK_ID, 1, RunKind.PLAN,
-                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", agent, List.of()),
+                new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", agent, List.of(), null, null, null),
                 "main", null, null, null, UUID.fromString("11111111-2222-3333-4444-555555555555"), false, prompt, model,
                 effort, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), null);
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), null, null, null, null, null);
     }
 
     /** Pairs {@code name} with Bold and starts a real {@link WorkerLoop}, wired to this fixture's server, on a virtual thread. */

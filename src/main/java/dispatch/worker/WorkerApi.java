@@ -273,45 +273,49 @@ public final class WorkerApi implements AutoCloseable {
         switch (path) {
             case PROJECTS -> json(exchange, 200, Json.write(projects(worker)));
             case NEXT -> {
-                // A worker from before the protocol says nothing: 0, which no version is.
+                // A worker from before the protocol says nothing: 0, which no version is. Another protocol's poll is not
+                // read past its number: its fields may mean something else there (ADR 0039).
                 int protocol = body.path("protocol").asInt(0);
                 boolean ours = protocol == WorkerProtocol.VERSION;
-                // Read, and refused if bad, before anything is stored: one poll's report lands whole or not at all. Another
-                // protocol's report is not read at all: its fields may mean something else there (ADR 0039).
-                Optional<Readiness> readiness = ours ? readiness(body) : Optional.empty();
-                Integer capacity = ours ? capacity(body) : null;
+                // Read, and refused if bad, before anything is stored: one poll's report lands whole or not at all.
+                Optional<Wire.Poll> poll = ours ? Optional.of(read(body, Wire.Poll.class)) : Optional.empty();
+                if (poll.isPresent() && poll.get().maxConcurrentRuns() < 1) {
+                    throw new ApiException(400, "invalid", Text.raw("maxConcurrentRuns: at least 1"));
+                }
+                if (poll.isPresent() && poll.get().readiness() == null) {
+                    throw new ApiException(400, "invalid", Text.raw("readiness: required"));
+                }
                 db.transaction(tx -> {
                     Workers.saveProtocol(tx, worker.id(), protocol);
-                    readiness.ifPresent(reported -> Workers.saveReadiness(tx, worker.id(), reported, clock.instant()));
-                    if (capacity != null) {
-                        Workers.saveCapacity(tx, worker.id(), capacity);
-                    }
+                    poll.ifPresent(it -> {
+                        Workers.saveReadiness(tx, worker.id(), it.readiness(), clock.instant());
+                        Workers.saveCapacity(tx, worker.id(), it.maxConcurrentRuns());
+                    });
                 });
                 // Work passes only between equal protocols (ADR 0039): another one waits as any poll does, and gets nothing.
                 Optional<Job> job = ours ? workers.next(worker) : workers.nothing();
-                ObjectNode answer = Json.object().put("protocol", WorkerProtocol.VERSION);
-                if (job.isPresent()) {
-                    answer.set("job", Json.MAPPER.<JsonNode>valueToTree(job.get()));
-                } else {
-                    answer.putNull("job");
-                }
-                json(exchange, 200, Json.write(answer));
+                json(exchange, 200, Json.write(new Wire.Next(WorkerProtocol.VERSION, job.orElse(null))));
             }
             case PROGRESS -> {
-                RemoteWorkers.Reply reply = workers.progress(worker, new RemoteWorkers.Progress(
-                        requiredLong(body, "taskId"), requiredInt(body, "seq"),
-                        text(body, "worktree"), text(body, "baseSha"), body.path("agentStarted").asBoolean(false),
-                        optionalInt(body, "steps"), text(body, "lastAction"), loopSteps(body)));
-                json(exchange, 200, Json.write(Json.object().put("cancel", reply.cancel()).put("skipStep", reply.skipStep())
-                        .put("deliverNow", reply.deliverNow()).put("pauseBeforeReview", reply.pauseBeforeReview())
-                        .put("resume", reply.resume())));
+                RemoteWorkers.Progress progress = read(body, RemoteWorkers.Progress.class);
+                checkSteps(progress.loopSteps());
+                json(exchange, 200, Json.write(workers.progress(worker, progress)));
             }
             case RESULT -> {
-                JobResult result = readJobResult(required(body, "result"));
-                workers.result(worker, requiredLong(body, "taskId"), requiredInt(body, "seq"), result);
+                Wire.Result reported = read(body, Wire.Result.class);
+                if (reported.result() == null) {
+                    throw new ApiException(400, "invalid", Text.raw("result: not a JobResult"));
+                }
+                workers.result(worker, reported.taskId(), reported.seq(), reported.result());
                 json(exchange, 200, Json.write(Json.object().put("ok", true)));
             }
-            case ATTACHMENT -> attachment(exchange, worker, requiredLong(body, "taskId"), required(body, "fileRef").asText());
+            case ATTACHMENT -> {
+                Wire.Attachment asked = read(body, Wire.Attachment.class);
+                if (asked.fileRef() == null) {
+                    throw new ApiException(400, "invalid", Text.raw("fileRef: required"));
+                }
+                attachment(exchange, worker, asked.taskId(), asked.fileRef());
+            }
             default -> throw new ApiException(404, "not_found", Text.raw("no such worker API: " + path));
         }
     }
@@ -357,68 +361,35 @@ public final class WorkerApi implements AutoCloseable {
     /** A step's detail holds at most a test tail or 20 findings; the cap keeps a post bounded. */
     static final int MAX_STEP_DETAIL = 32_768;
 
-    /** Null when the worker sent none: an older worker reports no steps (RM-2). */
-    private static List<RemoteWorkers.Step> loopSteps(JsonNode body) {
-        JsonNode list = body.get("loopSteps");
-        if (list == null || list.isNull()) {
-            return null;
+    /** One of the wire's records, as the other side wrote it; anything else is refused, since both sides speak one protocol. */
+    private static <T> T read(JsonNode body, Class<T> type) {
+        try {
+            return Json.MAPPER.treeToValue(body, type);
+        } catch (JsonProcessingException e) {
+            throw new ApiException(400, "invalid", Text.raw(type.getSimpleName() + ": " + e.getOriginalMessage()));
         }
-        if (!list.isArray() || list.size() > MAX_STEPS) {
+    }
+
+    /** A run's steps (RM-2): bounded, and each one a step this version knows. */
+    private static void checkSteps(List<RemoteWorkers.Step> steps) {
+        if (steps == null) {
+            return;
+        }
+        if (steps.size() > MAX_STEPS) {
             throw new ApiException(400, "invalid", Text.raw("loopSteps: a list of at most " + MAX_STEPS + " steps"));
         }
-        List<RemoteWorkers.Step> steps = new ArrayList<>();
-        for (JsonNode item : list) {
-            RemoteWorkers.Step step;
+        for (RemoteWorkers.Step step : steps) {
             try {
-                step = Json.MAPPER.treeToValue(item, RemoteWorkers.Step.class);
                 step.toRunStep();
-            } catch (JsonProcessingException | IllegalArgumentException e) {
+            } catch (IllegalArgumentException | NullPointerException e) {
                 throw new ApiException(400, "invalid", Text.raw("loopSteps: not a step: " + e.getMessage()));
             }
             if (step.detail() != null && step.detail().length() > MAX_STEP_DETAIL) {
                 throw new ApiException(400, "invalid", Text.raw("loopSteps: a detail longer than " + MAX_STEP_DETAIL));
             }
-            steps.add(step);
-        }
-        return steps;
-    }
-
-    /** Empty when the worker sent none: an older worker keeps working and counts as ready. */
-    private static Optional<Readiness> readiness(JsonNode body) {
-        JsonNode reported = body.path("readiness");
-        if (!reported.isObject()) {
-            return Optional.empty();
-        }
-        Map<String, Readiness.Check> projects = new LinkedHashMap<>();
-        reported.path("projects").properties().forEach(entry ->
-                projects.put(entry.getKey(), check(entry.getValue())));
-        // An older worker reports Claude Code alone: its other agents, if any, hold nothing.
-        Map<String, Readiness.Check> agents = new LinkedHashMap<>();
-        reported.path("agents").properties().forEach(entry -> agents.put(entry.getKey(), check(entry.getValue())));
-        return Optional.of(new Readiness(check(reported.path("claude")), check(reported.path("gh")), projects, agents));
-    }
-
-    /** How many runs the worker takes at once; null from a worker older than this field, which the claim counts as one. */
-    private static Integer capacity(JsonNode body) {
-        Integer capacity = optionalInt(body, "maxConcurrentRuns");
-        if (capacity != null && capacity < 1) {
-            throw new ApiException(400, "invalid", Text.raw("maxConcurrentRuns: at least 1"));
-        }
-        return capacity;
-    }
-
-    private static Readiness.Check check(JsonNode node) {
-        // A field a worker left out is "fine": only an explicit false holds anything.
-        return new Readiness.Check(node.path("ok").asBoolean(true), node.path("detail").asText(null));
-    }
-
-    private static JobResult readJobResult(JsonNode node) {
-        try {
-            return Json.MAPPER.treeToValue(node, JobResult.class);
-        } catch (JsonProcessingException e) {
-            throw new ApiException(400, "invalid", Text.raw("result: not a JobResult"));
         }
     }
+
 
     private static JsonNode required(JsonNode body, String field) {
         if (!body.hasNonNull(field)) {
@@ -484,21 +455,16 @@ public final class WorkerApi implements AutoCloseable {
     }
 
     /** What a worker needs before it can run anything: the team's projects as configured, and the commit author. */
-    private ObjectNode projects(Workers.Paired worker) {
+    private Wire.Setup projects(Workers.Paired worker) {
         Set<String> mine = groups.projectsOfMember(worker.memberRef());
-        ObjectNode answer = Json.object().put("team", config.team())
-                .put("authorName", config.delivery().authorName())
-                .put("authorEmail", config.delivery().authorEmail());
-        ArrayNode projects = answer.putArray("projects");
+        List<Wire.Project> projects = new ArrayList<>();
         for (Config.Project project : config.projects()) {
-            if (!mine.contains(project.name())) {
-                continue;
+            if (mine.contains(project.name())) {
+                projects.add(new Wire.Project(project.name(), project.repo(), project.baseBranch(), project.agent(),
+                        project.model(), project.effort()));
             }
-            projects.addObject().put("name", project.name()).put("repo", project.repo())
-                    .put("baseBranch", project.baseBranch()).put("agent", project.agent())
-                    .put("model", project.model()).put("effort", project.effort());
         }
-        return answer;
+        return new Wire.Setup(config.team(), config.delivery().authorName(), config.delivery().authorEmail(), projects);
     }
 
     private static String hostOf(HttpExchange exchange) {

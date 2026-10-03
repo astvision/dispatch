@@ -305,23 +305,6 @@ class CoordinatorTest {
     }
 
     @Test
-    void aLoopOffExecutionJobAddsNothingAnOlderWorkerWouldRejectToItsJson() {
-        String json = Json.write(approvedExecutionJob(ALM));
-
-        assertFalse(json.contains("\"loop\""), json);
-        assertFalse(json.contains("\"test\""), json);
-        assertFalse(json.contains("\"reviewPrompt\""), json);
-    }
-
-    @Test
-    void aLoopOffProjectWithATestCommandStillSendsNoTestToItsWorker() {
-        String json = Json.write(approvedExecutionJob(loopProject("off")));
-
-        assertFalse(json.contains("\"test\""), json);
-        assertFalse(json.contains("\"loop\""), json);
-    }
-
-    @Test
     void theBranchsExpectedHeadStartsAtItsBaseAndFollowsEachDeliveryDispatchMade() {
         long id = queue("Fix the login timeout");
         coordinator(projects(List.of(ALM)), (job, events, control) -> {
@@ -376,14 +359,6 @@ class CoordinatorTest {
 
         assertTrue(on.project().skillsOn());
         assertTrue(Json.write(on).contains("\"skills\":true"), Json.write(on));
-    }
-
-    @Test
-    void skillsOffAddNothingAnOlderWorkerWouldRejectToTheJobsJson() {
-        Job off = approvedExecutionJob(skillsProject("off", "claude-code"));
-
-        assertFalse(off.project().skillsOn());
-        assertFalse(Json.write(off).contains("\"skills\""), Json.write(off));
     }
 
     @Test
@@ -481,14 +456,6 @@ class CoordinatorTest {
 
         assertEquals(List.of("frontend-design"), job.picks());
         assertTrue(Json.write(job).contains("\"plugins\":[\"frontend-design\"]"), Json.write(job));
-    }
-
-    @Test
-    void anExecutionWithoutPicksSendsNoPluginsFieldAnOlderWorkerWouldReject() {
-        Job job = approvedExecutionJob(ALM);
-
-        assertEquals(List.of(), job.picks());
-        assertFalse(Json.write(job).contains("\"plugins\""), Json.write(job));
     }
 
     @Test
