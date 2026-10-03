@@ -130,6 +130,10 @@ export interface FolderListing {
 export type Model = "sonnet" | "opus" | "fable";
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
+/** A task's phases, as the server's Phase enum names them; contract/phases.json pins both sides. */
+export const PHASES = ["PLANNING", "AWAITING_APPROVAL", "EXECUTING", "COMPLETED", "FAILED", "REJECTED", "CANCELLED"] as const;
+export type Phase = (typeof PHASES)[number];
+
 /** A project's own model and effort for one phase; null keeps what the project sets for both. */
 export interface PhaseChoice {
   model: string | null;
@@ -335,7 +339,7 @@ export interface TaskRow {
   mine: boolean;
   /** What the viewer may do with it now; a button whose action is not here is not shown (ADR 0027). */
   actions: TaskAction[];
-  phase?: string;
+  phase?: Phase;
   prUrl?: string | null;
   failureReason?: string | null;
   costUsd?: string | null;
@@ -376,7 +380,7 @@ export interface Timeline {
   project: string;
   title: string;
   requester: string;
-  phase: string;
+  phase: Phase;
   priority: string;
   prUrl: string | null;
   branch?: string;
@@ -433,7 +437,7 @@ export interface TaskDetail {
   priority?: string;
   branch?: string;
   baseBranch?: string;
-  phase: string;
+  phase: Phase;
   prUrl: string | null;
   failureReason: string | null;
   createdAt: string | null;
