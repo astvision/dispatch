@@ -367,6 +367,62 @@ class ManageApiTest {
                 """.formatted(yamlPath(dir.resolve("crm"))), ""), Files.readString(config));
     }
 
+    /** ADR 0025: a project may be in several groups. Removing it must unlink it from every one of them. */
+    @Test
+    void aProjectInTwoGroupsIsRemovedFromBoth() throws Exception {
+        String twoGroups = original.replace("""
+                  projects:
+                    - alm
+                    - crm
+            """, """
+                  projects:
+                    - alm
+                    - crm
+                - name: ops
+                  chatId: -1009876543210
+                  members:
+                    - id: 100
+                      name: 'Bold'
+                  projects:
+                    - crm
+                    - alm
+            """);
+        Files.writeString(config, twoGroups);
+
+        call("/api/manage/projects/remove", "{\"version\":\"" + version() + "\",\"name\":\"crm\"}");
+
+        Config edited = load();
+        assertTrue(edited.telegram().groups().stream().noneMatch(group -> group.projects().contains("crm")),
+                "no group still names the removed project");
+        assertEquals(2, edited.telegram().groups().size());
+        assertTrue(edited.projects().stream().noneMatch(project -> project.name().equals("crm")));
+    }
+
+    @Test
+    void aProjectThatIsAGroupsOnlyOneIsKeptAndTheGroupNamed() throws Exception {
+        Files.writeString(config, original.replace("""
+                  projects:
+                    - alm
+                    - crm
+            """, """
+                  projects:
+                    - alm
+                    - crm
+                - name: ops
+                  chatId: -1009876543210
+                  members:
+                    - id: 100
+                      name: 'Bold'
+                  projects:
+                    - crm
+            """));
+
+        CliException refused = assertThrows(CliException.class,
+                () -> call("/api/manage/projects/remove", "{\"version\":\"" + version() + "\",\"name\":\"crm\"}"));
+
+        assertTrue(refused.getMessage().contains("ops"), refused.getMessage());
+    }
+
     @Test
     void theLastProjectIsKept() throws Exception {
         call("/api/manage/projects/remove", "{\"version\":\"" + version() + "\",\"name\":\"crm\"}");

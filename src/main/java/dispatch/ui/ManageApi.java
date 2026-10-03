@@ -13,6 +13,7 @@ import dispatch.cli.Service;
 import dispatch.config.Config;
 import dispatch.config.ConfigEdit;
 import dispatch.config.ConfigEdit.At;
+import dispatch.config.ConfigEdits;
 import dispatch.config.ConfigException;
 import dispatch.config.ConfigFile;
 import dispatch.config.ConfigText;
@@ -292,18 +293,7 @@ public final class ManageApi {
 
     private Saved removeProject(JsonNode body) {
         String name = SetupApi.text(body, "name");
-        return save(body, (text, config) -> {
-            project(config, name);
-            if (config.projects().size() == 1) {
-                throw new CliException(Text.of("manage.isThe", name));
-            }
-            Config.Group group = groupOf(config, name);
-            if (group.projects().size() == 1) {
-                throw new CliException(Text.of("manage.isTheOnly", name, group.name()));
-            }
-            String edited = ConfigEdit.remove(text, At.of("telegram", "groups").item("name", group.name()).key("projects").value(name));
-            return ConfigEdit.remove(edited, At.of("projects").item("name", name));
-        });
+        return save(body, (text, config) -> ConfigEdits.removeProject(text, config, name));
     }
 
     private Saved renameMember(JsonNode body) {
@@ -328,25 +318,7 @@ public final class ManageApi {
     private Saved removeMember(JsonNode body) {
         String groupName = SetupApi.text(body, "group");
         long id = SetupApi.requiredLong(body, "id");
-        return save(body, (text, config) -> {
-            Config.Group group = group(config, groupName);
-            Config.Member member = group.members().stream().filter(candidate -> candidate.id() == id).findFirst()
-                    .orElseThrow(() -> new CliException(Text.of("manage.nobodyWithId", id, groupName)));
-            if (group.members().size() == 1) {
-                throw new CliException(Text.of("manage.isTheOnlyMember", member.name(), groupName));
-            }
-            List<Long> admins = config.telegram().admins();
-            boolean memberElsewhere = config.telegram().groups().stream()
-                    .anyMatch(other -> other != group && other.members().stream().anyMatch(candidate -> candidate.id() == id));
-            String edited = ConfigEdit.remove(text, members(groupName).item("id", String.valueOf(id)));
-            if (admins.contains(id) && !memberElsewhere) {
-                if (realAdminCount(config) == 1) {
-                    throw new CliException(Text.of("manage.isTheTeam", member.name()));
-                }
-                edited = ConfigEdit.remove(edited, At.of("telegram", "admins").value(String.valueOf(id)));
-            }
-            return edited;
-        });
+        return save(body, (text, config) -> ConfigEdits.removeMember(text, config, groupName, id));
     }
 
     private Saved setAdmin(JsonNode body) {
@@ -366,7 +338,7 @@ public final class ManageApi {
             if (admin) {
                 return ConfigEdit.append(text, At.of("telegram", "admins"), String.valueOf(id));
             }
-            if (realAdminCount(config) == 1) {
+            if (ConfigEdits.realAdminCount(config) == 1) {
                 throw new CliException(Text.of("manage.isTheTeamS", member.name()));
             }
             return ConfigEdit.remove(text, At.of("telegram", "admins").value(String.valueOf(id)));
@@ -420,13 +392,6 @@ public final class ManageApi {
         } catch (RuntimeException e) {
             Log.warn("group.leave_failed", "chat_id", chatId, "error", e.getMessage());
         }
-    }
-
-    /** Admins who actually belong to a group; an id in telegram.admins with no matching member is not a real admin. */
-    private static long realAdminCount(Config config) {
-        List<Long> memberIds = config.telegram().groups().stream().flatMap(group -> group.members().stream())
-                .map(Config.Member::id).toList();
-        return config.telegram().admins().stream().filter(memberIds::contains).count();
     }
 
     /** The service log's last lines, as `dispatch service install` has it write them, filtered and redacted. */
