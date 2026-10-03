@@ -146,12 +146,14 @@ class RendererTest {
         assertTrue(worker.contains("ann-laptop") && worker.contains("claude --resume f21d"), worker);
     }
 
+    /** A forced reply stays the chat's input state until it is answered, so one never answered came back for days. */
     @Test
-    void theEditPromptAsksForAForcedReply() {
+    void theEditPromptAsksForAnOrdinaryReplyNotAForcedOne() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_EDIT_PROMPT, Json.object().put("taskId", 42).put("planSeq", 1));
 
-        assertTrue(rendered.html().contains("#42"), rendered.html());
-        assertEquals("#42-д юу өөрчлөх вэ?", rendered.forceReply());
+        assertTrue(rendered.html().contains("#42") && rendered.html().contains("хариу"), rendered.html());
+        assertNull(rendered.forceReply());
+        assertTrue(rendered.keyboard().isEmpty());
     }
 
     @Test

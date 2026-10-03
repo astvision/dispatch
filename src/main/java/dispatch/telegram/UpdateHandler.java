@@ -708,7 +708,7 @@ public final class UpdateHandler {
 
     /**
      * A plan's ▶️ ❓ ✏️ 📄 row. The views redraw the plan in place for anyone who can see it; a decision's alternative corrects
-     * the plan as a reply would, in words the agent reads; ✏️ asks for that reply as a forced one.
+     * the plan as a reply would, in words the agent reads; ✏️ asks for that reply under a prompt of its own (an ordinary message, not a forced reply, which would stay the chat's input state until answered).
      */
     private void onPlanButton(Tx tx, JsonNode callback, Requester who, Callback button) {
         String callbackId = callback.path("id").asText();

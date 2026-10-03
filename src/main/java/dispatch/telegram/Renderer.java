@@ -156,8 +156,9 @@ public final class Renderer {
             case ANSWER_READY -> answer(payload);
             case PLAN_QUESTION -> planQuestion(payload);
             case TELEPORT -> teleport(payload);
-            case PLAN_EDIT_PROMPT -> new Rendered(format("plan.editPrompt", taskId(payload)), List.of(), null,
-                    format("plan.editPlaceholder", taskId(payload)));
+            // An ordinary message to reply to, not a forced reply: Telegram keeps a forced reply as the chat's input state
+            // until it is answered, and one left unanswered came back under every later message for days.
+            case PLAN_EDIT_PROMPT -> plain(format("plan.editPrompt", taskId(payload)));
             case PLAN_ANSWER_PROMPT -> new Rendered(format("plan.answerPrompt", taskId(payload), payload.path("index").asInt()), List.of(),
                     null, text("plan.answerPlaceholder"));
             case EXECUTION_QUEUED -> plain(format("task.executionQueued", taskId(payload), escape(payload.path("by").asText())));
