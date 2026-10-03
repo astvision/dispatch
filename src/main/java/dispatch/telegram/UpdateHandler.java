@@ -73,11 +73,6 @@ public final class UpdateHandler {
     static final String OFFSET_KEY = "telegram.offset";
     private static final Set<String> JOINED_STATUSES = Set.of("member", "administrator");
     /** Messages about a task's outcome; a reply to one is a follow-up (ADR 0006). */
-    /** Commands about a member's own tasks and computers, answered only in their private chat. */
-    private static final Set<String> PRIVATE_COMMANDS = Set.of("cancel", "retry", "teleport", "worker", "manage");
-    private static final Set<String> COMMANDS =
-            Set.of("task", "status", "history", "stats", "cancel", "retry", "teleport", "worker", "manage", "new", "projects", "help",
-                    "start");
     /** What Telegram accepts as a deep link's start parameter. */
     private static final java.util.regex.Pattern START_PARAMETER = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,64}");
     private static final Duration UNKNOWN_NOTICE_INTERVAL = Duration.ofHours(24);
@@ -294,7 +289,10 @@ public final class UpdateHandler {
         return Command.parse(message).filter(command -> command.name().equals("worker") && command.addressedTo(botUsername)).isPresent();
     }
 
-    /** A message in the team group, or in a member's private chat with the bot, from someone with a user id. */
+    /**
+     * A message in the team group, or in a member's private chat with the bot, from someone with a user id. The facts about
+     * it are gathered once, {@link MessageMeaning} says what they mean, and that one meaning is carried out.
+     */
     private void onChatMessage(Tx tx, JsonNode message, boolean privateChat) {
         long chatId = message.path("chat").path("id").asLong();
         JsonNode from = message.path("from");
@@ -307,71 +305,65 @@ public final class UpdateHandler {
         TaskAccess.Viewer viewer = privateChat ? access.member(who.ref()) : access.chat(chatRef);
         Set<String> visible = viewer.projects();
         Optional<Command> parsed = Command.parse(message);
-        // Looked up once: what the message replies to decides, by its kind, what the reply means (OutboxKind.replyMeans).
         Optional<Replied> replied = replied(tx, message);
         Optional<Task> topicTask = privateChat && thread != null
                 ? tasks.taskOfTopic(tx, who.ref(), Long.toString(thread))
                 : Optional.empty();
-        if (topicTask.isPresent() && parsed.map(command -> !COMMANDS.contains(command.name())).orElse(true)) {
-            // Inside a task's own topic, anything that is not a command is about that task: a follow-up once it has finished,
-            // otherwise a correction of its plan, which is refused with the reason when no plan is waiting.
-            if (replied.filter(to -> to.means() == OutboxKind.Reply.ANSWER).isPresent()) {
-                answerQuestion(tx, replied.get(), message, who, origin, chatRef);
-                return;
-            }
-            Task task = topicTask.get();
-            TaskCommand more = task.phase() == Phase.COMPLETED || task.phase() == Phase.FAILED
-                    ? new TaskCommand.FollowUp(task.id(), text(message), new Origin(origin))
-                    : new TaskCommand.Correct(task.id(), OptionalInt.empty(), text(message));
-            reply(tx, who, more, commands.run(tx, who, more), origin, chatRef);
-            return;
+        Optional<String> forBot = privateChat ? Optional.empty() : withoutBotMentions(message);
+        boolean blank = text(message).isBlank();
+        boolean hasFiles = !attachments(message).isEmpty();
+        // A reply with nothing to add keeps its old meaning, as one to a draft given or closed since does.
+        boolean draftTakesContext = (!blank || hasFiles) && replied
+                .filter(to -> to.means() == OutboxKind.Reply.DRAFT_CONTEXT)
+                .map(to -> tasks.takesContext(tx, who, to.draftId()))
+                .orElse(false);
+        MessageMeaning.Facts facts = new MessageMeaning.Facts(privateChat,
+                topicTask.map(Task::phase).orElse(null),
+                parsed.map(Command::name).orElse(null),
+                parsed.map(command -> command.addressedTo(botUsername)).orElse(false),
+                replied.map(Replied::means).orElse(null),
+                draftTakesContext, assistant != null, blank, hasFiles, forBot.isPresent(), !mentions(message).isEmpty());
+        if (MessageMeaning.ignoresReply(facts)) {
+            Replied to = replied.get();
+            tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", to.ref(), "kind", to.sent().kind().name()));
         }
-        if (parsed.isEmpty()) {
-            if (privateChat && replied.filter(to -> to.means() == OutboxKind.Reply.DRAFT_CONTEXT).isPresent()
-                    && addToDraft(tx, replied.get(), message, who)) {
-                return;
+        switch (MessageMeaning.of(facts)) {
+            case ANSWER_QUESTION -> answerQuestion(tx, replied.get(), message, who, origin, chatRef);
+            case TOPIC_FOLLOW_UP -> {
+                TaskCommand more = new TaskCommand.FollowUp(topicTask.get().id(), text(message), new Origin(origin));
+                reply(tx, who, more, commands.run(tx, who, more), origin, chatRef);
             }
-            if (privateChat && replied.filter(to -> to.means() == OutboxKind.Reply.TASK).isPresent()) {
-                // An answer to /help's ✍️ prompt: a task by explicit intent, as /task's text is, never an assistant turn.
-                tasks.draft(tx, who, null, text(message), origin, attachments(message));
-                return;
+            // Refused with the reason when no plan is waiting.
+            case TOPIC_CORRECTION -> {
+                TaskCommand more = new TaskCommand.Correct(topicTask.get().id(), OptionalInt.empty(), text(message));
+                reply(tx, who, more, commands.run(tx, who, more), origin, chatRef);
             }
-            if (replyToTask(tx, replied, message, who, origin, chatRef)) {
-                return;
+            case ADD_TO_DRAFT -> addToDraft(tx, replied.get(), message, who);
+            case TASK_FROM_PROMPT, PRIVATE_TASK -> tasks.draft(tx, who, null, text(message), origin, attachments(message));
+            case FOLLOW_UP -> {
+                TaskCommand followUp = new TaskCommand.FollowUp(replied.get().sent().taskId(), text(message), new Origin(origin));
+                reply(tx, who, followUp, commands.run(tx, who, followUp), origin, chatRef);
             }
-            if (privateChat && assistant != null && !text(message).isBlank() && attachments(message).isEmpty()) {
-                // A conversation with the assistant, which proposes a task when the message is one (A-1). Files still make
-                // a draft directly: the assistant cannot see them.
-                assistant.submit(tx, who, text(message), origin, chatRef);
-            } else if (privateChat) {
-                // Anything else a member writes privately is a task to give (ADR 0012).
-                tasks.draft(tx, who, null, text(message), origin, attachments(message));
-            } else {
-                Optional<String> forBot = withoutBotMentions(message);
-                if (forBot.isPresent()) {
-                    groupTask(tx, who, null, forBot.get(), message, origin, chatRef);
-                } else if (!mentions(message).isEmpty()) {
-                    mentionTasks(tx, who, message, origin, chatRef);
-                } else {
-                    addition(tx, who, message, origin, chatRef);
-                }
+            case CORRECTION -> correctPlan(tx, replied.get(), message, who, origin, chatRef);
+            // The assistant proposes a task when the message is one (A-1).
+            case ASSISTANT_TURN -> assistant.submit(tx, who, text(message), origin, chatRef);
+            case GROUP_TASK -> groupTask(tx, who, null, forBot.get(), message, origin, chatRef);
+            case MENTION_TASKS -> mentionTasks(tx, who, message, origin, chatRef);
+            case ADDITION -> addition(tx, who, message, origin, chatRef);
+            case UNADDRESSED -> {
             }
-            return;
+            case RESET_ASSISTANT -> {
+                assistant.reset(tx, who.ref());
+                enqueue(tx, OutboxKind.ASSISTANT_REPLY, chatRef, origin, Json.object().put("new", true));
+            }
+            case PRIVATE_ONLY -> privateOnly(tx, chatRef, origin);
+            case IGNORED_COMMAND -> tx.afterCommit(() -> Log.info("telegram.command_ignored", "command", parsed.get().name()));
+            case COMMAND -> command(tx, parsed.get(), message, who, viewer, visible, privateChat, origin, chatRef);
         }
-        Command command = parsed.get();
-        if (!command.addressedTo(botUsername)) {
-            return;
-        }
-        if (command.name().equals("new") && privateChat && assistant != null) {
-            // Only where there is a conversation to restart; anywhere else /new is any unknown command, as before.
-            assistant.reset(tx, who.ref());
-            enqueue(tx, OutboxKind.ASSISTANT_REPLY, chatRef, origin, Json.object().put("new", true));
-            return;
-        }
-        if (!privateChat && PRIVATE_COMMANDS.contains(command.name())) {
-            privateOnly(tx, chatRef, origin);
-            return;
-        }
+    }
+
+    private void command(Tx tx, Command command, JsonNode message, Requester who, TaskAccess.Viewer viewer, Set<String> visible,
+            boolean privateChat, String origin, String chatRef) {
         switch (command.name()) {
             case "task" -> {
                 if (!privateChat) {
@@ -402,32 +394,15 @@ public final class UpdateHandler {
                 TaskCommand retry = new TaskCommand.Retry(id.get());
                 reply(tx, who, retry, commands.run(tx, who, retry), origin, chatRef);
             }
-            case "teleport" -> {
-                teleport(tx, who, command.args(), origin, chatRef);
-            }
-            case "worker" -> {
-                worker(tx, who, command.args(), origin, chatRef);
-            }
-            case "manage" -> {
-                manage(tx, who, origin, chatRef);
-            }
+            case "teleport" -> teleport(tx, who, command.args(), origin, chatRef);
+            case "worker" -> worker(tx, who, command.args(), origin, chatRef);
+            case "manage" -> manage(tx, who, origin, chatRef);
             case "stats" -> stats(tx, privateChat ? who.ref() : null,
                     privateChat ? groups.groupsOfMember(who.ref()) : groups.groupOfChat(chatRef).map(List::of).orElseThrow(), origin, chatRef);
             case "projects" -> projectList(tx, who, privateChat, visible, origin, chatRef);
             // "/start help" too: the group card's link to the private chat lands here.
             case "help", "start" -> help(tx, who, message, visible, origin, chatRef, privateChat);
-            default -> {
-                // Telegram marks any leading "/word" as a command, so "/api/login fails too" lands here: a correction when
-                // it replies to a plan, otherwise a task when written privately.
-                if (replyToTask(tx, replied, message, who, origin, chatRef)) {
-                    return;
-                }
-                if (privateChat) {
-                    tasks.draft(tx, who, null, text(message), origin, attachments(message));
-                } else {
-                    tx.afterCommit(() -> Log.info("telegram.command_ignored", "command", command.name()));
-                }
-            }
+            default -> throw new IllegalStateException("not one of the bot's commands: " + command.name());
         }
     }
 
@@ -694,6 +669,11 @@ public final class UpdateHandler {
         OutboxKind.Reply means() {
             return sent.kind().replyMeans();
         }
+
+        /** The draft a draft prompt is about. */
+        long draftId() {
+            return Json.read(sent.payload()).path("draftId").asLong();
+        }
     }
 
     /** What {@code message} replies to, when that is one of the bot's sent messages. */
@@ -706,57 +686,24 @@ public final class UpdateHandler {
         return Outbox.findSent(tx, ref).map(sent -> new Replied(ref, sent));
     }
 
-    /**
-     * A reply to the prompt of the writer's own open draft adds its text and files to that draft; false for a draft given
-     * or closed since, whose reply keeps its old meaning.
-     */
-    private boolean addToDraft(Tx tx, Replied prompt, JsonNode message, Requester who) {
-        long draftId = Json.read(prompt.sent().payload()).path("draftId").asLong();
+    /** A reply to the prompt of the writer's own open draft adds its text and files to that draft, numbered on from its own. */
+    private void addToDraft(Tx tx, Replied prompt, JsonNode message, Requester who) {
+        long draftId = prompt.draftId();
         int filesBefore = Attachments.forDraft(tx, draftId).size();
-        return tasks.addContext(tx, who, draftId, text(message), attachments(filesBefore, message), prompt.ref());
+        tasks.addContext(tx, who, draftId, text(message), attachments(filesBefore, message), prompt.ref());
     }
 
-    /**
-     * A reply to a plan's question answers it, one to a task's result is a follow-up, and one to a plan corrects that plan;
-     * false for any other message.
-     */
-    private boolean replyToTask(Tx tx, Optional<Replied> replied, JsonNode message, Requester who, String origin, String chatRef) {
-        if (replied.isEmpty()) {
-            // Not a reply to one of the bot's messages: another reading, such as an addition to a task given in a group,
-            // may still apply.
-            return false;
-        }
-        Outbox.Sent sent = replied.get().sent();
-        String repliedRef = replied.get().ref();
-        OutboxKind kind = sent.kind();
-        switch (replied.get().means()) {
-            case ANSWER -> {
-                answerQuestion(tx, replied.get(), message, who, origin, chatRef);
-                return true;
-            }
-            case FOLLOW_UP -> {
-                TaskCommand followUp = new TaskCommand.FollowUp(sent.taskId(), text(message), new Origin(origin));
-                reply(tx, who, followUp, commands.run(tx, who, followUp), origin, chatRef);
-                return true;
-            }
-            case DRAFT_CONTEXT, TASK, NOTHING -> {
-                tx.afterCommit(() -> Log.info("telegram.reply_ignored", "replied_to", repliedRef, "kind", kind.name()));
-                return false;
-            }
-            case CORRECTION -> {
-                // Below: the plan it corrects is the message itself, or the one its prompt was asked under.
-            }
-        }
+    /** A reply to a plan corrects it; a reply to ✏️'s prompt corrects the plan the prompt was asked under. */
+    private void correctPlan(Tx tx, Replied replied, JsonNode message, Requester who, String origin, String chatRef) {
+        Outbox.Sent sent = replied.sent();
         JsonNode payload = Json.read(sent.payload());
-        // A reply to ✏️'s prompt corrects the plan the prompt was asked under.
-        String planRef = kind == OutboxKind.PLAN_READY ? repliedRef : payload.path("planRef").asText();
+        String planRef = sent.kind() == OutboxKind.PLAN_READY ? replied.ref() : payload.path("planRef").asText();
         TaskCommand correct = new TaskCommand.Correct(sent.taskId(), OptionalInt.of(payload.path("planSeq").asInt()), text(message));
         CommandResult result = commands.run(tx, who, correct);
         if (result instanceof CommandResult.Done) {
             showCorrected(tx, planRef, text(message));
         }
         reply(tx, who, correct, result, origin, chatRef);
-        return true;
     }
 
     /**

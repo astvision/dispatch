@@ -249,6 +249,11 @@ public final class TaskService {
         return give(tx, who, found.get(), priority);
     }
 
+    /** Whether a reply to {@code draftId}'s prompt would add to it: the draft is {@code who}'s and still open. */
+    public boolean takesContext(Tx tx, Requester who, long draftId) {
+        return refusal(Drafts.find(tx, draftId), who).isEmpty();
+    }
+
     /**
      * A writer's reply to their open draft's prompt adds context: its text goes under the description's
      * {@value #CONTEXT_HEADING} section, one paragraph per reply, and its files join the draft's. The prompt is redrawn with
