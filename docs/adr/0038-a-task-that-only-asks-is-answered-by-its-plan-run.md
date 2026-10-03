@@ -19,3 +19,7 @@ Consequences: an answer costs at most the project's plan budget and timeout, and
 guess costs one reply: "do it" plans a change, "just answer" turns a plan into an answer. A team machine and its workers
 upgrade together, since an older team machine refuses a plan with `result` and `answer`; an older jar cannot read an
 answered task.
+
+Amended 2026-10-03: an answer that is a whole HTML document (it begins with the doctype or `<html>`) is sent as
+`answer-<task>.html`, however short, so a requested report opens in a browser; the plan's shape is unchanged, and a
+`format` field waits for a second file type.

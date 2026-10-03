@@ -101,6 +101,7 @@ class PromptsTest {
 
         assertTrue(prompt.contains("set result to \"answer\""), prompt);
         assertTrue(prompt.contains("set result to \"plan\""), prompt);
+        assertTrue(prompt.contains("complete HTML document"), "an HTML report is an answer too: " + prompt);
     }
 
     @Test

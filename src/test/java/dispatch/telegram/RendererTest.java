@@ -165,7 +165,7 @@ class RendererTest {
 
         assertNotNull(rendered.document());
         assertEquals("plan-42.md", rendered.document().fileName());
-        assertTrue(rendered.document().markdown().contains("150. Step 150 touches"), rendered.document().markdown());
+        assertTrue(rendered.document().content().contains("150. Step 150 touches"), rendered.document().content());
         assertTrue(rendered.html().length() <= 1024, "caption limit");
         assertEquals("approve:42:1", rendered.keyboard().getFirst().getFirst().data());
     }
@@ -1502,8 +1502,26 @@ class RendererTest {
         Renderer.Rendered rendered = renderer.render(OutboxKind.ANSWER_READY, answerPayload(answer));
 
         assertEquals("answer-42.md", rendered.document().fileName());
-        assertEquals(answer, rendered.document().markdown(), "the raw markdown, unconverted");
+        assertEquals(answer, rendered.document().content(), "the raw markdown, unconverted");
         assertTrue(rendered.html().length() <= Renderer.CAPTION_LIMIT, rendered.html());
+    }
+
+    @Test
+    void anAnswerThatIsAnHtmlDocumentGoesAsAnHtmlFileHoweverShort() {
+        for (String answer : List.of("<!DOCTYPE html>\n<html><body><h1>Report</h1></body></html>", "  <html lang=\"mn\"><body>x</body></html>")) {
+            Renderer.Rendered rendered = renderer.render(OutboxKind.ANSWER_READY, answerPayload(answer));
+
+            assertEquals("answer-42.html", rendered.document().fileName(), answer);
+            assertEquals(answer, rendered.document().content(), "the document as the agent wrote it");
+            assertTrue(rendered.html().startsWith("💬 <b>#42</b> · alm\n") && rendered.html().contains("Зардал"), rendered.html());
+        }
+    }
+
+    @Test
+    void markdownMentioningHtmlIsStillAMessage() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.ANSWER_READY, answerPayload("Use `<html>` as the root: see **index.html**"));
+
+        assertNull(rendered.document());
     }
 
     @Test

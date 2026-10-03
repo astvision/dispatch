@@ -136,7 +136,7 @@ public final class OutboxSender implements Runnable {
                     : rendered.document() == null
                     ? api.sendMessage(chatId, thread, rendered.html(), replyTo, rendered.keyboard())
                     : api.sendDocument(chatId, thread, rendered.document().fileName(),
-                            rendered.document().markdown().getBytes(StandardCharsets.UTF_8), rendered.html(), replyTo, rendered.keyboard());
+                            rendered.document().content().getBytes(StandardCharsets.UTF_8), rendered.html(), replyTo, rendered.keyboard());
             db.transaction(tx -> {
                 Outbox.markSent(tx, message.id(), attempts, Refs.message(chatId, sentId, null), clock.instant());
                 if (message.kind().answersGroupMessage() && message.fallbackChatRef() != null) {

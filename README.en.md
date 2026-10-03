@@ -217,8 +217,9 @@ interface work and `playwright` to check a change in a browser. The plan message
 keeps, without installing anything. A machine that lacks one skips it.
 
 A task that only asks something, such as "why is the login slow?" or "which tests cover payments?", is answered by its
-plan run (ADR 0038): no approval, no pull request, the answer in your private chat (as a file when it is long). Reply to
-it to ask more, or say "fix it" to get a plan to approve.
+plan run (ADR 0038): no approval, no pull request, the answer in your private chat (as a file when it is long). Ask for
+an HTML report and it arrives as an `.html` file to open in a browser. Reply to it to ask more, or say "fix it" to get a
+plan to approve.
 
 ### Watch and steer a run
 

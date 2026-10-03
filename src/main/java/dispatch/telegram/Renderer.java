@@ -75,7 +75,7 @@ public final class Renderer {
         }
     }
 
-    public record Document(String fileName, String markdown) {
+    public record Document(String fileName, String content) {
     }
 
     /**
@@ -668,12 +668,23 @@ public final class Renderer {
                 duration(Duration.ofSeconds(payload.path("durationSeconds").asLong()))) + "</i>" + modelWarning(payload)
                 + sandboxWarning(payload);
         String answer = payload.path("answer").asText();
+        if (isHtmlDocument(answer)) {
+            // An HTML report (spec: answers): the file as the agent wrote it, which the requester opens in a browser.
+            return new Rendered(truncate(title + "\n" + text("answer.htmlDocument") + "\n\n" + footer, CAPTION_LIMIT), List.of(),
+                    new Document("answer-" + taskId(payload) + ".html", answer));
+        }
         String html = title + "\n\n" + TelegramMarkdown.toHtml(answer) + "\n\n" + footer;
         if (html.length() <= MESSAGE_LIMIT) {
             return new Rendered(html, List.of(), null);
         }
         return new Rendered(truncate(title + "\n" + text("answer.document") + "\n\n" + footer, CAPTION_LIMIT), List.of(),
                 new Document("answer-" + taskId(payload) + ".md", answer));
+    }
+
+    /** A whole HTML document, not markdown that mentions a tag: it begins with the doctype or the root element. */
+    static boolean isHtmlDocument(String answer) {
+        String head = answer.stripLeading().toLowerCase(java.util.Locale.ROOT);
+        return head.startsWith("<!doctype html") || head.startsWith("<html");
     }
 
     private String planHtml(JsonNode payload, Plan plan, String title, String view) {
