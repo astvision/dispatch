@@ -388,6 +388,141 @@ class CiWatchTest {
         assertEquals("OFF", watchRow(taskId).get("reason"));
     }
 
+    @Test
+    void aFailedCheckStartsAFixRunThatIsToldWhatFailed() {
+        long taskId = delivered();
+        checks = List.of(check("ui", "pass", 11), check("test (windows-latest)", "fail", 11));
+        log = "AuthTest > timeout FAILED\n    expected 30 but was 0";
+
+        assertEquals(1, watch.pass());
+
+        Map<String, String> run = row("SELECT kind, cause, status, instruction FROM run WHERE task_id = ? AND seq = 3", taskId);
+        assertEquals("EXECUTE", run.get("kind"));
+        assertEquals("CI_FIX", run.get("cause"));
+        assertTrue(run.get("instruction").contains("- test (windows-latest): https://github.com/acme/alm/actions/runs/11/job/110"),
+                run.get("instruction"));
+        assertTrue(run.get("instruction").contains("<log>\nAuthTest > timeout FAILED"), run.get("instruction"));
+        assertFalse(run.get("instruction").contains("- ui:"), "only what failed");
+        Map<String, String> watchRow = watchRow(taskId);
+        assertEquals("FIXING", watchRow.get("state"));
+        assertEquals("1", watchRow.get("fix_rounds"));
+        assertEquals("test (windows-latest)", Json.read(watchRow.get("checks_json")).get(0).path("name").asText());
+        JsonNode news = said("CI_FIX_QUEUED");
+        assertEquals("test (windows-latest)", news.path("check").asText());
+        assertEquals(1, news.path("round").asInt());
+        JsonNode line = redrawn(taskId).path("ci");
+        assertEquals("FIXING", line.path("state").asText());
+        assertEquals(1, line.path("round").asInt());
+        assertEquals("2", count("SELECT count(*) AS n FROM task_event WHERE task_id = ? AND actor = 'ci'", taskId), "ci failed, then ci-fix");
+
+        asked.clear();
+        assertEquals(0, watch.pass(), "the run is going: nothing is asked or decided");
+        assertTrue(asked.isEmpty());
+        assertEquals("1", count("SELECT count(*) AS n FROM run WHERE cause = 'CI_FIX'"));
+    }
+
+    @Test
+    void theFixesOwnCommitIsWatchedInTurnAndASecondRedRunGetsASecondFixButAThirdNone() {
+        long taskId = delivered();
+        checks = List.of(check("test", "fail", 11));
+        watch.pass();
+        finishRun(taskId, List.of("src/Auth.java"), "fix1", "Fixed the timeout");
+        assertEquals("PENDING", watchRow(taskId).get("state"));
+        assertEquals("fix1", watchRow(taskId).get("head_sha"));
+        assertEquals("1", watchRow(taskId).get("fix_rounds"), "a fix run's delivery keeps the count");
+        assertEquals("PENDING", latestResult(taskId).path("ci").path("state").asText(), "the fix's own result carries the line now");
+
+        prHead = "fix1";
+        assertEquals(1, watch.pass());
+        assertEquals("2", watchRow(taskId).get("fix_rounds"));
+        finishRun(taskId, List.of("src/Auth.java"), "fix2", "Fixed it again");
+
+        prHead = "fix2";
+        assertEquals(1, watch.pass());
+
+        assertEquals("2", count("SELECT count(*) AS n FROM run WHERE cause = 'CI_FIX'"), "no third fix");
+        assertEquals("GAVE_UP", watchRow(taskId).get("state"));
+        assertEquals("CAP", watchRow(taskId).get("reason"));
+        JsonNode gaveUp = said("CI_GAVE_UP");
+        assertEquals("CAP", gaveUp.path("reason").asText());
+        assertEquals("test", gaveUp.path("checks").get(0).path("name").asText());
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"), "the task stays delivered, with its Merge button");
+    }
+
+    @Test
+    void aFixThatChangesNothingIsSaidOnceInTheAgentsOwnWords() {
+        long taskId = delivered();
+        checks = List.of(check("test", "fail", 11));
+        watch.pass();
+        finishRun(taskId, List.of(), HEAD, "The runner lost its network; nothing in this change is involved.");
+        asked.clear();
+
+        assertEquals(1, watch.pass());
+
+        assertEquals("GAVE_UP", watchRow(taskId).get("state"));
+        assertEquals("UNCHANGED", watchRow(taskId).get("reason"));
+        JsonNode gaveUp = said("CI_GAVE_UP");
+        assertEquals("The runner lost its network; nothing in this change is involved.", gaveUp.path("summary").asText());
+        assertEquals("test", gaveUp.path("checks").get(0).path("name").asText());
+        assertTrue(asked.isEmpty(), "settled from the database alone");
+
+        assertEquals(0, watch.pass(), "the same red commit never starts another fix");
+        assertEquals("1", count("SELECT count(*) AS n FROM run WHERE cause = 'CI_FIX'"));
+    }
+
+    @Test
+    void failedLogsAreReadOncePerRunThreeRunsAtMostAndCapped() {
+        long taskId = delivered();
+        checks = List.of(check("a", "fail", 11), check("b", "fail", 11), check("c", "fail", 12), check("d", "fail", 13), check("e", "fail", 14));
+        log = "x".repeat(20_000);
+
+        watch.pass();
+
+        assertEquals(List.of("log https://github.com/acme/alm/actions/runs/11", "log https://github.com/acme/alm/actions/runs/12",
+                "log https://github.com/acme/alm/actions/runs/13"), asked.stream().filter(question -> question.startsWith("log ")).toList());
+        String instruction = row("SELECT instruction FROM run WHERE task_id = ? AND seq = 3", taskId).get("instruction");
+        assertTrue(instruction.contains("- e: "), "every failed check is named");
+        int logStart = instruction.indexOf("<log>\n") + "<log>\n".length();
+        assertEquals(30_000, instruction.indexOf("\n</log>") - logStart, "the log is capped");
+    }
+
+    @Test
+    void aCheckThatIsNotAnActionsRunGoesByNameAndLink() {
+        long taskId = delivered();
+        checks = List.of(new Gh.Check("vercel", "fail", "https://vercel.com/acme/alm/deployments/9"));
+
+        assertEquals(1, watch.pass());
+
+        String instruction = row("SELECT instruction FROM run WHERE task_id = ? AND seq = 3", taskId).get("instruction");
+        assertEquals("Failed checks:\n- vercel: https://vercel.com/acme/alm/deployments/9", instruction);
+        assertFalse(asked.stream().anyMatch(question -> question.startsWith("log ")), "no Actions run, no log to ask for");
+    }
+
+    @Test
+    void aLogThatCannotBeReadDoesNotStopTheFix() {
+        long taskId = delivered();
+        checks = List.of(check("test", "fail", 11));
+        log = null;
+
+        assertEquals(1, watch.pass());
+
+        assertEquals("FIXING", watchRow(taskId).get("state"));
+        assertFalse(row("SELECT instruction FROM run WHERE task_id = ? AND seq = 3", taskId).get("instruction").contains("<log>"));
+    }
+
+    @Test
+    void aFixTheRequesterCancelledEndsTheWatch() {
+        long taskId = delivered();
+        checks = List.of(check("test", "fail", 11));
+        watch.pass();
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Cancel(taskId)));
+
+        assertEquals(1, watch.pass());
+
+        assertEquals("STOPPED", watchRow(taskId).get("state"));
+        assertEquals("ENDED", watchRow(taskId).get("reason"));
+    }
+
     private static Gh.Check check(String name, String bucket, int run) {
         return new Gh.Check(name, bucket, "https://github.com/acme/alm/actions/runs/" + run + "/job/" + (run * 10));
     }

@@ -11,6 +11,7 @@ import dispatch.domain.Task;
 import dispatch.store.Database;
 import dispatch.store.Events;
 import dispatch.store.Outbox;
+import dispatch.store.Runs;
 import dispatch.store.TaskCi;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
@@ -18,9 +19,13 @@ import dispatch.workspace.Gh;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Watches the checks of each pull request this bot delivered (ADR 0041). A delivery arms a watch on its commit
@@ -53,6 +58,11 @@ public final class CiWatch implements Runnable {
     /** Checks appear within seconds of a push; a repository silent this long runs none. */
     static final Duration NO_CHECKS_AFTER = Duration.ofMinutes(10);
     static final Duration STUCK_AFTER = Duration.ofHours(6);
+    /** Failed logs read for one fix: a matrix that fails everywhere fails the same way. */
+    private static final int LOGS_READ = 3;
+    private static final int LOG_LIMIT = 30_000;
+    /** A check's link up to its Actions run: the checks of one run share one failed log. */
+    private static final Pattern RUN_LINK = Pattern.compile("^https://[^/]+/[^/]+/[^/]+/actions/runs/\\d+");
 
     private enum Verdict { NONE, PENDING, FAILED, CANCELLED, PASSED }
 
@@ -229,12 +239,73 @@ public final class CiWatch implements Runnable {
         });
     }
 
+    /** Red on Dispatch's own commit: a fix run while rounds are left, else the pull request goes back to its requester. */
     private boolean red(TaskCi.Watch watch, Task task, List<Gh.Check> failed) {
-        return false;
+        ArrayNode failedJson = Json.MAPPER.createArrayNode();
+        failed.forEach(check -> failedJson.addObject().put("name", check.name()).put("link", check.link()));
+        if (watch.fixRounds() >= MAX_FIX_ROUNDS) {
+            return gaveUp(watch, task, "CAP", failedJson, null);
+        }
+        // Read before the transaction: GitHub is never asked inside one.
+        String instruction = instruction(failed);
+        int round = watch.fixRounds() + 1;
+        String first = failed.getFirst().name();
+        return write(watch, (tx, now) -> {
+            ObjectNode news = Json.object().put("check", first).put("round", round);
+            if (!commands.ciFix(tx, task.id(), watch.headSha(), instruction, news)) {
+                return;
+            }
+            TaskCi.fixing(tx, task.id(), Json.write(failedJson), now);
+            Events.record(tx, task.id(), null, TaskCommands.CI_ACTOR, Phase.COMPLETED, Phase.COMPLETED, "ci failed: " + first, now);
+            redraw(tx, task, Json.object().put("state", "FIXING").put("check", first).put("round", round), now);
+        });
     }
 
+    /**
+     * A fix run ended and its task is delivered again. Had it pushed, its delivery would have armed the watch anew; the
+     * branch still at the watched commit means it changed nothing, and its own words say why.
+     */
     private boolean settleFix(TaskCi.Watch watch, Task task) {
-        return false;
+        record Ended(String head, String summary) {
+        }
+        Ended ended = db.transactionReturning(tx -> new Ended(Tasks.expectedHead(tx, task.id()),
+                Runs.latest(tx, task.id()).flatMap(run -> Runs.output(tx, task.id(), run.seq())).orElse("")));
+        if (!watch.headSha().equals(ended.head())) {
+            // Delivered, yet not armed: the project stopped being watched while the fix ran.
+            return stop(watch, "OFF");
+        }
+        ArrayNode failed = watch.checksJson() == null ? Json.MAPPER.createArrayNode() : (ArrayNode) Json.read(watch.checksJson());
+        return gaveUp(watch, task, "UNCHANGED", failed, ended.summary());
+    }
+
+    /** What the fix run is told: every failed check, and the end of the failed logs, one per Actions run. */
+    private String instruction(List<Gh.Check> failed) {
+        StringBuilder text = new StringBuilder("Failed checks:");
+        Set<String> runs = new LinkedHashSet<>();
+        for (Gh.Check check : failed) {
+            text.append("\n- ").append(check.name()).append(": ").append(check.link());
+            Matcher run = RUN_LINK.matcher(check.link());
+            if (run.find() && runs.size() < LOGS_READ) {
+                runs.add(run.group());
+            }
+        }
+        StringBuilder logs = new StringBuilder();
+        for (String run : runs) {
+            try {
+                String log = checks.failedLog(run).strip();
+                if (!log.isEmpty()) {
+                    logs.append(logs.isEmpty() ? "" : "\n").append(log);
+                }
+            } catch (RuntimeException e) {
+                // The fix starts on names and links alone rather than not at all.
+                Log.warn("ci.log_unread", "run", run, "error", String.valueOf(e.getMessage()));
+            }
+        }
+        if (logs.isEmpty()) {
+            return text.toString();
+        }
+        String tail = logs.length() <= LOG_LIMIT ? logs.toString() : logs.substring(logs.length() - LOG_LIMIT);
+        return text.append("\n\nEnd of the failed log:\n<log>\n").append(tail).append("\n</log>").toString();
     }
 
     /**
