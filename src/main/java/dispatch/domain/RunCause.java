@@ -11,5 +11,7 @@ public enum RunCause {
     /** A member's reply to a finished task's result (ADR 0006). */
     FOLLOW_UP,
     /** A member's /retry of the failed step (ADR 0008). */
-    RETRY
+    RETRY,
+    /** The watcher, after the checks failed on a delivered commit (spec: CI watch). */
+    CI_FIX
 }

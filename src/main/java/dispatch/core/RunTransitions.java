@@ -11,6 +11,7 @@ import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
 import dispatch.domain.Plan;
 import dispatch.domain.Run;
+import dispatch.domain.RunCause;
 import dispatch.domain.RunStatus;
 import dispatch.domain.RunStep;
 import dispatch.domain.Task;
@@ -19,6 +20,7 @@ import dispatch.store.Events;
 import dispatch.store.Outbox;
 import dispatch.store.RunSteps;
 import dispatch.store.Runs;
+import dispatch.store.TaskCi;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
 import java.time.Clock;
@@ -26,6 +28,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 /**
  * State changes caused by runs rather than members. Each call is its own transaction; a result that arrives after the
@@ -40,6 +43,9 @@ public final class RunTransitions {
     private final Clock clock;
     private final Runnable wakeOutbox;
     private final boolean offerMerge;
+    /** By project name: whether its delivered pull requests are watched (spec: CI watch); null on a bot that watches none. */
+    private final Predicate<String> watchesCi;
+    private final Runnable wakeCi;
 
     public RunTransitions(Database db, Clock clock, Runnable wakeOutbox) {
         this(db, clock, wakeOutbox, false);
@@ -47,10 +53,22 @@ public final class RunTransitions {
 
     /** @param offerMerge a delivered task's result offers its requester the Merge button: a personal bot, which can merge */
     public RunTransitions(Database db, Clock clock, Runnable wakeOutbox, boolean offerMerge) {
+        this(db, clock, wakeOutbox, offerMerge, null, () -> { });
+    }
+
+    /**
+     * @param offerMerge as above
+     * @param watchesCi  by project name: whether its delivered pull requests are watched; null to watch none
+     * @param wakeCi     wakes the watcher once a delivery commits
+     */
+    public RunTransitions(Database db, Clock clock, Runnable wakeOutbox, boolean offerMerge, Predicate<String> watchesCi,
+                          Runnable wakeCi) {
         this.db = db;
         this.clock = clock;
         this.wakeOutbox = wakeOutbox;
         this.offerMerge = offerMerge;
+        this.watchesCi = watchesCi;
+        this.wakeCi = wakeCi;
     }
 
     public void recordBuildSession(long taskId, UUID buildSessionId) {
@@ -164,7 +182,8 @@ public final class RunTransitions {
             }
             ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("prUrl", prUrl)
                     .put("filesChanged", files.size()).put("summary", summary);
-            if (offerMerge && TaskAccess.mergeRefusal(task(tx, taskId)).isEmpty()) {
+            Task delivered = task(tx, taskId);
+            if (offerMerge && TaskAccess.mergeRefusal(delivered).isEmpty()) {
                 payload.put("merge", true);
             }
             ArrayNode denials = payload.putArray("denials");
@@ -175,10 +194,29 @@ public final class RunTransitions {
             if (verification != null) {
                 payload.set("verification", Json.MAPPER.valueToTree(verification));
             }
+            if (armCi(tx, delivered, run, head, !files.isEmpty(), now)) {
+                payload.set("ci", Json.object().put("state", TaskCi.State.PENDING.name()));
+            }
+            if (watchesCi != null) {
+                // Also when nothing was armed: a fix run that changed nothing is the watcher's to settle.
+                tx.afterCommit(wakeCi);
+            }
             String event = files.isEmpty() ? "no changes" : "delivered " + files.size() + " changed files";
             end(tx, task, run, new Ending(Phase.COMPLETED, event, OutboxKind.TASK_COMPLETED, payload,
                     completedLine(task, prUrl, files.size(), false), GroupReaction.COMPLETED), now);
         });
+    }
+
+    /**
+     * A commit pushed to a watched project's pull request is watched from now (spec: CI watch). A run a member caused
+     * starts the fix count afresh; a fix run's own delivery keeps it.
+     */
+    private boolean armCi(Tx tx, Task task, Run run, String head, boolean pushed, Instant now) {
+        if (watchesCi == null || !pushed || head == null || task.prUrl() == null || !watchesCi.test(task.project())) {
+            return false;
+        }
+        TaskCi.arm(tx, task.id(), head, run.cause() == RunCause.CI_FIX, now);
+        return true;
     }
 
     /** @param result null when no agent result exists (setup failure, interrupted before the agent reported) */
