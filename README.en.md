@@ -191,6 +191,19 @@ against the approved plan (ADR 0033). It always delivers: the draft PR and the r
 what was skipped, e.g. `stopped: time` when the tests hit the run's time limit. You can watch and steer it from the
 Mini App (below). `loop: off` on the instance or a project turns it off.
 
+### After the pull request: CI
+
+A bot that delivers on its own machine (every personal bot) keeps watching the checks of each pull request it
+delivered (ADR 0041). The result message says how they stand: `⏳ CI` while they run, `✅ CI` when they pass, with a
+reply telling you the pull request is ready for the Merge button. When a check fails on the commit Dispatch pushed, it
+reads the end of the failed log and starts a fix run on the same task and branch (`❌ CI: <check> · 🔧 1/2`); the fix is
+pushed to the same pull request and watched in turn. It hands the pull request back to you, with the reason and the
+failed checks' links, after two fix runs in a row, when a fix run finds the failure is not the change's doing and
+changes nothing, when the checks are cancelled, or when they are still running after six hours. A follow-up from you
+starts the count afresh. A repository without checks is dropped after ten minutes without a word, and a commit someone
+else pushes to the branch ends the watch. `ci: off` on the instance or a project turns it off. Nothing is merged for
+you: that stays your tap.
+
 ### Skills in Claude's runs
 
 Claude Code's plans, executions, fixes and reviews load `dispatch`, a plugin of six skills that ships with Dispatch

@@ -31,3 +31,8 @@ delivered each pull request.
 Once merged, a task takes no more commits: a reply to its result, or an addition to it, becomes a new task, planned from
 the new base with a pull request of its own. A pull request merged on GitHub instead is noticed when a follow-up is
 delivered, which then fails with that reason rather than pushing onto a branch nobody will merge.
+
+## Amended 2026-10-05: the checks are watched
+
+Dispatch no longer stops at the pull request: a personal bot watches its checks and fixes a red one (ADR 0041). Nothing
+merges without a human, as before.

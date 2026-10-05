@@ -84,6 +84,10 @@ _Avoid_: Publish, deploy, release
 What the verify loop found before delivery: whether the project's tests pass, what the reviewer left, and whether the loop stopped early. It is written into the delivery commit and the requester's result.
 _Avoid_: QA, check
 
+**CI watch**:
+What a personal bot does after a delivery: it asks GitHub how the checks of the delivered commit stand, says so on the result, and on a red check queues a fix run in the task's building session, at most two in a row.
+_Avoid_: Monitor (the run monitor is the Mini App's view of a running task), webhook
+
 **Review**:
 A fresh read-only agent session that judges an execution's change against the approved plan. Its blocking findings go back to the building session.
 _Avoid_: Audit, inspection

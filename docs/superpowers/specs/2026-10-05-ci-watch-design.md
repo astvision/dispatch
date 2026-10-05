@@ -229,3 +229,16 @@ Made with ZB on 2026-10-05, one question at a time:
 Defaults chosen in the design and approved with it: every check counts, not only required ones; 60-second interval;
 10 minutes for checks to appear; 6 hours before a pending run is called stuck; a member's follow-up resets the round
 count; a merge seen on GitHub is recorded.
+
+## As built
+
+Built on branch ci-watch on 2026-10-05, as designed, with these particulars:
+
+- The table's record in code is `TaskCi.Watch`; arming is in `RunTransitions.completed`, which is handed a predicate
+  (is this project watched?) and the watcher's wake-up, so it needs neither the watcher nor the config.
+- `Merges.recordMerged` is the one routine both a tap and the watcher record a merge with.
+- The fix run's instruction is `Failed checks:` with a line per failed check, then `End of the failed log:` in a `<log>`
+  block when a log was read. Logs are read per Actions run (the link up to `/actions/runs/<id>`), not per check.
+- The desk's task page shows the CI line beside the pull request link.
+- A red verdict's event reads `ci failed: <check>`; giving up records `ci gave up: <reason>`.
+- Not yet run live: the first real red check on the personal bot is the live check.
