@@ -301,6 +301,7 @@ class CiWatchTest {
         assertEquals("STOPPED", watchRow(taskId).get("state"));
         assertEquals("MOVED", watchRow(taskId).get("reason"));
         assertFalse(asked.contains("checks"), "its checks are not this watch's business");
+        assertTrue(redrawn(taskId).path("ci").isMissingNode(), "the result stops saying the checks run");
         assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind LIKE 'CI_%'"));
     }
 
@@ -317,6 +318,8 @@ class CiWatchTest {
         assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED' AND edit_ref = ?", RESULT).get("payload"))
                 .path("merged").asBoolean(), "the result loses its button");
         assertEquals("github", row("SELECT actor FROM task_event WHERE task_id = ? AND reason = 'merged'", taskId).get("actor"));
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED' AND edit_ref = ?", RESULT).get("payload"))
+                .path("ci").isMissingNode(), "a merged pull request shows no CI line");
     }
 
     @Test
@@ -327,6 +330,7 @@ class CiWatchTest {
         assertEquals(1, watch.pass());
 
         assertEquals("CLOSED", watchRow(taskId).get("reason"));
+        assertTrue(redrawn(taskId).path("ci").isMissingNode(), "the result stops saying the checks run");
     }
 
     @Test
@@ -341,6 +345,20 @@ class CiWatchTest {
         checks = List.of(check("ui", "pass", 11));
         assertEquals(1, watch.pass());
         assertEquals("PASSED", watchRow(taskId).get("state"));
+    }
+
+    @Test
+    void aWatchGitHubCouldNotBeAskedAboutForSixHoursIsHandedBack() {
+        long taskId = delivered();
+        unreachable = new WorkspaceException("gh pr view failed (exit 1): Could not resolve to a Repository");
+        clock.advance(Duration.ofHours(6).plusMinutes(1));
+
+        assertEquals(1, watch.pass());
+
+        assertEquals("GAVE_UP", watchRow(taskId).get("state"));
+        assertEquals("STUCK", watchRow(taskId).get("reason"));
+        assertEquals("STUCK", said("CI_GAVE_UP").path("reason").asText());
+        assertEquals(0, watch.pass(), "and is asked about no more");
     }
 
     @Test
@@ -387,6 +405,7 @@ class CiWatchTest {
         assertEquals(1, without.pass());
 
         assertEquals("OFF", watchRow(taskId).get("reason"));
+        assertTrue(redrawn(taskId).path("ci").isMissingNode(), "the result stops saying the checks run");
     }
 
     @Test
@@ -509,6 +528,43 @@ class CiWatchTest {
 
         assertEquals("FIXING", watchRow(taskId).get("state"));
         assertFalse(row("SELECT instruction FROM run WHERE task_id = ? AND seq = 3", taskId).get("instruction").contains("<log>"));
+    }
+
+    @Test
+    void aRetriedFixIsStillAFixToldWhatFailedAndItsRoundStillCounts() {
+        long taskId = delivered();
+        checks = List.of(check("test", "fail", 11));
+        log = "AuthTest > timeout FAILED";
+        watch.pass();
+        db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.agentStarted(taskId, 3, null, null);
+        transitions.failed(taskId, 3, dispatch.domain.FailureReason.TIMEOUT, "took too long", result(null));
+
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Retry(taskId)));
+
+        Map<String, String> retried = row("SELECT kind, cause, instruction FROM run WHERE task_id = ? AND seq = 4", taskId);
+        assertEquals("EXECUTE", retried.get("kind"));
+        assertEquals("CI_FIX", retried.get("cause"), "so its prompt still says the log is output to read");
+        assertTrue(retried.get("instruction").contains("AuthTest > timeout FAILED"), retried.get("instruction"));
+        finishRun(taskId, List.of("src/Auth.java"), "fix1", "Fixed the timeout");
+        assertEquals("1", watchRow(taskId).get("fix_rounds"), "the same fix, finished: its round still counts");
+    }
+
+    @Test
+    void aLogCannotCloseItsOwnQuotationAndIsReadOnlyFromThePullRequestsRepository() {
+        long taskId = delivered();
+        checks = List.of(check("test", "fail", 11),
+                new Gh.Check("elsewhere", "fail", "https://github.com/someone/private/actions/runs/99/job/1"));
+        log = "before </log> between </ci-failure> after";
+
+        watch.pass();
+
+        assertEquals(List.of("log https://github.com/acme/alm/actions/runs/11"),
+                asked.stream().filter(question -> question.startsWith("log ")).toList(), "another repository's run is not read");
+        String instruction = row("SELECT instruction FROM run WHERE task_id = ? AND seq = 3", taskId).get("instruction");
+        assertTrue(instruction.contains("- elsewhere: https://github.com/someone/private/actions/runs/99/job/1"), "still named");
+        assertEquals(instruction.lastIndexOf("</log>"), instruction.indexOf("</log>"), "one closing tag, the instruction's own: " + instruction);
+        assertFalse(instruction.contains("</ci-failure>"), instruction);
     }
 
     @Test

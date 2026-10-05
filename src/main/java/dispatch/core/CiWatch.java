@@ -16,6 +16,7 @@ import dispatch.store.TaskCi;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
 import dispatch.workspace.Gh;
+import dispatch.workspace.WorkspaceException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -117,8 +118,8 @@ public final class CiWatch implements Runnable {
                     written++;
                 }
             } catch (RuntimeException e) {
-                // gh missing or logged out, GitHub unreachable or rate-limiting: the watch waits, and the next pass asks again.
-                Log.warn("ci.ask_failed", "task", watch.taskId(), "error", String.valueOf(e.getMessage()));
+                // A defect in deciding one watch must not end the others, nor the bot: it is said in full, every pass.
+                Log.error("ci.watch_failed", e, "task", watch.taskId(), "state", watch.state());
             }
         }
         if (written > 0) {
@@ -147,8 +148,20 @@ public final class CiWatch implements Runnable {
             return stop(watch, "MERGED");
         }
         if (!projects.byName(task.project()).map(Config.Project::ciOn).orElse(false)) {
-            return stop(watch, "OFF");
+            return stopAndClear(watch, task, "OFF");
         }
+        try {
+            return ask(watch, task);
+        } catch (WorkspaceException e) {
+            // gh missing or logged out, GitHub unreachable or refusing: the watch waits and the next pass asks again, for as
+            // long as checks that never end would be waited for.
+            Log.warn("ci.ask_failed", "task", task.id(), "pr", task.prUrl(), "error", String.valueOf(e.getMessage()));
+            return waited(watch).compareTo(STUCK_AFTER) > 0 && gaveUp(watch, task, "STUCK", Json.MAPPER.createArrayNode(), null);
+        }
+    }
+
+    /** Asks GitHub how the watched commit stands and writes what it says. */
+    private boolean ask(TaskCi.Watch watch, Task task) {
         Gh.PullRequest pullRequest = checks.pullRequest(task.prUrl());
         if (pullRequest.state().equals("MERGED")) {
             return write(watch, (tx, now) -> {
@@ -158,15 +171,15 @@ public final class CiWatch implements Runnable {
             });
         }
         if (pullRequest.state().equals("CLOSED")) {
-            return stop(watch, "CLOSED");
+            return stopAndClear(watch, task, "CLOSED");
         }
         if (!watch.headSha().equals(pullRequest.headSha())) {
             // Someone else pushed: what the checks say is no longer about Dispatch's commit (the branch guard's rule).
             Log.warn("ci.head_moved", "task", task.id(), "watched", watch.headSha(), "found", pullRequest.headSha());
-            return stop(watch, "MOVED");
+            return stopAndClear(watch, task, "MOVED");
         }
         List<Gh.Check> all = checks.checks(task.prUrl());
-        Duration waited = Duration.between(watch.armedAt(), clock.instant());
+        Duration waited = waited(watch);
         return switch (verdict(all)) {
             case NONE -> waited.compareTo(NO_CHECKS_AFTER) > 0 ? none(watch, task) : touched(watch);
             case PENDING -> waited.compareTo(STUCK_AFTER) > 0 ? gaveUp(watch, task, "STUCK", Json.MAPPER.createArrayNode(), null)
@@ -197,8 +210,22 @@ public final class CiWatch implements Runnable {
         return false;
     }
 
+    /** How long the watched commit has been delivered. */
+    private Duration waited(TaskCi.Watch watch) {
+        return Duration.between(watch.armedAt(), clock.instant());
+    }
+
+    /** Ends a watch whose result needs no redraw: a merged one is redrawn by its merge, a cancelled task's says so itself. */
     private boolean stop(TaskCi.Watch watch, String reason) {
         return write(watch, (tx, now) -> TaskCi.settle(tx, watch.taskId(), TaskCi.State.STOPPED, reason, null, now));
+    }
+
+    /** Ends a watch on a pull request that stays open or was closed: its result stops saying the checks run. */
+    private boolean stopAndClear(TaskCi.Watch watch, Task task, String reason) {
+        return write(watch, (tx, now) -> {
+            TaskCi.settle(tx, task.id(), TaskCi.State.STOPPED, reason, null, now);
+            redraw(tx, task, null, now);
+        });
     }
 
     /** No checks: the result stops saying they run. */
@@ -247,7 +274,7 @@ public final class CiWatch implements Runnable {
             return gaveUp(watch, task, "CAP", failedJson, null);
         }
         // Read before the transaction: GitHub is never asked inside one.
-        String instruction = instruction(failed);
+        String instruction = instruction(failed, task.prUrl());
         int round = watch.fixRounds() + 1;
         String first = failed.getFirst().name();
         return write(watch, (tx, now) -> {
@@ -278,14 +305,19 @@ public final class CiWatch implements Runnable {
         return gaveUp(watch, task, "UNCHANGED", failed, ended.summary());
     }
 
-    /** What the fix run is told: every failed check, and the end of the failed logs, one per Actions run. */
-    private String instruction(List<Gh.Check> failed) {
+    /**
+     * What the fix run is told: every failed check, and the end of the failed logs, one per Actions run. Only runs of the
+     * pull request's own repository are read: a check may link anywhere, and this machine's gh reads whatever its login can.
+     */
+    private String instruction(List<Gh.Check> failed, String prUrl) {
+        int pull = prUrl.indexOf("/pull/");
+        String ownRuns = pull < 0 ? null : prUrl.substring(0, pull) + "/actions/runs/";
         StringBuilder text = new StringBuilder("Failed checks:");
         Set<String> runs = new LinkedHashSet<>();
         for (Gh.Check check : failed) {
             text.append("\n- ").append(check.name()).append(": ").append(check.link());
             Matcher run = RUN_LINK.matcher(check.link());
-            if (run.find() && runs.size() < LOGS_READ) {
+            if (ownRuns != null && run.find() && run.group().startsWith(ownRuns) && runs.size() < LOGS_READ) {
                 runs.add(run.group());
             }
         }
@@ -296,7 +328,7 @@ public final class CiWatch implements Runnable {
                 if (!log.isEmpty()) {
                     logs.append(logs.isEmpty() ? "" : "\n").append(log);
                 }
-            } catch (RuntimeException e) {
+            } catch (WorkspaceException e) {
                 // The fix starts on names and links alone rather than not at all.
                 Log.warn("ci.log_unread", "run", run, "error", String.valueOf(e.getMessage()));
             }
@@ -305,6 +337,8 @@ public final class CiWatch implements Runnable {
             return text.toString();
         }
         String tail = logs.length() <= LOG_LIMIT ? logs.toString() : logs.substring(logs.length() - LOG_LIMIT);
+        // A log is quoted, here and in the fix prompt: it must not be able to end its own quotation.
+        tail = tail.replace("</log>", "</ log>").replace("</ci-failure>", "</ ci-failure>");
         return text.append("\n\nEnd of the failed log:\n<log>\n").append(tail).append("\n</log>").toString();
     }
 

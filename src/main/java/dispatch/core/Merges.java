@@ -202,11 +202,17 @@ public final class Merges {
         wakeOutbox.run();
     }
 
-    /** The result {@code messageRef}, if it is task {@code taskId}'s own, redrawn as merged: without its button. */
+    /**
+     * The result {@code messageRef}, if it is task {@code taskId}'s own, redrawn as merged: without its button, and without
+     * its line about the checks, which the stored payload still shows as running (spec: CI watch).
+     */
     private static void redrawMerged(Tx tx, long taskId, String chatRef, String messageRef, Instant now) {
         Outbox.findSent(tx, messageRef)
                 .filter(sent -> sent.kind() == OutboxKind.TASK_COMPLETED && Objects.equals(sent.taskId(), taskId))
-                .ifPresent(sent -> Outbox.enqueueEdit(tx, taskId, OutboxKind.TASK_COMPLETED, chatRef, messageRef,
-                        ((ObjectNode) Json.read(sent.payload())).put("merged", true), now));
+                .ifPresent(sent -> {
+                    ObjectNode payload = (ObjectNode) Json.read(sent.payload());
+                    payload.remove("ci");
+                    Outbox.enqueueEdit(tx, taskId, OutboxKind.TASK_COMPLETED, chatRef, messageRef, payload.put("merged", true), now);
+                });
     }
 }

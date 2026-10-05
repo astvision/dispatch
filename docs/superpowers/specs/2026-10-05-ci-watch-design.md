@@ -241,4 +241,14 @@ Built on branch ci-watch on 2026-10-05, as designed, with these particulars:
   block when a log was read. Logs are read per Actions run (the link up to `/actions/runs/<id>`), not per check.
 - The desk's task page shows the CI line beside the pull request link.
 - A red verdict's event reads `ci failed: <check>`; giving up records `ci gave up: <reason>`.
+- After the whole-branch review:
+  - A retried fix run keeps the cause `CI_FIX`, so its prompt still quotes the log as output, and its round still
+    counts. The design said any retry resets the count; a member's follow-up still does.
+  - The reviewer of a fix run is not given the failed log as something "the team asked for".
+  - A watch GitHub cannot be asked about is handed back as `STUCK` once its commit is six hours old, like checks that
+    never end, instead of being asked about every minute for ever.
+  - `STOPPED` for `MOVED`, `CLOSED` and `OFF` redraws the result without its CI line; a merge's redraw drops the line too.
+  - Failed logs are read only from Actions runs of the pull request's own repository, and a log cannot close its own
+    quotation (`</log>`, `</ci-failure>`).
+  - A defect while deciding one watch is logged as an error with its stack trace and the pass goes on.
 - Not yet run live: the first real red check on the personal bot is the live check.

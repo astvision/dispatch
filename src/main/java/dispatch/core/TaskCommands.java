@@ -204,7 +204,9 @@ public final class TaskCommands {
             instruction = step.instruction();
         }
         Phase to = kind == RunKind.PLAN ? Phase.PLANNING : Phase.EXECUTING;
-        return queueRun(tx, who, task, to, kind, RunCause.RETRY, instruction, "retry of run " + step.seq(), true,
+        // A retried CI fix is still one: its instruction is a failed log, which only the fix prompt quotes as output to read.
+        RunCause cause = kind == RunKind.EXECUTE && step.cause() == RunCause.CI_FIX ? RunCause.CI_FIX : RunCause.RETRY;
+        return queueRun(tx, who, task, to, kind, cause, instruction, "retry of run " + step.seq(), true,
                 OutboxKind.RETRY_QUEUED, now);
     }
 

@@ -187,9 +187,15 @@ public final class Coordinator {
         return db.transactionReturning(tx -> Tasks.expectedHead(tx, taskId));
     }
 
-    /** What this run adds to the approved plan; the approval's (and its retry's) instruction is the plan itself, so none. */
+    /**
+     * What this run adds to the approved plan; the approval's (and its retry's) instruction is the plan itself, so none.
+     * A CI fix adds none either: its instruction is a failed log, which nobody asked the change to do.
+     */
     private static String reviewInstruction(Task task, Run run) {
-        return run.cause() == RunCause.APPROVAL || Objects.equals(run.instruction(), task.planJson()) ? null : run.instruction();
+        if (run.cause() == RunCause.APPROVAL || run.cause() == RunCause.CI_FIX) {
+            return null;
+        }
+        return Objects.equals(run.instruction(), task.planJson()) ? null : run.instruction();
     }
 
     /**
