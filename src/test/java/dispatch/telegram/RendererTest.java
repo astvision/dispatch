@@ -926,6 +926,49 @@ class RendererTest {
     }
 
     @Test
+    void aWatchedResultSaysHowItsChecksStand() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 1, List.of());
+        assertFalse(renderer.render(OutboxKind.TASK_COMPLETED, payload).html().contains("CI"), "a result that is not watched says nothing");
+
+        payload.set("ci", Json.object().put("state", "PENDING"));
+        assertTrue(renderer.render(OutboxKind.TASK_COMPLETED, payload).html().contains("\n⏳ CI"));
+
+        payload.set("ci", Json.object().put("state", "PASSED"));
+        assertTrue(renderer.render(OutboxKind.TASK_COMPLETED, payload).html().contains("\n✅ CI"));
+
+        payload.set("ci", Json.object().put("state", "FIXING").put("check", "ui").put("round", 2));
+        assertTrue(renderer.render(OutboxKind.TASK_COMPLETED, payload).html().contains("\n❌ CI: ui · 🔧 2/2"));
+
+        payload.set("ci", Json.object().put("state", "GAVE_UP").put("check", "ui"));
+        assertTrue(renderer.render(OutboxKind.TASK_COMPLETED, payload).html().contains("\n❌ CI: ui"));
+
+        payload.set("ci", Json.object().put("state", "GAVE_UP"));
+        assertTrue(renderer.render(OutboxKind.TASK_COMPLETED, payload).html().contains("\n⚠️ CI"));
+    }
+
+    @Test
+    void aCheckNameIsEscaped() {
+        ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 1, List.of());
+        payload.set("ci", Json.object().put("state", "FIXING").put("check", "build <linux>").put("round", 1));
+        assertTrue(renderer.render(OutboxKind.TASK_COMPLETED, payload).html().contains("build &lt;linux&gt;"));
+
+        String queued = renderer.render(OutboxKind.CI_FIX_QUEUED,
+                Json.object().put("taskId", 8).put("check", "build <linux>").put("round", 1)).html();
+        assertTrue(queued.contains("build &lt;linux&gt;") && queued.contains("1/2"), queued);
+
+        String gaveUp = renderer.render(OutboxKind.CI_GAVE_UP, ciGaveUp("CAP")).html();
+        assertTrue(gaveUp.contains("build &lt;linux&gt;") && gaveUp.contains("https://github.com/acme/alm/actions/runs/11/job/22"), gaveUp);
+    }
+
+    @Test
+    void givingUpOnTheChecksSaysWhy() {
+        assertTrue(renderer.render(OutboxKind.CI_GAVE_UP, ciGaveUp("UNCHANGED")).html().contains("The runner lost its network &lt;twice&gt;."));
+        assertFalse(renderer.render(OutboxKind.CI_GAVE_UP, ciGaveUp("STUCK")).html().contains("build"), "a stuck run names no failed check");
+        assertFalse(renderer.render(OutboxKind.CI_GAVE_UP, ciGaveUp("CANCELLED")).html().contains("build"));
+        assertTrue(renderer.render(OutboxKind.CI_PASSED, Json.object().put("taskId", 8)).html().contains("#8"));
+    }
+
+    @Test
     void aDeliveredTaskOffersMergeWhereItsBotCanMergeAndSaysSoOnceMerged() {
         ObjectNode payload = completedPayload("https://github.com/acme/alm/pull/7", 1, List.of()).put("merge", true);
 
@@ -1269,6 +1312,13 @@ class RendererTest {
         return payload;
     }
 
+    private static ObjectNode ciGaveUp(String reason) {
+        ObjectNode payload = Json.object().put("taskId", 8).put("reason", reason).put("summary", "The runner lost its network <twice>.");
+        payload.putArray("checks").addObject().put("name", "build <linux>")
+                .put("link", "https://github.com/acme/alm/actions/runs/11/job/22");
+        return payload;
+    }
+
     private static ObjectNode samplePayload(OutboxKind kind) {
         return switch (kind) {
             case TASK_QUEUED -> Json.object().put("taskId", 1).put("project", "autoland-management").put("requester", "Bold")
@@ -1298,6 +1348,10 @@ class RendererTest {
             case TASK_MERGED -> Json.object().put("taskId", 8).put("base", "main").put("prUrl", "https://github.com/acme/alm/pull/30");
             case MERGE_REFUSED -> Json.object().put("taskId", 8).put("error", "GraphQL: Required status check \"build\" is expected.");
             case FOLLOW_UP_NEW_TASK -> Json.object().put("taskId", 8).put("newTaskId", 9);
+            case CI_FIX_QUEUED -> Json.object().put("taskId", 8).put("by", "Bold").put("kind", "EXECUTE")
+                    .put("check", "test (windows-latest)").put("round", 1);
+            case CI_PASSED -> Json.object().put("taskId", 8);
+            case CI_GAVE_UP -> ciGaveUp("CAP");
             case JOIN_APPROVED -> Json.object().put("group", "backend");
             case PRIVATE_ONLY -> Json.object().put("bot", "dispatch_backend_bot");
             case NO_PROJECTS -> Json.object();

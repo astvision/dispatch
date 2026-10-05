@@ -120,7 +120,19 @@ public enum OutboxKind {
     /** To the requester, under that result: GitHub refused the merge. Payload: taskId, and error (GitHub's words) or closed. */
     MERGE_REFUSED(Ending.NONE),
     /** Under a follow-up to a merged task: it became a new task instead. Payload: taskId (the merged one), newTaskId. */
-    FOLLOW_UP_NEW_TASK(Ending.NONE);
+    FOLLOW_UP_NEW_TASK(Ending.NONE),
+    /**
+     * To the requester privately: the checks failed on the delivered commit and a fix run is queued (spec: CI watch).
+     * Payload: taskId, check (the first failed one), round.
+     */
+    CI_FIX_QUEUED(Ending.NONE),
+    /** To the requester, under the result: every check passed, so the pull request is ready to merge. Payload: taskId. */
+    CI_PASSED(Ending.NONE),
+    /**
+     * To the requester, under the result: the watch hands the pull request back. Payload: taskId, reason (CAP, UNCHANGED,
+     * STUCK, CANCELLED), checks ([{name, link}], the failed ones), summary (the fix run's own words, for UNCHANGED).
+     */
+    CI_GAVE_UP(Ending.NONE);
 
     /** What the message says about how its task ended. */
     public enum Ending {

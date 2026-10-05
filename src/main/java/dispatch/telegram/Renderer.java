@@ -34,6 +34,11 @@ public final class Renderer {
     private static final int VERIFY_LINE_LIMIT = 200;
     private static final int DENIAL_LIMIT = 200;
     private static final int DENIALS_SHOWN = 5;
+    /** A check's name in a message: matrix names run long. */
+    private static final int CHECK_LIMIT = 80;
+    private static final int CI_CHECKS_SHOWN = 5;
+    /** The fix run's own words when it changed nothing. */
+    private static final int CI_SUMMARY_LIMIT = 1500;
     private static final int TITLE_LIMIT = 80;
     /** GitHub's reason for refusing a merge: its first lines say why; a whole GraphQL error would drown the message. */
     private static final int MERGE_ERROR_LIMIT = 500;
@@ -227,6 +232,10 @@ public final class Renderer {
                     : format("task.mergeRefused", taskId(payload), escapeWithin(payload.path("error").asText(), MERGE_ERROR_LIMIT)));
             case FOLLOW_UP_NEW_TASK -> plain(format("task.followUpNewTask", taskId(payload),
                     String.valueOf(payload.path("newTaskId").asLong())));
+            case CI_FIX_QUEUED -> plain(format("ci.fixQueued", taskId(payload),
+                    escapeWithin(payload.path("check").asText(), CHECK_LIMIT), String.valueOf(payload.path("round").asInt())));
+            case CI_PASSED -> plain(format("ci.passedReply", taskId(payload)));
+            case CI_GAVE_UP -> plain(ciGaveUp(payload));
         };
     }
 
@@ -913,6 +922,7 @@ public final class Renderer {
         StringBuilder html = new StringBuilder(format("task.completed", taskId(payload), escape(payload.path("project").asText())))
                 .append('\n')
                 .append(filesChanged == 0 ? text("task.completedNoChanges") : format("task.completedPr", escape(payload.path("prUrl").asText())));
+        html.append(ciLine(payload.path("ci")));
         String verification = verificationBlock(payload.path("verification"));
         String summary = payload.path("summary").asText("").strip();
         if (!summary.isEmpty()) {
@@ -943,6 +953,45 @@ public final class Renderer {
         return new Rendered(html.toString(), payload.path("merge").asBoolean(false)
                 ? List.of(List.of(new Button(text("button.merge"), new Callback.Merge(payload.path("taskId").asLong()).data())))
                 : List.of(), null);
+    }
+
+    /** How the pull request's checks stand, under a result (spec: CI watch); nothing for a result that is not watched. */
+    private String ciLine(JsonNode ci) {
+        String check = escapeWithin(ci.path("check").asText(""), CHECK_LIMIT);
+        return switch (ci.path("state").asText("")) {
+            case "PENDING" -> "\n" + text("ci.pending");
+            case "PASSED" -> "\n" + text("ci.passed");
+            case "FIXING" -> "\n" + format("ci.fixing", check, String.valueOf(ci.path("round").asInt()));
+            case "GAVE_UP" -> "\n" + (check.isEmpty() ? text("ci.unknown") : format("ci.failed", check));
+            default -> "";
+        };
+    }
+
+    /** Why the watch hands the pull request back, with the failed checks where a check failed. */
+    private String ciGaveUp(JsonNode payload) {
+        String id = taskId(payload);
+        return switch (payload.path("reason").asText()) {
+            case "UNCHANGED" -> format("ci.gaveUpUnchanged", id,
+                    escapeWithin(payload.path("summary").asText("").strip(), CI_SUMMARY_LIMIT)) + failedChecks(payload.path("checks"));
+            case "STUCK" -> format("ci.gaveUpStuck", id);
+            case "CANCELLED" -> format("ci.gaveUpCancelled", id);
+            default -> format("ci.gaveUpCap", id) + failedChecks(payload.path("checks"));
+        };
+    }
+
+    /** A line per failed check: its name and where to read it. */
+    private String failedChecks(JsonNode checks) {
+        StringBuilder html = new StringBuilder();
+        int shown = 0;
+        for (JsonNode check : checks) {
+            if (shown++ == CI_CHECKS_SHOWN) {
+                html.append("\n…");
+                break;
+            }
+            html.append("\n• ").append(escapeWithin(check.path("name").asText(), CHECK_LIMIT)).append(": ")
+                    .append(escape(check.path("link").asText()));
+        }
+        return html.toString();
     }
 
     /** The verify loop's findings under a result (spec: verify loop); nothing for a run without the loop. */
