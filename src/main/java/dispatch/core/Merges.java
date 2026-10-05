@@ -171,19 +171,28 @@ public final class Merges {
 
     private void merged(Task task, Requester who, String messageRef) {
         Instant now = clock.instant();
-        boolean recorded = db.transactionReturning(tx -> {
-            if (!Tasks.merged(tx, task.id(), now)) {
-                return false;
-            }
-            Phase phase = Tasks.find(tx, task.id()).orElseThrow().phase();
-            Events.record(tx, task.id(), null, who.ref(), phase, phase, "merged", now);
-            Outbox.enqueue(tx, task.id(), OutboxKind.TASK_MERGED, task.requester().ref(), messageRef,
-                    Json.object().put("taskId", task.id()).put("base", task.baseBranch()).put("prUrl", task.prUrl()), now);
-            redrawMerged(tx, task.id(), task.requester().ref(), messageRef, now);
-            return true;
-        });
+        boolean recorded = db.transactionReturning(tx -> recordMerged(tx, task, who.ref(), messageRef, now));
         Log.info("merge.done", "task", task.id(), "pr", task.prUrl(), "recorded", recorded);
         wakeOutbox.run();
+    }
+
+    /**
+     * {@code task}'s pull request is merged, by a tap here or on GitHub (spec: CI watch): the task, its event by
+     * {@code actor}, the news under {@code messageRef} (null when there is no result to reply to) and that result without
+     * its button. False when it was recorded already.
+     */
+    static boolean recordMerged(Tx tx, Task task, String actor, String messageRef, Instant now) {
+        if (!Tasks.merged(tx, task.id(), now)) {
+            return false;
+        }
+        Phase phase = Tasks.find(tx, task.id()).orElseThrow().phase();
+        Events.record(tx, task.id(), null, actor, phase, phase, "merged", now);
+        Outbox.enqueue(tx, task.id(), OutboxKind.TASK_MERGED, task.requester().ref(), messageRef,
+                Json.object().put("taskId", task.id()).put("base", task.baseBranch()).put("prUrl", task.prUrl()), now);
+        if (messageRef != null) {
+            redrawMerged(tx, task.id(), task.requester().ref(), messageRef, now);
+        }
+        return true;
     }
 
     private void refused(Task task, String messageRef, ObjectNode reason) {

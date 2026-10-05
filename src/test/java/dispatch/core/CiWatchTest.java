@@ -3,6 +3,7 @@ package dispatch.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -19,9 +20,13 @@ import dispatch.store.Runs;
 import dispatch.store.TaskCi;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
+import dispatch.workspace.Gh;
+import dispatch.workspace.WorkspaceException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -53,6 +58,19 @@ class CiWatchTest {
     private boolean watched = true;
     private int woken;
 
+    /** What GitHub says of the pull request; a test changes it between passes. */
+    private String prState = "OPEN";
+    private String prHead = HEAD;
+    private List<Gh.Check> checks = List.of();
+    /** What a failed log holds; null for one that cannot be read. */
+    private String log = "";
+    /** Thrown by the next question to GitHub, as when it cannot be reached. */
+    private RuntimeException unreachable;
+    /** Run in the middle of a question to GitHub: what happens to the task meanwhile. */
+    private Runnable meanwhile = () -> { };
+    private final List<String> asked = new ArrayList<>();
+    private CiWatch watch;
+
     @BeforeEach
     void setUp() {
         dbFile = dir.resolve("dispatch.db");
@@ -65,6 +83,32 @@ class CiWatchTest {
                 List.of(new Config.Member(BOLD_ID, "Bold")), List.of("autoland-management"))));
         tasks = new TaskService(groups, projects, new ActiveRuns(), clock, () -> { }, () -> { });
         transitions = new RunTransitions(db, clock, () -> { }, true, project -> watched, () -> woken++);
+        watch = new CiWatch(db, projects, tasks.commands(), new CiWatch.Checks() {
+            @Override
+            public Gh.PullRequest pullRequest(String url) {
+                asked.add("pr");
+                if (unreachable != null) {
+                    throw unreachable;
+                }
+                return new Gh.PullRequest(prState, prHead);
+            }
+
+            @Override
+            public List<Gh.Check> checks(String url) {
+                asked.add("checks");
+                meanwhile.run();
+                return checks;
+            }
+
+            @Override
+            public String failedLog(String checkLink) {
+                asked.add("log " + checkLink);
+                if (log == null) {
+                    throw new WorkspaceException("gh run view timed out");
+                }
+                return log;
+            }
+        }, clock, new Signal(), () -> { });
     }
 
     @AfterEach
@@ -172,6 +216,196 @@ class CiWatchTest {
 
         assertEquals("0", count("SELECT count(*) AS n FROM run WHERE cause = 'CI_FIX'"));
         assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind = 'CI_FIX_QUEUED'"));
+    }
+
+    @Test
+    void checksStillRunningLeaveTheWatchAsItIs() {
+        long taskId = delivered();
+        checks = List.of(check("ui", "pass", 11), check("test", "pending", 11));
+
+        assertEquals(0, watch.pass());
+
+        assertEquals("PENDING", watchRow(taskId).get("state"));
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind LIKE 'CI_%'"));
+    }
+
+    @Test
+    void greenChecksSayThePullRequestIsReadyUnderItsResult() {
+        long taskId = delivered();
+        checks = List.of(check("ui", "pass", 11), check("docs", "skipping", 11));
+
+        assertEquals(1, watch.pass());
+
+        assertEquals("PASSED", watchRow(taskId).get("state"));
+        Map<String, String> reply = row("SELECT chat_ref, reply_to_ref FROM outbox WHERE kind = 'CI_PASSED'");
+        assertEquals(BOLD.ref(), reply.get("chat_ref"));
+        assertEquals(RESULT, reply.get("reply_to_ref"));
+        JsonNode result = redrawn(taskId);
+        assertEquals("PASSED", result.path("ci").path("state").asText());
+        assertTrue(result.path("merge").asBoolean(), "the redrawn result keeps its Merge button");
+        assertEquals("ci passed", row("SELECT reason FROM task_event WHERE task_id = ? AND actor = 'ci'", taskId).get("reason"));
+
+        assertEquals(0, watch.pass(), "a settled watch is not asked about again");
+        assertEquals("1", count("SELECT count(*) AS n FROM outbox WHERE kind = 'CI_PASSED'"));
+    }
+
+    @Test
+    void noChecksForTenMinutesEndTheWatchWithoutAWord() {
+        long taskId = delivered();
+
+        clock.advance(Duration.ofMinutes(9));
+        assertEquals(0, watch.pass());
+        assertEquals("PENDING", watchRow(taskId).get("state"), "checks take a moment to appear");
+
+        clock.advance(Duration.ofMinutes(2));
+        assertEquals(1, watch.pass());
+        assertEquals("NONE", watchRow(taskId).get("state"));
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind LIKE 'CI_%'"));
+        assertTrue(redrawn(taskId).path("ci").isMissingNode(), "the result no longer says the checks are running");
+    }
+
+    @Test
+    void checksStillRunningAfterSixHoursAreHandedBack() {
+        long taskId = delivered();
+        checks = List.of(check("test", "pending", 11));
+        clock.advance(Duration.ofHours(6).plusMinutes(1));
+
+        assertEquals(1, watch.pass());
+
+        assertEquals("GAVE_UP", watchRow(taskId).get("state"));
+        assertEquals("STUCK", watchRow(taskId).get("reason"));
+        assertEquals("STUCK", said("CI_GAVE_UP").path("reason").asText());
+    }
+
+    @Test
+    void cancelledChecksAreSaidAndNotFixed() {
+        long taskId = delivered();
+        checks = List.of(check("ui", "pass", 11), check("test", "cancel", 11));
+
+        assertEquals(1, watch.pass());
+
+        assertEquals("CANCELLED", watchRow(taskId).get("reason"));
+        assertEquals("0", count("SELECT count(*) AS n FROM run WHERE cause = 'CI_FIX'"));
+        assertEquals("CANCELLED", said("CI_GAVE_UP").path("reason").asText());
+    }
+
+    @Test
+    void aCommitDispatchDidNotPushStopsTheWatch() {
+        long taskId = delivered();
+        prHead = "someone-elses";
+        checks = List.of(check("ui", "fail", 11));
+
+        assertEquals(1, watch.pass());
+
+        assertEquals("STOPPED", watchRow(taskId).get("state"));
+        assertEquals("MOVED", watchRow(taskId).get("reason"));
+        assertFalse(asked.contains("checks"), "its checks are not this watch's business");
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind LIKE 'CI_%'"));
+    }
+
+    @Test
+    void aPullRequestMergedOnGitHubIsRecordedOnItsTask() {
+        long taskId = delivered();
+        prState = "MERGED";
+
+        assertEquals(1, watch.pass());
+
+        assertTrue(row("SELECT merged_at FROM task WHERE id = ?", taskId).get("merged_at") != null);
+        assertEquals("MERGED", watchRow(taskId).get("reason"));
+        assertEquals(RESULT, row("SELECT reply_to_ref FROM outbox WHERE kind = 'TASK_MERGED'").get("reply_to_ref"));
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED' AND edit_ref = ?", RESULT).get("payload"))
+                .path("merged").asBoolean(), "the result loses its button");
+        assertEquals("github", row("SELECT actor FROM task_event WHERE task_id = ? AND reason = 'merged'", taskId).get("actor"));
+    }
+
+    @Test
+    void aClosedPullRequestStopsTheWatch() {
+        long taskId = delivered();
+        prState = "CLOSED";
+
+        assertEquals(1, watch.pass());
+
+        assertEquals("CLOSED", watchRow(taskId).get("reason"));
+    }
+
+    @Test
+    void whenGitHubCannotBeAskedTheRowWaits() {
+        long taskId = delivered();
+        unreachable = new WorkspaceException("gh pr view failed (exit 1): could not resolve host: api.github.com");
+
+        assertEquals(0, watch.pass());
+        assertEquals("PENDING", watchRow(taskId).get("state"));
+
+        unreachable = null;
+        checks = List.of(check("ui", "pass", 11));
+        assertEquals(1, watch.pass());
+        assertEquals("PASSED", watchRow(taskId).get("state"));
+    }
+
+    @Test
+    void aVerdictForATaskThatMovedOnIsDropped() {
+        long taskId = delivered();
+        checks = List.of(check("ui", "pass", 11));
+        meanwhile = () -> db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.FollowUp(taskId, "more", new Origin("telegram:" + BOLD_ID + "/20"))));
+
+        assertEquals(0, watch.pass());
+
+        assertEquals("PENDING", watchRow(taskId).get("state"), "the follow-up's own delivery re-arms it");
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind = 'CI_PASSED'"));
+    }
+
+    @Test
+    void aTaskWithARunGoingIsNotAskedAbout() {
+        long taskId = delivered();
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.FollowUp(taskId, "more", new Origin("telegram:" + BOLD_ID + "/20"))));
+
+        assertEquals(0, watch.pass());
+
+        assertTrue(asked.isEmpty(), "GitHub is not asked while the branch is being worked on");
+    }
+
+    @Test
+    void aResultNotYetSentStillGetsItsNews() {
+        long taskId = approved();
+        transitions.completed(taskId, 2, result(null), "Done", List.of("src/Auth.java"), PR, null, HEAD);
+        checks = List.of(check("ui", "pass", 11));
+
+        assertEquals(1, watch.pass());
+
+        assertNull(row("SELECT reply_to_ref FROM outbox WHERE kind = 'CI_PASSED'").get("reply_to_ref"));
+        assertEquals("PASSED", redrawn(taskId).path("ci").path("state").asText(), "the redraw waits for its original");
+    }
+
+    @Test
+    void aProjectThatLeftTheConfigStopsTheWatch() {
+        long taskId = delivered();
+        CiWatch without = new CiWatch(db, new Projects(List.of(), project -> Optional.empty()), tasks.commands(), null, clock,
+                new Signal(), () -> { });
+
+        assertEquals(1, without.pass());
+
+        assertEquals("OFF", watchRow(taskId).get("reason"));
+    }
+
+    private static Gh.Check check(String name, String bucket, int run) {
+        return new Gh.Check(name, bucket, "https://github.com/acme/alm/actions/runs/" + run + "/job/" + (run * 10));
+    }
+
+    private Map<String, String> watchRow(long taskId) {
+        return row("SELECT head_sha, state, reason, fix_rounds, checks_json FROM task_ci WHERE task_id = ?", taskId);
+    }
+
+    /** The payload of the one message of {@code kind}. */
+    private JsonNode said(String kind) {
+        return Json.read(row("SELECT payload FROM outbox WHERE kind = ?", kind).get("payload"));
+    }
+
+    /** The newest redraw of the task's result. */
+    private JsonNode redrawn(long taskId) {
+        return Json.read(row("""
+                SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED' AND task_id = ? AND edit_of IS NOT NULL
+                ORDER BY id DESC LIMIT 1""", taskId).get("payload"));
     }
 
     /** Whether a fix run was queued for the task as it stands at {@code head}. */

@@ -171,6 +171,19 @@ public final class Outbox {
                 sentRef).filter(sent -> sent.kind() != null);
     }
 
+    /** A task's newest result message: its row, what Telegram called it once sent (null before), and what it says. */
+    public record Result(long id, String sentRef, String payload) {
+    }
+
+    /** The newest TASK_COMPLETED of {@code taskId} that was sent or is on its way, redraws aside. */
+    public static Optional<Result> latestResult(Tx tx, long taskId) {
+        return tx.one("""
+                        SELECT id, sent_ref, payload FROM outbox
+                        WHERE task_id = ? AND kind = 'TASK_COMPLETED' AND edit_ref IS NULL AND edit_of IS NULL AND status <> 'FAILED'
+                        ORDER BY id DESC LIMIT 1""",
+                row -> new Result(row.longValue("id"), row.string("sent_ref"), row.string("payload")), taskId);
+    }
+
     public static void markSent(Tx tx, long id, int attempts, String sentRef, Instant now) {
         tx.update("UPDATE outbox SET status = 'SENT', attempts = ?, sent_ref = ?, sent_at = ?, last_error = NULL WHERE id = ?",
                 attempts, sentRef, now, id);
