@@ -84,7 +84,11 @@ public final class ConfigLoader {
         if (!skills.equals("on") && !skills.equals("off")) {
             errors.add(Text.of("config.onOff", "skills", raw.skills()));
         }
-        List<Config.Project> projects = validateProjects(raw.projects(), agents, loop, skills, errors);
+        String ci = raw.ci() == null ? "on" : raw.ci();
+        if (!ci.equals("on") && !ci.equals("off")) {
+            errors.add(Text.of("config.onOff", "ci", raw.ci()));
+        }
+        List<Config.Project> projects = validateProjects(raw.projects(), agents, loop, skills, ci, errors);
         Config.Telegram telegram = validateTelegram(raw.telegram(), projects, errors);
         Config.Delivery delivery = validateDelivery(raw.delivery(), errors);
         Config.Workers workers = validateWorkers(raw.workers(), telegram, errors);
@@ -381,7 +385,7 @@ public final class ConfigLoader {
     }
 
     private static List<Config.Project> validateProjects(List<Config.Project> projects, Map<String, Config.Agent> agents,
-                                                         String instanceLoop, String instanceSkills, List<Text> errors) {
+                                                         String instanceLoop, String instanceSkills, String instanceCi, List<Text> errors) {
         if (projects == null || projects.isEmpty()) {
             errors.add(Text.of("config.projectsAtLeast"));
             return List.of();
@@ -441,12 +445,16 @@ public final class ConfigLoader {
             if (!projectSkills.equals("on") && !projectSkills.equals("off")) {
                 errors.add(Text.of("config.onOff", at + ".skills", project.skills()));
             }
+            String projectCi = project.ci() == null ? instanceCi : project.ci();
+            if (!projectCi.equals("on") && !projectCi.equals("off")) {
+                errors.add(Text.of("config.onOff", at + ".ci", project.ci()));
+            }
             if (project.test() != null && project.test().isBlank()) {
                 errors.add(Text.of("config.testBlank", at + ".test"));
             }
             normalized.add(new Config.Project(project.name(), project.alias(), project.repo(), project.path(), project.baseBranch(),
                     project.agent(), project.model(), project.effort(), List.copyOf(copyFiles), project.limits(), project.plan(),
-                    project.execute(), project.test(), projectLoop, projectSkills));
+                    project.execute(), project.test(), projectLoop, projectSkills, projectCi));
         }
         return List.copyOf(normalized);
     }
@@ -510,6 +518,7 @@ public final class ConfigLoader {
             String branchPrefix,
             String sandbox,
             String loop,
-            String skills) {
+            String skills,
+            String ci) {
     }
 }

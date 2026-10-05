@@ -242,12 +242,14 @@ public record Config(
             /** "on" or "off" once loaded: the project's own setting, else the instance's (spec: verify loop). */
             String loop,
             /** "on" or "off" once loaded: the project's own setting, else the instance's (spec: agent skills). */
-            String skills) {
+            String skills,
+            /** "on" or "off" once loaded: the project's own setting, else the instance's (spec: CI watch). */
+            String ci) {
 
-        /** A project as it was before the verify loop: no test command, loop and skills unresolved. */
+        /** A project as it was before the verify loop: no test command; loop, skills and ci unresolved. */
         public Project(String name, String alias, String repo, String path, String baseBranch, String agent, String model,
                        String effort, List<String> copyFiles, Limits limits, PhaseSettings plan, PhaseSettings execute) {
-            this(name, alias, repo, path, baseBranch, agent, model, effort, copyFiles, limits, plan, execute, null, null, null);
+            this(name, alias, repo, path, baseBranch, agent, model, effort, copyFiles, limits, plan, execute, null, null, null, null);
         }
 
         public boolean loopOn() {
@@ -257,6 +259,11 @@ public record Config(
         /** Whether this project's Claude Code runs load the dispatch skills plugin; Codex and Gemini ignore it. */
         public boolean skillsOn() {
             return "on".equals(skills);
+        }
+
+        /** Whether this project's delivered pull requests are watched for their checks; unresolved reads as off. */
+        public boolean ciOn() {
+            return "on".equals(ci);
         }
 
         public String planModel() {

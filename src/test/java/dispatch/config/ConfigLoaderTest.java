@@ -122,6 +122,31 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void ciIsWatchedByDefaultAndTheInstanceMayTurnItOff() throws Exception {
+        assertTrue(ConfigLoader.load(write(VALID), ENV).projects().getFirst().ciOn());
+
+        assertFalse(ConfigLoader.load(write("ci: off\n" + VALID), ENV).projects().getFirst().ciOn());
+    }
+
+    @Test
+    void aProjectsCiOverridesTheInstance() throws Exception {
+        String yaml = "ci: off\n" + VALID.replace("- name: autoland-management\n", "- name: autoland-management\n    ci: on\n");
+
+        assertTrue(ConfigLoader.load(write(yaml), ENV).projects().getFirst().ciOn());
+    }
+
+    @Test
+    void anUnknownCiValueIsRefusedWhereItIsWritten() throws Exception {
+        Path instance = write("ci: maybe\n" + VALID);
+        ConfigException atInstance = assertThrows(ConfigException.class, () -> ConfigLoader.load(instance, ENV));
+        assertTrue(atInstance.getMessage().contains("ci: on or off, not maybe"), atInstance.getMessage());
+
+        Path project = write(VALID.replace("- name: autoland-management\n", "- name: autoland-management\n    ci: always\n"));
+        ConfigException atProject = assertThrows(ConfigException.class, () -> ConfigLoader.load(project, ENV));
+        assertTrue(atProject.getMessage().contains("projects[0].ci: on or off, not always"), atProject.getMessage());
+    }
+
+    @Test
     void aBlankTestCommandIsRefused() throws Exception {
         Path file = write(VALID.replace("- name: autoland-management\n", "- name: autoland-management\n    test: \"  \"\n"));
 
