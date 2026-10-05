@@ -1,8 +1,9 @@
 # CI watch (CW): a red check on a delivered pull request starts a fix run
 
-Status: approved design, 2026-10-05; to build on branch ci-watch (ADR 0041, migration 036; the unmerged usage-limit
-branch holds ADR 0040 and migration 035, and whichever of the two merges second renumbers). First of two specs that
-close the loop after delivery: CI failures here, then GitHub review comments, which reuse this watcher.
+Status: approved design, 2026-10-05; to build on branch ci-watch (ADR 0041, migration 035). Migrations are applied by
+position, so the first of this and the unbuilt usage-limit design to be built takes 035; that design, which names 035
+and ADR 0040, moves to 036 when it is built. First of two specs that close the loop after delivery: CI failures here,
+then GitHub review comments, which reuse this watcher.
 
 ## Goal
 
@@ -58,13 +59,15 @@ One row per watched task, written when a delivery is recorded and by the pass af
 | `task_id` | primary key, the task |
 | `head_sha` | the commit this verdict is for: where the delivery left the branch (`task.head_sha`) |
 | `state` | `PENDING`, `PASSED`, `FIXING`, `GAVE_UP`, `NONE`, `STOPPED` |
-| `reason` | for `GAVE_UP`: `CAP`, `UNCHANGED`, `STUCK`, `CANCELLED`; for `STOPPED`: `MERGED`, `CLOSED`, `MOVED` |
+| `reason` | for `GAVE_UP`: `CAP`, `UNCHANGED`, `STUCK`, `CANCELLED`; for `STOPPED`: `MERGED`, `CLOSED`, `MOVED`, `OFF`, `ENDED` |
 | `fix_rounds` | automatic fix runs in a row, 0 to 2 |
 | `checks_json` | the failed checks' names and links as last read; null until a verdict |
 | `armed_at` | when this commit was delivered; the 10-minute and 6-hour limits count from it |
 | `checked_at` | when GitHub was last asked |
 
-`NONE` means the repository reported no checks. Only `PENDING` rows are polled.
+`NONE` means the repository reported no checks. Only `PENDING` rows are asked about on GitHub; `FIXING` rows are
+settled from the database alone. `STOPPED/OFF` is a task whose project left the config or turned `ci: off` since it
+was armed; `STOPPED/ENDED` one that was cancelled while its fix was queued.
 
 ### Arming
 
@@ -99,9 +102,11 @@ public interface Checks {
 
 `Gh` gains the three reads behind it, run in the state directory, outside any clone:
 - `gh pr view <url> --json state,headRefOid`
-- `gh pr checks <url> --json name,bucket,link,workflow`. Its exit code is not the verdict (8 means pending, 1 means a
-  failure or no checks); the JSON is. How "no checks reported" arrives (exit code and stderr) is pinned by a recorded
-  fixture in the plan's first task.
+- `gh pr checks <url> --json name,bucket,link`. Its exit code is not the verdict (8 means pending, 1 means a failure
+  or no checks); the JSON is. A pull request without checks prints nothing, exits 1 and says `no checks reported on
+  the '<branch>' branch` on stderr (seen with gh 2.87.3 on this repository's first pull requests): that is the empty
+  list. A repository that runs its workflow on both `push` and `pull_request` reports every check twice; the verdict
+  rules do not care, and failed logs are read once per Actions run.
 - `gh run view <run id> --repo <owner/repo> --log-failed`, the run id and repository taken from a check link of the
   form `https://github.com/<owner>/<repo>/actions/runs/<id>/…`.
 
@@ -158,8 +163,8 @@ All of it goes to the requester privately; a group hears nothing of CI (ADR 0011
 
 - **The CI line** on the result message (`TASK_COMPLETED`), redrawn in place through `Outbox.enqueueEdit` the way a
   merge redraws it: `⏳ CI` when armed, `✅ CI` on green, `❌ CI: <first failed check>` on red, with `· 🔧 1/2` while a
-  fix is queued or running. Nothing when the row is `NONE` or `STOPPED`. The line is drawn from the row, so any later
-  redraw of the result keeps it.
+  fix is queued or running. Nothing when the row is `NONE` or `STOPPED`. The line travels in the result's payload as
+  `ci`; the one other redraw, a merge, drops it, which is right: a merged pull request shows no CI line.
 - **`CI_FIX_QUEUED`**, the queued run's news, a new message: `❌ CI: <checks> — 🔧 засаж байна (1/2)`.
 - **`CI_PASSED`**, a reply under the result: CI passed, ready to merge. It notifies, since an edit does not.
 - **`CI_GAVE_UP`**, a reply under the result, by reason: the cap with the failed checks' links; the fix run's summary
@@ -167,13 +172,15 @@ All of it goes to the requester privately; a group hears nothing of CI (ADR 0011
 - A fix run's delivery sends its own result message, as a follow-up's does, and that one carries the CI line from then
   on.
 
-Texts are added in Mongolian and English like every other message.
+Texts are added to `messages_mn.properties`, like every other chat message.
 
 ### Mini App and desk
 
-The task payload gains `ci`: `{state, reason, fixRounds, checks}` or null. The task sheet shows the same line as the
-result message. The timeline shows the three events (`ci failed`, `ci-fix`, `ci passed`) through the existing event
-record. No new page, no new control.
+The timeline payload (which the Mini App's task sheet and the desk's task page both read) gains `ci`:
+`{state, reason, fixRounds, check}` or null, for the requester's own tasks only (ADR 0020). Both show it as one line
+next to the pull request link, in the same symbols as the result message. The fix run appears among the task's runs
+with cause `CI_FIX`; the three events (`ci failed`, `ci-fix`, `ci passed`) go to the audit trail (`task_event`). No new
+page, no new control.
 
 ### Settings
 
@@ -189,7 +196,8 @@ absent. The worker config has no such key.
 - A restart: rows are in SQLite; `PENDING` rows are polled again and `FIXING` rows are settled as above. The fix run
   and its row change in one transaction, so a crash between GitHub's answer and the commit leaves the row `PENDING`
   and the next pass decides again, once.
-- Removing a project removes its tasks' rows: `task_ci` joins the cascade that removal owns.
+- A project removed from the config, or turned `ci: off`, after a task of its was armed: the row becomes
+  `STOPPED/OFF` on the next pass, with no message.
 
 ## Testing
 
