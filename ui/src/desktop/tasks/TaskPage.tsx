@@ -1,5 +1,6 @@
 import { Button, Flex, Result, Spin, Typography } from "antd";
 import { getLogs, taskTimeline, type Timeline } from "../../api";
+import { ciLabel } from "../../ci";
 import { useT, type Key } from "../../i18n/i18n";
 import { LogRows } from "../../manage/LogsPage";
 import { usePolling } from "../usePolling";
@@ -24,6 +25,7 @@ function Facts({ timeline }: { timeline: Timeline }) {
         ))}
       </dl>
       {timeline.prUrl && <Typography.Link href={timeline.prUrl} target="_blank" rel="noreferrer">{t("tasks.pullRequest")}</Typography.Link>}
+      {ciLabel(timeline.ci) && <Typography.Text type="secondary"> · {ciLabel(timeline.ci)}</Typography.Text>}
     </section>
   );
 }

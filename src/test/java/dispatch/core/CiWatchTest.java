@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -521,6 +522,20 @@ class CiWatchTest {
 
         assertEquals("STOPPED", watchRow(taskId).get("state"));
         assertEquals("ENDED", watchRow(taskId).get("reason"));
+    }
+
+    @Test
+    void theRequestersTimelineSaysHowTheChecksStand() {
+        long taskId = delivered();
+        checks = List.of(check("test", "fail", 11));
+        watch.pass();
+
+        JsonNode ci = db.transactionReturning(tx -> tasks.timelinePayload(tx,
+                new TaskAccess.Viewer(BOLD.ref(), Set.of("autoland-management")), taskId)).orElseThrow().path("ci");
+
+        assertEquals("FIXING", ci.path("state").asText());
+        assertEquals(1, ci.path("fixRounds").asInt());
+        assertEquals("test", ci.path("check").asText());
     }
 
     private static Gh.Check check(String name, String bucket, int run) {

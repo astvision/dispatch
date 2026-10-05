@@ -31,6 +31,7 @@ import dispatch.store.Outbox;
 import dispatch.store.PlanAnswers;
 import dispatch.store.RunSteps;
 import dispatch.store.Runs;
+import dispatch.store.TaskCi;
 import dispatch.store.Tasks;
 import dispatch.store.Tx;
 import dispatch.store.Workers;
@@ -744,6 +745,7 @@ public final class TaskService {
         if (!isOwn(viewer, task)) {
             return Optional.of(payload.put("headline", true).putNull("costUsd"));
         }
+        payload.set("ci", TaskCi.find(tx, taskId).map(TaskService::ciView).orElse(null));
         ArrayNode runs = payload.putArray("runs");
         BigDecimal total = null;
         for (Run run : Runs.forTask(tx, taskId)) {
@@ -762,6 +764,13 @@ public final class TaskService {
         }
         payload.put("costUsd", total == null ? null : total.toPlainString());
         return Optional.of(payload);
+    }
+
+    /** A watch as the pages show it (spec: CI watch): its state, why it ended, the fix rounds, and the first failed check. */
+    private static ObjectNode ciView(TaskCi.Watch watch) {
+        String check = watch.checksJson() == null ? null : Json.read(watch.checksJson()).path(0).path("name").asText(null);
+        return Json.object().put("state", watch.state().name()).put("reason", watch.reason()).put("fixRounds", watch.fixRounds())
+                .put("check", check);
     }
 
     /**

@@ -14,6 +14,7 @@ import dispatch.core.ActiveRuns;
 import dispatch.core.Assistant;
 import dispatch.core.AssistantActions;
 import dispatch.core.AssistantHome;
+import dispatch.core.CiWatch;
 import dispatch.core.Coordinator;
 import dispatch.core.DraftExpiry;
 import dispatch.core.SkillsPlugin;
@@ -28,6 +29,7 @@ import dispatch.core.Recovery;
 import dispatch.core.RunTransitions;
 import dispatch.core.Scheduler;
 import dispatch.core.Signal;
+import dispatch.core.TaskCommands;
 import dispatch.core.Splitter;
 import dispatch.core.TaskService;
 import dispatch.core.Worker;
@@ -66,6 +68,8 @@ public final class App {
     private final OutboxSender sender;
     private final DraftExpiry draftExpiry;
     private final Sweeper sweeper;
+    /** Null on a team machine, which watches no pull request (ADR 0041). */
+    private final CiWatch ciWatch;
     private final Splitter splitter;
     private final Assistant assistant;
     private final ActiveRuns activeRuns;
@@ -79,12 +83,14 @@ public final class App {
     private Thread senderThread;
     private Thread draftExpiryThread;
     private Thread sweeperThread;
+    private Thread ciWatchThread;
 
     /**
      * @param workerApi null in personal mode, where no computer ever reaches this machine
      * @param miniApp   null unless the config has a {@code miniApp} block, and when this build bundles no pages
      */
-    private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, Sweeper sweeper, Splitter splitter,
+    private App(Database db, Poller poller, Scheduler scheduler, OutboxSender sender, DraftExpiry draftExpiry, Sweeper sweeper, CiWatch ciWatch,
+                Splitter splitter,
                 Assistant assistant, ActiveRuns activeRuns, WorkerApi workerApi, UiServer miniApp, dispatch.ui.DeskServer desk,
                 Consumer<Throwable> onFatal) {
         this.db = db;
@@ -93,6 +99,7 @@ public final class App {
         this.sender = sender;
         this.draftExpiry = draftExpiry;
         this.sweeper = sweeper;
+        this.ciWatch = ciWatch;
         this.splitter = splitter;
         this.assistant = assistant;
         this.activeRuns = activeRuns;
@@ -139,7 +146,10 @@ public final class App {
         ActiveRuns activeRuns = new ActiveRuns();
         // Only a personal bot merges from Telegram: in team mode each member's own computer holds the credentials that delivered it.
         boolean mergeFromTelegram = config.workers() == null;
-        RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake, mergeFromTelegram);
+        Signal ciSignal = new Signal();
+        // Likewise only it watches its pull requests' checks (ADR 0041): the watcher asks GitHub with this machine's gh.
+        RunTransitions transitions = new RunTransitions(db, clock, outboxSignal::wake, mergeFromTelegram,
+                mergeFromTelegram ? project -> projects.byName(project).map(Config.Project::ciOn).orElse(false) : null, ciSignal::wake);
         Groups groups = new Groups(config.telegram());
         Splitter[] splitter = new Splitter[1];
         Map<String, String> agentCommands = new java.util.LinkedHashMap<>();
@@ -257,7 +267,8 @@ public final class App {
         DraftExpiry draftExpiry = new DraftExpiry(db, tasks, clock, Duration.ofHours(24), Duration.ofMinutes(1));
         Sweeper sweeper = new Sweeper(db, projects, workspaces, clock, Duration.ofDays(config.worktrees().idleDays()), Duration.ofHours(1),
                 config.branchPrefix());
-        app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, splitter[0], assistant, activeRuns, workerApi, miniApp,
+        CiWatch ciWatch = mergeFromTelegram ? ciWatch(db, projects, tasks.commands(), gh, stateDir, clock, ciSignal, outboxSignal) : null;
+        app[0] = new App(db, poller, scheduler, sender, draftExpiry, sweeper, ciWatch, splitter[0], assistant, activeRuns, workerApi, miniApp,
                 desk, onFatal);
         app[0].startThreads();
         Log.info("dispatch.started", "team", config.team(), "bot", botUsername, "task_topics", taskTopics, "groups", groups.all().size(),
@@ -300,6 +311,9 @@ public final class App {
         pollerThread.interrupt();
         scheduler.stop();
         sweeper.stop();
+        if (ciWatch != null) {
+            ciWatch.stop();
+        }
         if (splitter != null) {
             splitter.stop();
         }
@@ -326,6 +340,9 @@ public final class App {
             draftExpiry.stop();
             draftExpiryThread.join(Duration.ofSeconds(10));
             sweeperThread.join(Duration.ofSeconds(10));
+            if (ciWatchThread != null) {
+                ciWatchThread.join(Duration.ofSeconds(10));
+            }
             sender.stop();
             senderThread.join(Duration.ofSeconds(10));
             pollerThread.join(Duration.ofSeconds(10));
@@ -342,6 +359,9 @@ public final class App {
         senderThread = Thread.ofVirtual().name("outbox-sender").start(guarded(sender));
         draftExpiryThread = Thread.ofVirtual().name("draft-expiry").start(guarded(draftExpiry));
         sweeperThread = Thread.ofVirtual().name("sweeper").start(guarded(sweeper));
+        if (ciWatch != null) {
+            ciWatchThread = Thread.ofVirtual().name("ci-watch").start(guarded(ciWatch));
+        }
     }
 
     /** A loop that dies unexpectedly would leave the instance half-working; report it as fatal instead. */
@@ -362,6 +382,28 @@ public final class App {
     private static java.util.Set<String> memberRefs(Groups groups) {
         return groups.all().stream().flatMap(group -> group.members().stream())
                 .map(member -> "telegram:" + member.id()).collect(java.util.stream.Collectors.toSet());
+    }
+
+    /** The watcher's GitHub side: gh runs in the state directory, outside any clone, as the Merge button's does. */
+    private static CiWatch ciWatch(Database db, Projects projects, TaskCommands commands, Gh gh, Path stateDir, Clock clock,
+                                   Signal signal, Signal outbox) {
+        CiWatch.Checks checks = new CiWatch.Checks() {
+            @Override
+            public Gh.PullRequest pullRequest(String url) {
+                return gh.pullRequest(stateDir, url);
+            }
+
+            @Override
+            public List<Gh.Check> checks(String url) {
+                return gh.checks(stateDir, url);
+            }
+
+            @Override
+            public String failedLog(String checkLink) {
+                return gh.failedLog(stateDir, checkLink);
+            }
+        };
+        return new CiWatch(db, projects, commands, checks, clock, signal, outbox::wake);
     }
 
     /**

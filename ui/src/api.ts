@@ -375,6 +375,16 @@ export interface TaskRun {
   failureReason: string | null;
 }
 
+/** How the checks of a task's delivered commit stand (spec: CI watch): the server's watch as the pages need it. */
+export interface CiView {
+  state: "PENDING" | "PASSED" | "FIXING" | "GAVE_UP" | "NONE" | "STOPPED";
+  reason: string | null;
+  /** Automatic fix runs in a row, 2 at most. */
+  fixRounds: number;
+  /** The first failed check, once one failed. */
+  check: string | null;
+}
+
 export interface Timeline {
   taskId: number;
   project: string;
@@ -392,6 +402,8 @@ export interface Timeline {
   /** True when this is someone else's task: no runs and no cost (ADR 0020). */
   headline?: boolean;
   runs?: TaskRun[];
+  /** Absent on someone else's task; null on one that is not watched. */
+  ci?: CiView | null;
 }
 
 /** One of a plan's questions: the answer options the agent offered, and the answer once given. */
@@ -445,6 +457,7 @@ export interface TaskDetail {
   costUsd: string | null;
   actions: TaskAction[];
   plan?: PlanView;
+  ci?: CiView | null;
 }
 
 /** One step of a run (RM): the implementation, a test run, a fix, the review, the delivery, or a plan run's one call. */

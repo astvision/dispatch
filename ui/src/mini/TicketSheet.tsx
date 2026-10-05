@@ -4,6 +4,7 @@ import {
   answerQuestion, ApiError, approvePlan, correctPlan, followUpTask, getTaskDetail, rejectPlan, type Answer, type PlanQuestionView, type TaskDetail,
   type TaskRow,
 } from "../api";
+import { ciLabel } from "../ci";
 import { haptic, useTelegramBackButton } from "./backButton";
 import RunMonitor from "./RunMonitor";
 import { clock, clockStart, stateOf } from "./tickets";
@@ -139,7 +140,10 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
         {detail && !plan && <p className="quiet" style={{ marginTop: 16 }}>Төлөвлөгөө хараахан гараагүй байна.</p>}
         {detail?.failureReason && <p style={{ marginTop: 16 }}>Шалтгаан: {detail.failureReason}</p>}
         {detail?.prUrl && (
-          <p style={{ marginTop: 16 }}><a href={detail.prUrl} target="_blank" rel="noreferrer">Pull request нээх</a></p>
+          <p style={{ marginTop: 16 }}>
+            <a href={detail.prUrl} target="_blank" rel="noreferrer">Pull request нээх</a>
+            {ciLabel(detail.ci) && <span className="quiet"> · {ciLabel(detail.ci)}</span>}
+          </p>
         )}
 
         {error && (
