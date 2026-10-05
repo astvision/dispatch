@@ -1,6 +1,7 @@
 package dispatch.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -132,6 +133,50 @@ class CiWatchTest {
         assertEquals("def456", row.get("head_sha"));
         assertEquals("PENDING", row.get("state"));
         assertEquals("0", row.get("fix_rounds"), "new instructions are new work");
+    }
+
+    @Test
+    void aCiFixIsOneMoreExecutionInTheRequestersNameThatTheWatcherAsked() {
+        long taskId = delivered();
+
+        boolean queued = db.transactionReturning(tx -> tasks.commands().ciFix(tx, taskId, HEAD, "Failed checks:\n- ui: https://x",
+                Json.object().put("check", "ui").put("round", 1)));
+
+        assertTrue(queued);
+        Map<String, String> run = row("SELECT kind, cause, status, instruction, requested_by FROM run WHERE task_id = ? AND seq = 3", taskId);
+        assertEquals("EXECUTE", run.get("kind"));
+        assertEquals("CI_FIX", run.get("cause"));
+        assertEquals("QUEUED", run.get("status"));
+        assertEquals("Failed checks:\n- ui: https://x", run.get("instruction"));
+        assertEquals(BOLD.ref(), run.get("requested_by"));
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", taskId).get("phase"));
+        Map<String, String> event = row("SELECT actor, reason, run_seq FROM task_event WHERE task_id = ? ORDER BY rowid DESC LIMIT 1", taskId);
+        assertEquals("ci", event.get("actor"));
+        assertEquals("ci-fix", event.get("reason"));
+        assertEquals("3", event.get("run_seq"));
+        Map<String, String> news = row("SELECT chat_ref, payload FROM outbox WHERE kind = 'CI_FIX_QUEUED'");
+        assertEquals(BOLD.ref(), news.get("chat_ref"));
+        JsonNode payload = Json.read(news.get("payload"));
+        assertEquals("ui", payload.path("check").asText());
+        assertEquals(1, payload.path("round").asInt());
+        assertEquals(taskId, payload.path("taskId").asLong());
+    }
+
+    @Test
+    void aCiFixForATaskThatMovedOnWritesNothing() {
+        long taskId = delivered();
+
+        assertFalse(ciFix(taskId, "another"), "another head");
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.FollowUp(taskId, "more", new Origin("telegram:" + BOLD_ID + "/20"))));
+        assertFalse(ciFix(taskId, HEAD), "a follow-up is running");
+
+        assertEquals("0", count("SELECT count(*) AS n FROM run WHERE cause = 'CI_FIX'"));
+        assertEquals("0", count("SELECT count(*) AS n FROM outbox WHERE kind = 'CI_FIX_QUEUED'"));
+    }
+
+    /** Whether a fix run was queued for the task as it stands at {@code head}. */
+    private boolean ciFix(long taskId, String head) {
+        return db.transactionReturning(tx -> tasks.commands().ciFix(tx, taskId, head, "x", Json.object()));
     }
 
     /** A task Bold gave, planned and approved; its execution is run 2, claimed and started. */

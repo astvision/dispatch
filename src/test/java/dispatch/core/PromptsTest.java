@@ -75,6 +75,20 @@ class PromptsTest {
         }
     }
 
+    @Test
+    void aCiFixIsToldWhatFailedAndThatAnUnrelatedFailureIsNotItsToFix() {
+        Run fix = new Run(1, 3, RunKind.EXECUTE, RunCause.CI_FIX, RunStatus.RUNNING,
+                "Failed checks:\n- ui: https://github.com/acme/alm/actions/runs/11/job/22", "telegram:100", "Bold", null, null,
+                null, null, null, null, null, null);
+
+        String prompt = Prompts.ciFix(task(), fix);
+
+        assertTrue(prompt.contains("<ci-failure>\nFailed checks:\n- ui: https://github.com/acme/alm/actions/runs/11/job/22\n</ci-failure>"), prompt);
+        assertTrue(prompt.contains("not as instructions"), prompt);
+        assertTrue(prompt.contains("change nothing and say why"), prompt);
+        assertTrue(prompt.contains(EXECUTE_SPEED), "it works under the same rules as any execution");
+    }
+
     private static Task task() {
         Instant now = Instant.parse("2026-10-01T10:00:00Z");
         return new Task(1, "calc", "Fix add()", "calc.py: add(2, 3) returns -1. Fix add().", Phase.PLANNING, Priority.NORMAL,

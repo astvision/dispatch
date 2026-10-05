@@ -40,6 +40,9 @@ import java.util.UUID;
  */
 public final class TaskCommands {
 
+    /** Who acts when the watcher does, in a task's events and the log (spec: CI watch). */
+    public static final String CI_ACTOR = "ci";
+
     private final Groups groups;
     private final Projects projects;
     private final ActiveRuns activeRuns;
@@ -214,17 +217,49 @@ public final class TaskCommands {
      */
     private CommandResult queueRun(Tx tx, Requester who, Task task, Phase to, RunKind kind, RunCause cause, String instruction,
                                    String reason, boolean eventNamesRun, OutboxKind news, Instant now) {
+        return queueRun(tx, who, who.ref(), task, to, kind, cause, instruction, reason, eventNamesRun, news, Json.object(), now);
+    }
+
+    /**
+     * The same, for a run nobody's command queued.
+     *
+     * @param actor whom the task's event names: {@code who}'s reference, unless no member acted
+     * @param more  what the news says besides the task, in whose name it runs and the run's kind
+     */
+    private CommandResult queueRun(Tx tx, Requester who, String actor, Task task, Phase to, RunKind kind, RunCause cause,
+                                   String instruction, String reason, boolean eventNamesRun, OutboxKind news, ObjectNode more,
+                                   Instant now) {
         Phase from = task.phase();
         changePhase(tx, task, from, to, now);
         int seq = Runs.nextSeq(tx, task.id());
         Runs.insert(tx, new Runs.NewRun(task.id(), seq, kind, cause, instruction, who), now);
-        Events.record(tx, task.id(), eventNamesRun ? seq : null, who.ref(), from, to, reason, now);
+        Events.record(tx, task.id(), eventNamesRun ? seq : null, actor, from, to, reason, now);
         Outbox.enqueueForRequester(tx, task, news,
-                Json.object().put("taskId", task.id()).put("by", who.name()).put("kind", kind.name()), now);
+                more.put("taskId", task.id()).put("by", who.name()).put("kind", kind.name()), now);
         tx.afterCommit(wakeOutbox);
         tx.afterCommit(wakeScheduler);
-        logTransition(tx, task.id(), from, to, who.ref());
+        logTransition(tx, task.id(), from, to, actor);
         return new CommandResult.Done(task.id(), isRequester(who, task));
+    }
+
+    /**
+     * The checks failed on the commit Dispatch delivered (spec: CI watch): one more execution in the task's building
+     * session, queued in its requester's name. No member's command asks for it, so no access is asked; what is checked is
+     * that the task is still the delivered, unmerged one whose branch is at {@code head}. False, writing nothing, when it
+     * is not.
+     *
+     * @param news what CI_FIX_QUEUED says besides the task: the first failed check and the round
+     */
+    public boolean ciFix(Tx tx, long taskId, String head, String instruction, ObjectNode news) {
+        Optional<Task> found = Tasks.find(tx, taskId).filter(task -> task.phase() == Phase.COMPLETED && task.mergedAt() == null
+                && head.equals(Tasks.expectedHead(tx, taskId)));
+        if (found.isEmpty()) {
+            return false;
+        }
+        queueRun(tx, found.get().requester(), CI_ACTOR, found.get(), Phase.EXECUTING, RunKind.EXECUTE, RunCause.CI_FIX, instruction,
+                "ci-fix", true, OutboxKind.CI_FIX_QUEUED, news, clock.instant());
+        tx.afterCommit(() -> Log.info("task.command", "command", "CiFix", "task", taskId, "actor", CI_ACTOR, "result", "Done"));
+        return true;
     }
 
     /** Queues the approved plan's execution; the requester hears it is queued. */
