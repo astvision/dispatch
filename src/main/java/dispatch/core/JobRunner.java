@@ -122,7 +122,8 @@ public final class JobRunner implements Worker {
             switch (result.outcome()) {
                 case SUCCEEDED -> ended(step, RunStep.Outcome.DONE, null);
                 case CANCELLED -> ended(step, RunStep.Outcome.STOPPED, null);
-                case FAILED -> ended(step, result.failureReason() == FailureReason.INTERRUPTED ? RunStep.Outcome.STOPPED
+                case FAILED -> ended(step, result.failureReason() == FailureReason.INTERRUPTED
+                        || result.failureReason() == FailureReason.USAGE_LIMIT ? RunStep.Outcome.STOPPED
                         : RunStep.Outcome.FAILED, result.failureDetail() == null ? null : StepDetail.error(result.failureDetail()));
             }
             return result;
@@ -558,6 +559,7 @@ public final class JobRunner implements Worker {
             case SUCCEEDED -> JobResult.succeeded(result);
             case BUDGET_EXCEEDED -> JobResult.failed(FailureReason.BUDGET, result.error(), result);
             case FAILED -> JobResult.failed(FailureReason.AGENT, result.error(), result);
+            case LIMITED -> JobResult.failed(FailureReason.USAGE_LIMIT, result.error(), result);
         };
     }
 

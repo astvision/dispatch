@@ -38,6 +38,8 @@ final class StreamParser implements OutputParser {
     private String permissionMode;
     private String sessionId;
     private JsonNode result;
+    /** True while Claude's last word on its usage limit was a rejection that no extra usage covers. */
+    private boolean limited;
     /** Written by the stdout reader, read by /status; replaced whole, so readers never see a torn value. */
     private volatile AgentActivity activity = new AgentActivity(0, null);
 
@@ -95,6 +97,9 @@ final class StreamParser implements OutputParser {
                     }
                 }
             }
+        } else if (type.equals("rate_limit_event")) {
+            JsonNode info = event.path("rate_limit_info");
+            limited = info.path("status").asText().equals("rejected") && !info.path("isUsingOverage").asBoolean();
         } else if (type.equals("result")) {
             result = event;
         }
@@ -132,7 +137,7 @@ final class StreamParser implements OutputParser {
                 : null;
         if (result == null) {
             String error = wrongMode != null ? wrongMode : "agent exited with code " + exitCode + " without a result" + detail(stderrTail);
-            return new AgentResult(AgentOutcome.FAILED, exitCode, sessionId, null, null, null, null, List.of(), error, model, unexpectedModel);
+            return new AgentResult(unfinished(), exitCode, sessionId, null, null, null, null, List.of(), error, model, unexpectedModel);
         }
         String session = result.hasNonNull("session_id") ? result.get("session_id").asText() : sessionId;
         BigDecimal cost = result.hasNonNull("total_cost_usd")
@@ -158,8 +163,9 @@ final class StreamParser implements OutputParser {
             outcome = exitCode == 0 ? AgentOutcome.SUCCEEDED : AgentOutcome.FAILED;
             error = exitCode == 0 ? null : "agent reported success but exited with code " + exitCode + detail(stderrTail);
         } else {
-            outcome = AgentOutcome.FAILED;
-            error = subtype + ": " + errors(result);
+            outcome = unfinished();
+            // A result that is_error under subtype "success" (a usage limit, say) carries Claude's own sentence; the subtype adds nothing.
+            error = subtype.equals("success") ? errors(result) : subtype + ": " + errors(result);
         }
         return new AgentResult(outcome, exitCode, session, structured, summary, cost, turns, denials, error, model, unexpectedModel);
     }
@@ -178,6 +184,11 @@ final class StreamParser implements OutputParser {
             return answered.matches(Pattern.quote(wanted) + "(-\\d{8})?");
         }
         return answered.contains("claude-" + wanted + "-");
+    }
+
+    /** How a run that did not finish ended: cut short by the usage limit when Claude's last word on it was a rejection. */
+    private AgentOutcome unfinished() {
+        return limited ? AgentOutcome.LIMITED : AgentOutcome.FAILED;
     }
 
     private static String errors(JsonNode result) {

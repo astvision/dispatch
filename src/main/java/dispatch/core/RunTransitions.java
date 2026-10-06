@@ -252,9 +252,11 @@ public final class RunTransitions {
                 ignoredResult(tx, task, seq);
                 return;
             }
+            // A failure is the requester's news alone: the group hears of it by reaction, never by a line (ZB, 2026-10-06), and
+            // of a usage limit not at all, since the task waits for /retry after the reset rather than ending.
+            GroupReaction reaction = reason == FailureReason.USAGE_LIMIT ? null : GroupReaction.ENDED;
             end(tx, task, run, new Ending(Phase.FAILED, reason + ": " + shortDetail, OutboxKind.TASK_FAILED,
-                    Json.object().put("taskId", taskId).put("reason", reason.name()).put("detail", shortDetail),
-                    Json.object().put("taskId", taskId).put("reason", reason.name()), GroupReaction.ENDED), now);
+                    Json.object().put("taskId", taskId).put("reason", reason.name()).put("detail", shortDetail), null, reaction), now);
         });
     }
 
@@ -265,15 +267,12 @@ public final class RunTransitions {
 
     /**
      * What differs between the endings of a task once its run is finished and its phase moved: where it went, the event's
-     * words, the requester's news, and the group's one line with its reaction (null for an ending the group does not hear
-     * of). Everything else about ending a task is the same and lives in {@link #end}.
+     * words, the requester's news, the group's one line (null when the group gets none: only a completion has one) and its
+     * reaction (null when the group's message keeps the one it has). Everything else about ending a task is the same and
+     * lives in {@link #end}.
      */
     private record Ending(Phase to, String event, OutboxKind news, ObjectNode payload, ObjectNode groupLine,
             GroupReaction reaction) {
-
-        OutboxKind groupKind() {
-            return to == Phase.FAILED ? OutboxKind.TASK_FAILED_SHORT : OutboxKind.TASK_COMPLETED_SHORT;
-        }
     }
 
     /**
@@ -284,7 +283,9 @@ public final class RunTransitions {
         Events.record(tx, task.id(), run.seq(), ACTOR, task.phase(), ending.to(), ending.event(), now);
         enqueueForRequester(tx, task, ending.news(), ending.payload(), now);
         if (ending.groupLine() != null) {
-            enqueue(tx, task, ending.groupKind(), ending.groupLine(), now);
+            enqueue(tx, task, OutboxKind.TASK_COMPLETED_SHORT, ending.groupLine(), now);
+        }
+        if (ending.reaction() != null) {
             GroupAcks.react(tx, task, ending.reaction(), now);
         }
         logTransition(tx, task.id(), run.seq(), task.phase(), ending.to());

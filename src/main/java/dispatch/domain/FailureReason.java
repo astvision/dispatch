@@ -11,5 +11,7 @@ public enum FailureReason {
     INTERRUPTED,
     DELIVERY,
     /** A bug in Dispatch itself; the log has the stack trace. */
-    INTERNAL
+    INTERNAL,
+    /** Claude's usage limit cut the run short; the detail is Claude's own sentence, with the reset time (spec: usage limit). */
+    USAGE_LIMIT
 }

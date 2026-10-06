@@ -143,6 +143,35 @@ class StreamParserTest {
     }
 
     @Test
+    void usageLimitRejectionEndsTheRunAsLimitedWithClaudesOwnSentence() {
+        StreamParser parser = feed("plan", List.of("""
+                {"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1790600400,"rateLimitType":"seven_day",\
+                "isUsingOverage":false},"session_id":"s-1"}""", """
+                {"type":"result","subtype":"success","is_error":true,"result":"You've hit your weekly limit · resets 9pm (Asia/Ulaanbaatar)",\
+                "session_id":"s-1","total_cost_usd":0,"num_turns":1,"permission_denials":[]}"""));
+
+        AgentResult result = parser.result(1, "");
+
+        assertEquals(AgentOutcome.LIMITED, result.outcome());
+        assertEquals("You've hit your weekly limit · resets 9pm (Asia/Ulaanbaatar)", result.error());
+    }
+
+    @Test
+    void rejectionCoveredByExtraUsageOrFollowedByAnAllowanceIsNoLimit() {
+        StreamParser overage = feed("plan", List.of("""
+                {"type":"rate_limit_event","rate_limit_info":{"status":"rejected","isUsingOverage":true}}""", """
+                {"type":"result","subtype":"error_during_execution","is_error":true,"errors":["API Error: 500"],"session_id":"s-1"}"""));
+        StreamParser allowedAgain = feed("plan", List.of("""
+                {"type":"rate_limit_event","rate_limit_info":{"status":"rejected","isUsingOverage":false}}""", """
+                {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","isUsingOverage":false}}""", """
+                {"type":"result","subtype":"error_during_execution","is_error":true,"errors":["API Error: 500"],"session_id":"s-1"}"""));
+
+        assertEquals(AgentOutcome.FAILED, overage.result(1, "").outcome());
+        assertEquals(AgentOutcome.FAILED, allowedAgain.result(1, "").outcome());
+        assertEquals("error_during_execution: API Error: 500", allowedAgain.result(1, "").error());
+    }
+
+    @Test
     void successResultWithNonZeroExitFails() throws IOException {
         StreamParser parser = feed("plan", fixture("plan-with-questions.jsonl"));
 

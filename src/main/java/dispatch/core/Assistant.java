@@ -248,7 +248,7 @@ public final class Assistant {
             case SUCCEEDED -> {
                 // Checked below.
             }
-            case BUDGET_EXCEEDED, FAILED -> throw new TurnFailed(result.error() + " (timeout " + limit.toSeconds() + "s)");
+            case BUDGET_EXCEEDED, FAILED, LIMITED -> throw new TurnFailed(result.error() + " (timeout " + limit.toSeconds() + "s)");
         }
         if (result.structuredOutput() == null) {
             throw new TurnFailed("agent finished without an answer");

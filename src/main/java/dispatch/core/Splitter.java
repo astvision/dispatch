@@ -157,7 +157,7 @@ public final class Splitter {
                 // Checked below.
             }
             case BUDGET_EXCEEDED -> throw new SplitFailed("budget exceeded: " + result.error());
-            case FAILED -> throw new SplitFailed(result.error());
+            case FAILED, LIMITED -> throw new SplitFailed(result.error());
         }
         if (result.structuredOutput() == null) {
             throw new SplitFailed("agent finished without topics");

@@ -4,5 +4,7 @@ package dispatch.agent;
 public enum AgentOutcome {
     SUCCEEDED,
     FAILED,
-    BUDGET_EXCEEDED
+    BUDGET_EXCEEDED,
+    /** Claude's usage limit cut the run short: it did not finish, and nothing of it is an error (spec: usage limit). */
+    LIMITED
 }

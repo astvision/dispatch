@@ -503,12 +503,20 @@ class RendererTest {
                 .put("prUrl", "https://github.com/acme/life/pull/4").put("filesChanged", 2)).html();
         String nothing = renderer.render(OutboxKind.TASK_COMPLETED_SHORT, Json.object().put("taskId", 3).put("project", "life")
                 .putNull("prUrl").put("filesChanged", 0)).html();
-        String failed = renderer.render(OutboxKind.TASK_FAILED_SHORT, Json.object().put("taskId", 3).put("reason", "TIMEOUT")).html();
 
         assertTrue(done.contains("#3") && done.contains("https://github.com/acme/life/pull/4"), done);
         assertTrue(nothing.contains(messages.getString("task.completedNoChanges")), nothing);
-        assertTrue(failed.contains("#3") && failed.contains(messages.getString("failure.TIMEOUT")), failed);
         assertFalse(done.contains("\n\n"), "one short message: " + done);
+    }
+
+    @Test
+    void usageLimitIsSaidPlainlyWithClaudesSentenceAndTheRetry() {
+        String html = renderer.render(OutboxKind.TASK_FAILED, Json.object().put("taskId", 3).put("reason", "USAGE_LIMIT")
+                .put("detail", "You've hit your weekly limit · resets 9pm (Asia/Ulaanbaatar)")).html();
+
+        assertTrue(html.contains("#3") && html.contains("You've hit your weekly limit · resets 9pm (Asia/Ulaanbaatar)"), html);
+        assertTrue(html.contains("/retry 3"), html);
+        assertFalse(html.contains("❌") || html.contains(messages.getString("failure.AGENT")), "not an error: " + html);
     }
 
     @Test

@@ -176,7 +176,9 @@ public final class Renderer {
                             ? text("task.completedNoChanges")
                             : format("task.completedPr", escape(payload.path("prUrl").asText()))));
             case TASK_FAILED_SHORT -> plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText()))));
-            case TASK_FAILED -> plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText())))
+            case TASK_FAILED -> payload.path("reason").asText().equals("USAGE_LIMIT")
+                    ? plain(format("task.limited", taskId(payload), escape(payload.path("detail").asText(""))))
+                    : plain(format("task.failed", taskId(payload), escape(text("failure." + payload.path("reason").asText())))
                     + detail(payload.path("detail").asText("")) + "\n\n" + format("task.retryHint", taskId(payload)));
             case TASK_REJECTED -> plain(format("task.rejected", taskId(payload), escape(payload.path("by").asText())));
             case TASK_CANCELLED -> plain(format("task.cancelled", taskId(payload), escape(payload.path("by").asText())));
@@ -1246,7 +1248,8 @@ public final class Renderer {
         switch (run.path("status").asText()) {
             case "QUEUED" -> parts.add(text("timeline.queued"));
             case "RUNNING" -> parts.add(text("timeline.running"));
-            case "FAILED" -> parts.add("❌ " + text("failure." + run.path("failureReason").asText()));
+            case "FAILED" -> parts.add((run.path("failureReason").asText().equals("USAGE_LIMIT") ? "⏳ " : "❌ ")
+                    + text("failure." + run.path("failureReason").asText()));
             case "CANCELLED" -> parts.add(text("timeline.stopped"));
             default -> {
                 // SUCCEEDED: duration and cost say enough.

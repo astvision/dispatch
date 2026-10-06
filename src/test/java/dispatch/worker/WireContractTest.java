@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
 class WireContractTest {
 
     private static final String WIRE = """
-            protocol 2
+            protocol 3
             worker.Wire$Poll: protocol maxConcurrentRuns readiness
             worker.Wire$Next: protocol job
             worker.RemoteWorkers$Progress: taskId seq worktree baseSha agentStarted steps lastAction loopSteps
@@ -40,9 +40,9 @@ class WireContractTest {
             domain.Attachment: fileRef name size
             core.JobResult$Outcome = SUCCEEDED FAILED CANCELLED
             agent.AgentResult: outcome exitCode sessionId structuredOutput summary costUsd turns denials error model requestedModel sandbox
-            domain.FailureReason = SETUP AGENT TIMEOUT BUDGET INTERRUPTED DELIVERY INTERNAL
+            domain.FailureReason = SETUP AGENT TIMEOUT BUDGET INTERRUPTED DELIVERY INTERNAL USAGE_LIMIT
             core.Verification: tests testRuns lastRunPassed testTail review findings reviewError stoppedBy
-            agent.AgentOutcome = SUCCEEDED FAILED BUDGET_EXCEEDED
+            agent.AgentOutcome = SUCCEEDED FAILED BUDGET_EXCEEDED LIMITED
             agent.SandboxUse: name unsandboxedReason
             core.Verification$Tests = PASSED FAILING UNVERIFIED NO_COMMAND NOT_RUN SKIPPED
             core.Verification$ReviewState = OK FINDINGS FIXED_UNREVIEWED FAILED NOT_RUN SKIPPED

@@ -31,6 +31,7 @@ public enum OutboxKind {
     /** The group's one line about a completion whose details went to the requester (ADR 0011). */
     TASK_COMPLETED_SHORT(Ending.RESULT),
     TASK_FAILED(Ending.RESULT),
+    /** Not sent since 2026-10-06 (a failure is the requester's news alone); kept so rows sent before then still parse. */
     TASK_FAILED_SHORT(Ending.RESULT),
     TASK_REJECTED(Ending.STOPPED),
     TASK_CANCELLED(Ending.STOPPED),

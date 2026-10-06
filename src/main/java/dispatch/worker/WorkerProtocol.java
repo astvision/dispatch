@@ -7,7 +7,8 @@ package dispatch.worker;
  */
 public final class WorkerProtocol {
 
-    public static final int VERSION = 2;
+    /** 3 since 2026-10-06: AgentOutcome.LIMITED and FailureReason.USAGE_LIMIT. */
+    public static final int VERSION = 3;
 
     private WorkerProtocol() {
     }

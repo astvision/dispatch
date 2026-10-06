@@ -311,12 +311,26 @@ class TaskLifecycleTest {
         JsonNode payload = Json.read(message.get("payload"));
         assertEquals("BUDGET", payload.get("reason").asText());
         assertEquals("Reached maximum budget ($2)", payload.get("detail").asText());
-        Map<String, String> inGroup = row("SELECT * FROM outbox WHERE kind = 'TASK_FAILED_SHORT'");
-        assertEquals(CHAT, inGroup.get("chat_ref"));
-        assertNull(inGroup.get("reply_to_ref"));
-        JsonNode brief = Json.read(inGroup.get("payload"));
-        assertEquals("BUDGET", brief.get("reason").asText());
-        assertFalse(brief.has("detail"), "details stay private");
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_FAILED_SHORT'").get("n"),
+                "a failure is the requester's news alone; the group gets no line");
+    }
+
+    @Test
+    void usageLimitEndsTheRunWithItsOwnReasonAndTellsOnlyTheRequester() {
+        long id = create(BOLD, "alm", "Fix login timeout", "21");
+        ClaimedRun run = claim();
+        AgentResult limited = new AgentResult(AgentOutcome.LIMITED, 1, "s", null, null, null, 1, List.of(),
+                "You've hit your weekly limit · resets 9pm (Asia/Ulaanbaatar)", null, null);
+
+        transitions.failed(id, run.seq(), FailureReason.USAGE_LIMIT, limited.error(), limited);
+
+        assertEquals("USAGE_LIMIT", row("SELECT * FROM task WHERE id = ?", id).get("failure_reason"));
+        assertEquals("USAGE_LIMIT", row("SELECT * FROM run WHERE task_id = ?", id).get("failure_reason"));
+        JsonNode payload = Json.read(row("SELECT * FROM outbox WHERE kind = 'TASK_FAILED'").get("payload"));
+        assertEquals("USAGE_LIMIT", payload.get("reason").asText());
+        assertEquals("You've hit your weekly limit · resets 9pm (Asia/Ulaanbaatar)", payload.get("detail").asText());
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind IN ('TASK_FAILED_SHORT', 'GROUP_REACTION')").get("n"),
+                "the group hears nothing of a limit");
     }
 
     @Test
