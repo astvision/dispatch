@@ -13,6 +13,8 @@ import dispatch.domain.RunKind;
 import dispatch.store.Database;
 import dispatch.store.Runs;
 import dispatch.store.Tasks;
+import dispatch.agent.UsageLimit;
+import dispatch.store.AgentLimits;
 import dispatch.store.Workers;
 import dispatch.testing.SqlRows;
 import dispatch.testing.TestClock;
@@ -293,6 +295,26 @@ class SchedulerTest {
                 "a started run is held by nothing, so the next block is news again");
     }
 
+    /** ADR 0040: the computer's Claude Code is held until its usage limit resets; the run waits and the requester is told why. */
+    @Test
+    void aRunWaitsWhileItsMembersOnlyComputerIsHeldByTheUsageLimit() {
+        long taskId = queuedPlanFor(BOLD, "alm");
+        long workerId = pairedWorkerFor(BOLD);
+        db.transaction(tx -> Workers.touch(tx, workerId, clock.instant()));
+        Instant resetsAt = clock.instant().plus(Duration.ofHours(2));
+        db.transaction(tx -> AgentLimits.hold(tx, workerId, "claude-code", new UsageLimit(resetsAt.getEpochSecond(), "five_hour")));
+
+        assertTrue(claim().isEmpty(), "not claimed: the only computer is held");
+        Readiness.Blocker blocker = db.transactionReturning(tx -> Workers.blockerOf(tx, BOLD.ref(), null,
+                clock.instant().minus(Workers.SEEN_WITHIN), "alm", "claude-code", RunKind.PLAN, clock.instant())).orElseThrow();
+        assertEquals("limit", blocker.code());
+        assertEquals(resetsAt.toString(), blocker.detail());
+
+        clock.advance(Duration.ofHours(2).plusSeconds(1));
+        db.transaction(tx -> Workers.touch(tx, workerId, clock.instant()));
+        assertEquals(taskId, claim().orElseThrow().taskId(), "the reset frees the computer with no further action");
+    }
+
     /** ADR 0039: claimed for a computer that will be handed nothing, the run would only fail on its lease. */
     @Test
     void aRunWaitsWhileItsMembersOnlyComputerSpeaksAnotherProtocol() {
@@ -303,7 +325,7 @@ class SchedulerTest {
 
         assertTrue(claim().isEmpty(), "not claimed: nobody could take it");
         assertEquals("version", db.transactionReturning(tx -> Workers.blockerOf(tx, BOLD.ref(), null,
-                clock.instant().minus(Workers.SEEN_WITHIN), "alm", "claude-code", RunKind.PLAN)).orElseThrow().code());
+                clock.instant().minus(Workers.SEEN_WITHIN), "alm", "claude-code", RunKind.PLAN, clock.instant())).orElseThrow().code());
 
         db.transaction(tx -> Workers.saveProtocol(tx, workerId, dispatch.worker.WorkerProtocol.VERSION));
         assertEquals(taskId, claim().orElseThrow().taskId(), "updated, the run starts with no further action");
@@ -323,7 +345,7 @@ class SchedulerTest {
 
         assertTrue(claim(onCodex).isEmpty(), "Codex cannot run here");
         assertEquals("codex", db.transactionReturning(tx -> Workers.blockerOf(tx, BOLD.ref(), null,
-                clock.instant().minus(Workers.SEEN_WITHIN), "alm", "codex", RunKind.PLAN)).orElseThrow().code());
+                clock.instant().minus(Workers.SEEN_WITHIN), "alm", "codex", RunKind.PLAN, clock.instant())).orElseThrow().code());
 
         db.transaction(tx -> Workers.saveReadiness(tx, workerId,
                 new Readiness(new Readiness.Check(false, "cannot run claude"), new Readiness.Check(true, null),
@@ -365,7 +387,8 @@ class SchedulerTest {
                                     + " protocol=" + protocol;
 
                             Optional<Readiness.Blocker> blocker = db.transactionReturning(tx -> Workers.blockerOf(tx,
-                                    requester.ref(), null, clock.instant().minus(Workers.SEEN_WITHIN), project, agent, RunKind.PLAN));
+                                    requester.ref(), null, clock.instant().minus(Workers.SEEN_WITHIN), project, agent, RunKind.PLAN,
+                                    clock.instant()));
                             Optional<ClaimedRun> claimed = db.transactionReturning(tx -> Runs.claimNext(tx, 1000, clock.instant(),
                                     clock.instant().minus(Workers.SEEN_WITHIN), agentOf));
 

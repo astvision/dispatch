@@ -11,6 +11,8 @@ import dispatch.domain.RunKind;
 import dispatch.testing.SqlRows;
 import java.nio.file.Path;
 import java.time.Instant;
+import dispatch.agent.UsageLimit;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -101,6 +103,28 @@ class RunsClaimTest {
 
         db.transaction(tx -> tx.update("UPDATE run SET status = 'SUCCEEDED' WHERE task_id = ?", runningExecution));
         assertEquals(blockedExecution, claim(10, T0).orElseThrow().taskId());
+    }
+
+    @Test
+    void aHeldClaudeCodeWaitsForTheResetWhileDeliveriesGoOn() {
+        long plan = queue("alm", RunKind.PLAN, T0);
+        long delivery = queue("crm", RunKind.DELIVER, T0.plusSeconds(1));
+        db.transaction(tx -> AgentLimits.hold(tx, AgentLimits.THIS_MACHINE, "claude-code",
+                new UsageLimit(T0.plusSeconds(3600).getEpochSecond(), "five_hour")));
+
+        assertEquals(delivery, claim(10, T0).orElseThrow().taskId(), "a delivery starts no agent");
+        assertEquals(Optional.empty(), claim(10, T0), "the plan waits for the reset");
+        assertEquals(plan, claim(10, T0.plusSeconds(3601)).orElseThrow().taskId());
+    }
+
+    @Test
+    void aHoldOnClaudeCodeDoesNotHoldAnotherAgentsProject() {
+        long onCodex = queue("crm", RunKind.PLAN, T0);
+        db.transaction(tx -> AgentLimits.hold(tx, AgentLimits.THIS_MACHINE, "claude-code",
+                new UsageLimit(T0.plusSeconds(3600).getEpochSecond(), "five_hour")));
+
+        assertEquals(onCodex, db.transactionReturning(tx -> Runs.claimNext(tx, 10, T0, null, Map.of("crm", "codex")))
+                .orElseThrow().taskId());
     }
 
     private Optional<ClaimedRun> claim(int cap, Instant now) {

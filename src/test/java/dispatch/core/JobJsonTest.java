@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.UsageLimit;
 import dispatch.agent.SandboxUse;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.domain.Attachment;
@@ -112,6 +113,18 @@ class JobJsonTest {
         JobResult result = JobResult.succeeded(agent);
 
         assertEquals(result, Json.MAPPER.readValue(Json.write(result), JobResult.class));
+    }
+
+    @Test
+    void aResultWithItsUsageLimitSurvivesJsonUnchangedAndOneWithoutStillReads() throws Exception {
+        AgentResult agent = new AgentResult(AgentOutcome.LIMITED, 1, "s1", null, null, null, 1, List.of(),
+                "You've hit your weekly limit", null, null).withLimit(new UsageLimit(1790600400L, "seven_day"));
+        JobResult result = JobResult.failed(FailureReason.USAGE_LIMIT, "You've hit your weekly limit", agent);
+
+        assertEquals(result, Json.MAPPER.readValue(Json.write(result), JobResult.class));
+        ObjectNode json = (ObjectNode) Json.MAPPER.readTree(Json.write(result));
+        ((ObjectNode) json.get("agent")).remove("limit");
+        assertNull(Json.MAPPER.treeToValue(json, JobResult.class).agent().limit(), "an older worker sends no limit");
     }
 
     @Test

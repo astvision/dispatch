@@ -47,6 +47,11 @@ public enum OutboxKind {
     REFUSED(Ending.NONE),
     /** /retry queued the failed step again. */
     RETRY_QUEUED(Ending.NONE),
+    /**
+     * To the requester privately: Claude's usage limit cut the run short, and the same run is queued to start by itself
+     * after the reset (spec: usage limit). Payload: taskId, type (Claude's window name), resetsAt (ISO instant).
+     */
+    LIMIT_REQUEUED(Ending.NONE),
     /** A reply to a finished task's result runs as a follow-up (ADR 0006). */
     FOLLOW_UP_QUEUED(Ending.NONE),
     NOT_ALLOWED(Ending.NONE),

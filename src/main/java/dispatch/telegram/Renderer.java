@@ -14,6 +14,7 @@ import java.text.MessageFormat;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -211,7 +212,11 @@ public final class Renderer {
             case WORKER_USAGE -> plain(text("worker.usage"));
             case WORKER_WAITING -> plain(format("worker.waiting", taskId(payload)));
             case WORKER_BLOCKED -> plain(format("blocked." + payload.path("code").asText(), taskId(payload),
-                    escape(payload.path("detail").asText(""))));
+                    payload.path("code").asText().equals("limit")
+                            ? resetTime(payload.path("detail").asText())
+                            : escape(payload.path("detail").asText(""))));
+            case LIMIT_REQUEUED -> plain(format("task.limitRequeued", taskId(payload), limitWords(payload.path("type").asText()),
+                    resetTime(payload.path("resetsAt").asText())));
             case JOIN_REQUEST -> joinRequest(payload);
             case JOIN_REQUESTED -> plain(text("join.requested"));
             case JOIN_APPROVED -> plain(format("join.approved", escape(payload.path("group").asText())));
@@ -1064,6 +1069,9 @@ public final class Renderer {
             return plain(text("status.empty"));
         }
         List<String> blocks = new ArrayList<>();
+        if (payload.hasNonNull("limitedUntil")) {
+            blocks.add(format("status.limited", resetTime(payload.get("limitedUntil").asText())));
+        }
         if (!running.isEmpty()) {
             blocks.add(text("status.running"));
             for (JsonNode run : running) {
@@ -1336,6 +1344,18 @@ public final class Renderer {
 
     private String detail(String detail) {
         return detail.isBlank() ? "" : "\n<pre>" + escapeWithin(detail, DETAIL_LIMIT) + "</pre>";
+    }
+
+    /** A reset as the bot's clock reads it: the hour when it is today, the day and hour otherwise (spec: usage limit). */
+    private String resetTime(String iso) {
+        ZonedDateTime at = Instant.parse(iso).atZone(clock.getZone());
+        boolean today = at.toLocalDate().equals(clock.instant().atZone(clock.getZone()).toLocalDate());
+        return at.format(DateTimeFormatter.ofPattern(today ? "HH:mm" : "MM-dd HH:mm"));
+    }
+
+    /** Claude's window name in the bot's words: five_hour, the seven_day family, or any other. */
+    private String limitWords(String type) {
+        return text(type.equals("five_hour") ? "limit.five_hour" : type.startsWith("seven_day") ? "limit.seven_day" : "limit.other");
     }
 
     private String age(Instant createdAt) {

@@ -26,6 +26,8 @@ public final class VerifyLoop {
     static final Duration AGENT_STEP_NEEDS = Duration.ofMinutes(5);
     public static final int DIFF_LIMIT = 60_000;
     static final BigDecimal BUDGET_FLOOR = new BigDecimal("0.05");
+    /** The Verification's stoppedBy when Claude's usage limit cut a fix or review short (spec: usage limit). */
+    public static final String USAGE_LIMIT = "usage limit";
     /** The Verification's stoppedBy when the requester tapped 📦 deliver now (RM-4). */
     public static final String DELIVERED_EARLY = "delivered early by the requester";
     /** How long a run paused before its review waits for the requester before it reviews anyway (RM-5). */
@@ -206,6 +208,10 @@ public final class VerifyLoop {
                 return;
             }
             if (result.outcome() != AgentOutcome.SUCCEEDED) {
+                if (result.outcome() == AgentOutcome.LIMITED) {
+                    // No more agent calls this run: the machine is held once the result reaches the coordinator.
+                    stoppedBy = USAGE_LIMIT;
+                }
                 reviewState = Verification.ReviewState.FAILED;
                 reviewError = reason(result);
                 agents.stepEnded(step, RunStep.Outcome.FAILED, StepDetail.error(reviewError));
@@ -287,7 +293,7 @@ public final class VerifyLoop {
                 return false;
             }
             if (result.outcome() != AgentOutcome.SUCCEEDED) {
-                stoppedBy = "fix failed: " + reason(result);
+                stoppedBy = result.outcome() == AgentOutcome.LIMITED ? USAGE_LIMIT : "fix failed: " + reason(result);
                 agents.stepEnded(step, RunStep.Outcome.FAILED, StepDetail.error(reason(result)));
                 return false;
             }

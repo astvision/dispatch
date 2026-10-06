@@ -24,6 +24,14 @@ _Avoid_: Owner, author, assignee
 A repository a group hands tasks for, together with how Dispatch works on it: its short alias, base branch and agent. A project belongs to at least one group, and may have several, one per Telegram group it is announced in.
 _Avoid_: Repo, service, workspace
 
+**Usage limit**:
+The cap Claude Code's plan puts on how much an account may use in a window (five hours, seven days). A run Claude rejects for it ends `USAGE_LIMIT`, which is not an error: the task keeps its phase and the run is queued again for after the reset (ADR 0040).
+_Avoid_: Rate limit (the API's per-minute kind), quota, budget (Dispatch's own cost cap per run)
+
+**Hold**:
+The state of a machine's agent between a usage-limit hit and the reset Claude named: no run that starts that agent is claimed for the machine, while deliveries, other agents and other machines go on. Machine 0 is the bot's own computer; a worker is its own machine.
+_Avoid_: Pause, cooldown, backoff
+
 **Task**:
 A piece of development work on one project that a member explicitly gives Dispatch in their private chat with the bot, with a priority. One message can give several tasks when the member splits it into parts.
 _Avoid_: Job, ticket, request

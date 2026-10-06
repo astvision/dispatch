@@ -202,12 +202,16 @@ public final class Coordinator {
      * A session that never ran (the first execution, or one whose earlier runs all failed before their agent started) gets
      * the approved plan; a resumed one is told only what this run adds.
      */
-    private static String executePrompt(Task task, Run run, boolean resume) {
+    private String executePrompt(Task task, Run run, boolean resume) {
         if (!resume) {
             return Prompts.execute(task, task.planJson());
         }
         return switch (run.cause()) {
-            case RETRY -> Prompts.retry(task, run.instruction());
+            case RETRY -> task.failureReason() != null ? Prompts.retry(task, run.instruction())
+                    // The task did not fail: a usage limit re-queued this run (ADR 0040); the run before says why.
+                    : Prompts.retry(task, run.instruction(), db.transactionReturning(tx -> Runs.find(tx, task.id(), run.seq() - 1))
+                            .map(previous -> previous.failureReason() == null ? "unknown reason" : previous.failureReason().name())
+                            .orElse("unknown reason"));
             case FOLLOW_UP -> Prompts.followUp(task, run);
             case CI_FIX -> Prompts.ciFix(task, run);
             default -> Prompts.execute(task, task.planJson());
@@ -255,11 +259,19 @@ public final class Coordinator {
             case FAILED -> {
                 if (result.failureReason() == FailureReason.DELIVERY) {
                     transitions.deliveryFailed(job.taskId(), job.seq(), result.failureDetail(), result.agent(), result.head());
+                } else if (result.failureReason() == FailureReason.USAGE_LIMIT && result.agent() != null) {
+                    transitions.limited(job.taskId(), job.seq(), result.failureDetail(), result.agent());
                 } else {
                     transitions.failed(job.taskId(), job.seq(), result.failureReason(), result.failureDetail(), result.agent());
                 }
             }
-            case SUCCEEDED -> succeeded(job, result);
+            case SUCCEEDED -> {
+                succeeded(job, result);
+                if (result.agent() != null && result.agent().limit() != null) {
+                    // A verify-loop call met the limit though the run delivered: hold the machine all the same.
+                    transitions.hold(job.taskId(), result.agent().limit());
+                }
+            }
         }
     }
 

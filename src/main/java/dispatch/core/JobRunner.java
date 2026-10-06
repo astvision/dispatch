@@ -6,6 +6,7 @@ import dispatch.Redactor;
 import dispatch.agent.Agent;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.UsageLimit;
 import dispatch.agent.AgentStartException;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
@@ -203,7 +204,7 @@ public final class JobRunner implements Worker {
                 // An interrupt ends a test step as stopped; the loop must not go on to the reviewer.
                 () -> control.stopReason() != null || Thread.currentThread().isInterrupted());
         // Every outcome records what the whole run cost, so the loop's calls count even when nothing is delivered.
-        AgentResult spent = combined(result.agent(), verified.runs());
+        AgentResult spent = combined(result.agent(), verified.runs()).withLimit(limitOf(verified.runs()));
         if (control.stopReason() != null) {
             return stopped(job, control.stopReason(), spent);
         }
@@ -212,6 +213,11 @@ public final class JobRunner implements Worker {
             return JobResult.failed(FailureReason.INTERRUPTED, "run thread was interrupted", spent);
         }
         return steps.around(RunStep.Kind.DELIVER, () -> deliver(job, worktree, startSha, spent, verified.verification()));
+    }
+
+    /** The usage limit a loop call met, if one did, so the coordinator holds the machine though the run delivers. */
+    private static UsageLimit limitOf(List<AgentResult> runs) {
+        return runs.stream().map(AgentResult::limit).filter(java.util.Objects::nonNull).findFirst().orElse(null);
     }
 
     /** The verify loop's agent calls: fixes resume the building session, the reviewer is a fresh read-only one. */

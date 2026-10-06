@@ -7,6 +7,7 @@ import dispatch.Log;
 import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.UsageLimit;
 import dispatch.agent.OutputParser;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -40,6 +41,8 @@ final class StreamParser implements OutputParser {
     private JsonNode result;
     /** True while Claude's last word on its usage limit was a rejection that no extra usage covers. */
     private boolean limited;
+    /** That rejection's reset and window, when it named them; null when it did not (Dispatch never guesses a reset). */
+    private UsageLimit limit;
     /** Written by the stdout reader, read by /status; replaced whole, so readers never see a torn value. */
     private volatile AgentActivity activity = new AgentActivity(0, null);
 
@@ -100,6 +103,9 @@ final class StreamParser implements OutputParser {
         } else if (type.equals("rate_limit_event")) {
             JsonNode info = event.path("rate_limit_info");
             limited = info.path("status").asText().equals("rejected") && !info.path("isUsingOverage").asBoolean();
+            limit = limited && info.hasNonNull("resetsAt")
+                    ? new UsageLimit(info.get("resetsAt").asLong(), info.path("rateLimitType").asText("unknown"))
+                    : null;
         } else if (type.equals("result")) {
             result = event;
         }
@@ -137,7 +143,8 @@ final class StreamParser implements OutputParser {
                 : null;
         if (result == null) {
             String error = wrongMode != null ? wrongMode : "agent exited with code " + exitCode + " without a result" + detail(stderrTail);
-            return new AgentResult(unfinished(), exitCode, sessionId, null, null, null, null, List.of(), error, model, unexpectedModel);
+            return new AgentResult(unfinished(), exitCode, sessionId, null, null, null, null, List.of(), error, model, unexpectedModel)
+                    .withLimit(limited ? limit : null);
         }
         String session = result.hasNonNull("session_id") ? result.get("session_id").asText() : sessionId;
         BigDecimal cost = result.hasNonNull("total_cost_usd")
@@ -167,7 +174,8 @@ final class StreamParser implements OutputParser {
             // A result that is_error under subtype "success" (a usage limit, say) carries Claude's own sentence; the subtype adds nothing.
             error = subtype.equals("success") ? errors(result) : subtype + ": " + errors(result);
         }
-        return new AgentResult(outcome, exitCode, session, structured, summary, cost, turns, denials, error, model, unexpectedModel);
+        return new AgentResult(outcome, exitCode, session, structured, summary, cost, turns, denials, error, model, unexpectedModel)
+                .withLimit(outcome == AgentOutcome.LIMITED ? limit : null);
     }
 
     /**

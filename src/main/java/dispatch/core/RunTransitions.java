@@ -5,6 +5,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.agent.AgentResult;
+import dispatch.agent.UsageLimit;
+import dispatch.domain.AgentKind;
+import dispatch.domain.Requester;
+import dispatch.domain.RunCause;
+import dispatch.store.AgentLimits;
 import dispatch.domain.FailureReason;
 import dispatch.domain.GroupReaction;
 import dispatch.domain.OutboxKind;
@@ -38,6 +43,8 @@ public final class RunTransitions {
 
     private static final String ACTOR = "dispatch";
     private static final int MAX_DETAIL_LENGTH = 2000;
+    /** The third limit hit in a row fails the task instead of queueing it again (spec: usage limit). */
+    private static final int MAX_LIMIT_HITS_IN_A_ROW = 3;
 
     private final Database db;
     private final Clock clock;
@@ -248,16 +255,77 @@ public final class RunTransitions {
             if (recordHead) {
                 Tasks.recordHead(tx, taskId, head, now);
             }
-            if (!Tasks.failed(tx, taskId, reason, shortDetail, now)) {
+            failTask(tx, task, run, reason, shortDetail, now);
+        });
+    }
+
+    /** The task's end on its run's failure, once the run is finished. */
+    private void failTask(Tx tx, Task task, Run run, FailureReason reason, String shortDetail, Instant now) {
+        if (!Tasks.failed(tx, task.id(), reason, shortDetail, now)) {
+            ignoredResult(tx, task, run.seq());
+            return;
+        }
+        // A failure is the requester's news alone: the group hears of it by reaction, never by a line (ZB, 2026-10-06), and
+        // of a usage limit not at all, since the task waits for /retry after the reset rather than ending.
+        GroupReaction reaction = reason == FailureReason.USAGE_LIMIT ? null : GroupReaction.ENDED;
+        end(tx, task, run, new Ending(Phase.FAILED, reason + ": " + shortDetail, OutboxKind.TASK_FAILED,
+                Json.object().put("taskId", task.id()).put("reason", reason.name()).put("detail", shortDetail), null, reaction), now);
+    }
+
+    /**
+     * Claude's usage limit cut the run short (spec: usage limit, ADR 0040). The run ends FAILED with reason USAGE_LIMIT and
+     * the machine that ran it is held until the reset; the task keeps its phase and the same run is queued again, to start
+     * by itself after the reset, as /retry would start it. The task fails as any other instead when Dispatch cannot say
+     * when the limit resets, when the reset has already passed, or on the third such hit in a row (a runaway guard).
+     *
+     * @param result the agent's result, whose {@link AgentResult#limit()} names the reset
+     */
+    public void limited(long taskId, int seq, String detail, AgentResult result) {
+        String shortDetail = truncate(detail);
+        db.transaction(tx -> {
+            Instant now = clock.instant();
+            Task task = task(tx, taskId);
+            Run run = run(tx, taskId, seq);
+            if (!finishRun(tx, run, RunStatus.FAILED, FailureReason.USAGE_LIMIT, shortDetail, result, result.summary(), now)) {
+                return;
+            }
+            UsageLimit limit = result.limit();
+            Instant resetsAt = limit == null ? null : Instant.ofEpochSecond(limit.resetsAt());
+            if (resetsAt == null || !resetsAt.isAfter(now)) {
+                failTask(tx, task, run, FailureReason.USAGE_LIMIT, shortDetail, now);
+                return;
+            }
+            hold(tx, task, limit);
+            if (task.phase() != Phase.PLANNING && task.phase() != Phase.EXECUTING) {
                 ignoredResult(tx, task, seq);
                 return;
             }
-            // A failure is the requester's news alone: the group hears of it by reaction, never by a line (ZB, 2026-10-06), and
-            // of a usage limit not at all, since the task waits for /retry after the reset rather than ending.
-            GroupReaction reaction = reason == FailureReason.USAGE_LIMIT ? null : GroupReaction.ENDED;
-            end(tx, task, run, new Ending(Phase.FAILED, reason + ": " + shortDetail, OutboxKind.TASK_FAILED,
-                    Json.object().put("taskId", taskId).put("reason", reason.name()).put("detail", shortDetail), null, reaction), now);
+            if (Runs.limitedInARow(tx, taskId) >= MAX_LIMIT_HITS_IN_A_ROW) {
+                failTask(tx, task, run, FailureReason.USAGE_LIMIT, shortDetail, now);
+                return;
+            }
+            int next = Runs.nextSeq(tx, taskId);
+            Runs.insert(tx, new Runs.NewRun(taskId, next, run.kind(), RunCause.RETRY, run.instruction(),
+                    new Requester(run.requestedBy(), run.requestedByName())), now);
+            Events.record(tx, taskId, next, ACTOR, task.phase(), task.phase(), "usage limit: run " + next + " queued", now);
+            enqueueForRequester(tx, task, OutboxKind.LIMIT_REQUEUED, Json.object().put("taskId", taskId)
+                    .put("type", limit.type()).put("resetsAt", resetsAt.toString()), now);
+            tx.afterCommit(() -> Log.info("run.limit_requeued", "task", taskId, "run", next, "resets_at", resetsAt,
+                    "type", limit.type()));
         });
+    }
+
+    /** A verify-loop call of a run that still delivered met the limit: only the machine's hold is written. */
+    public void hold(long taskId, UsageLimit limit) {
+        db.transaction(tx -> hold(tx, task(tx, taskId), limit));
+    }
+
+    /** Holds the machine that ran the task's agent: the bot's own in personal mode, else the task's worker. */
+    private void hold(Tx tx, Task task, UsageLimit limit) {
+        long machine = Tasks.workerOf(tx, task.id()).orElse(AgentLimits.THIS_MACHINE);
+        AgentLimits.hold(tx, machine, AgentKind.CLAUDE_CODE.id(), limit);
+        tx.afterCommit(() -> Log.info("agent.held", "machine", machine, "agent", AgentKind.CLAUDE_CODE.id(),
+                "resets_at", Instant.ofEpochSecond(limit.resetsAt()), "type", limit.type()));
     }
 
     /** The member already cancelled the task; only the run's end is recorded. */

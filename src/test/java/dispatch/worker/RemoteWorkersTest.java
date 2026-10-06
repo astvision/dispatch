@@ -27,6 +27,8 @@ import dispatch.domain.Plan;
 import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.RunKind;
+import dispatch.agent.UsageLimit;
+import dispatch.store.AgentLimits;
 import dispatch.store.Database;
 import dispatch.store.Runs;
 import dispatch.store.Workers;
@@ -112,6 +114,22 @@ class RemoteWorkersTest {
         assertEquals("AWAITING_APPROVAL", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
         assertEquals(ann.id(), Long.parseLong(row("SELECT worker_id FROM task WHERE id = ?", id).get("worker_id")),
                 "the task now belongs to that computer");
+    }
+
+    /** ADR 0040: an unpinned job is for the member's free computer, never the one whose Claude Code is held by its limit. */
+    @Test
+    void aComputerHeldByItsUsageLimitTakesNoClaudeCodeJobWhileTheOtherOneDoes() throws Exception {
+        long id = queue(BOLD, "Fix the login timeout");
+        Workers.Paired held = pair(BOLD, "ann-laptop");
+        Workers.Paired free = pair(BOLD, "ann-desktop");
+        db.transaction(tx -> AgentLimits.hold(tx, held.id(), "claude-code",
+                new UsageLimit(clock.instant().plusSeconds(3600).getEpochSecond(), "five_hour")));
+        Thread run = coordinate();
+
+        assertTrue(remote.next(held).isEmpty(), "the held computer is handed nothing that starts Claude Code");
+        assertEquals(id, remote.next(free).orElseThrow().taskId());
+        remote.result(free, id, 1, JobResult.cancelled(null));
+        assertTrue(run.join(Duration.ofSeconds(10)), "the coordinator thread should have finished");
     }
 
     @Test

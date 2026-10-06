@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.UsageLimit;
 import dispatch.agent.SandboxUse;
 import dispatch.config.Config;
 import dispatch.domain.ClaimedRun;
@@ -313,6 +314,73 @@ class TaskLifecycleTest {
         assertEquals("Reached maximum budget ($2)", payload.get("detail").asText());
         assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind = 'TASK_FAILED_SHORT'").get("n"),
                 "a failure is the requester's news alone; the group gets no line");
+    }
+
+    @Test
+    void usageLimitQueuesTheRunAgainHoldsThisMachineAndTellsTheRequester() {
+        long id = create(BOLD, "alm", "Fix login timeout", "21");
+        ClaimedRun run = claim();
+        Instant resetsAt = clock.instant().plus(Duration.ofHours(3));
+
+        transitions.limited(id, run.seq(), "You've hit your weekly limit · resets 1pm", limited(resetsAt, "seven_day"));
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("PLANNING", task.get("phase"), "the task did not fail");
+        assertNull(task.get("failure_reason"));
+        assertEquals("USAGE_LIMIT", row("SELECT * FROM run WHERE task_id = ? AND seq = 1", id).get("failure_reason"));
+        Map<String, String> again = row("SELECT * FROM run WHERE task_id = ? AND seq = 2", id);
+        assertEquals("QUEUED", again.get("status"));
+        assertEquals("PLAN", again.get("kind"));
+        assertEquals("RETRY", again.get("cause"));
+        assertEquals(row("SELECT instruction FROM run WHERE task_id = ? AND seq = 1", id).get("instruction"), again.get("instruction"));
+        Map<String, String> hold = row("SELECT * FROM agent_limit WHERE machine = 0 AND agent = 'claude-code'");
+        assertEquals("seven_day", hold.get("type"));
+        Map<String, String> message = row("SELECT * FROM outbox WHERE kind = 'LIMIT_REQUEUED'");
+        JsonNode payload = Json.read(message.get("payload"));
+        assertEquals("seven_day", payload.get("type").asText());
+        assertEquals(resetsAt.toString(), payload.get("resetsAt").asText());
+        assertEquals("0", row("SELECT count(*) AS n FROM outbox WHERE kind IN ('TASK_FAILED', 'TASK_FAILED_SHORT', 'GROUP_REACTION')").get("n"));
+        assertEquals("usage limit: run 2 queued", row("SELECT reason FROM task_event WHERE task_id = ? AND run_seq = 2", id).get("reason"));
+
+        assertTrue(db.transactionReturning(tx -> Runs.claimNext(tx, 10, clock.instant())).isEmpty(), "held until the reset");
+        clock.advance(Duration.ofHours(3).plusSeconds(1));
+        assertEquals(new ClaimedRun(id, 2, RunKind.PLAN), claim(), "the run starts by itself after the reset");
+    }
+
+    @Test
+    void theThirdLimitHitInARowFailsTheTaskWithTheRetryHint() {
+        long id = create(BOLD, "alm", "Fix login timeout", "21");
+        for (int hit = 1; hit <= 3; hit++) {
+            ClaimedRun run = claim();
+            assertEquals(hit, run.seq());
+            Instant resetsAt = clock.instant().plus(Duration.ofMinutes(5));
+            transitions.limited(id, run.seq(), "You've hit your limit", limited(resetsAt, "five_hour"));
+            clock.advance(Duration.ofMinutes(6));
+        }
+
+        assertEquals("FAILED", row("SELECT * FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("USAGE_LIMIT", row("SELECT * FROM task WHERE id = ?", id).get("failure_reason"));
+        assertEquals("0", row("SELECT count(*) AS n FROM run WHERE task_id = ? AND seq = 4", id).get("n"), "no fourth run");
+        assertEquals("2", row("SELECT count(*) AS n FROM outbox WHERE kind = 'LIMIT_REQUEUED'").get("n"));
+        assertEquals("USAGE_LIMIT", Json.read(row("SELECT * FROM outbox WHERE kind = 'TASK_FAILED'").get("payload")).get("reason").asText());
+    }
+
+    @Test
+    void aLimitWhoseResetIsUnknownOrPastFailsTheTaskAsBefore() {
+        long id = create(BOLD, "alm", "Fix login timeout", "21");
+        ClaimedRun run = claim();
+        AgentResult noReset = limited(clock.instant(), "five_hour").withLimit(null);
+
+        transitions.limited(id, run.seq(), "You've hit your limit", noReset);
+
+        assertEquals("FAILED", row("SELECT * FROM task WHERE id = ?", id).get("phase"));
+        assertEquals("0", row("SELECT count(*) AS n FROM agent_limit").get("n"), "no reset to hold until");
+        assertEquals("0", row("SELECT count(*) AS n FROM run WHERE task_id = ? AND seq = 2", id).get("n"));
+    }
+
+    private static AgentResult limited(Instant resetsAt, String type) {
+        return new AgentResult(AgentOutcome.LIMITED, 1, "s", null, null, null, 1, List.of(), "You've hit your limit", null, null)
+                .withLimit(new UsageLimit(resetsAt.getEpochSecond(), type));
     }
 
     @Test

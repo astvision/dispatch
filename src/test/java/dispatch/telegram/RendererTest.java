@@ -196,6 +196,30 @@ class RendererTest {
     }
 
     @Test
+    void aLimitRequeueNamesTheWindowAndTheResetAsTheHourTodayOrTheDayOtherwise() {
+        String today = renderer.render(OutboxKind.LIMIT_REQUEUED, Json.object().put("taskId", 12).put("type", "five_hour")
+                .put("resetsAt", "2026-09-17T15:00:00Z")).html();
+        String anotherDay = renderer.render(OutboxKind.LIMIT_REQUEUED, Json.object().put("taskId", 12).put("type", "seven_day_opus")
+                .put("resetsAt", "2026-09-21T13:00:00Z")).html();
+
+        assertTrue(today.contains("#12") && today.contains(messages.getString("limit.five_hour")) && today.contains("15:00"), today);
+        assertTrue(today.contains("/cancel 12"), today);
+        assertTrue(anotherDay.contains(messages.getString("limit.seven_day")) && anotherDay.contains("09-21 13:00"), anotherDay);
+        assertFalse(today.contains("❌"), "not an error: " + today);
+    }
+
+    @Test
+    void aComputerHeldByItsLimitSaysWhenItStartsAgainAndStatusSaysUntilWhen() {
+        String blocked = renderer.render(OutboxKind.WORKER_BLOCKED,
+                Json.object().put("taskId", 7).put("code", "limit").put("detail", "2026-09-17T15:00:00Z")).html();
+        ObjectNode payload = statusPayload().put("limitedUntil", "2026-09-17T15:00:00Z");
+        String status = renderer.render(OutboxKind.STATUS, payload).html();
+
+        assertTrue(blocked.contains("#7") && blocked.contains("15:00"), blocked);
+        assertTrue(status.startsWith(messages.getString("status.limited").replace("{0}", "15:00")), status);
+    }
+
+    @Test
     void aHeldTaskNamesWhichThingOnTheComputerIsWrong() {
         String claude = renderer.render(OutboxKind.WORKER_BLOCKED,
                 Json.object().put("taskId", 7).put("code", "claude").put("detail", "cannot run <claude>")).html();
@@ -1378,6 +1402,7 @@ class RendererTest {
             case TASK_NOT_FOUND -> Json.object().put("taskId", 99);
             case REFUSED -> Json.object().put("text", "#5 can't be retried: it is completed").put("hint", "/retry 5");
             case RETRY_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali").put("kind", "DELIVER");
+            case LIMIT_REQUEUED -> Json.object().put("taskId", 1).put("type", "five_hour").put("resetsAt", "2026-09-17T15:00:00Z");
             case FOLLOW_UP_QUEUED -> Json.object().put("taskId", 1).put("by", "Ali");
             case NOT_ALLOWED -> Json.object().put("name", "Sara");
             case TASK_USAGE -> Json.object();

@@ -9,6 +9,9 @@ import dispatch.core.JobResult;
 import dispatch.core.Worker;
 import dispatch.domain.RunStep;
 import dispatch.domain.FailureReason;
+import dispatch.domain.AgentKind;
+import dispatch.domain.RunKind;
+import dispatch.store.AgentLimits;
 import dispatch.store.Database;
 import dispatch.store.Tasks;
 import dispatch.store.Workers;
@@ -20,6 +23,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -214,7 +218,9 @@ public final class RemoteWorkers implements Worker {
      */
     public Optional<Job> next(Workers.Paired worker) throws InterruptedException {
         wakeScheduler.run();
-        Offer taken = awaitMatch(worker);
+        // Read before the lock, as every store access here is: a held agent takes no job that starts it (spec: usage limit).
+        Set<String> heldAgents = db.transactionReturning(tx -> AgentLimits.heldAgents(tx, worker.id(), clock.instant()));
+        Offer taken = awaitMatch(worker, heldAgents);
         return taken == null ? Optional.empty() : Optional.of(recordAndReturn(taken, worker));
     }
 
@@ -241,7 +247,7 @@ public final class RemoteWorkers implements Worker {
      * <p>The wait itself is bounded by the wall clock, not the injected {@link Clock}: it is how long this HTTP request
      * may actually block, not a business fact a test needs to move by hand the way it moves the lease.
      */
-    private Offer awaitMatch(Workers.Paired worker) throws InterruptedException {
+    private Offer awaitMatch(Workers.Paired worker, Set<String> heldAgents) throws InterruptedException {
         long deadlineNanos = System.nanoTime() + longPoll.toNanos();
         synchronized (lock) {
             while (true) {
@@ -251,9 +257,10 @@ public final class RemoteWorkers implements Worker {
                 // A job pinned to this computer first: nobody else may take it, while an unpinned one can still go to
                 // another of the member's computers. Taking the unpinned one first would hold the pinned one until this
                 // computer is free again, or until its offer expires unclaimed.
-                Optional<Offer> match = offers.stream().filter(offer -> matches(offer, worker) && offer.onlyWorker != null)
+                Optional<Offer> match = offers.stream()
+                        .filter(offer -> matches(offer, worker, heldAgents) && offer.onlyWorker != null)
                         .findFirst()
-                        .or(() -> offers.stream().filter(offer -> matches(offer, worker)).findFirst());
+                        .or(() -> offers.stream().filter(offer -> matches(offer, worker, heldAgents)).findFirst());
                 if (match.isPresent()) {
                     Offer offer = match.get();
                     offer.takenBy = worker.id();
@@ -270,9 +277,15 @@ public final class RemoteWorkers implements Worker {
         }
     }
 
-    private static boolean matches(Offer offer, Workers.Paired worker) {
+    private static boolean matches(Offer offer, Workers.Paired worker, Set<String> heldAgents) {
         return offer.takenBy == null && !offer.expired && offer.memberRef.equals(worker.memberRef())
-                && (offer.onlyWorker == null || offer.onlyWorker == worker.id());
+                && (offer.onlyWorker == null || offer.onlyWorker == worker.id())
+                && (offer.job.kind() == RunKind.DELIVER || !heldAgents.contains(agentOf(offer.job)));
+    }
+
+    /** The agent the job's project runs on; a project that names none runs on Claude Code (ADR 0026). */
+    private static String agentOf(Job job) {
+        return job.project().agent() == null ? AgentKind.CLAUDE_CODE.id() : job.project().agent();
     }
 
     /**

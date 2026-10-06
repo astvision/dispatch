@@ -177,15 +177,18 @@ public final class Workers {
      * @param agent          the agent {@code project} runs on (ADR 0026)
      */
     public static Optional<Readiness.Blocker> blockerOf(Tx tx, String memberRef, Long pinnedWorkerId, Instant seenSince,
-                                                        String project, String agent, RunKind kind) {
+                                                        String project, String agent, RunKind kind, Instant now) {
         Optional<Readiness.Blocker> first = Optional.empty();
         for (Paired worker : ofMember(tx, memberRef)) {
             if ((pinnedWorkerId != null && worker.id() != pinnedWorkerId) || !isLive(tx, worker.id(), seenSince)) {
                 continue;
             }
-            // A computer on another protocol is given no job at all (ADR 0039), whatever else it reports.
+            // A computer on another protocol is given no job at all (ADR 0039), whatever else it reports; one whose agent
+            // is held by its usage limit (spec: usage limit) gets none that starts the agent until the reset, its detail.
+            Optional<Instant> held = kind == RunKind.DELIVER ? Optional.empty() : AgentLimits.heldUntil(tx, worker.id(), agent, now);
             Optional<Readiness.Blocker> blocker = speaksAnotherProtocol(tx, worker.id())
                     ? Optional.of(new Readiness.Blocker("version", null))
+                    : held.isPresent() ? Optional.of(new Readiness.Blocker("limit", held.get().toString()))
                     : readiness(tx, worker.id()).blocker(project, agent, kind);
             if (blocker.isEmpty()) {
                 return Optional.empty();

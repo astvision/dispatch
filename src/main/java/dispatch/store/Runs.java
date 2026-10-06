@@ -98,7 +98,7 @@ public final class Runs {
         // nobody free to pick it up. The last clause is that same rule for one computer: once a task is pinned (its
         // worktree and session live there), no other computer may take it, so the member's *other* free computers do
         // not make it claimable — only room on this one does.
-        String workerGate = workerSeenSince == null ? "" : """
+        String workerGate = workerSeenSince == null ? "" : ("""
                           AND EXISTS (SELECT 1 FROM worker w
                                       WHERE w.member_ref = t.requester_ref AND w.revoked_at IS NULL
                                         AND w.last_seen_at > ?
@@ -111,6 +111,7 @@ public final class Runs {
                                         AND (w.claude_ok IS NULL OR w.claude_ok = 1 OR %1$s <> '%3$s')
                                         AND NOT EXISTS (SELECT 1 FROM worker_agent a
                                                          WHERE a.worker_id = w.id AND a.agent = %1$s AND a.ok = 0)
+                """ + HOLD_GATE.formatted("w.id", "%1$s") + """
                                         -- Stated the same way round as Readiness.blocker: gh holds ONLY the kinds that
                                         -- deliver. RunKind has a fourth value, SPLIT, which is never stored as a run —
                                         -- listing what gh blocks, rather than what it does not, keeps this agreeing
@@ -127,17 +128,25 @@ public final class Runs {
                                OR (SELECT count(*) FROM run pinned_run JOIN task pinned_task ON pinned_task.id = pinned_run.task_id
                                    WHERE pinned_run.status = ? AND pinned_task.worker_id = t.worker_id)
                                   < (SELECT COALESCE(pinned.max_runs, 1) FROM worker pinned WHERE pinned.id = t.worker_id))
-                """.formatted(agentOfProject(agentOf), WorkerProtocol.VERSION, AgentKind.CLAUDE_CODE.id());
+                """).formatted(agentOfProject(agentOf), WorkerProtocol.VERSION, AgentKind.CLAUDE_CODE.id());
         List<Object> params = new ArrayList<>(List.of(RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE,
                 RunKind.DELIVER));
         if (workerSeenSince != null) {
             params.add(workerSeenSince);
-            // The agent expression appears twice, in this order, right after the first seen-since.
+            // The agent expression appears three times, in this order, right after the first seen-since; the hold gate
+            // between the second and the third.
             params.addAll(agentOfProjectParams(agentOf));
             params.addAll(agentOfProjectParams(agentOf));
+            params.add(RunKind.DELIVER);
+            params.addAll(agentOfProjectParams(agentOf));
+            params.add(now);
             params.add(workerSeenSince);
             params.add(RunStatus.RUNNING);
             params.add(RunStatus.RUNNING);
+        } else {
+            params.add(RunKind.DELIVER);
+            params.addAll(agentOfProjectParams(agentOf));
+            params.add(now);
         }
         params.add(Priority.URGENT);
         params.add(Priority.NORMAL);
@@ -148,7 +157,7 @@ public final class Runs {
                           AND (r.kind = ? OR NOT EXISTS (
                                 SELECT 1 FROM run busy JOIN task busy_task ON busy_task.id = busy.task_id
                                 WHERE busy.status = ? AND busy.kind IN (?, ?) AND busy_task.project = t.project))
-                        """ + workerGate + """
+                        """ + (workerSeenSince != null ? workerGate : HOLD_GATE.formatted(AgentLimits.THIS_MACHINE, agentOfProject(agentOf))) + """
                         ORDER BY CASE t.priority WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END, r.queued_at, r.task_id, r.seq
                         LIMIT 1""",
                 row -> new ClaimedRun(row.longValue("task_id"), row.intValue("seq"), row.enumValue("kind", RunKind.class)),
@@ -161,6 +170,27 @@ public final class Runs {
                     now, now, run.taskId());
         });
         return next;
+    }
+
+    /**
+     * The machine's agent is held until its usage limit resets (spec: usage limit): no run that starts the agent (DELIVER
+     * starts none) is claimed for it. Formatted with the machine (0, or the worker row's id) and the agent expression;
+     * its values are DELIVER, {@link #agentOfProjectParams} and now.
+     */
+    private static final String HOLD_GATE = """
+                          AND (r.kind = ? OR NOT EXISTS (SELECT 1 FROM agent_limit h
+                                                         WHERE h.machine = %s AND h.agent = %s AND h.resets_at > ?))
+            """;
+
+    /** How many of the task's newest runs in a row ended on the usage limit (spec: usage limit's runaway guard). */
+    public static int limitedInARow(Tx tx, long taskId) {
+        return tx.one("""
+                        SELECT count(*) AS n FROM run
+                        WHERE task_id = ? AND failure_reason = ?
+                          AND seq > COALESCE((SELECT max(seq) FROM run WHERE task_id = ? AND status <> ?
+                                              AND (failure_reason IS NULL OR failure_reason <> ?)), 0)""",
+                row -> row.intValue("n"), taskId, FailureReason.USAGE_LIMIT, taskId, RunStatus.QUEUED, FailureReason.USAGE_LIMIT)
+                .orElse(0);
     }
 
     /** {@code t.project}'s agent as an SQL expression, one WHEN per configured project; its values are {@link #agentOfProjectParams}. */

@@ -23,6 +23,7 @@ import dispatch.domain.RunStatus;
 import dispatch.domain.RunStep;
 import dispatch.domain.SplitState;
 import dispatch.domain.Task;
+import dispatch.store.AgentLimits;
 import dispatch.store.Attachments;
 import dispatch.store.Conversations;
 import dispatch.store.Drafts;
@@ -595,6 +596,11 @@ public final class TaskService {
         ArrayNode running = payload.putArray("running");
         ArrayNode queued = payload.putArray("queued");
         Instant workerSeenSince = requiresWorker ? clock.instant().minus(Workers.SEEN_WITHIN) : null;
+        if (!requiresWorker) {
+            // The bot's own Claude Code is held by its usage limit (spec: usage limit): the status says until when.
+            AgentLimits.heldUntil(tx, AgentLimits.THIS_MACHINE, AgentKind.CLAUDE_CODE.id(), clock.instant())
+                    .ifPresent(until -> payload.put("limitedUntil", text(until)));
+        }
         for (Runs.InProgress run : Runs.inProgress(tx, viewer.projects(), viewer.ref())) {
             Task task = active.get(run.taskId());
             boolean own = isOwn(viewer, task);
@@ -680,7 +686,8 @@ public final class TaskService {
             }
             String requesterRef = task.get().requester().ref();
             Optional<Readiness.Blocker> blocker = Workers.blockerOf(tx, requesterRef, Tasks.workerOf(tx, run.taskId()).orElse(null),
-                    workerSeenSince, run.project(), agentOf.getOrDefault(run.project(), AgentKind.CLAUDE_CODE.id()), run.kind());
+                    workerSeenSince, run.project(), agentOf.getOrDefault(run.project(), AgentKind.CLAUDE_CODE.id()), run.kind(),
+                    clock.instant());
             if (blocker.isEmpty()) {
                 Tasks.setBlockedReason(tx, run.taskId(), null);
                 continue;

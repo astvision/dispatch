@@ -221,15 +221,20 @@ final class Prompts {
      * @param instruction what the failed run was asked to do: the approved plan, or a follow-up
      */
     static String retry(Task task, String instruction) {
+        return retry(task, instruction, failure(task));
+    }
+
+    /** @param why how the previous run stopped, when not the task's own failure: a usage limit re-queued it (ADR 0040) */
+    static String retry(Task task, String instruction, String why) {
         return """
-                Your previous run on task #%d stopped before it finished: %s. A team member asked you to try again. Your \
+                Your previous run on task #%d stopped before it finished: %s. You are asked to try again. Your \
                 changes so far are still in this repository: check them, then finish the work below.
 
                 <instruction>
                 %s
                 </instruction>
 
-                """.formatted(task.id(), failure(task), instruction) + EXECUTE_RULES;
+                """.formatted(task.id(), why, instruction) + EXECUTE_RULES;
     }
 
     /** @param run the planning run whose instruction is the requester's reply to the task's answer (spec: answers) */

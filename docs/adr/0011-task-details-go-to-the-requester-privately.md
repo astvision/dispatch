@@ -10,7 +10,7 @@ Tasks are still created in the team group, and Dispatch acknowledges them there 
 
 The group gets one line per outcome: done with the pull request link, failed with the reason, rejected, or cancelled.
 
-*Amended 2026-10-06:* a failure gets no group line; it is the requester's news alone (the group's own message still gets the 👎 reaction). A run cut short by Claude's usage limit (`USAGE_LIMIT`) is not an error: the requester is told plainly with the reset time, and the group hears nothing.
+*Amended 2026-10-06:* a failure gets no group line; it is the requester's news alone (the group's own message still gets the 👎 reaction). A run cut short by Claude's usage limit (`USAGE_LIMIT`) is not an error: the requester is told once with the reset time, the run is queued again to start by itself after it (ADR 0040), and the group hears nothing.
 
 Only the requester can approve, reject or correct their task's plan. Any member can still cancel any task, and `/status` and `/history` show the whole team's work in either chat.
 

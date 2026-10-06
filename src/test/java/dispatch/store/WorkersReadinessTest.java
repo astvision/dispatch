@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dispatch.agent.UsageLimit;
 import dispatch.domain.RunKind;
 import dispatch.worker.Readiness;
 import java.nio.file.Path;
@@ -100,7 +101,7 @@ class WorkersReadinessTest {
 
     @Test
     void aMemberWithNoComputerIsNotHeld() {
-        assertTrue(db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:999", null, SEEN_SINCE, "alm", "claude-code", RunKind.PLAN))
+        assertTrue(db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:999", null, SEEN_SINCE, "alm", "claude-code", RunKind.PLAN, NOW))
                 .isEmpty());
     }
 
@@ -161,6 +162,21 @@ class WorkersReadinessTest {
     }
 
     private Optional<Readiness.Blocker> blockerOf(Long pinnedWorker, String project, RunKind kind) {
-        return db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:100", pinnedWorker, SEEN_SINCE, project, "claude-code", kind));
+        return db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:100", pinnedWorker, SEEN_SINCE, project, "claude-code", kind, NOW));
+    }
+
+    @Test
+    void aComputerHeldByItsUsageLimitBlocksAgentRunsUntilTheResetButNotDeliveries() {
+        live(workerId, new Readiness(new Readiness.Check(true, "2.1.286"), new Readiness.Check(true, null), Map.of()));
+        Instant resetsAt = NOW.plusSeconds(3600);
+        db.transaction(tx -> AgentLimits.hold(tx, workerId, "claude-code", new UsageLimit(resetsAt.getEpochSecond(), "seven_day")));
+
+        Readiness.Blocker blocker = blockerOf(null, "alm", RunKind.EXECUTE).orElseThrow();
+
+        assertEquals("limit", blocker.code());
+        assertEquals(resetsAt.toString(), blocker.detail());
+        assertTrue(blockerOf(null, "alm", RunKind.DELIVER).isEmpty(), "a delivery starts no agent");
+        assertTrue(db.transactionReturning(tx -> Workers.blockerOf(tx, "telegram:100", null, SEEN_SINCE, "alm", "claude-code",
+                RunKind.PLAN, resetsAt.plusSeconds(1))).isEmpty(), "the reset frees it");
     }
 }

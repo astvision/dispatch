@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.UsageLimit;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
@@ -154,6 +155,7 @@ class StreamParserTest {
 
         assertEquals(AgentOutcome.LIMITED, result.outcome());
         assertEquals("You've hit your weekly limit · resets 9pm (Asia/Ulaanbaatar)", result.error());
+        assertEquals(new UsageLimit(1790600400L, "seven_day"), result.limit());
     }
 
     @Test
