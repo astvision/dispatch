@@ -19,6 +19,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 class ConfigLoaderTest {
@@ -792,12 +795,20 @@ class ConfigLoaderTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "a data block is refused on Windows")
     void aDataBlockResolvesItsUriFromTheEnvironment() throws Exception {
         Config.Project project = ConfigLoader.load(write(withData(DATA_BLOCK)), envWith("WEBAPP_RO_URI", RO_URI)).projects().getFirst();
 
         assertEquals(RO_URI, project.data().uri());
         assertEquals("webapp-prod", project.data().ssh());
         assertNull(ConfigLoader.load(write(PERSONAL_BASE), ENV).projects().getFirst().data());
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void aDataBlockOnWindowsIsRefused() throws Exception {
+        assertTrue(dataError(withData(DATA_BLOCK), envWith("WEBAPP_RO_URI", RO_URI))
+                .contains("projects[0].data: a data block is not supported on Windows"));
     }
 
     @Test
