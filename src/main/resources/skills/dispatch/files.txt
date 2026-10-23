@@ -12,3 +12,4 @@ skills/verification-before-completion/SKILL.md
 skills/receiving-code-review/SKILL.md
 skills/code-reviewer/SKILL.md
 skills/ponytail/SKILL.md
+skills/data-report/SKILL.md

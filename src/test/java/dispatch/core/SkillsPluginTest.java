@@ -32,6 +32,7 @@ class SkillsPluginTest {
         for (String file : SkillsPlugin.files()) {
             assertTrue(Files.isRegularFile(plugin.resolve(file)), file);
         }
+        assertTrue(Files.isRegularFile(plugin.resolve("skills/data-report/SKILL.md")));
         assertFalse(Files.exists(plugin.resolve("skills/dropped-skill")), "a skill no longer shipped is gone");
         assertTrue(Files.readString(plugin.resolve(".claude-plugin/plugin.json")).contains("\"name\": \"dispatch\""));
     }
@@ -55,7 +56,7 @@ class SkillsPluginTest {
         List<String> skills = SkillsPlugin.files().stream().filter(file -> file.endsWith("/SKILL.md")).toList();
         assertEquals(List.of("skills/test-driven-development/SKILL.md", "skills/systematic-debugging/SKILL.md",
                 "skills/verification-before-completion/SKILL.md", "skills/receiving-code-review/SKILL.md",
-                "skills/code-reviewer/SKILL.md", "skills/ponytail/SKILL.md"), skills);
+                "skills/code-reviewer/SKILL.md", "skills/ponytail/SKILL.md", "skills/data-report/SKILL.md"), skills);
         for (String file : skills) {
             String name = file.substring("skills/".length(), file.length() - "/SKILL.md".length());
             String text = BundledFiles.read(SkillsPlugin.RESOURCES + "/" + file);
