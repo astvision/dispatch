@@ -29,6 +29,14 @@ class RendererTest {
     private final Renderer renderer = new Renderer(messages, clock, "dispatch_backend_bot");
 
     @Test
+    void aRetriedReportIsNamedAsOne() {
+        String html = renderer.render(OutboxKind.RETRY_QUEUED, Json.object().put("taskId", 5).put("by", "Ali").put("kind", "REPORT"))
+                .html();
+
+        assertTrue(html.contains(messages.getString("kind.REPORT")), html);
+    }
+
+    @Test
     void everyTextKeyIsDefinedOnce() throws Exception {
         // A properties file keeps the last of two same keys, so a second one silently changes the first one's screens.
         java.util.Set<String> seen = new java.util.HashSet<>();

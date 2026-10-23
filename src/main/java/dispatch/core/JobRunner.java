@@ -89,6 +89,7 @@ public final class JobRunner implements Worker {
             case PLAN -> plan(job, events, control, steps);
             case EXECUTE -> implement(job, events, control, steps);
             case DELIVER -> steps.around(RunStep.Kind.DELIVER, () -> deliverAgain(job, control));
+            case REPORT -> throw new IllegalStateException("REPORT runs arrive in Task 6");
             case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a task's run");
         };
     }

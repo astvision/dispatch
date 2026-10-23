@@ -1,5 +1,6 @@
 package dispatch.core;
 
+import dispatch.Json;
 import dispatch.Log;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
@@ -22,6 +23,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -127,6 +129,7 @@ public final class Coordinator {
             case PLAN -> planJob(task, run, project.get());
             case EXECUTE -> executeJob(task, run, project.get());
             case DELIVER -> deliverJob(task, run, project.get());
+            case REPORT -> reportJob(task, run, project.get());
             case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(run.kind() + " is never a task's run");
         });
     }
@@ -148,6 +151,16 @@ public final class Coordinator {
         return newJob(task, run, project, buildSession(task), resume, executePrompt(task, run, resume), project.executeModel(),
                 project.executeEffort(), limits.timeout().toMillis(), limits.budgetUsd(), attachments(task.id()), null,
                 project.loopOn() ? Prompts.review(task, task.planJson(), reviewInstruction(task, run)) : null, picks(task));
+    }
+
+    /**
+     * The approved report, in the session that planned it (spec: data reports): planning's model with an execution's limits,
+     * as it runs the queries. The session has seen the attachments; a report has no review and loads no picks.
+     */
+    private Job reportJob(Task task, Run run, Config.Project project) {
+        Config.RunLimits limits = executeLimits.apply(project);
+        return newJob(task, run, project, task.sessionId(), true, Prompts.report(task), project.planModel(), project.planEffort(),
+                limits.timeout().toMillis(), limits.budgetUsd(), List.of(), null, null, null);
     }
 
     /** The plan's plugin picks (spec: plugin picks); a task without a plan has none. A plan run never loads them. */
@@ -180,9 +193,9 @@ public final class Coordinator {
         return project.skillsOn() && AgentKind.of(project.agent()).loadsPlugins() ? Boolean.TRUE : null;
     }
 
-    /** Null for a PLAN job, which neither builds on the branch nor pushes it: nothing to check. */
+    /** Null for a PLAN or REPORT job, which neither builds on the branch nor pushes it: nothing to check. */
     private String expectedHead(long taskId, RunKind kind) {
-        if (kind == RunKind.PLAN) {
+        if (kind == RunKind.PLAN || kind == RunKind.REPORT) {
             return null;
         }
         return db.transactionReturning(tx -> Tasks.expectedHead(tx, taskId));
@@ -221,7 +234,7 @@ public final class Coordinator {
 
     /**
      * The delivery commit's trailers: who asked, and whoever approved the plan (later runs do not change that). Only
-     * EXECUTE and DELIVER jobs ever deliver, so a PLAN job skips the {@code Runs.forTask} query and gets none.
+     * EXECUTE and DELIVER jobs ever deliver, so a PLAN or REPORT job skips the {@code Runs.forTask} query and gets none.
      */
     private List<String> trailers(Task task, RunKind kind) {
         if (kind != RunKind.EXECUTE && kind != RunKind.DELIVER) {
@@ -283,6 +296,7 @@ public final class Coordinator {
                     result.prUrl(), result.verification(), result.head());
             case DELIVER -> transitions.completed(job.taskId(), job.seq(), null, job.deliverySummary(), result.files(),
                     result.prUrl(), null, result.head());
+            case REPORT -> finishReport(job.taskId(), job.seq(), result.agent());
             case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a task's run");
         }
     }
@@ -302,6 +316,33 @@ public final class Coordinator {
         } catch (InvalidPlanException e) {
             transitions.failed(taskId, seq, FailureReason.AGENT, "plan did not match the schema: " + e.getMessage(), result);
         }
+    }
+
+    /** The report is checked here, as a plan is: only a whole HTML document reaches the requester as the answer. */
+    private void finishReport(long taskId, int seq, AgentResult result) {
+        String html = reportHtml(result.structuredOutput());
+        if (html == null || !isHtmlDocument(html)) {
+            transitions.failed(taskId, seq, FailureReason.AGENT, "the report run returned no HTML document", result);
+            return;
+        }
+        transitions.reported(taskId, seq, html, result);
+    }
+
+    /** The answer's html; null when there is none or the answer is not JSON, which is the agent's failure, as a bad plan is. */
+    private static String reportHtml(String structuredOutput) {
+        if (structuredOutput == null) {
+            return null;
+        }
+        try {
+            return Json.read(structuredOutput).path("html").asText(null);
+        } catch (IllegalStateException malformed) {
+            return null;
+        }
+    }
+
+    private static boolean isHtmlDocument(String text) {
+        String head = text.strip().toLowerCase(Locale.ROOT);
+        return head.startsWith("<!doctype html") || head.startsWith("<html");
     }
 
     private boolean hasData(String projectName) {

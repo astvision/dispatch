@@ -61,8 +61,9 @@ public final class GeminiAgent implements Agent {
         boolean plan = switch (request.kind()) {
             case PLAN, REVIEW -> true;
             case EXECUTE -> false;
-            // Splitting and the assistant need Claude Code's structured output and tools (ADR 0013, A-1).
-            case SPLIT, ASSISTANT -> throw new IllegalArgumentException(request.kind() + " runs on claude-code, not gemini");
+            // Splitting and the assistant need Claude Code's structured output and tools (ADR 0013, A-1); a report needs the
+            // data only a claude-code project can have (spec: data reports).
+            case SPLIT, ASSISTANT, REPORT -> throw new IllegalArgumentException(request.kind() + " runs on claude-code, not gemini");
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
         };
         List<String> args = new ArrayList<>(List.of(command, "--output-format", "stream-json", "--skip-trust",

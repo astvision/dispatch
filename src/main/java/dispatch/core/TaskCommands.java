@@ -184,7 +184,7 @@ public final class TaskCommands {
         return new CommandResult.Done(task.id(), isRequester(who, task));
     }
 
-    /** Repeats the failed step: a plan, an execution, or only the delivery of work already done (ADR 0008). */
+    /** Repeats the failed step: a plan, a report, an execution, or only the delivery of work already done (ADR 0008). */
     private CommandResult retry(Tx tx, Requester who, Task task) {
         Instant now = clock.instant();
         // Task access saw the latest run fail: that run is the step to repeat.
@@ -192,8 +192,8 @@ public final class TaskCommands {
                 + " was allowed a retry, yet has no run to repeat"));
         RunKind kind;
         String instruction;
-        if (step.kind() == RunKind.PLAN) {
-            kind = RunKind.PLAN;
+        if (step.kind() == RunKind.PLAN || step.kind() == RunKind.REPORT) {
+            kind = step.kind();
             instruction = step.instruction();
         } else if (step.kind() == RunKind.DELIVER || step.failureReason() == FailureReason.DELIVERY) {
             // The agent's work is done and waits in the worktree; only its summary is needed, as the commit message.
@@ -264,10 +264,11 @@ public final class TaskCommands {
         return true;
     }
 
-    /** Queues the approved plan's execution; the requester hears it is queued. */
+    /** Queues the approved plan's execution, or its report (spec: data reports); the requester hears it is queued. */
     private CommandResult approve(Tx tx, Requester who, Task task, int planSeq) {
+        RunKind kind = Plan.parse(task.planJson()).result() == Plan.Result.REPORT ? RunKind.REPORT : RunKind.EXECUTE;
         // The run carries the plan it implements, so what was approved stays on record.
-        return queueRun(tx, who, task, Phase.EXECUTING, RunKind.EXECUTE, RunCause.APPROVAL, task.planJson(),
+        return queueRun(tx, who, task, Phase.EXECUTING, kind, RunCause.APPROVAL, task.planJson(),
                 "approved plan " + planSeq, false, OutboxKind.EXECUTION_QUEUED, clock.instant());
     }
 

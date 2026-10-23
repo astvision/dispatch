@@ -12,5 +12,7 @@ public enum RunKind {
     /** One turn of a member's conversation with the bot's assistant (A-1); belongs to no task and is never stored as a run. */
     ASSISTANT,
     /** The verify loop's reviewer inside an execution run; never a task's run of its own. */
-    REVIEW
+    REVIEW,
+    /** Runs an approved report plan's queries read-only and returns the report (spec: data reports). */
+    REPORT
 }

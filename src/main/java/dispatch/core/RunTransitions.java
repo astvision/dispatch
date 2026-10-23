@@ -145,6 +145,29 @@ public final class RunTransitions {
                 completedLine(task, null, 0, true), GroupReaction.COMPLETED), now);
     }
 
+    /**
+     * The report run returned its HTML (spec: data reports): the task completes as an answered one does, and only its
+     * requester gets the report.
+     */
+    public void reported(long taskId, int seq, String html, AgentResult result) {
+        db.transaction(tx -> {
+            Instant now = clock.instant();
+            Task task = task(tx, taskId);
+            Run run = run(tx, taskId, seq);
+            if (!finishRun(tx, run, RunStatus.SUCCEEDED, null, null, result, html, now)) {
+                return;
+            }
+            if (!Tasks.completed(tx, taskId, null, now)) {
+                ignoredResult(tx, task, seq);
+                return;
+            }
+            ObjectNode payload = Json.object().put("taskId", taskId).put("project", task.project()).put("answer", html);
+            putRunDetails(payload, run, result, now);
+            end(tx, task, run, new Ending(Phase.COMPLETED, "reported", OutboxKind.ANSWER_READY, payload,
+                    completedLine(task, null, 0, true), GroupReaction.COMPLETED), now);
+        });
+    }
+
     /** An execution run whose changes were delivered, with the agent's own summary. */
     public void completed(long taskId, int seq, AgentResult result, List<String> files, String prUrl) {
         completed(taskId, seq, result, result.summary(), files, prUrl);

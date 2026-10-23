@@ -109,6 +109,7 @@ public final class ClaudeCodeAgent implements Agent {
             // Anything not allowed up front is refused without asking: here, every Bash command but dispatch ask.
             case ASSISTANT -> "dontAsk";
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
+            case REPORT -> throw new IllegalStateException("REPORT runs arrive in Task 6");
         };
     }
 
@@ -172,6 +173,7 @@ public final class ClaudeCodeAgent implements Agent {
             case ASSISTANT -> args.addAll(List.of("--tools", "Read,Grep,Glob,Bash,Skill", "--json-schema", ASSISTANT_SCHEMA,
                     "--allowedTools", ASSISTANT_BASH));
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
+            case REPORT -> throw new IllegalStateException("REPORT runs arrive in Task 6");
         }
         if (request.data() != null) {
             denied.addAll(DATA_DENIED);

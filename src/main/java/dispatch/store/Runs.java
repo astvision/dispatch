@@ -68,8 +68,8 @@ public final class Runs {
     /**
      * Claims the most urgent queued run that may start now, the oldest among equals: fewer than {@code maxConcurrentRuns}
      * runs are active, and an execution-type run also needs its project to have no other execution running (builds and
-     * tests of the same project can clash on ports and test databases). Planning runs only need a free slot. A run that
-     * cannot start yet never holds back the ones after it.
+     * tests of the same project can clash on ports and test databases). Planning and report runs, read-only, only need a
+     * free slot. A run that cannot start yet never holds back the ones after it.
      *
      * @param workerSeenSince in team mode, a run starts only when one of its requester's computers reported since then —
      *                        and, once the task has a worktree, only that computer, and only while it has room for
@@ -129,8 +129,8 @@ public final class Runs {
                                    WHERE pinned_run.status = ? AND pinned_task.worker_id = t.worker_id)
                                   < (SELECT COALESCE(pinned.max_runs, 1) FROM worker pinned WHERE pinned.id = t.worker_id))
                 """).formatted(agentOfProject(agentOf), WorkerProtocol.VERSION, AgentKind.CLAUDE_CODE.id());
-        List<Object> params = new ArrayList<>(List.of(RunStatus.QUEUED, RunKind.PLAN, RunStatus.RUNNING, RunKind.EXECUTE,
-                RunKind.DELIVER));
+        List<Object> params = new ArrayList<>(List.of(RunStatus.QUEUED, RunKind.PLAN, RunKind.REPORT, RunStatus.RUNNING,
+                RunKind.EXECUTE, RunKind.DELIVER));
         if (workerSeenSince != null) {
             params.add(workerSeenSince);
             // The agent expression appears three times, in this order, right after the first seen-since; the hold gate
@@ -154,7 +154,7 @@ public final class Runs {
                         SELECT r.task_id, r.seq, r.kind
                         FROM run r JOIN task t ON t.id = r.task_id
                         WHERE r.status = ?
-                          AND (r.kind = ? OR NOT EXISTS (
+                          AND (r.kind IN (?, ?) OR NOT EXISTS (
                                 SELECT 1 FROM run busy JOIN task busy_task ON busy_task.id = busy.task_id
                                 WHERE busy.status = ? AND busy.kind IN (?, ?) AND busy_task.project = t.project))
                         """ + (workerSeenSince != null ? workerGate : HOLD_GATE.formatted(AgentLimits.THIS_MACHINE, agentOfProject(agentOf))) + """

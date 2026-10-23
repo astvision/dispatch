@@ -20,6 +20,9 @@ import org.junit.jupiter.api.Test;
  */
 class WireContractTest {
 
+    // RunKind.REPORT was added under protocol 4 without raising it: a report needs a project's data, which only a personal
+    // instance may have, and a personal instance hands no job to a worker (spec: data reports), so no REPORT job is ever
+    // sent on this wire.
     private static final String WIRE = """
             protocol 4
             worker.Wire$Poll: protocol maxConcurrentRuns readiness
@@ -35,7 +38,7 @@ class WireContractTest {
             core.JobResult: outcome agent files prUrl failureReason failureDetail verification head
             worker.Wire$Project: name repo baseBranch agent model effort
             worker.Readiness$Check: ok detail
-            domain.RunKind = PLAN EXECUTE DELIVER SPLIT ASSISTANT REVIEW
+            domain.RunKind = PLAN EXECUTE DELIVER SPLIT ASSISTANT REVIEW REPORT
             core.Job$Project: name repo path baseBranch agent copyFiles test loop skills
             domain.Attachment: fileRef name size
             core.JobResult$Outcome = SUCCEEDED FAILED CANCELLED

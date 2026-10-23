@@ -14,8 +14,8 @@ import java.time.Instant;
  */
 public record RunStep(int n, Kind kind, int round, Instant startedAt, Instant endedAt, Outcome outcome, String detail) {
 
-    /** PAUSE: the loop waits before its review for the requester's choice (RM-5). */
-    public enum Kind { PLAN, IMPLEMENT, TEST, FIX, PAUSE, REVIEW, DELIVER }
+    /** PAUSE: the loop waits before its review for the requester's choice (RM-5). REPORT: a report run's one agent call. */
+    public enum Kind { PLAN, IMPLEMENT, TEST, FIX, PAUSE, REVIEW, DELIVER, REPORT }
 
     /**
      * DONE: an agent call or the delivery finished. PASSED and FAILED: a test run, or FAILED for a call that did not

@@ -45,7 +45,7 @@ public final class Database implements AutoCloseable {
             "db/027-retired-reply-kinds.sql", "db/028-worker-agent.sql", "db/029-run-sandbox.sql",
             "db/030-task-head.sql", "db/031-draft-view.sql", "db/032-run-step.sql", "db/033-run-step-pause.sql", "db/034-worker-protocol.sql",
             "db/035-task-ci.sql", "db/036-usage-limit-reason.sql",
-            "db/037-agent-limit.sql");
+            "db/037-agent-limit.sql", "db/038-report-run.sql");
 
     private final Connection connection;
     private final ReentrantLock lock = new ReentrantLock();

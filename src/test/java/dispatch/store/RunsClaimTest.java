@@ -106,6 +106,19 @@ class RunsClaimTest {
     }
 
     @Test
+    void aReportIsReadOnlyLikeAPlan() {
+        queue("alm", RunKind.EXECUTE, T0);
+        claim(10, T0).orElseThrow();
+        long report = queue("alm", RunKind.REPORT, T0.plusSeconds(1));
+        assertEquals(report, claim(10, T0).orElseThrow().taskId(), "it does not wait for its project's execution");
+
+        queue("crm", RunKind.REPORT, T0.plusSeconds(2));
+        claim(10, T0).orElseThrow();
+        long execution = queue("crm", RunKind.EXECUTE, T0.plusSeconds(3));
+        assertEquals(execution, claim(10, T0).orElseThrow().taskId(), "nor does an execution wait for it");
+    }
+
+    @Test
     void aHeldClaudeCodeWaitsForTheResetWhileDeliveriesGoOn() {
         long plan = queue("alm", RunKind.PLAN, T0);
         long delivery = queue("crm", RunKind.DELIVER, T0.plusSeconds(1));

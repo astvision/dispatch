@@ -515,6 +515,10 @@ class CoordinatorTest {
     private static final DataSource DATA = new DataSource("ops", "db:27017", "webapp", "mongodb://ro:" + "pw@h/webapp");
     private static final String REPORT_JSON = new Plan("Visits per day", List.of("visits.at is a date"), List.of("Count visits by day"),
             List.of(), List.of(), List.of(), List.of(), Plan.Result.REPORT, "").toJson();
+    private static final Config.Project WITH_DATA = new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm",
+            "main", "claude-code", null, "high", List.of(".env"), null, new Config.PhaseSettings("opus", null),
+            new Config.PhaseSettings(null, "low"), null, null, null, null, DATA);
+    private static final String REPORT_HTML = "<!doctype html><html><body><h1>Visits per day</h1></body></html>";
 
     @Test
     void aReportForAProjectWithoutDataIsAnInvalidPlan() {
@@ -531,10 +535,7 @@ class CoordinatorTest {
     @Test
     void aReportsFollowUpIsPlannedWithTheReportFollowUpPrompt() {
         long id = queue("How many visits per day?");
-        Config.Project withData = new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm", "main",
-                "claude-code", null, "high", List.of(".env"), null, new Config.PhaseSettings("opus", null),
-                new Config.PhaseSettings(null, "low"), null, null, null, null, DATA);
-        Projects configured = projects(List.of(withData));
+        Projects configured = projects(List.of(WITH_DATA));
         coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
         db.transaction(tx -> tasks.commands().run(tx, BOLD,
                 new TaskCommand.Correct(id, java.util.OptionalInt.of(1), "Only last month")));
@@ -544,5 +545,55 @@ class CoordinatorTest {
         assertEquals(RunKind.PLAN, given.get().kind());
         assertTrue(given.get().prompt().contains("Count visits by day"), given.get().prompt());
         assertTrue(given.get().prompt().contains("Only last month"), given.get().prompt());
+    }
+
+    @Test
+    void aReportJobResumesThePlanningSession() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object().put("html", REPORT_HTML).toString())));
+
+        Job job = given.get();
+        assertEquals(RunKind.REPORT, job.kind());
+        assertEquals(row("SELECT session_id FROM task WHERE id = ?", id).get("session_id"), job.sessionId().toString());
+        assertTrue(job.resume(), "the report runs in the session that planned it");
+        assertTrue(job.prompt().contains("dispatch:data-report"), job.prompt());
+        assertEquals("opus", job.model(), "planning's model");
+        assertEquals("high", job.effort());
+        assertEquals(Duration.ofMinutes(60).toMillis(), job.timeoutMillis(), "an execution's limits");
+        assertEquals(new BigDecimal("10"), job.budgetUsd());
+        assertEquals(List.of(), job.attachments(), "the planning session has seen them");
+        assertNull(job.reviewPrompt());
+        assertEquals(List.of(), job.picks());
+        assertEquals(List.of(), job.commitTrailers(), "a report delivers no commit");
+    }
+
+    @Test
+    void aReportRunsHtmlCompletesTheTaskAsAnAnswer() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object().put("html", REPORT_HTML).toString())));
+
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        String answer = Json.read(row("SELECT payload FROM outbox WHERE kind = 'ANSWER_READY'").get("payload")).get("answer").asText();
+        assertTrue(answer.startsWith("<!doctype html"), answer);
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("payload"))
+                .get("answered").asBoolean(), "the group hears it was answered");
+    }
+
+    @Test
+    void aReportRunWithoutHtmlFails() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object().put("html", "just text").toString())));
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("FAILED", task.get("phase"));
+        assertEquals("AGENT", task.get("failure_reason"));
+        assertEquals("the report run returned no HTML document", task.get("failure_detail"));
+    }
+
+    /** Plans a report on the data project, approves it, and runs its REPORT job to {@code result}. */
+    private long reported(JobResult result) {
+        long id = queue("How many visits per day?");
+        Projects configured = projects(List.of(WITH_DATA));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
+        coordinator(configured, remember(result)).execute(claim());
+        return id;
     }
 }
