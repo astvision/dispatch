@@ -6,7 +6,6 @@ import dispatch.Language;
 import dispatch.Log;
 import dispatch.Text;
 import dispatch.config.Config;
-import dispatch.domain.FailureReason;
 import dispatch.domain.GroupReaction;
 import dispatch.domain.OutboxKind;
 import dispatch.domain.Phase;
@@ -190,23 +189,9 @@ public final class TaskCommands {
         // Task access saw the latest run fail: that run is the step to repeat.
         Run step = Runs.latest(tx, task.id()).orElseThrow(() -> new IllegalStateException("task #" + task.id()
                 + " was allowed a retry, yet has no run to repeat"));
-        RunKind kind;
-        String instruction;
-        if (step.kind() == RunKind.PLAN) {
-            kind = RunKind.PLAN;
-            instruction = step.instruction();
-        } else if (step.kind() == RunKind.DELIVER || step.failureReason() == FailureReason.DELIVERY) {
-            // The agent's work is done and waits in the worktree; only its summary is needed, as the commit message.
-            kind = RunKind.DELIVER;
-            instruction = step.kind() == RunKind.DELIVER ? step.instruction() : Runs.output(tx, task.id(), step.seq()).orElse("");
-        } else {
-            kind = RunKind.EXECUTE;
-            instruction = step.instruction();
-        }
-        Phase to = kind == RunKind.PLAN ? Phase.PLANNING : Phase.EXECUTING;
-        // A retried CI fix is still one: its instruction is a failed log, which only the fix prompt quotes as output to read.
-        RunCause cause = kind == RunKind.EXECUTE && step.cause() == RunCause.CI_FIX ? RunCause.CI_FIX : RunCause.RETRY;
-        return queueRun(tx, who, task, to, kind, cause, instruction, "retry of run " + step.seq(), true,
+        Repeat repeat = Repeat.of(step, () -> Runs.output(tx, task.id(), step.seq()).orElse(""));
+        Phase to = repeat.kind() == RunKind.PLAN ? Phase.PLANNING : Phase.EXECUTING;
+        return queueRun(tx, who, task, to, repeat.kind(), repeat.cause(), repeat.instruction(), "retry of run " + step.seq(), true,
                 OutboxKind.RETRY_QUEUED, now);
     }
 

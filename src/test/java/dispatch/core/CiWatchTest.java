@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.UsageLimit;
 import dispatch.config.Config;
 import dispatch.domain.Plan;
 import dispatch.domain.Priority;
@@ -548,6 +549,27 @@ class CiWatchTest {
         assertTrue(retried.get("instruction").contains("AuthTest > timeout FAILED"), retried.get("instruction"));
         finishRun(taskId, List.of("src/Auth.java"), "fix1", "Fixed the timeout");
         assertEquals("1", watchRow(taskId).get("fix_rounds"), "the same fix, finished: its round still counts");
+    }
+
+    @Test
+    void aFixCutShortByTheUsageLimitIsQueuedAgainAsAFixAndItsRoundStillCounts() {
+        long taskId = delivered();
+        checks = List.of(check("test", "fail", 11));
+        log = "AuthTest > timeout FAILED";
+        watch.pass();
+        db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.agentStarted(taskId, 3, null, null);
+        Instant resetsAt = clock.instant().plus(Duration.ofHours(1));
+        transitions.limited(taskId, 3, "You've hit your limit", new AgentResult(AgentOutcome.LIMITED, 1, "s", null, null, null, 1,
+                List.of(), "You've hit your limit", null, null).withLimit(new UsageLimit(resetsAt.getEpochSecond(), "five_hour")));
+
+        Map<String, String> again = row("SELECT kind, cause, instruction FROM run WHERE task_id = ? AND seq = 4", taskId);
+        assertEquals("EXECUTE", again.get("kind"));
+        assertEquals("CI_FIX", again.get("cause"), "so its prompt still says the log is output to read");
+        assertTrue(again.get("instruction").contains("AuthTest > timeout FAILED"), again.get("instruction"));
+        clock.advance(Duration.ofHours(2));
+        finishRun(taskId, List.of("src/Auth.java"), "fix1", "Fixed the timeout");
+        assertEquals("1", watchRow(taskId).get("fix_rounds"), "a limit hit grants no extra round");
     }
 
     @Test

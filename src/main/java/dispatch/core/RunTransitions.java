@@ -305,7 +305,8 @@ public final class RunTransitions {
                 return;
             }
             int next = Runs.nextSeq(tx, taskId);
-            Runs.insert(tx, new Runs.NewRun(taskId, next, run.kind(), RunCause.RETRY, run.instruction(),
+            Repeat repeat = Repeat.of(run, () -> Runs.output(tx, taskId, seq).orElse(""));
+            Runs.insert(tx, new Runs.NewRun(taskId, next, repeat.kind(), repeat.cause(), repeat.instruction(),
                     new Requester(run.requestedBy(), run.requestedByName())), now);
             Events.record(tx, taskId, next, ACTOR, task.phase(), task.phase(), "usage limit: run " + next + " queued", now);
             enqueueForRequester(tx, task, OutboxKind.LIMIT_REQUEUED, Json.object().put("taskId", taskId)
