@@ -135,4 +135,21 @@ class PromptsTest {
         assertTrue(prompt.contains("<reply>\nWhy does it subtract?\n</reply>"), prompt);
         assertTrue(prompt.contains("set result to \"answer\""), "ends with the plan format: " + prompt);
     }
+
+    @Test
+    void aReportPromptNamesTheSkillAndAReportFollowUpLeavesTheDataNoteToTheRunner() {
+        Instant now = Instant.parse("2026-10-01T10:00:00Z");
+        String reportJson = new dispatch.domain.Plan("u", List.of(), List.of("Count visits by day"), List.of(), List.of(),
+                List.of(), List.of(), dispatch.domain.Plan.Result.REPORT, "").toJson();
+        Task reported = new Task(1, "webapp", "Visits", "Visits per day?", Phase.AWAITING_APPROVAL, Priority.NORMAL,
+                new Requester("telegram:100", "Bold"), "telegram:100/1", "telegram:100", UUID.randomUUID(), null, "main",
+                null, null, reportJson, null, null, null, null, now, null, now, now, null);
+        Run reply = new Run(1, 2, RunKind.PLAN, RunCause.FOLLOW_UP, RunStatus.RUNNING, "Only last month",
+                "telegram:100", "Bold", null, null, null, null, null, null, null, null);
+
+        assertTrue(Prompts.report(reported).contains("dispatch:data-report"));
+        String followUp = Prompts.reportFollowUp(reported, reply);
+        assertTrue(followUp.contains("Count visits by day"), followUp);
+        assertFalse(followUp.contains(Prompts.DATA_NOTE), "JobRunner owns the note");
+    }
 }

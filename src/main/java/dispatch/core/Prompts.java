@@ -287,7 +287,7 @@ final class Prompts {
 
                 If the reply asks something, answer it. If it changes what the report should show, plan that report again.
                 """.formatted(task.id(), task.requester().name(), task.description(), plan.understanding(),
-                String.join("\n", plan.steps()), run.requestedByName(), run.instruction()) + PLAN_FORMAT + DATA_NOTE;
+                String.join("\n", plan.steps()), run.requestedByName(), run.instruction()) + PLAN_FORMAT;
     }
 
     /** @param run the planning run whose instruction is the requester's reply to the task's answer (spec: answers) */

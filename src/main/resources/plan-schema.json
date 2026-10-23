@@ -56,7 +56,7 @@
     },
     "answer": {
       "type": "string",
-      "description": "The full answer in markdown when result is answer; empty when result is plan"
+      "description": "The full answer in markdown when result is answer; empty when result is plan or report"
     }
   }
 }

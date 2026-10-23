@@ -367,19 +367,20 @@ class TaskAccessTest {
         return id;
     }
 
-    /** Its first plan run failed, so no execution ever started. */
     @Test
     void aReportedTaskAcceptsAFollowUp() {
+        // An answer completes without executing; storing a report plan in its place makes it a never-executed report task.
+        Plan answer = new Plan("Visits per day", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                Plan.Result.ANSWER, "42");
+        long id = awaiting(answer);
         Plan report = new Plan("Visits per day", List.of(), List.of("Count visits by day"), List.of(), List.of(), List.of(),
                 List.of(), Plan.Result.REPORT, "");
-        long id = awaiting(report);
-        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
-        transitions.failed(id, claim().seq(), FailureReason.AGENT, "boom", RESULT);
-
+        db.transaction(tx -> tx.update("UPDATE task SET plan_json = ? WHERE id = ?", report.toJson(), id));
 
         assertEquals(Optional.empty(), verdict(BOLD, id).refusal(Action.FOLLOW_UP));
     }
 
+    /** Its first plan run failed, so no execution ever started. */
     private long failedPlan() {
         long id = create("alm");
         ClaimedRun run = claim();
