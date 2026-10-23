@@ -164,7 +164,9 @@ public final class App {
         // One confinement for the agents and the verify loop's test command, which runs in the same sandbox (ADR 0032).
         dispatch.agent.sandbox.Confinement confinement = Confinements.of(sandbox, stateDir, configFile, clones,
                 dispatch.cli.Instances.othersPrivate(configFile, environment));
-        Map<String, Agent> agents = Agents.create(agentCommands, environment, stateDir, confinement,
+        // The agents and the test command never see a data URI variable; a data run gets its own (ADR 0043).
+        Map<String, String> agentEnvironment = dispatch.data.DataSources.withoutDataUris(environment, config);
+        Map<String, Agent> agents = Agents.create(agentCommands, agentEnvironment, stateDir, confinement,
                 dispatch.agent.claude.OwnerPlugins.instance(configFile, Path.of(System.getProperty("user.home"))));
         // Splitting and the assistant need Claude Code (ADR 0013, A-1); without it they are simply not offered (ADR 0026).
         Agent claude = agents.get(AgentKind.CLAUDE_CODE.id());
@@ -175,7 +177,7 @@ public final class App {
             // Personal mode runs the job in this process, exactly as before.
             // Data is personal-only (ADR 0043): a team instance's projects never reach a prod Mongo.
             worker = new JobRunner(workspaces, delivery, agents, redactor, api::downloadFile,
-                    new dispatch.core.TestCommand(confinement, environment), clock,
+                    new dispatch.core.TestCommand(confinement, agentEnvironment), clock,
                     config.isTeam() ? dispatch.data.DataSources.NONE : dispatch.data.DataSources.of(config));
         } else {
             workerKeys = new WorkerKeys(db, clock);

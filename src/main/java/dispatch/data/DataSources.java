@@ -29,6 +29,23 @@ public interface DataSources {
     /** @throws TunnelException when the tunnel does not forward; nothing is left running then */
     Tunnel open(DataSource source);
 
+    /**
+     * {@code environment} without the variables that hold a project's data URI. dispatch.env is the agents' environment too, so
+     * without this every run, of any project, would carry prod's real address and read-only password; a data run gets its
+     * tunnelled URI as {@code DISPATCH_DATA_URI} instead (ADR 0043).
+     */
+    static Map<String, String> withoutDataUris(Map<String, String> environment, Config config) {
+        java.util.Set<String> uris = new java.util.HashSet<>();
+        for (Config.Project project : config.projects()) {
+            if (project.data() != null) {
+                uris.add(project.data().uri());
+            }
+        }
+        Map<String, String> kept = new HashMap<>(environment);
+        kept.values().removeIf(uris::contains);
+        return kept;
+    }
+
     static DataSources of(Config config) {
         return of(config, List.of("ssh"));
     }
