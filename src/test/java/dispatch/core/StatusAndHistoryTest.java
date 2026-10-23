@@ -176,6 +176,56 @@ class StatusAndHistoryTest {
     }
 
     @Test
+    void aRetriedCorrectionStillShowsItsTextAndARetriedFirstPlanDoesNot() {
+        long id = create("Add make help", "50");
+        claim();
+        transitions.failed(id, 1, FailureReason.TIMEOUT, "took too long", null);
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Retry(id)));
+        claim();
+        transitions.planSucceeded(id, 2, PLAN, result("0.16"));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Correct(id, OptionalInt.of(2), "Also describe the logs target")));
+        for (int seq = 3; seq <= 4; seq++) {
+            claim();
+            transitions.failed(id, seq, FailureReason.TIMEOUT, "took too long", null);
+            db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Retry(id)));
+        }
+
+        JsonNode runs = db.transactionReturning(tx -> tasks.timelinePayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), id))
+                .orElseThrow().get("runs");
+
+        assertEquals(5, runs.size());
+        assertTrue(runs.get(1).get("instruction").isNull(), "a retried first plan's instruction is still the task itself");
+        assertEquals("Also describe the logs target", runs.get(2).get("instruction").asText());
+        assertEquals("RETRY", runs.get(3).get("cause").asText());
+        assertEquals("Also describe the logs target", runs.get(3).get("instruction").asText(), "the retry repeats the correction");
+        assertEquals("Also describe the logs target", runs.get(4).get("instruction").asText(), "and so does a retry of the retry");
+    }
+
+    @Test
+    void aRetriedDeliveryOfAFollowUpShowsNoTextSinceItsInstructionIsTheSummary() {
+        long id = create("Add make help", "50");
+        claim();
+        transitions.planSucceeded(id, 1, PLAN, result("0.16"));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
+        claim();
+        transitions.agentStarted(id, 2, null, null);
+        transitions.completed(id, 2, result("0.26"), List.of("Makefile"), "https://github.com/acme/life/pull/1");
+        assertEquals(new CommandResult.Done(id, true), db.transactionReturning(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.FollowUp(id, "Also describe the logs target", new Origin("telegram:100/400")))));
+        claim();
+        transitions.failed(id, 3, FailureReason.DELIVERY, "push rejected", result("0.12"));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Retry(id)));
+
+        JsonNode runs = db.transactionReturning(tx -> tasks.timelinePayload(tx, new TaskAccess.Viewer(BOLD.ref(), LIFE), id))
+                .orElseThrow().get("runs");
+
+        assertEquals("Also describe the logs target", runs.get(2).get("instruction").asText());
+        assertEquals("DELIVER", runs.get(3).get("kind").asText());
+        assertTrue(runs.get(3).get("instruction").isNull(), runs.get(3).toString());
+    }
+
+    @Test
     void anUnknownTaskHasNoTimeline() {
         assertTrue(db.transactionReturning(tx -> tasks.timelinePayload(tx, new TaskAccess.Viewer(null, LIFE), 999)).isEmpty());
     }

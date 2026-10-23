@@ -1234,7 +1234,11 @@ public final class Renderer {
         String requestedBy = escape(run.path("requestedBy").asText("—"));
         switch (run.path("cause").asText()) {
             case "RETRY" -> {
-                return format("timeline.retry", requestedBy, text("kind." + run.path("kind").asText()));
+                String retry = format("timeline.retry", requestedBy, text("kind." + run.path("kind").asText()));
+                // A retry of a correction or a follow-up carries its text (TaskService); any other retry carries none.
+                return run.hasNonNull("instruction")
+                        ? retry + " — " + escapeWithin(run.path("instruction").asText(), INSTRUCTION_LIMIT)
+                        : retry;
             }
             case "FOLLOW_UP" -> {
                 return format("timeline.followUp", requestedBy, escapeWithin(run.path("instruction").asText(), INSTRUCTION_LIMIT));

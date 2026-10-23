@@ -756,9 +756,14 @@ public final class TaskService {
         payload.set("ci", TaskCi.find(tx, taskId).map(TaskService::ciView).orElse(null));
         ArrayNode runs = payload.putArray("runs");
         BigDecimal total = null;
+        boolean previousWasReply = false;
         for (Run run : Runs.forTask(tx, taskId)) {
-            // A reply's text is worth showing; the first plan's instruction is the task, an execution's the plan.
-            boolean reply = run.cause() == RunCause.CORRECTION || run.cause() == RunCause.FOLLOW_UP;
+            // A reply's text is worth showing; the first plan's instruction is the task, an execution's the plan. A retry is
+            // queued right after the run it repeats (/retry and the usage limit's re-queue, ADR 0008 and ADR 0040), so it
+            // carries a reply's text too, unless only the delivery is repeated: its instruction is the agent's summary.
+            boolean retriedReply = run.cause() == RunCause.RETRY && run.kind() != RunKind.DELIVER && previousWasReply;
+            boolean reply = run.cause() == RunCause.CORRECTION || run.cause() == RunCause.FOLLOW_UP || retriedReply;
+            previousWasReply = reply;
             String instruction = reply ? truncate(run.instruction(), INSTRUCTION_LENGTH) : null;
             runs.addObject().put("seq", run.seq()).put("kind", run.kind().name()).put("cause", name(run.cause()))
                     .put("status", run.status().name())

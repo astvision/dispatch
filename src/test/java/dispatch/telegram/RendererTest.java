@@ -1366,6 +1366,18 @@ class RendererTest {
         assertTrue(html.contains("🔁 Дахин оролдлого (Ali): хүргэлт"), html);
     }
 
+    @Test
+    void timelineShowsTheTextARetryRepeats() {
+        ObjectNode payload = timelinePayload();
+        payload.withArray("runs").addObject().put("seq", 4).put("kind", "PLAN").put("cause", "RETRY").put("status", "QUEUED")
+                .put("requestedBy", "Bold").put("instruction", "Also describe the <logs> target").put("queuedAt", "2026-09-17T10:09:00Z")
+                .putNull("startedAt").putNull("finishedAt").putNull("costUsd").putNull("failureReason");
+
+        String html = renderer.render(OutboxKind.TASK_TIMELINE, payload).html();
+
+        assertTrue(html.contains("🔁 Дахин оролдлого (Bold): төлөвлөгөө — Also describe the &lt;logs&gt; target"), html);
+    }
+
     private static ObjectNode completedPayload(String prUrl, int filesChanged, List<String> denials) {
         ObjectNode payload = Json.object().put("taskId", 42).put("project", "autoland-management").put("prUrl", prUrl)
                 .put("filesChanged", filesChanged).put("summary", "Made the timeout <configurable>.")
