@@ -251,9 +251,10 @@ final class Prompts {
     /** The resumed planning session runs the approved report plan (ADR 0043). */
     static String report(Task task) {
         return """
-                The requester approved the report plan above for task #%d. Use the dispatch:data-report skill. Run what \
-                was approved, nothing broader; that includes the finer queries the data checks need. Filter early and \
-                use indexes.
+                The requester approved the report plan above for task #%d. Before your first query, load the \
+                dispatch:data-report skill and follow it. Run what was approved, nothing broader, plus the finer queries \
+                its data checks need: daily or monthly counts for gaps and dead periods, whatever grouping the plan \
+                names. Filter early and use indexes.
 
                 Return only {"html": "<!doctype html>…"} through the structured output: one complete, self-contained \
                 HTML document, in the same language as the task.

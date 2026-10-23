@@ -147,7 +147,10 @@ class PromptsTest {
         Run reply = new Run(1, 2, RunKind.PLAN, RunCause.FOLLOW_UP, RunStatus.RUNNING, "Only last month",
                 "telegram:100", "Bold", null, null, null, null, null, null, null, null);
 
-        assertTrue(Prompts.report(reported).contains("dispatch:data-report"));
+        // A live report run told only to "use" the skill skipped it and never checked below the plan's yearly grouping.
+        String report = Prompts.report(reported);
+        assertTrue(report.contains("Before your first query, load the dispatch:data-report skill"), report);
+        assertTrue(report.contains("daily or monthly counts for gaps and dead periods"), report);
         String followUp = Prompts.reportFollowUp(reported, reply);
         assertTrue(followUp.contains("Count visits by day"), followUp);
         assertFalse(followUp.contains(Prompts.DATA_NOTE), "JobRunner owns the note");
