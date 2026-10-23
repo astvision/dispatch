@@ -1,5 +1,6 @@
 package dispatch.cli;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.agent.AgentStartException;
 import dispatch.agent.ProcessRun;
 import dispatch.agent.claude.OwnerPlugins;
@@ -296,43 +297,59 @@ public final class Checks {
     /** Whether a data project's tunnel opens and its Mongo user cannot write; the connection string never reaches a message. */
     private static void checkData(Run run, Config.Project project, DataSources sources, String mongosh, String npx) {
         String area = "project " + project.name();
+        int before = run.findings.size();
         Tunnel tunnel;
         try {
             tunnel = sources.open(project.data());
         } catch (TunnelException e) {
             run.add(Level.FAIL, area, Text.of("check.dataTunnel", project.name(), project.data().ssh(), e.getMessage()));
             return;
+        } catch (RuntimeException e) {
+            // One project's trouble must not abort the other projects' checks; the class name only, since a message could hold the URI.
+            run.add(Level.FAIL, area, Text.of("check.dataTunnel", project.name(), project.data().ssh(), e.getClass().getSimpleName()));
+            return;
         }
         try (tunnel) {
-            int before = run.findings.size();
-            writableActions(run, area, project, tunnel, mongosh).ifPresent(text -> run.add(Level.FAIL, area, text));
-            if (!mcpServerFetched(npx)) {
-                run.add(Level.WARN, area, Text.of("check.dataMcpFetch", project.name(), MCP_SERVER));
-            }
-            if (run.findings.size() == before) {
-                run.add(Level.OK, area, Text.of("check.data", project.name(), project.data().ssh()));
-            }
+            checkWriteAccess(run, area, project, tunnel, mongosh);
+        }
+        // After the tunnel is closed: a cold npx cache can take 120 s and must not hold the SSH forward.
+        if (!mcpServerFetched(npx)) {
+            run.add(Level.WARN, area, Text.of("check.dataMcpFetch", project.name(), MCP_SERVER));
+        }
+        if (run.findings.size() == before) {
+            run.add(Level.OK, area, Text.of("check.data", project.name(), project.data().ssh()));
         }
     }
 
-    /** The write actions the user holds; empty when none, or when they cannot be asked (a warning is added then). */
-    private static Optional<Text> writableActions(Run run, String area, Config.Project project, Tunnel tunnel, String mongosh) {
+    /** Adds a finding unless the user is shown to hold none of the write actions; anything it cannot read is never an OK. */
+    private static void checkWriteAccess(Run run, String area, Config.Project project, Tunnel tunnel, String mongosh) {
         // ponytail: the URI is mongosh's last argument, so `ps` shows it while this runs; use --file if check ever runs unattended.
         List<String> commandLine = List.of(mongosh, "--quiet", "--eval", ACTIONS_EVAL, project.data().connectionString(tunnel.port()));
         Optional<Git.Result> result = command(commandLine, Path.of("").toAbsolutePath(), COMMAND_TIMEOUT);
-        if (result.isEmpty() || result.get().exitCode() != 0) {
+        if (result.isEmpty()) {
             run.add(Level.WARN, area, Text.of("check.dataNoMongosh", project.name(), mongosh));
-            return Optional.empty();
+            return;
+        }
+        if (result.get().exitCode() != 0) {
+            // The exit code only: mongosh's stderr may echo the connection string.
+            run.add(Level.FAIL, area, Text.of("check.dataConnect", project.name(), result.get().exitCode()));
+            return;
         }
         List<String> held = new ArrayList<>();
         try {
-            Json.read(result.get().stdout().strip()).forEach(action -> held.add(action.asText()));
+            JsonNode actions = Json.read(result.get().stdout().strip());
+            if (!actions.isArray() || actions.isEmpty() || !actions.valueStream().allMatch(JsonNode::isTextual)) {
+                throw new IllegalArgumentException("not a list of actions");
+            }
+            actions.forEach(action -> held.add(action.asText()));
         } catch (RuntimeException e) {
-            run.add(Level.WARN, area, Text.of("check.dataNoMongosh", project.name(), mongosh));
-            return Optional.empty();
+            run.add(Level.WARN, area, Text.of("check.dataUnreadable", project.name(), mongosh));
+            return;
         }
         List<String> writes = WRITE_ACTIONS.stream().filter(held::contains).toList();
-        return writes.isEmpty() ? Optional.empty() : Optional.of(Text.of("check.dataWritable", project.name(), String.join(", ", writes)));
+        if (!writes.isEmpty()) {
+            run.add(Level.FAIL, area, Text.of("check.dataWritable", project.name(), String.join(", ", writes)));
+        }
     }
 
     private static boolean mcpServerFetched(String npx) {

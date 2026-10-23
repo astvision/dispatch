@@ -13,9 +13,6 @@ import dispatch.config.DataSource;
 import dispatch.data.DataSources;
 import dispatch.data.Tunnel;
 import dispatch.data.TunnelException;
-import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.condition.EnabledOnOs;
 import dispatch.telegram.BotApi;
 import dispatch.testing.FakeClaude;
 import dispatch.testing.FakeTelegram;
@@ -31,10 +28,13 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -512,6 +512,56 @@ class ChecksTest {
         assertTrue(findings.stream().anyMatch(f -> f.level() == Checks.Level.WARN && f.message().english().contains("mongodb-mcp-server")),
                 findings.toString());
         assertFalse(Checks.failed(findings));
+    }
+
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void anAnswerThatIsNotAListOfActionsIsAWarningNeverOk() throws IOException {
+        Path npx = script("npx", "echo 2.1.2");
+        for (String answer : List.of("", "null", "{\"a\":1}", "[]", "[1,2]")) {
+            Path mongosh = script("mongosh", "echo '" + answer + "'");
+
+            List<Checks.Finding> findings = Checks.dataFindings(dataProject(), tunnelling(new AtomicInteger()), mongosh.toString(), npx.toString());
+
+            assertEquals(1, findings.size(), answer + " " + findings);
+            assertEquals(Checks.Level.WARN, findings.getFirst().level(), answer);
+            assertTrue(findings.getFirst().message().english().contains("cannot verify the user is read-only"), answer);
+        }
+    }
+
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void aMongoshThatCannotConnectIsAnErrorWithItsExitCodeAndNoUri() throws IOException {
+        Path mongosh = script("mongosh", "echo \"$@\" >&2; exit 1");
+        Path npx = script("npx", "echo 2.1.2");
+        AtomicInteger closed = new AtomicInteger();
+
+        List<Checks.Finding> findings = Checks.dataFindings(dataProject(), tunnelling(closed), mongosh.toString(), npx.toString());
+
+        assertTrue(Checks.failed(findings), findings.toString());
+        assertTrue(findings.getFirst().message().english().contains("mongosh exit 1"), findings.toString());
+        assertFalse(findings.toString().contains("pw@"));
+        assertEquals(1, closed.get());
+    }
+
+    @Test
+    void anUnexpectedFailureOpeningTheTunnelIsAFindingNotACrash() {
+        DataSources broken = new DataSources() {
+            @Override
+            public Optional<DataSource> forProject(String project) {
+                return Optional.of(dataProject().data());
+            }
+
+            @Override
+            public Tunnel open(DataSource source) {
+                throw new IllegalStateException(DATA_URI);
+            }
+        };
+
+        List<Checks.Finding> findings = Checks.dataFindings(dataProject(), broken, "mongosh", "npx");
+
+        assertTrue(Checks.failed(findings), findings.toString());
+        assertFalse(findings.toString().contains("pw@"));
     }
 
     private Checks checks() {
