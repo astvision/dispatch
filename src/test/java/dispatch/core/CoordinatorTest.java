@@ -587,6 +587,30 @@ class CoordinatorTest {
         assertEquals("the report run returned no HTML document", task.get("failure_detail"));
     }
 
+    /** A query that failed twice is said so, never papered over with a page of numbers it did not get. */
+    @Test
+    void aReportRunThatCouldNotBeBuiltFailsWithItsReason() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object()
+                .put("error", "the visits aggregate by day timed out twice").toString())));
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("FAILED", task.get("phase"));
+        assertEquals("AGENT", task.get("failure_reason"));
+        assertEquals("the report could not be built: the visits aggregate by day timed out twice", task.get("failure_detail"));
+    }
+
+    @Test
+    void aReportRunWithNoOutputOrOutputThatIsNotJsonFails() {
+        for (String output : java.util.Arrays.asList(null, "<!doctype html><html></html>")) {
+            long id = reported(JobResult.succeeded(agentResult(output)));
+
+            Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+            assertEquals("FAILED", task.get("phase"), String.valueOf(output));
+            assertEquals("AGENT", task.get("failure_reason"));
+            assertEquals("the report run returned no HTML document", task.get("failure_detail"));
+        }
+    }
+
     /** A reply to an answered code question resumes a session that never read report data: it may answer again. */
     @Test
     void aFollowUpToACodeAnswerOnADataProjectHasNotSeenData() {

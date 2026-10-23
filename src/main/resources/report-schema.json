@@ -1,1 +1,1 @@
-{"type":"object","required":["html"],"additionalProperties":false,"properties":{"html":{"type":"string","description":"The complete self-contained HTML report"}}}
+{"type":"object","additionalProperties":false,"properties":{"html":{"type":"string","description":"The complete self-contained HTML report"},"error":{"type":"string","description":"Only when the report could not be built: which query failed and why; then leave out html"}}}

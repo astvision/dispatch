@@ -25,7 +25,8 @@ A plan run told about the data (`Prompts.DATA_NOTE`) returns `result: "report"` 
 steps explain the query in a few lines (collection, filter, date range, grouping) for the requester to approve. The plan
 message says it is a report and its button is 📊 **Тайлан гаргах**. Approving starts a `REPORT` run, which resumes the planning
 session in the task's worktree, follows the `dispatch:data-report` skill (query, check the data for gaps, dead periods,
-partial edges and spikes, then one self-contained page) and returns `{"html": …}`. The task then ends as an answered task
+partial edges and spikes, then one self-contained page) and returns `{"html": …}`, or `{"error": …}` naming a query that
+still failed after one narrower retry, which fails the run with that reason. The task then ends as an answered task
 does: the requester gets `answer-<task>.html`. A reply plans again. A task that asks about the code or for a change on the
 same project is answered or planned as before.
 

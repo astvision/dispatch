@@ -64,6 +64,20 @@ class SkillsPluginTest {
         }
     }
 
+    /** A report run that cannot get its numbers says which query failed instead of returning a page without them. */
+    @Test
+    void theDataReportSkillReturnsAnErrorWhenAQueryStillFailsAndChecksOnTheRequestedGrain() {
+        String text = skill("data-report/SKILL.md");
+
+        assertTrue(text.contains("\ndescription: Use when building an HTML report from a project's data in a report run.\n"), text);
+        assertTrue(text.contains("retry it once narrower"), text);
+        assertTrue(text.contains("{\"error\": \""), text);
+        assertTrue(text.contains("never a number you did not get"), text);
+        assertTrue(text.contains("on the requested grain, after rolling up"), text);
+        assertTrue(text.contains("uses the neighbours that exist"), text);
+        assertTrue(text.contains("never the notes or the period table"), text);
+    }
+
     /** Speed matters (spec: agent skills): a skill must not send the agent to the whole suite, which Dispatch runs itself. */
     @Test
     void theSkillsTestWhatTheChangeCoversNotTheWholeSuite() {

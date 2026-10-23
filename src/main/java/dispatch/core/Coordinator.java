@@ -1,5 +1,6 @@
 package dispatch.core;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dispatch.Json;
 import dispatch.Log;
 import dispatch.agent.AgentResult;
@@ -329,9 +330,18 @@ public final class Coordinator {
         }
     }
 
-    /** The report is checked here, as a plan is: only a whole HTML document reaches the requester as the answer. */
+    /**
+     * The report is checked here, as a plan is: only a whole HTML document reaches the requester as the answer, and a run
+     * that says why it could not build one fails with that reason.
+     */
     private void finishReport(long taskId, int seq, AgentResult result) {
-        String html = reportHtml(result.structuredOutput());
+        JsonNode answer = reportAnswer(result.structuredOutput());
+        String error = answer.path("error").asText("").strip();
+        if (!error.isEmpty()) {
+            transitions.failed(taskId, seq, FailureReason.AGENT, "the report could not be built: " + error, result);
+            return;
+        }
+        String html = answer.path("html").asText(null);
         if (html == null || !isHtmlDocument(html)) {
             transitions.failed(taskId, seq, FailureReason.AGENT, "the report run returned no HTML document", result);
             return;
@@ -339,15 +349,15 @@ public final class Coordinator {
         transitions.reported(taskId, seq, html, result);
     }
 
-    /** The answer's html; null when there is none or the answer is not JSON, which is the agent's failure, as a bad plan is. */
-    private static String reportHtml(String structuredOutput) {
+    /** The run's answer; empty when there is none or it is not JSON, which is the agent's failure, as a bad plan is. */
+    private static JsonNode reportAnswer(String structuredOutput) {
         if (structuredOutput == null) {
-            return null;
+            return Json.object();
         }
         try {
-            return Json.read(structuredOutput).path("html").asText(null);
+            return Json.read(structuredOutput);
         } catch (IllegalStateException malformed) {
-            return null;
+            return Json.object();
         }
     }
 

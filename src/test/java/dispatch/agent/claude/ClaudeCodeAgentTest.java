@@ -284,6 +284,17 @@ class ClaudeCodeAgentTest {
         assertEquals("--disallowedTools", args.get(args.size() - 7), args.toString());
     }
 
+    /** A run whose query failed says so in error instead of html; the Coordinator fails it with that reason. */
+    @Test
+    void theReportSchemaLetsARunReturnAnErrorInsteadOfHtml() {
+        com.fasterxml.jackson.databind.JsonNode schema = dispatch.Json.read(dispatch.agent.Schemas.REPORT);
+
+        assertEquals("string", schema.path("properties").path("error").path("type").asText(), schema.toString());
+        assertEquals("string", schema.path("properties").path("html").path("type").asText());
+        assertFalse(schema.path("required").toString().contains("html"), schema.toString());
+        assertFalse(schema.path("additionalProperties").asBoolean(true));
+    }
+
     /** Every follow-up resumes the plan's session; only a session that saw report data is kept from answering. */
     @Test
     void aResumedDataPlanMayAnswerOnlyWhenItsSessionSawNoReportData() throws Exception {

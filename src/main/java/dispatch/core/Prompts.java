@@ -257,7 +257,8 @@ final class Prompts {
                 names. Filter early and use indexes.
 
                 Return only {"html": "<!doctype html>…"} through the structured output: one complete, self-contained \
-                HTML document, in the same language as the task.
+                HTML document, in the same language as the task. If a query you need still fails after one narrower retry, \
+                return {"error": "…"} naming that query instead, never a number you did not get.
                 """.formatted(task.id());
     }
 

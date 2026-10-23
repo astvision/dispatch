@@ -151,6 +151,7 @@ class PromptsTest {
         String report = Prompts.report(reported);
         assertTrue(report.contains("Before your first query, load the dispatch:data-report skill"), report);
         assertTrue(report.contains("daily or monthly counts for gaps and dead periods"), report);
+        assertTrue(report.contains("If a query you need still fails after one narrower retry, return {\"error\": \"…\"}"), report);
         String followUp = Prompts.reportFollowUp(reported, reply);
         assertTrue(followUp.contains("Count visits by day"), followUp);
         assertFalse(followUp.contains(Prompts.DATA_NOTE), "JobRunner owns the note");
