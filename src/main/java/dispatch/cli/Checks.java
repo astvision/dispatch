@@ -12,6 +12,9 @@ import dispatch.Redactor;
 import dispatch.Text;
 import dispatch.config.Config;
 import dispatch.config.ConfigException;
+import dispatch.data.DataSources;
+import dispatch.data.Tunnel;
+import dispatch.data.TunnelException;
 import dispatch.domain.AgentKind;
 import dispatch.telegram.BotApi;
 import dispatch.telegram.TelegramException;
@@ -108,7 +111,13 @@ public final class Checks {
         Finding sandbox = sandbox(Sandboxes.detect(config.sandbox(), Probe.system(prepared.environment())));
         run.add(sandbox.level(), sandbox.area(), sandbox.message());
         Workspaces workspaces = new Workspaces(config.stateDir(), new Git("git", null, COMMAND_TIMEOUT));
-        config.projects().forEach(project -> checkProject(run, project, workspaces));
+        DataSources dataSources = DataSources.of(config);
+        config.projects().forEach(project -> {
+            checkProject(run, project, workspaces);
+            if (project.data() != null) {
+                checkData(run, project, dataSources, "mongosh", "npx");
+            }
+        });
         checkStateDir(run, config.stateDir());
         if (team) {
             // Tasks run on members' computers (ADR 0021), so nothing here opens a pull request.
@@ -269,6 +278,68 @@ public final class Checks {
         run.add(Level.WARN, area, Text.of("check.noClaudeMd", Text.of("check.projectArea", project.name()), base));
     }
 
+    /** The MCP server a report run starts; the check fetches this version so a run's first start is not a download. */
+    private static final String MCP_SERVER = "mongodb-mcp-server@2.1.2";
+    private static final Duration MCP_FETCH_TIMEOUT = Duration.ofSeconds(120);
+    /** Actions that change data or structure; a report user holding any of them is not read-only. */
+    private static final List<String> WRITE_ACTIONS = List.of("insert", "update", "remove", "createCollection",
+            "dropCollection", "createIndex", "dropDatabase", "renameCollectionSameDB");
+    private static final String ACTIONS_EVAL = "JSON.stringify(db.runCommand({connectionStatus:1,showPrivileges:true})"
+            + ".authInfo.authenticatedUserPrivileges.flatMap(p=>p.actions))";
+
+    static List<Finding> dataFindings(Config.Project project, DataSources sources, String mongosh, String npx) {
+        List<Finding> findings = new ArrayList<>();
+        checkData(new Run(findings::add, Redactor.patternsOnly()), project, sources, mongosh, npx);
+        return findings;
+    }
+
+    /** Whether a data project's tunnel opens and its Mongo user cannot write; the connection string never reaches a message. */
+    private static void checkData(Run run, Config.Project project, DataSources sources, String mongosh, String npx) {
+        String area = "project " + project.name();
+        Tunnel tunnel;
+        try {
+            tunnel = sources.open(project.data());
+        } catch (TunnelException e) {
+            run.add(Level.FAIL, area, Text.of("check.dataTunnel", project.name(), project.data().ssh(), e.getMessage()));
+            return;
+        }
+        try (tunnel) {
+            int before = run.findings.size();
+            writableActions(run, area, project, tunnel, mongosh).ifPresent(text -> run.add(Level.FAIL, area, text));
+            if (!mcpServerFetched(npx)) {
+                run.add(Level.WARN, area, Text.of("check.dataMcpFetch", project.name(), MCP_SERVER));
+            }
+            if (run.findings.size() == before) {
+                run.add(Level.OK, area, Text.of("check.data", project.name(), project.data().ssh()));
+            }
+        }
+    }
+
+    /** The write actions the user holds; empty when none, or when they cannot be asked (a warning is added then). */
+    private static Optional<Text> writableActions(Run run, String area, Config.Project project, Tunnel tunnel, String mongosh) {
+        // ponytail: the URI is mongosh's last argument, so `ps` shows it while this runs; use --file if check ever runs unattended.
+        List<String> commandLine = List.of(mongosh, "--quiet", "--eval", ACTIONS_EVAL, project.data().connectionString(tunnel.port()));
+        Optional<Git.Result> result = command(commandLine, Path.of("").toAbsolutePath(), COMMAND_TIMEOUT);
+        if (result.isEmpty() || result.get().exitCode() != 0) {
+            run.add(Level.WARN, area, Text.of("check.dataNoMongosh", project.name(), mongosh));
+            return Optional.empty();
+        }
+        List<String> held = new ArrayList<>();
+        try {
+            Json.read(result.get().stdout().strip()).forEach(action -> held.add(action.asText()));
+        } catch (RuntimeException e) {
+            run.add(Level.WARN, area, Text.of("check.dataNoMongosh", project.name(), mongosh));
+            return Optional.empty();
+        }
+        List<String> writes = WRITE_ACTIONS.stream().filter(held::contains).toList();
+        return writes.isEmpty() ? Optional.empty() : Optional.of(Text.of("check.dataWritable", project.name(), String.join(", ", writes)));
+    }
+
+    private static boolean mcpServerFetched(String npx) {
+        Optional<Git.Result> fetched = command(List.of(npx, "-y", MCP_SERVER, "--version"), Path.of("").toAbsolutePath(), MCP_FETCH_TIMEOUT);
+        return fetched.isPresent() && fetched.get().exitCode() == 0;
+    }
+
     private static void checkStateDir(Run run, Path stateDir) {
         if (!Files.exists(stateDir)) {
             run.add(Level.OK, "state", Text.of("check.stateNew", stateDir));
@@ -373,9 +444,14 @@ public final class Checks {
 
     /** Empty when the command cannot start or hangs. */
     private static Optional<Git.Result> command(List<String> commandLine, Path near) {
+        return command(commandLine, near, COMMAND_TIMEOUT);
+    }
+
+    private static Optional<Git.Result> command(List<String> commandLine, Path near, Duration timeout) {
         Path dir = Files.isDirectory(near) ? near : near.toAbsolutePath().getParent();
         try {
-            return Optional.of(Git.runProcess(commandLine, dir, null, COMMAND_TIMEOUT, String.join(" ", commandLine)));
+            // Only the executable is described: a command line may carry a connection string.
+            return Optional.of(Git.runProcess(commandLine, dir, null, timeout, commandLine.getFirst()));
         } catch (WorkspaceException e) {
             return Optional.empty();
         }

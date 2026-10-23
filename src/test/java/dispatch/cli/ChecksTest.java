@@ -8,6 +8,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
 import dispatch.agent.claude.OwnerPlugins;
+import dispatch.config.Config;
+import dispatch.config.DataSource;
+import dispatch.data.DataSources;
+import dispatch.data.Tunnel;
+import dispatch.data.TunnelException;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.condition.EnabledOnOs;
 import dispatch.telegram.BotApi;
 import dispatch.testing.FakeClaude;
 import dispatch.testing.FakeTelegram;
@@ -395,6 +403,115 @@ class ChecksTest {
         try (java.net.ServerSocket socket = new java.net.ServerSocket(0, 0, InetAddress.getByName("127.0.0.1"))) {
             return socket.getLocalPort();
         }
+    }
+
+    private static final String DATA_URI = "mongodb://ro:" + "pw@10.0.0.1:27017/webapp";
+
+    private Path script(String name, String body) throws IOException {
+        Path file = dir.resolve(name);
+        Files.writeString(file, "#!/bin/sh\n" + body + "\n");
+        file.toFile().setExecutable(true);
+        return file;
+    }
+
+    private static Config.Project dataProject() {
+        return new Config.Project("webapp", null, null, null, "main", "claude-code", null, null, List.of(), null, null, null, null,
+                "off", "off", "off", new DataSource("webapp-prod", "127.0.0.1:27017", "webapp", DATA_URI));
+    }
+
+    private static DataSources tunnelling(AtomicInteger closed) {
+        return new DataSources() {
+            @Override
+            public Optional<DataSource> forProject(String project) {
+                return Optional.of(dataProject().data());
+            }
+
+            @Override
+            public Tunnel open(DataSource source) {
+                return new Tunnel(27999, closed::incrementAndGet);
+            }
+        };
+    }
+
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void aReadOnlyUserPasses() throws IOException {
+        Path mongosh = script("mongosh", "echo '[\"find\",\"listCollections\"]'");
+        Path npx = script("npx", "echo 2.1.2");
+        AtomicInteger closed = new AtomicInteger();
+
+        List<Checks.Finding> findings = Checks.dataFindings(dataProject(), tunnelling(closed), mongosh.toString(), npx.toString());
+
+        assertEquals(1, findings.size(), findings.toString());
+        assertEquals(Checks.Level.OK, findings.getFirst().level());
+        assertEquals("project webapp", findings.getFirst().area());
+        assertEquals(1, closed.get(), "the tunnel is closed");
+        assertFalse(findings.toString().contains("pw@"));
+    }
+
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void aUserThatCanInsertIsAnError() throws IOException {
+        Path mongosh = script("mongosh", "echo '[\"find\",\"insert\",\"dropDatabase\"]'");
+        Path npx = script("npx", "echo 2.1.2");
+        AtomicInteger closed = new AtomicInteger();
+
+        List<Checks.Finding> findings = Checks.dataFindings(dataProject(), tunnelling(closed), mongosh.toString(), npx.toString());
+
+        Checks.Finding error = findings.stream().filter(f -> f.level() == Checks.Level.FAIL).findFirst()
+                .orElseThrow(() -> new AssertionError(findings.toString()));
+        assertTrue(error.message().english().contains("insert, dropDatabase"), error.message().english());
+        assertEquals(1, closed.get());
+        assertFalse(findings.toString().contains("pw@"));
+    }
+
+    @Test
+    void aTunnelThatFailsIsAnErrorNamingTheHost() {
+        DataSources failing = new DataSources() {
+            @Override
+            public Optional<DataSource> forProject(String project) {
+                return Optional.of(dataProject().data());
+            }
+
+            @Override
+            public Tunnel open(DataSource source) {
+                throw new TunnelException("ssh to webapp-prod exited with 255: Permission denied");
+            }
+        };
+
+        List<Checks.Finding> findings = Checks.dataFindings(dataProject(), failing, "mongosh", "npx");
+
+        assertEquals(1, findings.size(), findings.toString());
+        assertEquals(Checks.Level.FAIL, findings.getFirst().level());
+        assertTrue(findings.getFirst().message().english().contains("webapp-prod"), findings.toString());
+    }
+
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void withoutMongoshTheCheckWarns() throws IOException {
+        Path npx = script("npx", "echo 2.1.2");
+        AtomicInteger closed = new AtomicInteger();
+
+        List<Checks.Finding> findings = Checks.dataFindings(dataProject(), tunnelling(closed),
+                dir.resolve("no-such-mongosh").toString(), npx.toString());
+
+        assertTrue(findings.stream().anyMatch(f -> f.level() == Checks.Level.WARN
+                && f.message().english().contains("cannot verify the user is read-only")), findings.toString());
+        assertFalse(Checks.failed(findings));
+        assertEquals(1, closed.get());
+    }
+
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void anMcpServerThatCannotBeFetchedWarns() throws IOException {
+        Path mongosh = script("mongosh", "echo '[\"find\"]'");
+        Path npx = script("npx", "exit 1");
+
+        List<Checks.Finding> findings = Checks.dataFindings(dataProject(), tunnelling(new AtomicInteger()), mongosh.toString(), npx.toString());
+
+        assertTrue(findings.stream().anyMatch(f -> f.level() == Checks.Level.WARN && f.message().english().contains("mongodb-mcp-server")),
+                findings.toString());
+        assertFalse(Checks.failed(findings));
     }
 
     private Checks checks() {
