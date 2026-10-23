@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.DataAccess;
 import dispatch.agent.UsageLimit;
 import java.io.IOException;
 import java.io.InputStream;
@@ -278,6 +279,80 @@ class StreamParserTest {
 
         assertTrue(logged.contains("level=WARN event=agent.mcp_failed server=mongodb run=" + logBase), logged);
         assertFalse(logged.contains("server=plugin_playwright_playwright"), logged);
+    }
+
+    private static final String DATA_INIT = """
+            {"type":"system","subtype":"init","session_id":"s-1","permissionMode":"plan","tools":["Read","Bash",\
+            "mcp__dispatch_data__list-collections","mcp__dispatch_data__count"],\
+            "mcp_servers":[{"name":"dispatch_data","status":"connected"}]}""";
+    private static final String COUNT_CALL = """
+            {"type":"assistant","parent_tool_use_id":null,"message":{"model":"claude-opus-5-5","content":[\
+            {"type":"tool_use","id":"t1","name":"mcp__dispatch_data__count","input":{"database":"webapp","collection":"visits"}}]}}""";
+
+    private static String planResult(String result) {
+        return """
+                {"type":"result","subtype":"success","is_error":false,"session_id":"s-1","total_cost_usd":0.02,"num_turns":3,\
+                "permission_denials":[],"structured_output":{"result":"%s","understanding":"x"}}""".formatted(result);
+    }
+
+    private static StreamParser schemaParser(String... lines) {
+        StreamParser parser = new StreamParser("plan", null, WORKTREE, null, DataAccess.Level.SCHEMA);
+        List.of(lines).forEach(parser::accept);
+        return parser;
+    }
+
+    @Test
+    void aDataServerWithAnUnexpectedToolStopsTheRun() {
+        StreamParser parser = schemaParser("""
+                {"type":"system","subtype":"init","session_id":"s-1","permissionMode":"plan","tools":["Read",\
+                "mcp__dispatch_data__count","mcp__dispatch_data__aggregate"],\
+                "mcp_servers":[{"name":"dispatch_data","status":"connected"}]}""");
+
+        assertEquals("data_tools_unexpected", parser.stopReason());
+        AgentResult result = parser.result(143, "");
+        assertEquals(AgentOutcome.FAILED, result.outcome());
+        assertTrue(result.error().contains("aggregate"), result.error());
+        assertFalse(result.error().contains("count"), result.error());
+    }
+
+    @Test
+    void aDataServerThatFailedToConnectFailsTheRun() {
+        StreamParser parser = schemaParser("""
+                {"type":"system","subtype":"init","session_id":"s-1","permissionMode":"plan","tools":["Read","Bash"],\
+                "mcp_servers":[{"name":"dispatch_data","status":"failed"}]}""", planResult("plan"));
+
+        AgentResult result = parser.result(0, "");
+
+        assertEquals(AgentOutcome.FAILED, result.outcome());
+        assertTrue(result.error().contains("could not reach the project's data"), result.error());
+        assertNull(result.structuredOutput(), "a plan made without the data it needed");
+    }
+
+    @Test
+    void aPlanThatTouchedDataCannotAnswer() {
+        StreamParser parser = schemaParser(DATA_INIT, COUNT_CALL, planResult("answer"));
+
+        assertNull(parser.stopReason());
+        AgentResult result = parser.result(0, "");
+        assertEquals(AgentOutcome.FAILED, result.outcome());
+        assertTrue(result.error().contains("read the project's data, so it may not answer directly"), result.error());
+        assertNull(result.structuredOutput(), "the answer may carry what the data holds");
+    }
+
+    @Test
+    void aPlanThatTouchedNoDataMayAnswer() {
+        AgentResult result = schemaParser(DATA_INIT, planResult("answer")).result(0, "");
+
+        assertEquals(AgentOutcome.SUCCEEDED, result.outcome());
+        assertNull(result.error());
+    }
+
+    @Test
+    void aReportResultAfterTouchingDataIsFine() {
+        AgentResult result = schemaParser(DATA_INIT, COUNT_CALL, planResult("report")).result(0, "");
+
+        assertEquals(AgentOutcome.SUCCEEDED, result.outcome());
+        assertTrue(result.structuredOutput().contains("\"report\""), result.structuredOutput());
     }
 
     private static String capturingLog(Runnable action) {

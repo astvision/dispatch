@@ -21,6 +21,7 @@ import java.util.UUID;
  * @param pluginDirs   Claude Code plugins this run loads (spec: agent skills); empty for none, ignored by Codex and Gemini CLI
  * @param picks        the official plugins the task's plan picked (spec: plugin picks); empty for none, ignored by Codex and
  *                     Gemini CLI
+ * @param data         the project's data this run may read and at what level (spec: data reports); null for none
  */
 public record RunRequest(
         RunKind kind,
@@ -35,7 +36,8 @@ public record RunRequest(
         Path logBase,
         Map<String, String> environment,
         List<Path> pluginDirs,
-        List<String> picks) {
+        List<String> picks,
+        DataAccess data) {
 
     public RunRequest {
         pluginDirs = pluginDirs == null ? List.of() : List.copyOf(pluginDirs);
@@ -45,7 +47,7 @@ public record RunRequest(
     /** This request loading {@code all} plugin directories, its own among them; the sandbox binds them all read-only. */
     public RunRequest loading(List<Path> all) {
         return new RunRequest(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase,
-                environment, all, picks);
+                environment, all, picks, data);
     }
 
     /**
@@ -55,7 +57,15 @@ public record RunRequest(
     public RunRequest as(RunKind otherKind, String otherPrompt, UUID otherSession, boolean otherResume, BigDecimal otherBudgetUsd,
                          Path otherLogBase) {
         return new RunRequest(otherKind, workdir, otherPrompt, otherSession, otherResume, readOnlyDirs, otherBudgetUsd, model,
-                effort, otherLogBase, environment, pluginDirs, picks);
+                effort, otherLogBase, environment, pluginDirs, picks, data);
+    }
+
+    /** Without data. */
+    public RunRequest(RunKind kind, Path workdir, String prompt, UUID sessionId, boolean resume, List<Path> readOnlyDirs,
+                      BigDecimal budgetUsd, String model, String effort, Path logBase, Map<String, String> environment,
+                      List<Path> pluginDirs, List<String> picks) {
+        this(kind, workdir, prompt, sessionId, resume, readOnlyDirs, budgetUsd, model, effort, logBase, environment, pluginDirs,
+                picks, null);
     }
 
     /** Without picks. */

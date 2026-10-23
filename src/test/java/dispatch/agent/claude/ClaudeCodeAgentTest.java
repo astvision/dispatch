@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.agent.AgentStartException;
+import dispatch.agent.DataAccess;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.SandboxUse;
@@ -230,6 +231,22 @@ class ClaudeCodeAgentTest {
         assertFalse(env.contains("GH_TOKEN"), env);
         assertFalse(env.contains("DISPATCH_WORKER_KEY"), env);
         assertTrue(env.contains("ANTHROPIC_API_KEY=sk-ant-test"), env);
+    }
+
+    /** Any local user can read a process's command line, only the owner its environment (SECURITY.md). */
+    @Test
+    void aDataRunPassesTheUriOnlyThroughTheEnvironment() throws Exception {
+        String uri = "mongodb://ro:" + "pw@127.0.0.1:40123/webapp";
+        RunRequest request = new RunRequest(RunKind.PLAN, workdir, "Plan it", SESSION, false, List.of(), new BigDecimal("2"),
+                null, null, dir.resolve("runs/1/1"), Map.of(), List.of(), List.of(),
+                new DataAccess(DataAccess.Level.SCHEMA, uri));
+
+        agent.start(request).await();
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertTrue(valueAfter(args, "--mcp-config").contains("dispatch_data"), args.toString());
+        assertFalse(String.join(" ", args).contains("mongodb://"), args.toString());
+        assertTrue(Files.readString(workdir.resolve("fake-claude.env")).contains("DISPATCH_DATA_URI=" + uri));
     }
 
     @Test

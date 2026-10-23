@@ -7,6 +7,7 @@ import dispatch.Log;
 import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.DataAccess;
 import dispatch.agent.UsageLimit;
 import dispatch.agent.OutputParser;
 import java.math.BigDecimal;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Pattern;
 
 /**
@@ -34,6 +36,8 @@ final class StreamParser implements OutputParser {
     private final String requestedModel;
     private final Path workdir;
     private final Path logBase;
+    /** The level the run was given the project's data at; null when it has none. */
+    private final DataAccess.Level dataLevel;
     private final Set<String> models = new LinkedHashSet<>();
     private boolean initSeen;
     private String permissionMode;
@@ -43,6 +47,12 @@ final class StreamParser implements OutputParser {
     private boolean limited;
     /** That rejection's reset and window, when it named them; null when it did not (Dispatch never guesses a reset). */
     private UsageLimit limit;
+    /** The data server's tools beyond what its level allows, as the init event lists them (spec: data reports). */
+    private final Set<String> unexpectedDataTools = new TreeSet<>();
+    /** The data server's status when the init event shows it anything but connected; null otherwise. */
+    private String dataServerDown;
+    /** True once the run itself called one of the data server's tools. */
+    private boolean dataTouched;
     /** Written by the stdout reader, read by /status; replaced whole, so readers never see a torn value. */
     private volatile AgentActivity activity = new AgentActivity(0, null);
 
@@ -52,6 +62,12 @@ final class StreamParser implements OutputParser {
      * @param logBase        the run's log base, which names its task, run and step in the log
      */
     StreamParser(String expectedPermissionMode, String requestedModel, Path workdir, Path logBase) {
+        this(expectedPermissionMode, requestedModel, workdir, logBase, null);
+    }
+
+    /** @param dataLevel the level the run was given the project's data at, whose tools are checked; null for none */
+    StreamParser(String expectedPermissionMode, String requestedModel, Path workdir, Path logBase, DataAccess.Level dataLevel) {
+        this.dataLevel = dataLevel;
         this.expectedPermissionMode = expectedPermissionMode;
         this.requestedModel = requestedModel;
         this.workdir = workdir;
@@ -86,6 +102,9 @@ final class StreamParser implements OutputParser {
                     Log.warn("agent.mcp_failed", "server", server.path("name").asText(), "run", logBase);
                 }
             }
+            if (dataLevel != null) {
+                checkDataServer(event);
+            }
         } else if (type.equals("assistant")) {
             // A subagent's messages name the tool call that started it; only the run's own model is reported.
             boolean topLevel = !event.hasNonNull("parent_tool_use_id");
@@ -95,6 +114,9 @@ final class StreamParser implements OutputParser {
             for (JsonNode block : event.path("message").path("content")) {
                 if (block.path("type").asText().equals("tool_use")) {
                     activity = new AgentActivity(activity.steps() + 1, describe(block));
+                    if (topLevel && block.path("name").asText().startsWith(DataAccess.TOOL_PREFIX)) {
+                        dataTouched = true;
+                    }
                     if (topLevel && block.path("name").asText().equals("Skill")) {
                         Log.info("agent.skill", "skill", block.path("input").path("skill").asText(), "run", logBase);
                     }
@@ -125,9 +147,51 @@ final class StreamParser implements OutputParser {
         return initSeen && !expectedPermissionMode.equals(permissionMode);
     }
 
+    /**
+     * Dispatch enforces a data level rather than asking for it in the prompt: a server that offers more than its level allows
+     * (a newer server, a changed disabled list) stops the run before it can call it.
+     */
+    private void checkDataServer(JsonNode init) {
+        for (JsonNode tool : init.path("tools")) {
+            String name = tool.asText();
+            if (!name.startsWith(DataAccess.TOOL_PREFIX)) {
+                continue;
+            }
+            String bare = name.substring(DataAccess.TOOL_PREFIX.length());
+            if (!dataLevel.allowedTools().contains(bare)) {
+                unexpectedDataTools.add(bare);
+            }
+        }
+        for (JsonNode server : init.path("mcp_servers")) {
+            String status = server.path("status").asText();
+            if (server.path("name").asText().equals(DataAccess.SERVER) && !status.equals("connected")) {
+                dataServerDown = status;
+            }
+        }
+    }
+
     @Override
     public String stopReason() {
-        return wrongPermissionMode() ? "wrong_permission_mode" : null;
+        if (wrongPermissionMode()) {
+            return "wrong_permission_mode";
+        }
+        if (!unexpectedDataTools.isEmpty()) {
+            return "data_tools_unexpected";
+        }
+        // Without its data the run can only guess; whatever it spends from here is wasted.
+        return dataServerDown != null ? "data_unreachable" : null;
+    }
+
+    /** Why the init event alone makes the run's result unusable on the data's account; null when it does not. */
+    private String dataRefusal() {
+        if (!unexpectedDataTools.isEmpty()) {
+            return "the project's data server offered tools its " + dataLevel + " level does not allow, so the run was stopped: "
+                    + String.join(", ", unexpectedDataTools);
+        }
+        if (dataServerDown != null) {
+            return "could not reach the project's data: its server's status was '" + dataServerDown + "'";
+        }
+        return null;
     }
 
     @Override
@@ -141,8 +205,9 @@ final class StreamParser implements OutputParser {
                 ? "Claude Code started in permission mode '" + permissionMode + "' instead of '" + expectedPermissionMode
                         + "' and was stopped; not every model supports every mode (Haiku has no auto mode)"
                 : null;
+        String refusal = wrongMode != null ? wrongMode : dataRefusal();
         if (result == null) {
-            String error = wrongMode != null ? wrongMode : "agent exited with code " + exitCode + " without a result" + detail(stderrTail);
+            String error = refusal != null ? refusal : "agent exited with code " + exitCode + " without a result" + detail(stderrTail);
             return new AgentResult(unfinished(), exitCode, sessionId, null, null, null, null, List.of(), error, model, unexpectedModel)
                     .withLimit(limited ? limit : null);
         }
@@ -152,9 +217,13 @@ final class StreamParser implements OutputParser {
                 : null;
         Integer turns = result.hasNonNull("num_turns") ? result.get("num_turns").asInt() : null;
         List<String> denials = denials(result.path("permission_denials"));
-        if (wrongMode != null) {
+        if (refusal == null && dataTouched && result.path("structured_output").path("result").asText().equals("answer")) {
+            // An answer goes to the chat as it is, and what the run read may be in it: only an approved report may show data.
+            refusal = "the plan read the project's data, so it may not answer directly";
+        }
+        if (refusal != null) {
             // Whatever it produced was produced under the wrong rules; keep only the accounting.
-            return new AgentResult(AgentOutcome.FAILED, exitCode, session, null, null, cost, turns, denials, wrongMode, model,
+            return new AgentResult(AgentOutcome.FAILED, exitCode, session, null, null, cost, turns, denials, refusal, model,
                     unexpectedModel);
         }
         String structured = result.hasNonNull("structured_output") ? result.get("structured_output").toString() : null;

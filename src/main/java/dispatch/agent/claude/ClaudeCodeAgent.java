@@ -89,7 +89,9 @@ public final class ClaudeCodeAgent implements Agent {
         Map<String, String> runEnvironment = new HashMap<>(environment);
         runEnvironment.putAll(loadout.environment());
         return ProcessRun.start(AgentKind.CLAUDE_CODE.id(), commandLine(run, permissionMode, loadout), run, runEnvironment, run.prompt(),
-                new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE);
+                new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase(),
+                        request.data() == null ? null : request.data().level()),
+                cancelGrace, confinement, STATE);
     }
 
     private static String permissionMode(RunKind kind) {
