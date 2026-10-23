@@ -612,13 +612,14 @@ public final class Renderer {
      */
     private Rendered plan(JsonNode payload) {
         String taskId = taskId(payload);
-        String title = format("plan.title", taskId, escape(payload.path("project").asText()));
         String view = payload.path("view").asText("summary");
         if (view.equals("updating")) {
             return plain(format("plan.titleUpdating", taskId, escape(payload.path("project").asText())) + "\n\n"
                     + format("plan.correction", escapeWithin(payload.path("correction").asText(), SUMMARY_LIMIT)));
         }
         Plan plan = Plan.of(payload.path("plan"));
+        boolean report = plan.result() == Plan.Result.REPORT;
+        String title = format(report ? "plan.reportTitle" : "plan.title", taskId, escape(payload.path("project").asText()));
         long id = payload.path("taskId").asLong();
         int planSeq = payload.path("planSeq").asInt();
         // The buttons are task access's: no Start while the plan asks questions (G-1d, ADR 0027); either way the answers
@@ -626,7 +627,7 @@ public final class Renderer {
         List<TaskAccess.Action> actions = TaskAccess.decisions(plan.questionItems().size());
         List<List<Button>> keyboard = new ArrayList<>();
         if (actions.contains(TaskAccess.Action.APPROVE)) {
-            keyboard.add(List.of(Button.primary(text("button.start"), new Callback.Approve(id, planSeq).data())));
+            keyboard.add(List.of(Button.primary(text(report ? "button.report" : "button.start"), new Callback.Approve(id, planSeq).data())));
         }
         Button reject = new Button(text("button.reject"), new Callback.Reject(id, planSeq).data());
         Button edit = new Button(text("button.edit"), new Callback.EditPlan(id, planSeq).data());
@@ -1247,6 +1248,7 @@ public final class Renderer {
                     ? format("timeline.correction", requestedBy, escapeWithin(run.path("instruction").asText(), INSTRUCTION_LIMIT))
                     : text("timeline.plan");
             case "EXECUTE" -> format("timeline.execute", requestedBy);
+            case "REPORT" -> format("timeline.report", requestedBy);
             default -> text("kind." + run.path("kind").asText());
         };
     }

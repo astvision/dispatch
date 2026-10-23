@@ -62,7 +62,7 @@ class WorkerLoopTest extends WorkerApiFixture {
         Job guarded = new Job(sent.taskId(), sent.seq(), sent.kind(), project, sent.baseBranch(), sent.baseSha(), sent.worktree(),
                 sent.prUrl(), sent.sessionId(), sent.resume(), sent.prompt(), sent.model(), sent.effort(), sent.timeoutMillis(),
                 sent.budgetUsd(), sent.attachments(), sent.commitSubject(), sent.commitTrailers(), sent.deliverySummary(),
-                sent.branch(), sent.reviewPrompt(), "9c1e2d4", null);
+                sent.branch(), sent.reviewPrompt(), "9c1e2d4", null, null);
 
         assertEquals("9c1e2d4", loop.withLocalClone(guarded).orElseThrow().expectedHead(), "dropped, the guard would check nothing");
     }
@@ -75,7 +75,7 @@ class WorkerLoopTest extends WorkerApiFixture {
         Job picked = new Job(sent.taskId(), sent.seq(), sent.kind(), project, sent.baseBranch(), sent.baseSha(), sent.worktree(),
                 sent.prUrl(), sent.sessionId(), sent.resume(), sent.prompt(), sent.model(), sent.effort(), sent.timeoutMillis(),
                 sent.budgetUsd(), sent.attachments(), sent.commitSubject(), sent.commitTrailers(), sent.deliverySummary(),
-                sent.branch(), sent.reviewPrompt(), sent.expectedHead(), List.of("playwright"));
+                sent.branch(), sent.reviewPrompt(), sent.expectedHead(), List.of("playwright"), null);
 
         assertEquals(List.of("playwright"), loop.withLocalClone(picked).orElseThrow().picks());
     }
@@ -83,7 +83,7 @@ class WorkerLoopTest extends WorkerApiFixture {
     private static Job executeJob(Job.Project project, String reviewPrompt) {
         return new Job(TASK_ID, 2, RunKind.EXECUTE, project, "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false,
                 "Implement", null, null, 1000L, new BigDecimal("2"), List.of(), "dispatch #7: x", List.of(), null, null,
-                reviewPrompt, null, null);
+                reviewPrompt, null, null, null);
     }
 
     /** A sandboxed run's guard that a crash left open on this computer: undone before the loop takes a job. */

@@ -135,7 +135,7 @@ public final class Main {
             return;
         }
         // The secrets file's values are masked too.
-        Log.useRedactor(Redactor.fromEnvironment(prepared.environment()));
+        Log.useRedactor(Redactor.fromEnvironment(prepared.environment()).with(prepared.config().dataSecrets()));
 
         App app;
         try {

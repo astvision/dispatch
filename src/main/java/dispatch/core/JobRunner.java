@@ -8,10 +8,15 @@ import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.agent.UsageLimit;
 import dispatch.agent.AgentStartException;
+import dispatch.agent.DataAccess;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.sandbox.Confinement;
 import dispatch.config.Config;
+import dispatch.config.DataSource;
+import dispatch.data.DataSources;
+import dispatch.data.Tunnel;
+import dispatch.data.TunnelException;
 import dispatch.domain.AgentKind;
 import dispatch.domain.Attachment;
 import dispatch.domain.FailureReason;
@@ -51,6 +56,7 @@ public final class JobRunner implements Worker {
     private final TestRunner tests;
     private final Clock clock;
     private final Duration deliveryReserve;
+    private final DataSources dataSources;
 
     /** Without a sandbox for the verify loop's test command; for tests and callers that never run the loop. */
     public JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
@@ -66,12 +72,24 @@ public final class JobRunner implements Worker {
      */
     public JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
                      AttachmentSource attachmentSource, TestRunner tests, Clock clock) {
-        this(workspaces, delivery, agents, redactor, attachmentSource, tests, clock, DELIVERY_RESERVE);
+        this(workspaces, delivery, agents, redactor, attachmentSource, tests, clock, DataSources.NONE);
+    }
+
+    /** @param dataSources the projects' data its plans and reports reach (ADR 0043); {@link DataSources#NONE} off a personal bot */
+    public JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
+                     AttachmentSource attachmentSource, TestRunner tests, Clock clock, DataSources dataSources) {
+        this(workspaces, delivery, agents, redactor, attachmentSource, tests, clock, DELIVERY_RESERVE, dataSources);
     }
 
     /** @param deliveryReserve see {@link #DELIVERY_RESERVE}; a test shortens it so a loop call times out in seconds */
     JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
               AttachmentSource attachmentSource, TestRunner tests, Clock clock, Duration deliveryReserve) {
+        this(workspaces, delivery, agents, redactor, attachmentSource, tests, clock, deliveryReserve, DataSources.NONE);
+    }
+
+    private JobRunner(Workspaces workspaces, Delivery delivery, Map<String, Agent> agents, Redactor redactor,
+                      AttachmentSource attachmentSource, TestRunner tests, Clock clock, Duration deliveryReserve,
+                      DataSources dataSources) {
         this.workspaces = workspaces;
         this.delivery = delivery;
         this.agents = Map.copyOf(agents);
@@ -80,6 +98,7 @@ public final class JobRunner implements Worker {
         this.tests = tests;
         this.clock = clock;
         this.deliveryReserve = deliveryReserve;
+        this.dataSources = dataSources;
     }
 
     @Override
@@ -89,6 +108,7 @@ public final class JobRunner implements Worker {
             case PLAN -> plan(job, events, control, steps);
             case EXECUTE -> implement(job, events, control, steps);
             case DELIVER -> steps.around(RunStep.Kind.DELIVER, () -> deliverAgain(job, control));
+            case REPORT -> report(job, events, control, steps);
             case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a task's run");
         };
     }
@@ -135,11 +155,12 @@ public final class JobRunner implements Worker {
         if (control.stopReason() != null) {
             return stopped(job, control.stopReason(), null);
         }
+        DataSource source = dataSources.forProject(job.project().name()).orElse(null);
         Path worktree;
         TaskFiles files;
         List<Path> plugins;
         try {
-            plugins = plugins(job);
+            plugins = plugins(job, source != null);
             worktree = job.worktree() == null ? createWorktree(job, events) : existingWorktree(job);
             if (control.stopReason() != null) {
                 return stopped(job, control.stopReason(), null);
@@ -148,8 +169,54 @@ public final class JobRunner implements Worker {
         } catch (WorkspaceException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
         }
-        return steps.around(RunStep.Kind.PLAN, () -> runAgent(job, events, control, request(job, worktree, files, plugins),
-                Duration.ofMillis(job.timeoutMillis())));
+        return steps.around(RunStep.Kind.PLAN, () -> runWithData(job, events, control, worktree, files, plugins, source));
+    }
+
+    /**
+     * The approved report, in the session that planned it (ADR 0043): the same worktree, so {@code --resume} finds the
+     * session, and no copyFiles, as for a plan: what it reads may be quoted back.
+     */
+    private JobResult report(Job job, JobEvents events, ActiveRuns.ActiveRun control, Steps steps) {
+        if (control.stopReason() != null) {
+            return stopped(job, control.stopReason(), null);
+        }
+        DataSource source = dataSources.forProject(job.project().name()).orElse(null);
+        if (source == null) {
+            // The data block was removed after the plan was approved.
+            return JobResult.failed(FailureReason.SETUP, "the project's data is no longer configured", null);
+        }
+        Path worktree;
+        List<Path> plugins;
+        try {
+            plugins = plugins(job, true);
+            worktree = existingWorktree(job);
+        } catch (WorkspaceException e) {
+            return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
+        }
+        // The planning session has already seen the task's files.
+        return steps.around(RunStep.Kind.REPORT, () -> runWithData(job, events, control, worktree,
+                TaskFiles.NONE, plugins, source));
+    }
+
+    /**
+     * Runs the agent with {@code source} reachable through a tunnel open only while it runs, closed however the run ends; a
+     * plan sees the data's shape, a report reads it. A tunnel that does not forward fails the run as SETUP before the agent.
+     *
+     * @param source null runs the agent without data
+     */
+    private JobResult runWithData(Job job, JobEvents events, ActiveRuns.ActiveRun control, Path worktree, TaskFiles files,
+                                  List<Path> plugins, DataSource source) {
+        Duration timeout = Duration.ofMillis(job.timeoutMillis());
+        if (source == null) {
+            return runAgent(job, events, control, request(job, worktree, files, plugins, null), timeout);
+        }
+        try (Tunnel tunnel = dataSources.open(source)) {
+            DataAccess data = new DataAccess(job.kind() == RunKind.REPORT ? DataAccess.Level.FULL : DataAccess.Level.SCHEMA,
+                    source.connectionString(tunnel.port()), job.sawData());
+            return runAgent(job, events, control, request(job, worktree, files, plugins, data), timeout);
+        } catch (TunnelException e) {
+            return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
+        }
     }
 
     private JobResult implement(Job job, JobEvents events, ActiveRuns.ActiveRun control, Steps steps) {
@@ -161,7 +228,7 @@ public final class JobRunner implements Worker {
         List<Path> plugins;
         String startSha;
         try {
-            plugins = plugins(job);
+            plugins = plugins(job, false);
             worktree = existingWorktree(job);
             files = attachments(job);
             // Local-only files (e.g. .env) the build and tests need; never part of planning runs.
@@ -188,7 +255,7 @@ public final class JobRunner implements Worker {
         }
         // The whole run's time: the loop's tests and agent calls share what the implementation left.
         Instant deadline = clock.instant().plusMillis(job.timeoutMillis());
-        RunRequest execution = request(job, worktree, files, plugins);
+        RunRequest execution = request(job, worktree, files, plugins, null);
         JobResult result = steps.around(RunStep.Kind.IMPLEMENT, () -> runAgent(job, events, control, execution,
                 Duration.ofMillis(job.timeoutMillis())));
         if (result.outcome() != JobResult.Outcome.SUCCEEDED) {
@@ -455,11 +522,12 @@ public final class JobRunner implements Worker {
     }
 
     /**
-     * The dispatch plugin for a job whose skills are on (spec: agent skills), else none. A missing one means this
-     * machine's startup never wrote it: the run fails rather than tell the agent to use skills it cannot load.
+     * The dispatch plugin for a job whose skills are on (spec: agent skills), or a run given the project's data, whose report
+     * skill is in it (ADR 0043); else none. A missing one means this machine's startup never wrote it: the run fails rather
+     * than tell the agent to use skills it cannot load.
      */
-    private List<Path> plugins(Job job) {
-        if (!job.project().skillsOn()) {
+    private List<Path> plugins(Job job, boolean hasData) {
+        if (!job.project().skillsOn() && !hasData) {
             return List.of();
         }
         Path dir = workspaces.skillsPluginDir();
@@ -470,18 +538,31 @@ public final class JobRunner implements Worker {
     }
 
     /** The note naming the plugin's skills for a plan or an execution; added here, beside the plugin, never by the team machine. */
-    private static String skillNote(RunKind kind, List<Path> plugins) {
+    private static String skillNote(Job job, List<Path> plugins) {
         if (plugins.isEmpty()) {
             return "";
         }
-        return (kind == RunKind.PLAN ? Prompts.SkillNote.PLAN : Prompts.SkillNote.EXECUTE).after();
+        return switch (job.kind()) {
+            // A data project loads the plugin for its report skill alone; the plan's note is for the project's own skills.
+            case PLAN -> job.project().skillsOn() ? Prompts.SkillNote.PLAN.after() : "";
+            case EXECUTE -> Prompts.SkillNote.EXECUTE.after();
+            // Its prompt names its one skill, dispatch:data-report; a plan's note would have it plan a change instead.
+            case REPORT -> "";
+            case DELIVER, SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a job's agent run");
+        };
     }
 
-    private RunRequest request(Job job, Path worktree, TaskFiles files, List<Path> plugins) {
+    /** @param data the project's data the run may read, null for none */
+    private RunRequest request(Job job, Path worktree, TaskFiles files, List<Path> plugins, DataAccess data) {
         return new RunRequest(job.kind(), worktree,
-                job.prompt() + files.note() + pluginNote(job) + skillNote(job.kind(), plugins),
+                job.prompt() + files.note() + pluginNote(job) + dataNote(job.kind(), data != null) + skillNote(job, plugins),
                 job.sessionId(), job.resume(), files.dirs(), job.budgetUsd(), job.model(), job.effort(),
-                workspaces.runLogBase(job.taskId(), job.seq()), Map.of(), plugins, job.picks());
+                workspaces.runLogBase(job.taskId(), job.seq()), Map.of(), plugins, job.picks(), data);
+    }
+
+    /** The note that lets a plan run read the project's data shape and propose a report (ADR 0043). */
+    static String dataNote(RunKind kind, boolean hasData) {
+        return kind == RunKind.PLAN && hasData ? Prompts.DATA_NOTE : "";
     }
 
     /**

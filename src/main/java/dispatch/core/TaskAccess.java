@@ -256,10 +256,12 @@ public final class TaskAccess {
                 }
                 // An answered task never executes: its reply is planned again (spec: answers).
                 boolean executed = Runs.agentStartedBefore(tx, task.id(), RunKind.EXECUTE, Integer.MAX_VALUE);
-                yield executed || Plan.answers(task.planJson()) ? Optional.empty() : Optional.of(Refusal.NOT_EXECUTED);
+                yield executed || Plan.endsWithoutCode(task.planJson()) ? Optional.empty() : Optional.of(Refusal.NOT_EXECUTED);
             }
             case MERGE -> mergeRefusal(task);
-            case STEER -> phase == Phase.EXECUTING ? Optional.empty() : Optional.of(Refusal.WRONG_PHASE);
+            // A report runs in EXECUTING too, but has no loop to steer (ADR 0043).
+            case STEER -> phase == Phase.EXECUTING && Runs.latest(tx, task.id()).filter(run -> run.kind() == RunKind.REPORT).isEmpty()
+                    ? Optional.empty() : Optional.of(Refusal.WRONG_PHASE);
         };
     }
 

@@ -15,6 +15,7 @@ public final class Schemas {
     public static final String SPLIT = Json.read(resource("/split-schema.json")).toString();
     public static final String REVIEW = Json.read(resource("/review-schema.json")).toString();
     public static final String ASSISTANT = Json.read(resource("/assistant-schema.json")).toString();
+    public static final String REPORT = Json.read(resource("/report-schema.json")).toString();
 
     private Schemas() {
     }

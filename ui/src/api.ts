@@ -351,7 +351,7 @@ export interface TaskRow {
   steps?: number;
   lastAction?: string;
   waitingForWorker?: boolean;
-  /** A running or queued run's kind: PLAN or EXECUTE. */
+  /** A running or queued run's kind: PLAN, EXECUTE or REPORT. */
   kind?: string;
   blocked?: string;
   /** On the viewer's own task awaiting approval: how many of its plan's questions are open, and the first of them. */
@@ -432,8 +432,11 @@ export interface PlanView {
   findings: string[];
   /** The official plugins the execution loads (spec: plugin picks); empty when the plan picked none. */
   plugins: string[];
-  /** "answer" when the plan run answered the task instead of planning a change (spec: answers). */
-  result: "plan" | "answer";
+  /**
+   * "answer" when the plan run answered the task instead of planning a change (spec: answers); "report" when it plans a
+   * report from the project's data, which approving runs (ADR 0043).
+   */
+  result: "plan" | "answer" | "report";
   /** The answer in markdown; empty for a plan. */
   answer: string;
   questions: PlanQuestionView[];
@@ -463,7 +466,7 @@ export interface TaskDetail {
 /** One step of a run (RM): the implementation, a test run, a fix, the review, the delivery, or a plan run's one call. */
 export interface RunStepView {
   n: number;
-  kind: "PLAN" | "IMPLEMENT" | "TEST" | "FIX" | "PAUSE" | "REVIEW" | "DELIVER";
+  kind: "PLAN" | "REPORT" | "IMPLEMENT" | "TEST" | "FIX" | "PAUSE" | "REVIEW" | "DELIVER";
   round: number;
   startedAt: string;
   endedAt: string | null;
@@ -480,7 +483,7 @@ export interface RunStepView {
 export interface RunView {
   taskId: number;
   seq: number;
-  kind: "PLAN" | "EXECUTE" | "DELIVER";
+  kind: "PLAN" | "EXECUTE" | "REPORT" | "DELIVER";
   status: string;
   startedAt: string | null;
   finishedAt: string | null;

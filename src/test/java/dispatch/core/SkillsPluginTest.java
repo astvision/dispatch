@@ -32,6 +32,7 @@ class SkillsPluginTest {
         for (String file : SkillsPlugin.files()) {
             assertTrue(Files.isRegularFile(plugin.resolve(file)), file);
         }
+        assertTrue(Files.isRegularFile(plugin.resolve("skills/data-report/SKILL.md")));
         assertFalse(Files.exists(plugin.resolve("skills/dropped-skill")), "a skill no longer shipped is gone");
         assertTrue(Files.readString(plugin.resolve(".claude-plugin/plugin.json")).contains("\"name\": \"dispatch\""));
     }
@@ -55,12 +56,26 @@ class SkillsPluginTest {
         List<String> skills = SkillsPlugin.files().stream().filter(file -> file.endsWith("/SKILL.md")).toList();
         assertEquals(List.of("skills/test-driven-development/SKILL.md", "skills/systematic-debugging/SKILL.md",
                 "skills/verification-before-completion/SKILL.md", "skills/receiving-code-review/SKILL.md",
-                "skills/code-reviewer/SKILL.md", "skills/ponytail/SKILL.md"), skills);
+                "skills/code-reviewer/SKILL.md", "skills/ponytail/SKILL.md", "skills/data-report/SKILL.md"), skills);
         for (String file : skills) {
             String name = file.substring("skills/".length(), file.length() - "/SKILL.md".length());
             String text = BundledFiles.read(SkillsPlugin.RESOURCES + "/" + file);
             assertTrue(text.startsWith("---\nname: " + name + "\ndescription: "), file);
         }
+    }
+
+    /** A report run that cannot get its numbers says which query failed instead of returning a page without them. */
+    @Test
+    void theDataReportSkillReturnsAnErrorWhenAQueryStillFailsAndChecksOnTheRequestedGrain() {
+        String text = skill("data-report/SKILL.md");
+
+        assertTrue(text.contains("\ndescription: Use when building an HTML report from a project's data in a report run.\n"), text);
+        assertTrue(text.contains("retry it once narrower"), text);
+        assertTrue(text.contains("{\"error\": \""), text);
+        assertTrue(text.contains("never a number you did not get"), text);
+        assertTrue(text.contains("on the requested grain, after rolling up"), text);
+        assertTrue(text.contains("uses the neighbours that exist"), text);
+        assertTrue(text.contains("never the notes or the period table"), text);
     }
 
     /** Speed matters (spec: agent skills): a skill must not send the agent to the whole suite, which Dispatch runs itself. */

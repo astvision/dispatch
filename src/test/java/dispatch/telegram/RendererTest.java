@@ -29,6 +29,14 @@ class RendererTest {
     private final Renderer renderer = new Renderer(messages, clock, "dispatch_backend_bot");
 
     @Test
+    void aRetriedReportIsNamedAsOne() {
+        String html = renderer.render(OutboxKind.RETRY_QUEUED, Json.object().put("taskId", 5).put("by", "Ali").put("kind", "REPORT"))
+                .html();
+
+        assertTrue(html.contains(messages.getString("kind.REPORT")), html);
+    }
+
+    @Test
     void everyTextKeyIsDefinedOnce() throws Exception {
         // A properties file keeps the last of two same keys, so a second one silently changes the first one's screens.
         java.util.Set<String> seen = new java.util.HashSet<>();
@@ -64,6 +72,38 @@ class RendererTest {
                 List.of(Renderer.Button.primary(messages.getString("button.start"), "approve:42:1")),
                 List.of(new Renderer.Button("❓ Шийдвэр (1)", "pv:42:1:c"), new Renderer.Button(messages.getString("button.edit"), "pe:42:1"),
                         new Renderer.Button(messages.getString("button.details"), "pv:42:1:d"))), rendered.keyboard());
+    }
+
+    @Test
+    void aReportPlanSaysReportAndOffersToMakeIt() {
+        ObjectNode payload = planPayload(List.of("Count visits per day"), List.of());
+        ((ObjectNode) payload.get("plan")).put("result", "report");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, payload);
+
+        assertTrue(rendered.html().contains("📊"), rendered.html());
+        assertEquals(Renderer.Button.primary("📊 Тайлан гаргах", "approve:42:1"), rendered.keyboard().get(0).get(0));
+    }
+
+    @Test
+    void aCodePlanKeepsItsStartButton() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, planPayload(List.of("Do it"), List.of()));
+
+        assertFalse(rendered.html().contains("📊"), rendered.html());
+        assertEquals(Renderer.Button.primary(messages.getString("button.start"), "approve:42:1"), rendered.keyboard().get(0).get(0));
+    }
+
+    @Test
+    void timelineShowsAnApprovedReportRunAsAReportWithWhoApprovedIt() {
+        ObjectNode payload = timelinePayload();
+        payload.withArray("runs").removeAll();
+        payload.withArray("runs").addObject().put("seq", 2).put("kind", "REPORT").put("status", "SUCCEEDED").put("requestedBy", "Bold")
+                .putNull("instruction").put("queuedAt", "2026-09-17T10:07:00Z").put("startedAt", "2026-09-17T10:07:00Z")
+                .put("finishedAt", "2026-09-17T10:08:02Z").put("costUsd", "0.26").putNull("failureReason");
+
+        String html = renderer.render(OutboxKind.TASK_TIMELINE, payload).html();
+
+        assertTrue(html.contains("📊 Тайлан (Bold зөвшөөрсөн)"), html);
     }
 
     @Test

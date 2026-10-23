@@ -155,7 +155,7 @@ export default function TicketSheet({ task, now, onClose, onDecided }: {
 
         <div className="sheet-actions">
           {decides && plan
-            ? <Decide busy={busy} mayApprove={mayApprove} mayCorrect={mayCorrect}
+            ? <Decide busy={busy} mayApprove={mayApprove} mayCorrect={mayCorrect} report={plan.result === "report"}
                       onCorrect={(text) => void act(() => correctPlan(task.taskId, plan.planSeq, text), () => onDecided(task.taskId, "corrected"))}
                       onApprove={() => void act(() => approvePlan(task.taskId, plan.planSeq), () => onDecided(task.taskId, "approved"))}
                       onReject={() => void act(() => rejectPlan(task.taskId, plan.planSeq), () => onDecided(task.taskId, "rejected"))} />
@@ -231,8 +231,10 @@ function Question({ question, total, current, later, busy, onAnswer }: {
  * Approve, add context for the agent to plan again with, or reject after one more tap: rejecting ends the task, and
  * Telegram's webview shows no confirm() dialog.
  */
-function Decide({ busy, mayApprove, mayCorrect, onApprove, onCorrect, onReject }: {
+function Decide({ busy, mayApprove, mayCorrect, report, onApprove, onCorrect, onReject }: {
   busy: boolean;
+  /** A report plan: approving runs the report, labelled as Telegram labels it (ADR 0043). */
+  report: boolean;
   /** False while the plan asks questions: their answers make the agent plan again, and that plan is approved. */
   mayApprove: boolean;
   mayCorrect: boolean;
@@ -263,7 +265,7 @@ function Decide({ busy, mayApprove, mayCorrect, onApprove, onCorrect, onReject }
     <>
       {!mayApprove && <p className="note">Асуултад хариулсны дараа агент төлөвлөгөөгөө шинэчилнэ.</p>}
       <button type="button" className="ticket-go" style={{ marginTop: 0 }} disabled={busy || !mayApprove} onClick={onApprove}>
-        Зөвшөөрөх
+        {report ? "📊 Тайлан гаргах" : "Зөвшөөрөх"}
       </button>
       {mayCorrect && (
         <button type="button" className="choice" style={{ textAlign: "center", color: "var(--link)" }} disabled={busy}

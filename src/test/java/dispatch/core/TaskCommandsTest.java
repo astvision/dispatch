@@ -61,6 +61,8 @@ class TaskCommandsTest {
             List.of(), List.of(), Plan.Result.ANSWER, "In `AuthClient.java:14`: **30 s**.");
     private static final Plan PLAN = new Plan("Make the auth timeout configurable", List.of("AuthClient.java:14 hard-codes 30s"),
             List.of("Read auth.timeout"), List.of(), List.of());
+    private static final Plan REPORT = new Plan("Visits per day", List.of("visits.at is a date"), List.of("Count visits by day"),
+            List.of(), List.of(), List.of(), List.of(), Plan.Result.REPORT, "");
     private static final Plan PLAN_WITH_TWO_QUESTIONS = new Plan("Make the auth timeout configurable", List.of(),
             List.of("Read auth.timeout"), List.of(), List.of(
                     new PlanQuestion("Which environments?", List.of("staging", "prod")),
@@ -186,6 +188,31 @@ class TaskCommandsTest {
         assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.Approve(id, 1)));
         assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
         assertEquals(List.of(BOLD.ref()), chatsOf("EXECUTION_QUEUED"));
+    }
+
+    @Test
+    void approvingAReportPlanQueuesAReportRun() {
+        long id = awaitingApproval("5", REPORT);
+
+        assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.Approve(id, 1)));
+
+        assertEquals(Map.of("kind", "REPORT", "cause", "APPROVAL", "status", "QUEUED"),
+                row("SELECT kind, cause, status FROM run WHERE task_id = ? ORDER BY seq DESC LIMIT 1", id));
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        assertEquals(List.of(BOLD.ref()), chatsOf("EXECUTION_QUEUED"));
+    }
+
+    @Test
+    void aFailedReportIsRetriedAsAReport() {
+        long id = awaitingApproval("5", REPORT);
+        run(BOLD, new TaskCommand.Approve(id, 1));
+        transitions.failed(id, claimFor(id).seq(), FailureReason.AGENT, "boom", executionResult());
+
+        assertEquals(new CommandResult.Done(id, true), run(BOLD, new TaskCommand.Retry(id)));
+
+        assertEquals(Map.of("kind", "REPORT", "cause", "RETRY", "status", "QUEUED"),
+                row("SELECT kind, cause, status FROM run WHERE task_id = ? ORDER BY seq DESC LIMIT 1", id));
+        assertEquals("EXECUTING", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
     }
 
     @Test

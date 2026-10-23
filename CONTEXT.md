@@ -24,6 +24,10 @@ _Avoid_: Owner, author, assignee
 A repository a group hands tasks for, together with how Dispatch works on it: its short alias, base branch and agent. A project belongs to at least one group, and may have several, one per Telegram group it is announced in.
 _Avoid_: Repo, service, workspace
 
+**Data source**:
+A project's production MongoDB that reports may read: the SSH host Dispatch tunnels through, Mongo's address behind it, the database, and a read-only user's connection string kept in `dispatch.env`. Personal instances and Claude Code projects only (ADR 0043).
+_Avoid_: Database (the bot's own SQLite), connection, prod access
+
 **Usage limit**:
 The cap Claude Code's plan puts on how much an account may use in a window (five hours, seven days). A run Claude rejects for it ends `USAGE_LIMIT`, which is not an error: the task keeps its phase and the run is queued again for after the reset (ADR 0040).
 _Avoid_: Rate limit (the API's per-minute kind), quota, budget (Dispatch's own cost cap per run)
@@ -54,7 +58,11 @@ _Avoid_: Proposal, analysis
 
 **Answer**:
 What a plan run returns instead of a plan when the task only asks for information; the task completes with it, without an approval, and a reply plans again (ADR 0038).
-_Avoid_: Reply, report
+_Avoid_: Reply, report (that one reads prod after an approval)
+
+**Report**:
+What a plan run on a project with a data source proposes when the task asks for numbers from that data: the query explained in a few lines for the requester to approve. Approving runs it read-only on prod and returns one self-contained HTML page, which warns about gaps and other problems it found in the data; the task then completes as an answered one (ADR 0043).
+_Avoid_: Answer (that never touches prod), export, dashboard
 
 **Assistant**:
 The bot's side of a member's private conversation: it answers questions about their tasks and code and proposes changes, but never makes one. Each member has their own, which forgets after `/new` or 12 hours of silence.

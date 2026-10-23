@@ -11,6 +11,7 @@ import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
+import dispatch.config.DataSource;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
 import dispatch.domain.Plan;
@@ -509,5 +510,165 @@ class CoordinatorTest {
 
         assertEquals(RunKind.PLAN, given.get().kind());
         assertTrue(given.get().prompt().contains("<reply>\nWhy 30?\n</reply>"), given.get().prompt());
+    }
+
+    private static final DataSource DATA = new DataSource("ops", "db:27017", "webapp", "mongodb://ro:" + "pw@h/webapp");
+    private static final String REPORT_JSON = new Plan("Visits per day", List.of("visits.at is a date"), List.of("Count visits by day"),
+            List.of(), List.of(), List.of(), List.of(), Plan.Result.REPORT, "").toJson();
+    private static final Config.Project WITH_DATA = new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm",
+            "main", "claude-code", null, "high", List.of(".env"), null, new Config.PhaseSettings("opus", null),
+            new Config.PhaseSettings(null, "low"), null, null, null, null, DATA);
+    private static final String REPORT_HTML = "<!doctype html><html><body><h1>Visits per day</h1></body></html>";
+
+    @Test
+    void aReportForAProjectWithoutDataIsAnInvalidPlan() {
+        long id = queue("How many visits per day?");
+
+        coordinator(projects(List.of(ALM)), remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("FAILED", task.get("phase"));
+        assertEquals("AGENT", task.get("failure_reason"));
+        assertTrue(task.get("failure_detail").contains("needs the project's data"), task.get("failure_detail"));
+    }
+
+    @Test
+    void aReportsFollowUpIsPlannedWithTheReportFollowUpPrompt() {
+        long id = queue("How many visits per day?");
+        Projects configured = projects(List.of(WITH_DATA));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Correct(id, java.util.OptionalInt.of(1), "Only last month")));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+
+        assertEquals(RunKind.PLAN, given.get().kind());
+        assertTrue(given.get().prompt().contains("Count visits by day"), given.get().prompt());
+        assertTrue(given.get().prompt().contains("Only last month"), given.get().prompt());
+    }
+
+    @Test
+    void aReportJobResumesThePlanningSession() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object().put("html", REPORT_HTML).toString())));
+
+        Job job = given.get();
+        assertEquals(RunKind.REPORT, job.kind());
+        assertEquals(row("SELECT session_id FROM task WHERE id = ?", id).get("session_id"), job.sessionId().toString());
+        assertTrue(job.resume(), "the report runs in the session that planned it");
+        assertTrue(job.prompt().contains("dispatch:data-report"), job.prompt());
+        assertEquals("opus", job.model(), "planning's model");
+        assertEquals("high", job.effort());
+        assertEquals(Duration.ofMinutes(60).toMillis(), job.timeoutMillis(), "an execution's limits");
+        assertEquals(new BigDecimal("10"), job.budgetUsd());
+        assertEquals(List.of(), job.attachments(), "the planning session has seen them");
+        assertNull(job.reviewPrompt());
+        assertEquals(List.of(), job.picks());
+        assertEquals(List.of(), job.commitTrailers(), "a report delivers no commit");
+    }
+
+    @Test
+    void aReportRunsHtmlCompletesTheTaskAsAnAnswer() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object().put("html", REPORT_HTML).toString())));
+
+        assertEquals("COMPLETED", row("SELECT phase FROM task WHERE id = ?", id).get("phase"));
+        String answer = Json.read(row("SELECT payload FROM outbox WHERE kind = 'ANSWER_READY'").get("payload")).get("answer").asText();
+        assertTrue(answer.startsWith("<!doctype html"), answer);
+        assertTrue(Json.read(row("SELECT payload FROM outbox WHERE kind = 'TASK_COMPLETED_SHORT'").get("payload"))
+                .get("answered").asBoolean(), "the group hears it was answered");
+    }
+
+    @Test
+    void aReportRunWithoutHtmlFails() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object().put("html", "just text").toString())));
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("FAILED", task.get("phase"));
+        assertEquals("AGENT", task.get("failure_reason"));
+        assertEquals("the report run returned no HTML document", task.get("failure_detail"));
+    }
+
+    /** A query that failed twice is said so, never papered over with a page of numbers it did not get. */
+    @Test
+    void aReportRunThatCouldNotBeBuiltFailsWithItsReason() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object()
+                .put("error", "the visits aggregate by day timed out twice").toString())));
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("FAILED", task.get("phase"));
+        assertEquals("AGENT", task.get("failure_reason"));
+        assertEquals("the report could not be built: the visits aggregate by day timed out twice", task.get("failure_detail"));
+    }
+
+    @Test
+    void aReportRunWithNoOutputOrOutputThatIsNotJsonFails() {
+        for (String output : java.util.Arrays.asList(null, "<!doctype html><html></html>")) {
+            long id = reported(JobResult.succeeded(agentResult(output)));
+
+            Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+            assertEquals("FAILED", task.get("phase"), String.valueOf(output));
+            assertEquals("AGENT", task.get("failure_reason"));
+            assertEquals("the report run returned no HTML document", task.get("failure_detail"));
+        }
+    }
+
+    /** A reply to an answered code question resumes a session that never read report data: it may answer again. */
+    @Test
+    void aFollowUpToACodeAnswerOnADataProjectHasNotSeenData() {
+        long id = queue("Where is the timeout set?");
+        Projects configured = projects(List.of(WITH_DATA));
+        String answer = new Plan("Where?", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                Plan.Result.ANSWER, "In AuthClient.java").toJson();
+        coordinator(configured, remember(JobResult.succeeded(agentResult(answer)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.FollowUp(id, "Why 30?", new Origin("telegram:100/9"))));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(answer)))).execute(claim());
+
+        assertEquals(RunKind.PLAN, given.get().kind());
+        assertNull(given.get().dataSeen());
+    }
+
+    @Test
+    void aCorrectionOfAReportPlanHasSeenData() {
+        long id = queue("How many visits per day?");
+        Projects configured = projects(List.of(WITH_DATA));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Correct(id, java.util.OptionalInt.of(1), "Only last month")));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+
+        assertEquals(Boolean.TRUE, given.get().dataSeen());
+    }
+
+    /** The session ran a report, then planned a code change: what the report read is still in its context. */
+    @Test
+    void aTaskThatHadAReportRunHasSeenDataWhateverItsPlanIsNow() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object().put("html", REPORT_HTML).toString())));
+        Projects configured = projects(List.of(WITH_DATA));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.FollowUp(id, "Add this to the admin page",
+                new Origin("telegram:100/9"))));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(PLAN_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Correct(id, java.util.OptionalInt.empty(), "Only for admins")));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(PLAN_JSON)))).execute(claim());
+
+        assertEquals(RunKind.PLAN, given.get().kind());
+        assertTrue(given.get().prompt().contains("Only for admins"), given.get().prompt());
+        assertEquals(Boolean.TRUE, given.get().dataSeen());
+    }
+
+    /** Plans a report on the data project, approves it, and runs its REPORT job, whose agent starts, to {@code result}. */
+    private long reported(JobResult result) {
+        long id = queue("How many visits per day?");
+        Projects configured = projects(List.of(WITH_DATA));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
+        coordinator(configured, (job, events, control) -> {
+            given.set(job);
+            events.agentStarted(null, clock.instant());
+            return result;
+        }).execute(claim());
+        return id;
     }
 }

@@ -29,13 +29,22 @@ public final class ClaudeCodeAgent implements Agent {
     private static final String REVIEW_SCHEMA = Schemas.REVIEW;
     private static final String SPLIT_SCHEMA = Schemas.SPLIT;
     private static final String ASSISTANT_SCHEMA = Schemas.ASSISTANT;
+    private static final String REPORT_SCHEMA = Schemas.REPORT;
     /** The one command the assistant may run: its view of the member's tasks (A-1). */
     private static final String ASSISTANT_BASH = "Bash(dispatch ask *)";
     /** Replaces Claude Code's coding prompt, which a split does not need: it would multiply the split's cost (ADR 0013). */
     private static final String SPLIT_SYSTEM_PROMPT =
             "You split a developer's chat message into independent development tasks. Answer only through the structured output.";
     /** Runs that do the task's work; a split and an assistant turn keep only what Dispatch gives them. */
-    private static final Set<RunKind> OWNER_KINDS = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW);
+    private static final Set<RunKind> OWNER_KINDS = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW, RunKind.REPORT);
+    /** Delivery is Dispatch's job (ADR 0007); the deny rules are a guardrail, not a boundary (ADR 0009). */
+    private static final List<String> EXECUTE_DENIED = List.of("Bash(git commit *)", "Bash(git push *)", "Bash(gh *)");
+    /**
+     * A run with data has its URI in the environment: no shell may reach Mongo past the data server's level or print it. A
+     * guardrail like {@link #EXECUTE_DENIED}; the level's gate is the data server's tool check (spec: data reports).
+     */
+    private static final List<String> DATA_DENIED = List.of("Bash(mongosh *)", "Bash(mongo *)", "Bash(mongoexport *)",
+            "Bash(mongodump *)", "Bash(printenv*)", "Bash(env*)");
 
     /**
      * What Claude Code keeps in the owner's home (spec: agent state guard); what persists, where a working dir's project
@@ -89,12 +98,14 @@ public final class ClaudeCodeAgent implements Agent {
         Map<String, String> runEnvironment = new HashMap<>(environment);
         runEnvironment.putAll(loadout.environment());
         return ProcessRun.start(AgentKind.CLAUDE_CODE.id(), commandLine(run, permissionMode, loadout), run, runEnvironment, run.prompt(),
-                new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase()), cancelGrace, confinement, STATE);
+                new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase(),
+                        request.data() == null ? null : request.data().level(), request.data() != null && request.data().seen()),
+                cancelGrace, confinement, STATE);
     }
 
     private static String permissionMode(RunKind kind) {
         return switch (kind) {
-            case PLAN, SPLIT, REVIEW -> "plan";
+            case PLAN, SPLIT, REVIEW, REPORT -> "plan";
             case EXECUTE -> "auto";
             // Anything not allowed up front is refused without asking: here, every Bash command but dispatch ask.
             case ASSISTANT -> "dontAsk";
@@ -147,20 +158,31 @@ public final class ClaudeCodeAgent implements Agent {
             args.addAll(List.of("--add-dir", dir.toString()));
         }
         String skill = loadout.skillTool() ? ",Skill" : "";
+        List<String> denied = new ArrayList<>();
         switch (request.kind()) {
             // Read-only investigation: no subagents or schedulers, just reading files and read-only shell commands.
             case PLAN -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", PLAN_SCHEMA));
-            // Delivery is Dispatch's job (ADR 0007); the deny rules are a guardrail, not a boundary (ADR 0009).
-            // --disallowedTools takes every following argument that is not a flag, so it stays last.
-            case EXECUTE -> args.addAll(List.of("--tools", "Read,Edit,Write,Bash" + skill,
-                    "--disallowedTools", "Bash(git commit *)", "Bash(git push *)", "Bash(gh *)"));
+            case EXECUTE -> {
+                args.addAll(List.of("--tools", "Read,Edit,Write,Bash" + skill));
+                denied.addAll(EXECUTE_DENIED);
+            }
             // The verify loop's reviewer: read-only like a plan, its own schema (spec: verify loop).
             case REVIEW -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", REVIEW_SCHEMA));
             case SPLIT -> args.addAll(List.of("--tools", "", "--json-schema", SPLIT_SCHEMA, "--system-prompt", SPLIT_SYSTEM_PROMPT));
             // Reads code, asks for tasks and loads its taskmanager skill (A-1), nothing else; --allowedTools takes every following argument too, so it is last.
             case ASSISTANT -> args.addAll(List.of("--tools", "Read,Grep,Glob,Bash,Skill", "--json-schema", ASSISTANT_SCHEMA,
                     "--allowedTools", ASSISTANT_BASH));
+            // The approved report (ADR 0043): read-only like its plan, querying through the data server, its HTML in its own schema.
+            case REPORT -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", REPORT_SCHEMA));
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
+        }
+        if (request.data() != null) {
+            denied.addAll(DATA_DENIED);
+        }
+        if (!denied.isEmpty()) {
+            // --disallowedTools takes every following argument that is not a flag, so it stays last, after --json-schema's value.
+            args.add("--disallowedTools");
+            args.addAll(denied);
         }
         return args;
     }

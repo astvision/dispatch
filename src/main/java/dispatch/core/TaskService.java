@@ -19,6 +19,7 @@ import dispatch.domain.Priority;
 import dispatch.domain.Requester;
 import dispatch.domain.Run;
 import dispatch.domain.RunCause;
+import dispatch.domain.RunKind;
 import dispatch.domain.RunStatus;
 import dispatch.domain.RunStep;
 import dispatch.domain.SplitState;
@@ -747,7 +748,7 @@ public final class TaskService {
                 .put("requester", task.requester().name()).put("phase", task.phase().name()).put("priority", task.priority().name())
                 .put("prUrl", task.prUrl()).put("baseBranch", task.baseBranch()).put("branch", Config.branch(branchPrefix, task.id()))
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
-                .put("completedAt", text(task.completedAt())).put("answered", Plan.answers(task.planJson()));
+                .put("completedAt", text(task.completedAt())).put("answered", Plan.endsWithoutCode(task.planJson()));
         putActions(payload, actionsOf(tx, viewer, List.of(task)).get(task.id()));
         if (!isOwn(viewer, task)) {
             return Optional.of(payload.put("headline", true).putNull("costUsd"));
@@ -807,7 +808,10 @@ public final class TaskService {
         if (run.status() == RunStatus.RUNNING) {
             activeRuns.activity(taskId).ifPresent(activity ->
                     payload.putObject("activity").put("steps", activity.steps()).put("lastAction", activity.lastAction()));
-            activeRuns.run(taskId).ifPresent(active -> putControls(payload, RunSteps.of(tx, taskId, run.seq()), active));
+            if (run.kind() != RunKind.REPORT) {
+                // A report has no loop to skip, pause or deliver early (ADR 0043).
+                activeRuns.run(taskId).ifPresent(active -> putControls(payload, RunSteps.of(tx, taskId, run.seq()), active));
+            }
         }
         payload.set("teleport", teleportPayload(tx, taskId));
         return Optional.of(payload);

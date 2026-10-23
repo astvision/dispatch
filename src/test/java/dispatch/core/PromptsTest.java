@@ -135,4 +135,30 @@ class PromptsTest {
         assertTrue(prompt.contains("<reply>\nWhy does it subtract?\n</reply>"), prompt);
         assertTrue(prompt.contains("set result to \"answer\""), "ends with the plan format: " + prompt);
     }
+
+    @Test
+    void aReportPromptNamesTheSkillAndAReportFollowUpLeavesTheDataNoteToTheRunner() {
+        Instant now = Instant.parse("2026-10-01T10:00:00Z");
+        String reportJson = new dispatch.domain.Plan("u", List.of(), List.of("Count visits by day"), List.of(), List.of(),
+                List.of(), List.of(), dispatch.domain.Plan.Result.REPORT, "").toJson();
+        Task reported = new Task(1, "webapp", "Visits", "Visits per day?", Phase.AWAITING_APPROVAL, Priority.NORMAL,
+                new Requester("telegram:100", "Bold"), "telegram:100/1", "telegram:100", UUID.randomUUID(), null, "main",
+                null, null, reportJson, null, null, null, null, now, null, now, now, null);
+        Run reply = new Run(1, 2, RunKind.PLAN, RunCause.FOLLOW_UP, RunStatus.RUNNING, "Only last month",
+                "telegram:100", "Bold", null, null, null, null, null, null, null, null);
+
+        // A live report run told only to "use" the skill skipped it and never checked below the plan's yearly grouping.
+        String report = Prompts.report(reported);
+        assertTrue(report.contains("Before your first query, load the dispatch:data-report skill"), report);
+        assertTrue(report.contains("daily or monthly counts for gaps and dead periods"), report);
+        assertTrue(report.contains("If a query you need still fails after one narrower retry, return {\"error\": \"…\"}"), report);
+        String followUp = Prompts.reportFollowUp(reported, reply);
+        assertTrue(followUp.contains("Count visits by day"), followUp);
+        assertFalse(followUp.contains(Prompts.DATA_NOTE), "JobRunner owns the note");
+        // The session has read the data, so an answer would always be refused (ADR 0043).
+        assertFalse(followUp.contains("answer it"), followUp);
+        assertTrue(followUp.contains("If the reply asks for a different or changed report, plan the report again: explain the new "
+                + "query in steps and set result to \"report\". If it asks for a change to the code, plan that change. Never answer "
+                + "directly"), followUp);
+    }
 }

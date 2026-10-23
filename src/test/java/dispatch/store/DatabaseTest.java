@@ -248,6 +248,38 @@ class DatabaseTest {
         }
     }
 
+    /** The rebuild that lets a run be a REPORT keeps every run and step that was there. */
+    @Test
+    void version37RunsAndStepsSurviveTheRebuildThatAddsReports() throws Exception {
+        Path file = databaseAtVersion(37, """
+                INSERT INTO task (id, project, title, description, phase, requester_ref, requester_name, origin_ref, chat_ref,
+                                  session_id, base_branch, created_at, updated_at)
+                VALUES (1, 'webapp', 't', 't', 'EXECUTING', 'telegram:1', 'Bold', 'telegram:1/5', 'telegram:-1',
+                        '63d36fba-124d-4737-8020-d37d4998abca', 'main', '2026-10-23T10:00:00.000Z', '2026-10-23T10:00:00.000Z')""", """
+                INSERT INTO run (task_id, seq, kind, status, instruction, requested_by, queued_at, failure_reason, sandbox)
+                VALUES (1, 1, 'PLAN', 'FAILED', 'count visits', 'telegram:1', '2026-10-23T10:00:00.000Z', 'USAGE_LIMIT', 'bwrap')""", """
+                INSERT INTO run_step (task_id, seq, n, kind, round, started_at, outcome)
+                VALUES (1, 1, 1, 'PLAN', 1, '2026-10-23T10:00:01.000Z', 'FAILED')""");
+
+        try (Database upgraded = Database.open(file)) {
+            upgraded.migrate();
+
+            assertEquals("PLAN USAGE_LIMIT bwrap count visits", upgraded.transactionReturning(tx -> tx.one(
+                    "SELECT kind || ' ' || failure_reason || ' ' || sandbox || ' ' || instruction AS r FROM run",
+                    row -> row.string("r"))).orElseThrow());
+            assertEquals("PLAN FAILED", upgraded.transactionReturning(tx -> tx.one(
+                    "SELECT kind || ' ' || outcome AS r FROM run_step", row -> row.string("r"))).orElseThrow());
+            upgraded.transaction(tx -> tx.update("""
+                    INSERT INTO run (task_id, seq, kind, status, instruction, requested_by, queued_at)
+                    VALUES (1, 2, 'REPORT', 'RUNNING', 'plan', 'telegram:1', '2026-10-23T10:05:00.000Z')"""));
+            upgraded.transaction(tx -> tx.update("""
+                    INSERT INTO run_step (task_id, seq, n, kind, round, started_at)
+                    VALUES (1, 2, 1, 'REPORT', 1, '2026-10-23T10:05:01.000Z')"""));
+            assertEquals("2", upgraded.transactionReturning(tx -> tx.one("SELECT count(*) AS n FROM run_step",
+                    row -> row.string("n"))).orElseThrow());
+        }
+    }
+
     /** A state file as an older Dispatch left it: the first {@code version} migrations applied, then {@code inserts}. */
     private Path databaseAtVersion(int version, String... inserts) throws Exception {
         Path file = dir.resolve("v" + version + ".db");
@@ -261,7 +293,9 @@ class DatabaseTest {
                     "/db/017-telegram-usernames.sql", "/db/018-plan-answers.sql", "/db/019-member-prefs.sql", "/db/020-assistant.sql",
                     "/db/021-draft-discarded.sql", "/db/022-worker-capacity.sql", "/db/023-additions.sql", "/db/024-merged.sql",
                     "/db/025-draft-source.sql", "/db/026-outbox-edit-of.sql", "/db/027-retired-reply-kinds.sql",
-                    "/db/028-worker-agent.sql", "/db/029-run-sandbox.sql", "/db/030-task-head.sql"};
+                    "/db/028-worker-agent.sql", "/db/029-run-sandbox.sql", "/db/030-task-head.sql", "/db/031-draft-view.sql",
+                    "/db/032-run-step.sql", "/db/033-run-step-pause.sql", "/db/034-worker-protocol.sql", "/db/035-task-ci.sql",
+                    "/db/036-usage-limit-reason.sql", "/db/037-agent-limit.sql"};
             for (int i = 0; i < version; i++) {
                 try (java.io.InputStream script = getClass().getResourceAsStream(scripts[i])) {
                     String sqlText = new String(script.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);

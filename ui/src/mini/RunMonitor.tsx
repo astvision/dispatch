@@ -20,6 +20,7 @@ function countdown(ms: number): string {
 function label(step: RunStepView): string {
   switch (step.kind) {
     case "PLAN": return "Төлөвлөлт";
+    case "REPORT": return "Тайлан";
     case "IMPLEMENT": return "Хэрэгжүүлэлт";
     case "TEST": return `Тест ${step.round}`;
     case "FIX": return `Засвар ${step.round}/${FIX_ROUNDS}`;

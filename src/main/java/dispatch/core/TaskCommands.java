@@ -183,7 +183,7 @@ public final class TaskCommands {
         return new CommandResult.Done(task.id(), isRequester(who, task));
     }
 
-    /** Repeats the failed step: a plan, an execution, or only the delivery of work already done (ADR 0008). */
+    /** Repeats the failed step: a plan, a report, an execution, or only the delivery of work already done (ADR 0008). */
     private CommandResult retry(Tx tx, Requester who, Task task) {
         Instant now = clock.instant();
         // Task access saw the latest run fail: that run is the step to repeat.
@@ -249,10 +249,11 @@ public final class TaskCommands {
         return true;
     }
 
-    /** Queues the approved plan's execution; the requester hears it is queued. */
+    /** Queues the approved plan's execution, or its report (spec: data reports); the requester hears it is queued. */
     private CommandResult approve(Tx tx, Requester who, Task task, int planSeq) {
+        RunKind kind = Plan.parse(task.planJson()).result() == Plan.Result.REPORT ? RunKind.REPORT : RunKind.EXECUTE;
         // The run carries the plan it implements, so what was approved stays on record.
-        return queueRun(tx, who, task, Phase.EXECUTING, RunKind.EXECUTE, RunCause.APPROVAL, task.planJson(),
+        return queueRun(tx, who, task, Phase.EXECUTING, kind, RunCause.APPROVAL, task.planJson(),
                 "approved plan " + planSeq, false, OutboxKind.EXECUTION_QUEUED, clock.instant());
     }
 
@@ -312,7 +313,7 @@ public final class TaskCommands {
         }
         // The reply to an answer is planned in the answer's own session: another answer, or a plan to approve. Any other
         // finished task continues in its building session, without a new plan (ADR 0006).
-        boolean answered = Plan.answers(task.planJson());
+        boolean answered = Plan.endsWithoutCode(task.planJson());
         return queueRun(tx, who, task, answered ? Phase.PLANNING : Phase.EXECUTING, answered ? RunKind.PLAN : RunKind.EXECUTE,
                 RunCause.FOLLOW_UP, followUp.text().strip(), "follow-up", true, OutboxKind.FOLLOW_UP_QUEUED, now);
     }

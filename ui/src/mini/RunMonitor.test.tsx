@@ -53,6 +53,17 @@ describe("the run monitor", () => {
     expect(vi.mocked(api.getTaskRun).mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
+  it("labels a report run's step", async () => {
+    vi.mocked(api.getTaskRun).mockResolvedValue({
+      ...running, kind: "REPORT", status: "RUNNING",
+      steps: [{ n: 1, kind: "REPORT", round: 1, startedAt: "2026-09-30T10:00:00Z", endedAt: null, outcome: null }],
+    });
+
+    render(<RunMonitor taskId={15} live />);
+
+    expect(await screen.findByText("Тайлан")).toBeInTheDocument();
+  });
+
   it("lists a review's findings with how serious each is", async () => {
     vi.mocked(api.getTaskRun).mockResolvedValue({
       ...running, status: "SUCCEEDED", finishedAt: "2026-09-30T10:12:00Z", costUsd: "1.05",

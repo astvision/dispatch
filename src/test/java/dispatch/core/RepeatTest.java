@@ -16,6 +16,8 @@ class RepeatTest {
     @CsvSource(nullValues = "-", value = {
             "PLAN,    TASK,       TIMEOUT,      PLAN,    RETRY,  step",
             "PLAN,    CORRECTION, USAGE_LIMIT,  PLAN,    RETRY,  step",
+            "REPORT,  APPROVAL,   AGENT,        REPORT,  RETRY,  step",
+            "REPORT,  APPROVAL,   USAGE_LIMIT,  REPORT,  RETRY,  step",
             "EXECUTE, APPROVAL,   AGENT,        EXECUTE, RETRY,  step",
             "EXECUTE, FOLLOW_UP,  USAGE_LIMIT,  EXECUTE, RETRY,  step",
             "EXECUTE, RETRY,      BUDGET,       EXECUTE, RETRY,  step",

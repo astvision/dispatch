@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.agent.AgentStartException;
+import dispatch.agent.DataAccess;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.SandboxUse;
@@ -230,6 +231,92 @@ class ClaudeCodeAgentTest {
         assertFalse(env.contains("GH_TOKEN"), env);
         assertFalse(env.contains("DISPATCH_WORKER_KEY"), env);
         assertTrue(env.contains("ANTHROPIC_API_KEY=sk-ant-test"), env);
+    }
+
+    /** Any local user can read a process's command line, only the owner its environment (SECURITY.md). */
+    @Test
+    void aDataRunPassesTheUriOnlyThroughTheEnvironment() throws Exception {
+        String uri = "mongodb://ro:" + "pw@127.0.0.1:40123/webapp";
+        RunRequest request = new RunRequest(RunKind.PLAN, workdir, "Plan it", SESSION, false, List.of(), new BigDecimal("2"),
+                null, null, dir.resolve("runs/1/1"), Map.of(), List.of(), List.of(),
+                new DataAccess(DataAccess.Level.SCHEMA, uri));
+
+        agent.start(request).await();
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertTrue(valueAfter(args, "--mcp-config").contains("dispatch_data"), args.toString());
+        assertFalse(String.join(" ", args).contains("mongodb://"), args.toString());
+        assertTrue(Files.readString(workdir.resolve("fake-claude.env")).contains("DISPATCH_DATA_URI=" + uri));
+    }
+
+    /** A guardrail, not the boundary: the URI is in the environment, and a shell could reach Mongo or print it. */
+    @Test
+    void aDataRunMayNotRunAMongoShellOrPrintTheEnvironment() throws Exception {
+        RunRequest request = new RunRequest(RunKind.PLAN, workdir, "Plan it", SESSION, false, List.of(), new BigDecimal("2"),
+                null, null, dir.resolve("runs/1/1"), Map.of(), List.of(), List.of(),
+                new DataAccess(DataAccess.Level.SCHEMA, "mongodb://ro:" + "pw@127.0.0.1:40123/webapp"));
+
+        agent.start(request).await();
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        // --disallowedTools takes every following argument that is not a flag, so it is last.
+        assertEquals(List.of("--disallowedTools", "Bash(mongosh *)", "Bash(mongo *)", "Bash(mongoexport *)", "Bash(mongodump *)",
+                "Bash(printenv*)", "Bash(env*)"), args.subList(args.size() - 7, args.size()));
+        assertTrue(valueAfter(args, "--json-schema").contains("\"understanding\""), args.toString());
+        assertEquals("Read,Bash", valueAfter(args, "--tools"));
+    }
+
+    /** A report reads like a plan and answers through its own schema; the deny rules stay last, after the schema's value. */
+    @Test
+    void aReportRunIsPlanModeWithTheReportSchema() throws Exception {
+        Path plugin = Files.createDirectories(dir.resolve("state/plugins/dispatch"));
+        RunRequest request = new RunRequest(RunKind.REPORT, workdir, "Run the approved report", SESSION, true, List.of(),
+                new BigDecimal("2"), null, null, dir.resolve("runs/1/2"), Map.of(), List.of(plugin), List.of(),
+                new DataAccess(DataAccess.Level.FULL, "mongodb://ro:" + "pw@127.0.0.1:40123/webapp"));
+
+        agent.start(request).await();
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertEquals("plan", valueAfter(args, "--permission-mode"));
+        assertEquals("Read,Bash,Skill", valueAfter(args, "--tools"));
+        assertEquals(dispatch.agent.Schemas.REPORT, valueAfter(args, "--json-schema"));
+        assertEquals(SESSION.toString(), valueAfter(args, "--resume"));
+        assertEquals("--disallowedTools", args.get(args.size() - 7), args.toString());
+    }
+
+    /** A run whose query failed says so in error instead of html; the Coordinator fails it with that reason. */
+    @Test
+    void theReportSchemaLetsARunReturnAnErrorInsteadOfHtml() {
+        com.fasterxml.jackson.databind.JsonNode schema = dispatch.Json.read(dispatch.agent.Schemas.REPORT);
+
+        assertEquals("string", schema.path("properties").path("error").path("type").asText(), schema.toString());
+        assertEquals("string", schema.path("properties").path("html").path("type").asText());
+        assertFalse(schema.path("required").toString().contains("html"), schema.toString());
+        assertFalse(schema.path("additionalProperties").asBoolean(true));
+    }
+
+    /** Every follow-up resumes the plan's session; only a session that saw report data is kept from answering. */
+    @Test
+    void aResumedDataPlanMayAnswerOnlyWhenItsSessionSawNoReportData() throws Exception {
+        AgentResult unseen = agent.start(resumedDataPlan(false)).await();
+        AgentResult seen = agent.start(resumedDataPlan(true)).await();
+
+        assertEquals(AgentOutcome.SUCCEEDED, unseen.outcome(), unseen.error());
+        assertEquals(AgentOutcome.FAILED, seen.outcome());
+        assertTrue(seen.error().contains("may not answer directly"), seen.error());
+    }
+
+    private RunRequest resumedDataPlan(boolean seen) {
+        return new RunRequest(RunKind.PLAN, workdir, "SCENARIO:data-answer", SESSION, true, List.of(), new BigDecimal("2"),
+                null, null, dir.resolve("runs/1/3"), Map.of(), List.of(), List.of(),
+                new DataAccess(DataAccess.Level.SCHEMA, "mongodb://ro:" + "pw@127.0.0.1:40123/webapp", seen));
+    }
+
+    @Test
+    void aPlanRunWithoutDataDeniesNothing() throws Exception {
+        agent.start(plan("Plan it")).await();
+
+        assertFalse(Files.readAllLines(workdir.resolve("fake-claude.args")).contains("--disallowedTools"));
     }
 
     @Test

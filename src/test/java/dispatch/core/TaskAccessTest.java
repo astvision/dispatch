@@ -367,6 +367,19 @@ class TaskAccessTest {
         return id;
     }
 
+    @Test
+    void aReportedTaskAcceptsAFollowUp() {
+        // An answer completes without executing; storing a report plan in its place makes it a never-executed report task.
+        Plan answer = new Plan("Visits per day", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                Plan.Result.ANSWER, "42");
+        long id = awaiting(answer);
+        Plan report = new Plan("Visits per day", List.of(), List.of("Count visits by day"), List.of(), List.of(), List.of(),
+                List.of(), Plan.Result.REPORT, "");
+        db.transaction(tx -> tx.update("UPDATE task SET plan_json = ? WHERE id = ?", report.toJson(), id));
+
+        assertEquals(Optional.empty(), verdict(BOLD, id).refusal(Action.FOLLOW_UP));
+    }
+
     /** Its first plan run failed, so no execution ever started. */
     private long failedPlan() {
         long id = create("alm");

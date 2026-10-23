@@ -234,6 +234,40 @@ plan run (ADR 0038): no approval, no pull request, the answer in your private ch
 an HTML report and it arrives as an `.html` file to open in a browser. Reply to it to ask more, or say "fix it" to get a
 plan to approve.
 
+### Reports from prod data
+
+On a personal bot, a Claude Code project can name its production MongoDB, and a task that asks for numbers from it,
+such as "how many visits per year?", becomes a report (ADR 0043). Add a `data` block to the project:
+
+```yaml
+projects:
+  - name: webapp
+    data:
+      ssh: webapp-prod             # a Host your own ssh reaches without a prompt (~/.ssh/config)
+      mongo: 127.0.0.1:27017       # Mongo's address as that host sees it
+      database: webapp
+      uri: ${WEBAPP_MONGO_RO_URI}  # a read-only user's mongodb:// URI, kept in dispatch.env
+```
+
+and to `dispatch.env`, beside the config, a line `WEBAPP_MONGO_RO_URI=` followed by the read-only user's `mongodb://`
+connection string (the host is replaced by the tunnel's; `mongodb+srv://` is refused). Create the user with only the `read` role.
+Reads go to the one host `mongo` names (the URI's replica set is dropped and the driver connects directly), so point it
+at a secondary to keep load off the primary.
+`dispatch check` opens the tunnel, refuses a user that can do more than read (it needs `mongosh` for that check), and fetches the
+pinned MongoDB MCP server so the first report does not wait for npx.
+
+The flow: the plan run sees only the data's shape (collections, indexes, field types, counts) and sends a report plan,
+📊, whose steps explain the query: collection, filter, date range, grouping. Tap 📊 **Тайлан гаргах** and a report
+run, in the same session, queries prod read-only, checks the data for gaps, dead periods, partial edges and spikes, and
+sends one self-contained `.html` page to your private chat, with a warning box for whatever it found. Reply to it to
+ask for more. A bug fix or a question about the code on the same project is planned or answered as before.
+
+Dispatch opens the SSH tunnel itself, outside the sandbox, for that run only. A plan cannot run `find` or `aggregate`,
+and one that read the data cannot answer without your tap; every query stops after 60 s. A team instance, a Codex or
+Gemini CLI project and Windows cannot have a data block. What this does and does not protect: SECURITY.md. To try it
+for real: `DISPATCH_LIVE_DATA=1 ./mvnw test -Dtest=LiveDataReportTest` (needs docker, `/usr/sbin/sshd` and `claude`;
+uses the account's quota).
+
 ### Watch and steer a run
 
 Open a task in the Mini App and its latest run shows as a rail of steps, refreshed every 2 seconds while it runs: each

@@ -1,5 +1,7 @@
 package dispatch.core;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import dispatch.Json;
 import dispatch.Log;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
@@ -22,6 +24,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -127,6 +130,7 @@ public final class Coordinator {
             case PLAN -> planJob(task, run, project.get());
             case EXECUTE -> executeJob(task, run, project.get());
             case DELIVER -> deliverJob(task, run, project.get());
+            case REPORT -> reportJob(task, run, project.get());
             case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(run.kind() + " is never a task's run");
         });
     }
@@ -135,10 +139,22 @@ public final class Coordinator {
         Config.RunLimits limits = planLimits.apply(project);
         // A task that already has a plan is being corrected, or, after an answer, continued: the run's instruction is the reply.
         String prompt = task.planJson() == null ? Prompts.plan(task)
-                : Plan.answers(task.planJson()) ? Prompts.answerFollowUp(task, run) : Prompts.correction(task, run);
+                : !Plan.endsWithoutCode(task.planJson()) ? Prompts.correction(task, run)
+                : Plan.answers(task.planJson()) ? Prompts.answerFollowUp(task, run) : Prompts.reportFollowUp(task, run);
         return newJob(task, run, project, task.sessionId(), agentStartedBefore(task.id(), RunKind.PLAN, run.seq()), prompt,
                 project.planModel(), project.planEffort(), limits.timeout().toMillis(), limits.budgetUsd(),
-                attachments(task.id()), null, null, null);
+                attachments(task.id()), null, null, null, dataSeen(task, run));
+    }
+
+    /**
+     * Whether the task's session has seen report data (ADR 0043): it ran a report, or its plan proposes one. Every follow-up
+     * resumes that session, so only such a one is kept from answering; a code question's reply may answer again.
+     */
+    private boolean dataSeen(Task task, Run run) {
+        if (task.planJson() != null && Plan.parse(task.planJson()).result() == Plan.Result.REPORT) {
+            return true;
+        }
+        return agentStartedBefore(task.id(), RunKind.REPORT, run.seq());
     }
 
     private Job executeJob(Task task, Run run, Config.Project project) {
@@ -146,7 +162,17 @@ public final class Coordinator {
         boolean resume = agentStartedBefore(task.id(), RunKind.EXECUTE, run.seq());
         return newJob(task, run, project, buildSession(task), resume, executePrompt(task, run, resume), project.executeModel(),
                 project.executeEffort(), limits.timeout().toMillis(), limits.budgetUsd(), attachments(task.id()), null,
-                project.loopOn() ? Prompts.review(task, task.planJson(), reviewInstruction(task, run)) : null, picks(task));
+                project.loopOn() ? Prompts.review(task, task.planJson(), reviewInstruction(task, run)) : null, picks(task), false);
+    }
+
+    /**
+     * The approved report, in the session that planned it (spec: data reports): planning's model with an execution's limits,
+     * as it runs the queries. The session has seen the attachments; a report has no review and loads no picks.
+     */
+    private Job reportJob(Task task, Run run, Config.Project project) {
+        Config.RunLimits limits = executeLimits.apply(project);
+        return newJob(task, run, project, task.sessionId(), true, Prompts.report(task), project.planModel(), project.planEffort(),
+                limits.timeout().toMillis(), limits.budgetUsd(), List.of(), null, null, null, false);
     }
 
     /** The plan's plugin picks (spec: plugin picks); a task without a plan has none. A plan run never loads them. */
@@ -156,12 +182,12 @@ public final class Coordinator {
 
     /** A delivery run has no agent: it commits what the failed delivery left, with that run's summary as the body. */
     private Job deliverJob(Task task, Run run, Config.Project project) {
-        return newJob(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction(), null, null);
+        return newJob(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction(), null, null, false);
     }
 
     private Job newJob(Task task, Run run, Config.Project project, UUID sessionId, boolean resume, String prompt, String model,
                     String effort, long timeoutMillis, BigDecimal budgetUsd, List<Attachment> attachments,
-                    String deliverySummary, String reviewPrompt, List<String> plugins) {
+                    String deliverySummary, String reviewPrompt, List<String> plugins, boolean dataSeen) {
         Job.Project on = new Job.Project(project.name(), project.repo(), project.path(), project.baseBranch(), project.agent(),
                 project.copyFiles(), project.loopOn() ? project.test() : null, project.loopOn() ? Boolean.TRUE : null,
                 skills(project));
@@ -169,7 +195,7 @@ public final class Coordinator {
                 task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
                 trailers(task, run.kind()), deliverySummary, Config.branchFor(branchPrefix, task.id()), reviewPrompt,
-                expectedHead(task.id(), run.kind()), plugins);
+                expectedHead(task.id(), run.kind()), plugins, dataSeen);
     }
 
     /**
@@ -179,9 +205,9 @@ public final class Coordinator {
         return project.skillsOn() && AgentKind.of(project.agent()).loadsPlugins() ? Boolean.TRUE : null;
     }
 
-    /** Null for a PLAN job, which neither builds on the branch nor pushes it: nothing to check. */
+    /** Null for a PLAN or REPORT job, which neither builds on the branch nor pushes it: nothing to check. */
     private String expectedHead(long taskId, RunKind kind) {
-        if (kind == RunKind.PLAN) {
+        if (kind == RunKind.PLAN || kind == RunKind.REPORT) {
             return null;
         }
         return db.transactionReturning(tx -> Tasks.expectedHead(tx, taskId));
@@ -220,7 +246,7 @@ public final class Coordinator {
 
     /**
      * The delivery commit's trailers: who asked, and whoever approved the plan (later runs do not change that). Only
-     * EXECUTE and DELIVER jobs ever deliver, so a PLAN job skips the {@code Runs.forTask} query and gets none.
+     * EXECUTE and DELIVER jobs ever deliver, so a PLAN or REPORT job skips the {@code Runs.forTask} query and gets none.
      */
     private List<String> trailers(Task task, RunKind kind) {
         if (kind != RunKind.EXECUTE && kind != RunKind.DELIVER) {
@@ -277,26 +303,71 @@ public final class Coordinator {
 
     private void succeeded(Job job, JobResult result) {
         switch (job.kind()) {
-            case PLAN -> finishPlan(job.taskId(), job.seq(), result.agent());
+            case PLAN -> finishPlan(job.taskId(), job.seq(), result.agent(), job.project().name());
             case EXECUTE -> transitions.completed(job.taskId(), job.seq(), result.agent(), result.agent().summary(), result.files(),
                     result.prUrl(), result.verification(), result.head());
             case DELIVER -> transitions.completed(job.taskId(), job.seq(), null, job.deliverySummary(), result.files(),
                     result.prUrl(), null, result.head());
+            case REPORT -> finishReport(job.taskId(), job.seq(), result.agent());
             case SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a task's run");
         }
     }
 
     /** The plan is parsed here, not by the worker: a worker's answer is checked before it becomes the task's plan. */
-    private void finishPlan(long taskId, int seq, AgentResult result) {
+    private void finishPlan(long taskId, int seq, AgentResult result, String projectName) {
         if (result.structuredOutput() == null) {
             transitions.failed(taskId, seq, FailureReason.AGENT, "agent finished without returning a plan", result);
             return;
         }
         try {
-            transitions.planSucceeded(taskId, seq, Plan.parse(result.structuredOutput()), result);
+            Plan plan = Plan.parse(result.structuredOutput());
+            if (plan.result() == Plan.Result.REPORT && !hasData(projectName)) {
+                throw new InvalidPlanException("result report needs the project's data, which is not configured");
+            }
+            transitions.planSucceeded(taskId, seq, plan, result);
         } catch (InvalidPlanException e) {
             transitions.failed(taskId, seq, FailureReason.AGENT, "plan did not match the schema: " + e.getMessage(), result);
         }
+    }
+
+    /**
+     * The report is checked here, as a plan is: only a whole HTML document reaches the requester as the answer, and a run
+     * that says why it could not build one fails with that reason.
+     */
+    private void finishReport(long taskId, int seq, AgentResult result) {
+        JsonNode answer = reportAnswer(result.structuredOutput());
+        String error = answer.path("error").asText("").strip();
+        if (!error.isEmpty()) {
+            transitions.failed(taskId, seq, FailureReason.AGENT, "the report could not be built: " + error, result);
+            return;
+        }
+        String html = answer.path("html").asText(null);
+        if (html == null || !isHtmlDocument(html)) {
+            transitions.failed(taskId, seq, FailureReason.AGENT, "the report run returned no HTML document", result);
+            return;
+        }
+        transitions.reported(taskId, seq, html, result);
+    }
+
+    /** The run's answer; empty when there is none or it is not JSON, which is the agent's failure, as a bad plan is. */
+    private static JsonNode reportAnswer(String structuredOutput) {
+        if (structuredOutput == null) {
+            return Json.object();
+        }
+        try {
+            return Json.read(structuredOutput);
+        } catch (IllegalStateException malformed) {
+            return Json.object();
+        }
+    }
+
+    private static boolean isHtmlDocument(String text) {
+        String head = text.strip().toLowerCase(Locale.ROOT);
+        return head.startsWith("<!doctype html") || head.startsWith("<html");
+    }
+
+    private boolean hasData(String projectName) {
+        return projects.byName(projectName).map(project -> project.data() != null).orElse(false);
     }
 
     private void failAfterCrash(ClaimedRun claimed, RuntimeException cause) {

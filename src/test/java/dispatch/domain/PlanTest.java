@@ -201,7 +201,31 @@ class PlanTest {
     @Test
     void anUnknownResultIsInvalid() {
         assertThrows(InvalidPlanException.class, () -> Plan.parse(
-                "{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[],\"result\":\"report\",\"answer\":\"\"}"));
+                "{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[],\"result\":\"summary\",\"answer\":\"\"}"));
+    }
+
+    @Test
+    void aReportPlanParses() {
+        Plan plan = Plan.parse("{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"count visits per day\"],\"risks\":[],\"questions\":[],\"result\":\"report\",\"answer\":\"\"}");
+
+        assertEquals(Plan.Result.REPORT, plan.result());
+        assertEquals("report", Plan.parse(plan.toJson()).result().json());
+    }
+
+    @Test
+    void aReportWithoutStepsIsInvalid() {
+        assertThrows(InvalidPlanException.class, () -> Plan.parse(
+                "{\"understanding\":\"u\",\"findings\":[],\"steps\":[],\"risks\":[],\"questions\":[\"which year?\"],\"result\":\"report\",\"answer\":\"\"}"));
+    }
+
+    @Test
+    void endsWithoutCodeIsTrueForAnswerAndReportOnly() {
+        String base = "{\"understanding\":\"u\",\"findings\":[],\"steps\":[\"s\"],\"risks\":[],\"questions\":[],\"result\":\"%s\",\"answer\":\"a\"}";
+
+        assertTrue(Plan.endsWithoutCode(base.formatted("answer")));
+        assertTrue(Plan.endsWithoutCode(base.formatted("report")));
+        assertFalse(Plan.endsWithoutCode(base.formatted("plan")));
+        assertFalse(Plan.endsWithoutCode(null));
     }
 
     @Test
@@ -230,7 +254,7 @@ class PlanTest {
 
         assertTrue(schema.path("required").toString().contains("\"result\""), schema.toString());
         assertTrue(schema.path("required").toString().contains("\"answer\""), schema.toString());
-        assertEquals("[\"plan\",\"answer\"]", schema.path("properties").path("result").path("enum").toString());
+        assertEquals("[\"plan\",\"answer\",\"report\"]", schema.path("properties").path("result").path("enum").toString());
     }
 
     @Test

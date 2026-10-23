@@ -41,6 +41,15 @@ public record Config(
         return isTeam(telegram);
     }
 
+    /** Every project's data URI and password, for the instance's Redactor (ADR 0043); empty without data. */
+    public List<String> dataSecrets() {
+        if (projects == null) {
+            return List.of();
+        }
+        return projects.stream().filter(project -> project.data() != null).flatMap(project -> project.data().secrets().stream())
+                .toList();
+    }
+
     /** The task's branch name: the instance's own prefix, or "dispatch" by default. */
     public String branch(long taskId) {
         return branch(branchPrefix, taskId);
@@ -244,7 +253,16 @@ public record Config(
             /** "on" or "off" once loaded: the project's own setting, else the instance's (spec: agent skills). */
             String skills,
             /** "on" or "off" once loaded: the project's own setting, else the instance's (spec: CI watch). */
-            String ci) {
+            String ci,
+            /** Its production Mongo for reports, or null; personal Claude Code projects only (ADR 0043). */
+            DataSource data) {
+
+        /** A project without a data block. */
+        public Project(String name, String alias, String repo, String path, String baseBranch, String agent, String model,
+                       String effort, List<String> copyFiles, Limits limits, PhaseSettings plan, PhaseSettings execute,
+                       String test, String loop, String skills, String ci) {
+            this(name, alias, repo, path, baseBranch, agent, model, effort, copyFiles, limits, plan, execute, test, loop, skills, ci, null);
+        }
 
         /** A project as it was before the verify loop: no test command; loop, skills and ci unresolved. */
         public Project(String name, String alias, String repo, String path, String baseBranch, String agent, String model,

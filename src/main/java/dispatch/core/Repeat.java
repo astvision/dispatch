@@ -14,8 +14,8 @@ record Repeat(RunKind kind, RunCause cause, String instruction) {
 
     /** @param output the step's summary, read only when just its delivery is repeated */
     static Repeat of(Run step, Supplier<String> output) {
-        if (step.kind() == RunKind.PLAN) {
-            return new Repeat(RunKind.PLAN, RunCause.RETRY, step.instruction());
+        if (step.kind() == RunKind.PLAN || step.kind() == RunKind.REPORT) {
+            return new Repeat(step.kind(), RunCause.RETRY, step.instruction());
         }
         if (step.kind() == RunKind.DELIVER || step.failureReason() == FailureReason.DELIVERY) {
             // The agent's work is done and waits in the worktree; only its summary is needed, as the commit message.

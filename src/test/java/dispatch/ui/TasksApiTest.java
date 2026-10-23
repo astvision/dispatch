@@ -347,6 +347,27 @@ class TasksApiTest {
         activeRuns.unregister(active);
     }
 
+    /** A report has no loop to skip, pause or cut short: neither ⏸ nor any other control is offered while it runs. */
+    @Test
+    void aRunningReportOffersNoControlsAndCannotBeSteered() {
+        long taskId = planned(ALI, new Plan("Visits per day", List.of(), List.of("Count visits by day"), List.of(), List.of(),
+                List.of(), List.of(), Plan.Result.REPORT, ""));
+        db.transaction(tx -> tasks.commands().run(tx, ALI, new TaskCommand.Approve(taskId, 1)));
+        ClaimedRun run = db.transactionReturning(tx -> Runs.claimNext(tx, 5, clock.instant())).orElseThrow();
+        transitions.agentStarted(run.taskId(), run.seq(), null, null);
+        ActiveRuns.ActiveRun active = activeRuns.register(taskId, run.seq());
+        transitions.stepStarted(taskId, run.seq(), 1, RunStep.Kind.REPORT, 1);
+
+        JsonNode watched = api.run(ALI_CALLER, Json.object().put("taskId", taskId));
+
+        assertEquals("REPORT", watched.path("kind").asText());
+        assertFalse(watched.has("controls"), watched.toString());
+        assertFalse(api.detail(ALI_CALLER, Json.object().put("taskId", taskId)).path("actions").toString().contains("steer"));
+        assertEquals("409 not_running", refused(() -> api.control(ALI_CALLER, Json.object().put("taskId", taskId).put("action", "pause"))));
+        assertFalse(active.pauseBeforeReviewRequested());
+        activeRuns.unregister(active);
+    }
+
     @Test
     void aFinishedTaskCannotBeSteered() {
         long taskId = finished(ALI);

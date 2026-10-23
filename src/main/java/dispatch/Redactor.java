@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Stream;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -42,14 +44,23 @@ public final class Redactor {
 
     /** Masks the values of Dispatch's secret variables found in {@code environment}, plus the common formats. */
     public static Redactor fromEnvironment(Map<String, String> environment) {
-        List<String> secrets = environment.entrySet().stream()
+        return new Redactor(known(environment.entrySet().stream()
                 .filter(entry -> SECRET_VARIABLES.contains(entry.getKey()))
-                .map(Map.Entry::getValue)
-                .filter(value -> value != null && value.strip().length() >= MIN_SECRET_LENGTH)
+                .map(Map.Entry::getValue)));
+    }
+
+    /** This redactor also masking {@code secrets}, such as a project's data URI and its password (ADR 0043). */
+    public Redactor with(Collection<String> secrets) {
+        return new Redactor(known(Stream.concat(knownSecrets.stream(), secrets.stream())));
+    }
+
+    /** Longest first, so a secret that contains another is masked whole. */
+    private static List<String> known(Stream<String> values) {
+        return values.filter(value -> value != null && value.strip().length() >= MIN_SECRET_LENGTH)
                 .map(String::strip)
+                .distinct()
                 .sorted(Comparator.comparingInt(String::length).reversed())
                 .toList();
-        return new Redactor(secrets);
     }
 
     public static Redactor patternsOnly() {

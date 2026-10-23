@@ -22,7 +22,7 @@ class JobCopyTest {
     private static final Job JOB = new Job(7, 2, RunKind.EXECUTE, PROJECT, "main", "6f3030a", "/w/7",
             "https://github.com/acme/alm/pull/9", UUID.fromString("11111111-2222-3333-4444-555555555555"), true, "Implement",
             "opus", "low", 1000L, new BigDecimal("2"), List.of(new Attachment("id", "1-a.jpg", 3L)), "dispatch #7: x",
-            List.of("Requested-by: Bold"), "summary", "dispatch/team/7", "Review it", "9c1e2d4", List.of("playwright"));
+            List.of("Requested-by: Bold"), "summary", "dispatch/team/7", "Review it", "9c1e2d4", List.of("playwright"), true);
 
     @Test
     void aJobWithAnotherProjectKeepsEveryOtherField() throws Exception {

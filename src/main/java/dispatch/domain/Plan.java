@@ -21,9 +21,9 @@ public record Plan(String understanding, List<String> findings, List<String> ste
                    List<PlanQuestion> questionItems, List<PlanDecision> decisions, List<String> plugins, Result result,
                    String answer) {
 
-    /** What the plan run returned (spec: answers): a plan to approve, or the answer to a task that only asks something. */
+    /** What the plan run returned (spec: answers): a plan to approve, the answer to a task that only asks something, or a plan for a report from the project's data. */
     public enum Result {
-        PLAN, ANSWER;
+        PLAN, ANSWER, REPORT;
 
         public String json() {
             return name().toLowerCase(java.util.Locale.ROOT);
@@ -55,6 +55,15 @@ public record Plan(String understanding, List<String> findings, List<String> ste
     /** Whether {@code planJson}, a task's stored plan, is an answer: such a task never executed (spec: answers). */
     public static boolean answers(String planJson) {
         return planJson != null && parse(planJson).result() == Result.ANSWER;
+    }
+
+    /** Whether the task's stored plan is an answer or a report: neither ever executes code (spec: answers, ADR 0043). */
+    public static boolean endsWithoutCode(String planJson) {
+        if (planJson == null) {
+            return false;
+        }
+        Result result = parse(planJson).result();
+        return result == Result.ANSWER || result == Result.REPORT;
     }
 
     /** A plan without plugin picks. */
@@ -109,6 +118,8 @@ public record Plan(String understanding, List<String> findings, List<String> ste
                 throw new InvalidPlanException("plan field 'answer' must be non-blank text when result is \"answer\"");
             }
             answer = answerNode.asText();
+        } else if (result == Result.REPORT && steps.isEmpty()) {
+            throw new InvalidPlanException("plan field 'steps' must explain the query when result is \"report\"");
         } else if (steps.isEmpty() && questions.isEmpty()) {
             throw new InvalidPlanException("plan has neither steps nor questions");
         }
@@ -118,8 +129,8 @@ public record Plan(String understanding, List<String> findings, List<String> ste
 
     public String toJson() {
         ObjectNode json = tree();
-        if (result == Result.ANSWER) {
-            // Only an answer says so: a plan stays readable by a jar from before answers, which a rollback runs.
+        if (result != Result.PLAN) {
+            // Only an answer or a report says so: a plan stays readable by a jar from before answers, which a rollback runs.
             json.put("result", result.json()).put("answer", answer);
         }
         return json.toString();
@@ -247,7 +258,8 @@ public record Plan(String understanding, List<String> findings, List<String> ste
         return switch (result.asText("")) {
             case "plan" -> Result.PLAN;
             case "answer" -> Result.ANSWER;
-            default -> throw new InvalidPlanException("plan field 'result' must be \"plan\" or \"answer\"");
+            case "report" -> Result.REPORT;
+            default -> throw new InvalidPlanException("plan field 'result' must be \"plan\", \"answer\" or \"report\"");
         };
     }
 
