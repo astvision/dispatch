@@ -53,6 +53,11 @@ jobs:
         with:
           name: ui-dist
           path: ui/dist
+      - name: Fetch Maven
+        # Before the Cyrillic temp dir below: the wrapper downloads through it, and a cold cache then fails on Windows
+        # ("curl: Failed to fetch ...apache-maven-3.9.16-bin.zip").
+        shell: bash
+        run: ./mvnw --batch-mode --version
       - name: Temporary files under a space and Cyrillic (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
