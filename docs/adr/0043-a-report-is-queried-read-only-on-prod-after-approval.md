@@ -7,8 +7,9 @@ A project on a personal instance may name its production MongoDB in a `data` blo
 address as that host sees it, the database, and `uri: ${NAME}`, the read-only user's connection string, which lives only in
 `dispatch.env`. For each plan or report run on such a project, Dispatch itself (outside the sandbox, which in a sandboxed run hides `~/.ssh`)
 opens `ssh -N -L 127.0.0.1:<free port>:<mongo> <host>`, waits up to 20 s for the port, runs the agent, and closes the tunnel
-however the run ends. The URI's hosts become `127.0.0.1:<port>`; its `replicaSet` is dropped and `directConnection=true`
-added, since one forwarded port reaches one member and discovery would dial hosts the tunnel cannot reach. Reads go to the
+however the run ends. A tunnel that does not open fails a report run (`SETUP`); a plan whose session never saw report data
+runs without data instead, told that a data question must wait, so a code task never waits on prod. The URI's hosts become
+`127.0.0.1:<port>`; its `replicaSet` is dropped and `directConnection` set to `true`, since one forwarded port reaches one member and discovery would dial hosts the tunnel cannot reach. Reads go to the
 host `mongo` names, so point it at a secondary to keep load off the primary.
 
 The run reaches Mongo through `mongodb-mcp-server`, pinned to 2.1.2 and named `dispatch_data`, in `--strict-mcp-config` with
@@ -36,10 +37,10 @@ same project is answered or planned as before.
 - the data server is missing or not connected (`data_unreachable`): with `--strict-mcp-config` Dispatch chose the servers,
   so a run without its data can only guess.
 
-A plan run that called any `dispatch_data` tool may not end in `answer`, since an answer goes to the chat unapproved; a
-resumed plan session counts as having called one when the task ran a report or its plan proposes one (`Job.dataSeen`),
-because what that session read is still in its context. A reply to an answered code question may be answered again.
-Such a run fails as an invalid plan.
+A plan run that called any `dispatch_data` tool may not end in `answer`, since an answer goes to the chat unapproved; such
+a run fails as an invalid plan. A resumed plan session counts as having called one when the task ran a report or its plan
+proposes one (`Job.dataSeen`), because what that session read is still in its context. A reply to an answered code
+question may be answered again.
 
 **Read-only twice.** The Mongo user is the hard boundary: `dispatch check` opens the tunnel, asks Mongo for the user's
 privileges (`connectionStatus`, `showPrivileges`) and fails a user that holds any action beyond reading, naming it: only

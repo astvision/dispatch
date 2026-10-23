@@ -248,6 +248,13 @@ final class Prompts {
             unclear whether the task wants numbers or a change, choose plan or answer, never report.
             """;
 
+    /** A plan on a data project whose tunnel did not open runs without data rather than fail a code task (ADR 0043). */
+    static final String DATA_UNREACHABLE_NOTE = """
+            This project's production data could not be reached for this run. If the task asks for numbers, statistics or a
+            report drawn from that data, set result to "answer" and say only that the data could not be reached and to send the
+            request again later; never give a number. Otherwise answer or plan as usual.
+            """;
+
     /** The resumed planning session runs the approved report plan (ADR 0043). */
     static String report(Task task) {
         return """

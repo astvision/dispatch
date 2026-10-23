@@ -3,6 +3,7 @@ package dispatch.config;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class DataSourceTest {
@@ -45,11 +46,26 @@ class DataSourceTest {
     }
 
     @Test
-    void keepsAGivenDirectConnection() {
-        DataSource source = source("mongodb://ro:" + "pw@db1/webapp?directConnection=true");
+    void alwaysConnectsDirectly() {
+        DataSource source = source("mongodb://ro:" + "pw@db1/webapp?directConnection=false");
 
         assertEquals("mongodb://ro:" + "pw@127.0.0.1:40001/webapp?directConnection=true&readPreference=secondaryPreferred",
                 source.connectionString(40001));
+    }
+
+    @Test
+    void masksTheUriAndItsPasswordAsWrittenAndDecoded() {
+        DataSource source = source("mongodb://ro:" + "p%40ss@db1/webapp");
+
+        assertEquals(List.of("mongodb://ro:" + "p%40ss@db1/webapp", "p%40ss", "p@ss"), source.secrets());
+    }
+
+    /** A raw '%' is an invalid URI, yet startup reads the secrets before dispatch check can say so. */
+    @Test
+    void aPasswordThatDoesNotDecodeIsMaskedAsWritten() {
+        DataSource source = source("mongodb://ro:" + "50%off@db1/webapp");
+
+        assertEquals(List.of("mongodb://ro:" + "50%off@db1/webapp", "50%off"), source.secrets());
     }
 
     @Test

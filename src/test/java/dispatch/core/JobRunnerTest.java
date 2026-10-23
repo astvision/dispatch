@@ -1161,13 +1161,46 @@ class JobRunnerTest {
         assertEquals(1, data.closed.get());
     }
 
+    /** A code task on a data project must not wait on prod. */
     @Test
-    void aTunnelThatFailsFailsTheRunAsSetupWithoutStartingTheAgent() {
+    void aPlanWhoseTunnelFailsRunsWithoutDataAndIsToldSo() {
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+        answers.put(RunKind.PLAN, answer("{}", "0.10"));
+        FakeDataSources data = new FakeDataSources("alm");
+        data.failure = new TunnelException("ssh to webapp-prod exited with 255: Permission denied (publickey).");
+
+        JobResult result = dataRunner(data).run(job(RunKind.PLAN, 1, "Fix the login page", null, null, null), events, control);
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), result.failureDetail());
+        RunRequest request = loopRequests.getFirst();
+        assertNull(request.data());
+        assertTrue(request.prompt().contains(Prompts.DATA_UNREACHABLE_NOTE), request.prompt());
+        assertFalse(request.prompt().contains(Prompts.DATA_NOTE), request.prompt());
+    }
+
+    /** Without the data tools nothing would gate its answer, and what it read is still in its context. */
+    @Test
+    void aPlanWhoseSessionSawReportDataFailsWhenTheTunnelFails() throws Exception {
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+        FakeDataSources data = new FakeDataSources("alm");
+        data.failure = new TunnelException("ssh to webapp-prod exited with 255: Permission denied (publickey).");
+        Path worktree = Files.createDirectories(dir.resolve("seen-worktree"));
+
+        JobResult result = dataRunner(data).run(resumed(job(RunKind.PLAN, 3, "Reply", worktree.toString(), null, null), true),
+                events, control);
+
+        assertEquals(JobResult.Outcome.FAILED, result.outcome());
+        assertEquals(FailureReason.SETUP, result.failureReason());
+        assertTrue(agentKindsStarted.isEmpty(), agentKindsStarted.toString());
+    }
+
+    @Test
+    void aReportWhoseTunnelFailsFailsAsSetupWithoutStartingTheAgent() throws Exception {
         SkillsPlugin.install(workspaces.skillsPluginDir());
         FakeDataSources data = new FakeDataSources("alm");
         data.failure = new TunnelException("ssh to webapp-prod exited with 255: Permission denied (publickey).");
 
-        JobResult result = dataRunner(data).run(job(RunKind.PLAN, 1, "How many visits a day?", null, null, null), events, control);
+        JobResult result = dataRunner(data).run(reportJob(), events, control);
 
         assertEquals(JobResult.Outcome.FAILED, result.outcome());
         assertEquals(FailureReason.SETUP, result.failureReason());

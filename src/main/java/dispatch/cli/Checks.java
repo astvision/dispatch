@@ -97,7 +97,7 @@ public final class Checks {
         }
         // The merged environment includes the secrets file, so tokens findings quote (e.g. a repo URL's userinfo,
         // or a check command's own output) are masked too, not only the ones already known from processEnvironment.
-        Run run = new Run(onEach, Redactor.fromEnvironment(prepared.environment()));
+        Run run = new Run(onEach, Redactor.fromEnvironment(prepared.environment()).with(prepared.config().dataSecrets()));
         run.add(Level.OK, "config", Text.of("check.config", configFile));
         Config config = prepared.config();
         checkBot(run, config.secrets().telegramBotToken());

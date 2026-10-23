@@ -262,7 +262,8 @@ run, in the same session, queries prod read-only, checks the data for gaps, dead
 sends one self-contained `.html` page to your private chat, with a warning box for whatever it found. Reply to it to
 ask for more. A bug fix or a question about the code on the same project is planned or answered as before.
 
-Dispatch opens the SSH tunnel itself, outside the sandbox, for that run only. A plan cannot run `find` or `aggregate`,
+Dispatch opens the SSH tunnel itself, outside the sandbox, for that run only. If the tunnel does not open, a report
+fails, while a plan runs without the data, so code tasks never wait on prod. A plan cannot run `find` or `aggregate`,
 and one that read the data cannot answer without your tap; every query stops after 60 s. A team instance, a Codex or
 Gemini CLI project and Windows cannot have a data block. What this does and does not protect: SECURITY.md. To try it
 for real: `DISPATCH_LIVE_DATA=1 ./mvnw test -Dtest=LiveDataReportTest` (needs docker, `/usr/sbin/sshd` and `claude`;

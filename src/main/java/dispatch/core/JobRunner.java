@@ -200,7 +200,8 @@ public final class JobRunner implements Worker {
 
     /**
      * Runs the agent with {@code source} reachable through a tunnel open only while it runs, closed however the run ends; a
-     * plan sees the data's shape, a report reads it. A tunnel that does not forward fails the run as SETUP before the agent.
+     * plan sees the data's shape, a report reads it. A tunnel that does not forward fails the run as SETUP before the agent,
+     * except a plan whose session never saw report data: it runs without data, told so.
      *
      * @param source null runs the agent without data
      */
@@ -215,7 +216,14 @@ public final class JobRunner implements Worker {
                     source.connectionString(tunnel.port()), job.sawData());
             return runAgent(job, events, control, request(job, worktree, files, plugins, data), timeout);
         } catch (TunnelException e) {
-            return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
+            if (job.kind() != RunKind.PLAN || job.sawData()) {
+                return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
+            }
+            // A code task must not wait on prod. A session that saw report data keeps failing: without the data tools its
+            // answer would go out ungated.
+            Log.warn("data.unreachable", "task", job.taskId(), "run", job.seq(), "reason", e.getMessage());
+            return runAgent(job, events, control, request(job, worktree, files, plugins, null, Prompts.DATA_UNREACHABLE_NOTE),
+                    timeout);
         }
     }
 
@@ -554,8 +562,12 @@ public final class JobRunner implements Worker {
 
     /** @param data the project's data the run may read, null for none */
     private RunRequest request(Job job, Path worktree, TaskFiles files, List<Path> plugins, DataAccess data) {
+        return request(job, worktree, files, plugins, data, dataNote(job.kind(), data != null));
+    }
+
+    private RunRequest request(Job job, Path worktree, TaskFiles files, List<Path> plugins, DataAccess data, String dataNote) {
         return new RunRequest(job.kind(), worktree,
-                job.prompt() + files.note() + pluginNote(job) + dataNote(job.kind(), data != null) + skillNote(job, plugins),
+                job.prompt() + files.note() + pluginNote(job) + dataNote + skillNote(job, plugins),
                 job.sessionId(), job.resume(), files.dirs(), job.budgetUsd(), job.model(), job.effort(),
                 workspaces.runLogBase(job.taskId(), job.seq()), Map.of(), plugins, job.picks(), data);
     }

@@ -35,13 +35,12 @@ public record DataSource(String ssh, String mongo, String database, String uri) 
         String rewritten = uri.substring(0, schemeEnd) + credentials + "127.0.0.1:" + localPort + pathPart;
         List<String> options = new ArrayList<>();
         for (String option : queryString.split("&")) {
-            if (!option.isEmpty() && !hasName(option, "replicaSet")) {
+            if (!option.isEmpty() && !hasName(option, "replicaSet") && !hasName(option, "directConnection")) {
                 options.add(option);
             }
         }
-        if (options.stream().noneMatch(option -> hasName(option, "directConnection"))) {
-            options.add("directConnection=true");
-        }
+        // Even a URI that says directConnection=false cannot discover members through one forwarded port.
+        options.add("directConnection=true");
         if (options.stream().noneMatch(option -> hasName(option, "readPreference"))) {
             options.add("readPreference=secondaryPreferred");
         }
@@ -49,7 +48,7 @@ public record DataSource(String ssh, String mongo, String database, String uri) 
     }
 
     /**
-     * What the instance's Redactor masks: the URI, and its password as written and decoded, since a shell that echoes the
+     * What the instance's Redactor masks: the URI, and its password as written and, when it decodes, decoded, since a shell that echoes the
      * password alone matches no pattern. Empty parts are left out.
      */
     public List<String> secrets() {
@@ -60,7 +59,12 @@ public record DataSource(String ssh, String mongo, String database, String uri) 
         if (at > schemeEnd && colon > 0 && colon < at) {
             String password = uri.substring(colon + 1, at);
             secrets.add(password);
-            secrets.add(URLDecoder.decode(password, StandardCharsets.UTF_8));
+            try {
+                secrets.add(URLDecoder.decode(password, StandardCharsets.UTF_8));
+            } catch (IllegalArgumentException e) {
+                // A raw '%' is no valid encoding: the password as written is the only form there is, and dispatch check
+                // reports the URI, so startup must not fail here.
+            }
         }
         return secrets;
     }
