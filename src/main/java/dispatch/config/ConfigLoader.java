@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Reads the YAML config and environment, and fails with every problem listed rather than the first one. */
@@ -43,6 +44,8 @@ public final class ConfigLoader {
     private static final List<String> CODEX_EFFORT_LEVELS = List.of("low", "medium", "high", "xhigh");
     /** http(s) URLs with any user info (user:token@ or token@); ssh "git@" URLs are fine. */
     private static final Pattern CREDENTIAL_URL = Pattern.compile("^https?://[^/@]*@", Pattern.CASE_INSENSITIVE);
+    /** A data uri is only ever a whole ${NAME}, so the secret stays in dispatch.env (ADR 0043). */
+    private static final Pattern DATA_URI_VARIABLE = Pattern.compile("\\$\\{([A-Z0-9_]+)\\}");
     private static final Pattern SECRET_KEY = Pattern.compile("(?i).*(token|secret|password|passwd|apikey|api_key|credential).*");
     /**
      * Segments of letters, digits, '.', '_' or '-' separated by single '/', e.g. dispatch/team (M: several instances).
@@ -88,7 +91,7 @@ public final class ConfigLoader {
         if (!ci.equals("on") && !ci.equals("off")) {
             errors.add(Text.of("config.onOff", "ci", raw.ci()));
         }
-        List<Config.Project> projects = validateProjects(raw.projects(), agents, loop, skills, ci, errors);
+        List<Config.Project> projects = validateProjects(raw.projects(), agents, loop, skills, ci, isTeam(raw.telegram()), env, errors);
         Config.Telegram telegram = validateTelegram(raw.telegram(), projects, errors);
         Config.Delivery delivery = validateDelivery(raw.delivery(), errors);
         Config.Workers workers = validateWorkers(raw.workers(), telegram, errors);
@@ -385,7 +388,8 @@ public final class ConfigLoader {
     }
 
     private static List<Config.Project> validateProjects(List<Config.Project> projects, Map<String, Config.Agent> agents,
-                                                         String instanceLoop, String instanceSkills, String instanceCi, List<Text> errors) {
+                                                         String instanceLoop, String instanceSkills, String instanceCi, boolean team,
+                                                         Map<String, String> env, List<Text> errors) {
         if (projects == null || projects.isEmpty()) {
             errors.add(Text.of("config.projectsAtLeast"));
             return List.of();
@@ -452,11 +456,77 @@ public final class ConfigLoader {
             if (project.test() != null && project.test().isBlank()) {
                 errors.add(Text.of("config.testBlank", at + ".test"));
             }
+            DataSource data = validateData(at + ".data", project, team, env, errors);
             normalized.add(new Config.Project(project.name(), project.alias(), project.repo(), project.path(), project.baseBranch(),
                     project.agent(), project.model(), project.effort(), List.copyOf(copyFiles), project.limits(), project.plan(),
-                    project.execute(), project.test(), projectLoop, projectSkills, projectCi));
+                    project.execute(), project.test(), projectLoop, projectSkills, projectCi, data));
         }
         return List.copyOf(normalized);
+    }
+
+    /** The raw telegram block may still hold nulls that validateTelegram reports, so it can't go to Config.isTeam as is. */
+    private static boolean isTeam(Config.Telegram telegram) {
+        if (telegram == null) {
+            return false;
+        }
+        if (telegram.admins() != null && !telegram.admins().isEmpty()) {
+            return true;
+        }
+        if (telegram.groups() == null) {
+            return false;
+        }
+        return telegram.groups().stream()
+                .filter(group -> group != null && group.members() != null)
+                .flatMap(group -> group.members().stream())
+                .filter(member -> member != null)
+                .mapToLong(Config.Member::id)
+                .distinct()
+                .count() > 1;
+    }
+
+    /** A project's data block (ADR 0043): returns it with its URI resolved from the environment, or null when there is none or it is refused. */
+    private static DataSource validateData(String at, Config.Project project, boolean team, Map<String, String> env, List<Text> errors) {
+        DataSource data = project.data();
+        if (data == null) {
+            return null;
+        }
+        if (team) {
+            errors.add(Text.of("config.dataTeam", at));
+        }
+        if (!AgentKind.CLAUDE_CODE.id().equals(project.agent())) {
+            errors.add(Text.of("config.dataAgent", at));
+        }
+        if (System.getProperty("os.name", "").contains("Windows")) {
+            errors.add(Text.of("config.dataWindows", at));
+        }
+        boolean complete = true;
+        for (Map.Entry<String, String> field : Map.of("ssh", orEmpty(data.ssh()), "mongo", orEmpty(data.mongo()),
+                "database", orEmpty(data.database())).entrySet()) {
+            if (field.getValue().isBlank()) {
+                errors.add(Text.of("config.dataField", at + "." + field.getKey()));
+                complete = false;
+            }
+        }
+        // The value is never echoed: a literal one is a secret that must not sit in the YAML.
+        Matcher variable = data.uri() == null ? null : DATA_URI_VARIABLE.matcher(data.uri());
+        if (variable == null || !variable.matches()) {
+            errors.add(Text.of("config.dataUri", at + ".uri", "${NAME}"));
+            return null;
+        }
+        String resolved = env.get(variable.group(1));
+        if (isBlank(resolved)) {
+            errors.add(Text.of("config.dataUriMissing", at + ".uri", variable.group(1)));
+            return null;
+        }
+        if (!resolved.startsWith("mongodb://")) {
+            errors.add(Text.of("config.dataUriScheme", at + ".uri", variable.group(1)));
+            return null;
+        }
+        return complete ? new DataSource(data.ssh(), data.mongo(), data.database(), resolved) : null;
+    }
+
+    private static String orEmpty(String value) {
+        return value == null ? "" : value;
     }
 
     private static void validateKey(String at, String key, boolean required, Map<String, Integer> keys, List<Text> errors) {

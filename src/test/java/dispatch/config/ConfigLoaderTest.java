@@ -772,6 +772,78 @@ class ConfigLoaderTest {
                 blank.getMessage());
     }
 
+    private static final String DATA_BLOCK = "    data:\n      ssh: webapp-prod\n      mongo: \"127.0.0.1:27017\"\n"
+            + "      database: webapp\n      uri: \"${WEBAPP_RO_URI}\"\n";
+    private static final String RO_URI = "mongodb://ro:" + "pw@db1/webapp";
+
+    private String withData(String block) {
+        return PERSONAL_BASE.replace("    agent: claude-code\n", "    agent: claude-code\n" + block);
+    }
+
+    private Map<String, String> envWith(String name, String value) {
+        Map<String, String> env = new java.util.HashMap<>(ENV);
+        env.put(name, value);
+        return env;
+    }
+
+    private String dataError(String yaml, Map<String, String> env) throws IOException {
+        Path file = write(yaml);
+        return assertThrows(ConfigException.class, () -> ConfigLoader.load(file, env)).getMessage();
+    }
+
+    @Test
+    void aDataBlockResolvesItsUriFromTheEnvironment() throws Exception {
+        Config.Project project = ConfigLoader.load(write(withData(DATA_BLOCK)), envWith("WEBAPP_RO_URI", RO_URI)).projects().getFirst();
+
+        assertEquals(RO_URI, project.data().uri());
+        assertEquals("webapp-prod", project.data().ssh());
+        assertNull(ConfigLoader.load(write(PERSONAL_BASE), ENV).projects().getFirst().data());
+    }
+
+    @Test
+    void aDataUriNamingAMissingVariableIsRefused() throws Exception {
+        assertTrue(dataError(withData(DATA_BLOCK), ENV).contains("WEBAPP_RO_URI"));
+    }
+
+    @Test
+    void aLiteralDataUriIsRefused() throws Exception {
+        String message = dataError(withData(DATA_BLOCK.replace("${WEBAPP_RO_URI}", RO_URI)), ENV);
+
+        assertTrue(message.contains("projects[0].data.uri"), message);
+        assertFalse(message.contains("pw@"), "the secret is never echoed: " + message);
+    }
+
+    @Test
+    void anSrvDataUriIsRefused() throws Exception {
+        String message = dataError(withData(DATA_BLOCK), envWith("WEBAPP_RO_URI", "mongodb+srv://ro:" + "pw@cluster.example.net/webapp"));
+
+        assertTrue(message.contains("mongodb+srv://"), message);
+        assertFalse(message.contains("pw@"), message);
+    }
+
+    @Test
+    void aDataBlockOnATeamInstanceIsRefused() throws Exception {
+        String team = withData(DATA_BLOCK).replace("telegram:\n", "telegram:\n  admins: [123456789]\n");
+
+        assertTrue(dataError(team, envWith("WEBAPP_RO_URI", RO_URI)).contains("projects[0].data: a data block is for a personal"));
+    }
+
+    @Test
+    void aDataBlockOnACodexProjectIsRefused() throws Exception {
+        String codex = withData(DATA_BLOCK).replace("    agent: claude-code\n", "    agent: codex\n")
+                .replace("agents:\n", "agents:\n  codex:\n    command: codex\n");
+
+        assertTrue(dataError(codex, envWith("WEBAPP_RO_URI", RO_URI)).contains("projects[0].data: a data block needs the claude-code agent"));
+    }
+
+    @Test
+    void aDataBlockMissingSshMongoOrDatabaseIsRefused() throws Exception {
+        String message = dataError(withData("    data:\n      uri: \"${WEBAPP_RO_URI}\"\n"), envWith("WEBAPP_RO_URI", RO_URI));
+
+        assertTrue(message.contains("projects[0].data.ssh") && message.contains("projects[0].data.mongo")
+                && message.contains("projects[0].data.database"), message);
+    }
+
     private Path write(String yaml) throws IOException {
         Path file = dir.resolve("backend.yaml");
         Files.writeString(file, yaml);
