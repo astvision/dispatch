@@ -251,7 +251,9 @@ projects:
 
 and to `dispatch.env`, beside the config, a line `WEBAPP_MONGO_RO_URI=` followed by the read-only user's `mongodb://`
 connection string (the host is replaced by the tunnel's; `mongodb+srv://` is refused). Create the user with only the `read` role.
-`dispatch check` opens the tunnel, refuses a user that can write (it needs `mongosh` for that check), and fetches the
+Reads go to the one host `mongo` names (the URI's replica set is dropped and the driver connects directly), so point it
+at a secondary to keep load off the primary.
+`dispatch check` opens the tunnel, refuses a user that can do more than read (it needs `mongosh` for that check), and fetches the
 pinned MongoDB MCP server so the first report does not wait for npx.
 
 The flow: the plan run sees only the data's shape (collections, indexes, field types, counts) and sends a report plan,

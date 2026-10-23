@@ -46,8 +46,8 @@ that project's plan and report runs, does an agent reach prod.
 - **The tunnel:** Dispatch opens `ssh -L` to a free local port itself, outside the sandbox, with the owner's own SSH
   setup, and closes it when the run ends. In a sandboxed run the agent never sees `~/.ssh`; it reaches only
   `127.0.0.1:<port>`, and only while the run lasts.
-- **Read-only, twice:** the Mongo user is the hard boundary, and `dispatch check` fails one that can insert, update,
-  remove, or create or drop a collection or index. The MCP server Dispatch loads (`mongodb-mcp-server`, pinned) runs in
+- **Read-only, twice:** the Mongo user is the hard boundary, and `dispatch check` fails one that holds any action
+  beyond reading: only the built-in `read` role's actions, `listDatabases` and `planCacheRead` pass. The MCP server Dispatch loads (`mongodb-mcp-server`, pinned) runs in
   its read-only mode, which offers no write tool.
 - **The approval gate:** a plan run sees only the data's shape (collections, indexes, field types, counts), never
   `find` or `aggregate`; the real query runs only after the requester taps 📊 **Тайлан гаргах**. Dispatch enforces this

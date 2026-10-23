@@ -1,5 +1,9 @@
 package dispatch.config;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
 /**
  * A project's production Mongo, reached for reports through an SSH tunnel (ADR 0043).
  *
@@ -10,11 +14,10 @@ package dispatch.config;
  */
 public record DataSource(String ssh, String mongo, String database, String uri) {
 
-    private static final String READ_PREFERENCE = "readPreference=";
-
     /**
-     * The URI pointed at the local end of the tunnel: its hosts become 127.0.0.1:localPort, credentials, path and query stay,
-     * and reads prefer a secondary so a report does not load the primary.
+     * The URI pointed at the local end of the tunnel: its hosts become 127.0.0.1:localPort, credentials, path and query stay.
+     * One forwarded port reaches one member, so the replica set is dropped and the driver connects directly instead of
+     * discovering members the tunnel cannot reach: reads go to the host {@code mongo} names, which should be a secondary.
      */
     public String connectionString(int localPort) {
         int schemeEnd = uri.indexOf("://") + 3;
@@ -28,11 +31,24 @@ public record DataSource(String ssh, String mongo, String database, String uri) 
         String credentials = authority.substring(0, authority.lastIndexOf('@') + 1);
 
         String rewritten = uri.substring(0, schemeEnd) + credentials + "127.0.0.1:" + localPort + pathPart;
-        if (queryString.contains(READ_PREFERENCE)) {
-            return rewritten + "?" + queryString;
+        List<String> options = new ArrayList<>();
+        for (String option : queryString.split("&")) {
+            if (!option.isEmpty() && !hasName(option, "replicaSet")) {
+                options.add(option);
+            }
         }
-        String preference = READ_PREFERENCE + "secondaryPreferred";
-        return rewritten + "?" + (queryString.isEmpty() ? preference : queryString + "&" + preference);
+        if (options.stream().noneMatch(option -> hasName(option, "directConnection"))) {
+            options.add("directConnection=true");
+        }
+        if (options.stream().noneMatch(option -> hasName(option, "readPreference"))) {
+            options.add("readPreference=secondaryPreferred");
+        }
+        return rewritten + "?" + String.join("&", options);
+    }
+
+    /** URI option names are case-insensitive. */
+    private static boolean hasName(String option, String name) {
+        return option.toLowerCase(Locale.ROOT).startsWith(name.toLowerCase(Locale.ROOT) + "=");
     }
 
     @Override

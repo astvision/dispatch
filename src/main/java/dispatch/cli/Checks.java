@@ -282,9 +282,14 @@ public final class Checks {
     /** The MCP server a report run starts; the check fetches this version so a run's first start is not a download. */
     private static final String MCP_SERVER = "mongodb-mcp-server@2.1.2";
     private static final Duration MCP_FETCH_TIMEOUT = Duration.ofSeconds(120);
-    /** Actions that change data or structure; a report user holding any of them is not read-only. */
-    private static final List<String> WRITE_ACTIONS = List.of("insert", "update", "remove", "createCollection",
-            "dropCollection", "createIndex", "dropDatabase", "renameCollectionSameDB");
+    /**
+     * The only actions a report user may hold; any other one fails the check. The built-in read role grants changeStream,
+     * collStats, dbHash, dbStats, find, killCursors, listCollections, listIndexes and listSearchIndexes
+     * (https://www.mongodb.com/docs/manual/reference/built-in-roles/#mongodb-authrole-read); readAnyDatabase adds
+     * listDatabases, and planCacheRead only reads.
+     */
+    private static final Set<String> READ_ACTIONS = Set.of("find", "listCollections", "listIndexes", "collStats", "dbStats",
+            "dbHash", "killCursors", "listDatabases", "changeStream", "planCacheRead", "listSearchIndexes");
     private static final String ACTIONS_EVAL = "JSON.stringify(db.runCommand({connectionStatus:1,showPrivileges:true})"
             + ".authInfo.authenticatedUserPrivileges.flatMap(p=>p.actions))";
 
@@ -321,7 +326,7 @@ public final class Checks {
         }
     }
 
-    /** Adds a finding unless the user is shown to hold none of the write actions; anything it cannot read is never an OK. */
+    /** Adds a finding unless the user is shown to hold only read actions; anything it cannot read is never an OK. */
     private static void checkWriteAccess(Run run, String area, Config.Project project, Tunnel tunnel, String mongosh) {
         // ponytail: the URI is mongosh's last argument, so `ps` shows it while this runs; use --file if check ever runs unattended.
         List<String> commandLine = List.of(mongosh, "--quiet", "--eval", ACTIONS_EVAL, project.data().connectionString(tunnel.port()));
@@ -346,9 +351,9 @@ public final class Checks {
             run.add(Level.WARN, area, Text.of("check.dataUnreadable", project.name(), mongosh));
             return;
         }
-        List<String> writes = WRITE_ACTIONS.stream().filter(held::contains).toList();
-        if (!writes.isEmpty()) {
-            run.add(Level.FAIL, area, Text.of("check.dataWritable", project.name(), String.join(", ", writes)));
+        List<String> beyondReading = held.stream().filter(action -> !READ_ACTIONS.contains(action)).distinct().toList();
+        if (!beyondReading.isEmpty()) {
+            run.add(Level.FAIL, area, Text.of("check.dataWritable", project.name(), String.join(", ", beyondReading)));
         }
     }
 

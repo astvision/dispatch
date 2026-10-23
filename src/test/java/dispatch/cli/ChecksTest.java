@@ -449,6 +449,37 @@ class ChecksTest {
         assertFalse(findings.toString().contains("pw@"));
     }
 
+    /** The built-in read role's actions, as https://www.mongodb.com/docs/manual/reference/built-in-roles/ lists them. */
+    private static final String READ_ROLE = "[\"changeStream\",\"collStats\",\"dbHash\",\"dbStats\",\"find\",\"killCursors\","
+            + "\"listCollections\",\"listIndexes\",\"listSearchIndexes\"";
+
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void aUserWithTheReadRolePasses() throws IOException {
+        List<Checks.Finding> findings = dataFindingsFor(READ_ROLE + ",\"find\"]");
+
+        assertEquals(List.of(Checks.Level.OK), findings.stream().map(Checks.Finding::level).toList(), findings.toString());
+    }
+
+    /** Not a write in the data, but a user that can grant roles or make users can make itself one that writes. */
+    @Test
+    @EnabledOnOs({OS.LINUX, OS.MAC})
+    void anyActionBeyondReadingIsAnErrorNamingIt() throws IOException {
+        for (String extra : List.of("grantRole", "createUser")) {
+            List<Checks.Finding> findings = dataFindingsFor(READ_ROLE + ",\"" + extra + "\"]");
+
+            Checks.Finding error = findings.stream().filter(f -> f.level() == Checks.Level.FAIL).findFirst()
+                    .orElseThrow(() -> new AssertionError(extra + ": " + findings));
+            assertTrue(error.message().english().contains("(" + extra + ")"), error.message().english());
+        }
+    }
+
+    private List<Checks.Finding> dataFindingsFor(String actionsJson) throws IOException {
+        Path mongosh = script("mongosh", "echo '" + actionsJson + "'");
+        Path npx = script("npx", "echo 2.1.2");
+        return Checks.dataFindings(dataProject(), tunnelling(new AtomicInteger()), mongosh.toString(), npx.toString());
+    }
+
     @Test
     @EnabledOnOs({OS.LINUX, OS.MAC})
     void aUserThatCanInsertIsAnError() throws IOException {
