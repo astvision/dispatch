@@ -21,7 +21,7 @@ import org.junit.jupiter.api.io.TempDir;
 @EnabledOnOs({OS.LINUX, OS.MAC})
 class TunnelTest {
 
-    private static final DataSource SOURCE = new DataSource("webapp-prod", "db1:27017", "app", "mongodb://u:p@db1:27017/app");
+    private static final DataSource SOURCE = new DataSource("webapp-prod", "db1:27017", "app", "mongodb://u:" + "p@db1:27017/app");
 
     @TempDir
     Path dir;

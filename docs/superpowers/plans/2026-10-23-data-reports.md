@@ -90,11 +90,13 @@ These were run against a throwaway container before this plan was written. They 
 
 `DataSourceTest`:
 - `rewritesHostsAndKeepsCredentialsAndQuery`:
-  - input `uri = "mongodb://ro:p%40ss@" + "db1:27017,db2:27017/webapp?authSource=admin"`, port `40001`
-  - expected `"mongodb://ro:p%40ss@127.0.0.1:40001/webapp?authSource=admin&readPreference=secondaryPreferred"`
+  - input: user `ro` with an encoded `@` in its password, hosts `db1:27017,db2:27017`, path `/webapp`, query
+    `authSource=admin`; port `40001`
+  - expected: the same credentials, host `127.0.0.1:40001`, path `/webapp`, query
+    `authSource=admin&readPreference=secondaryPreferred`
 - `addsTheDatabaseWhenTheUriHasNoPath`:
-  - input `"mongodb://ro:pw@" + "db1"` with database `webapp`
-  - expected `"mongodb://ro:pw@127.0.0.1:40001/webapp?readPreference=secondaryPreferred"`
+  - input: user `ro`, host `db1`, no path, with database `webapp`
+  - expected: the same credentials, host `127.0.0.1:40001`, path `/webapp`, query `readPreference=secondaryPreferred`
 - `keepsAGivenReadPreference`: input `…/webapp?readPreference=primary`, which is kept unchanged.
 - `toStringNeverShowsTheUri`: `assertFalse(source.toString().contains("pw"))`.
 

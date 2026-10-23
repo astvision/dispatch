@@ -1,5 +1,7 @@
 package dispatch.config;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -44,6 +46,23 @@ public record DataSource(String ssh, String mongo, String database, String uri) 
             options.add("readPreference=secondaryPreferred");
         }
         return rewritten + "?" + String.join("&", options);
+    }
+
+    /**
+     * What the instance's Redactor masks: the URI, and its password as written and decoded, since a shell that echoes the
+     * password alone matches no pattern. Empty parts are left out.
+     */
+    public List<String> secrets() {
+        List<String> secrets = new ArrayList<>(List.of(uri));
+        int schemeEnd = uri.indexOf("://") + 3;
+        int at = uri.lastIndexOf('@');
+        int colon = uri.indexOf(':', schemeEnd);
+        if (at > schemeEnd && colon > 0 && colon < at) {
+            String password = uri.substring(colon + 1, at);
+            secrets.add(password);
+            secrets.add(URLDecoder.decode(password, StandardCharsets.UTF_8));
+        }
+        return secrets;
     }
 
     /** URI option names are case-insensitive. */

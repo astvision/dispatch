@@ -125,7 +125,7 @@ public final class App {
         Workspaces workspaces = new Workspaces(stateDir, git);
         Gh gh = new Gh(config.delivery().ghCommand(), config.secrets().ghToken(), Duration.ofMinutes(2));
         Delivery delivery = new Delivery(git, gh, config.delivery().authorName(), config.delivery().authorEmail());
-        Redactor redactor = Redactor.fromEnvironment(environment);
+        Redactor redactor = Redactor.fromEnvironment(environment).with(config.dataSecrets());
         // Team mode never runs a task's agent or holds a worktree here; each member's own computer does (ADR 0021).
         (config.workers() == null ? workspaces.createDirectories() : workspaces.createTeamDirectories())
                 .ifPresent(warning -> Log.warn("state.permissions_too_open", "detail", warning));

@@ -41,6 +41,15 @@ public record Config(
         return isTeam(telegram);
     }
 
+    /** Every project's data URI and password, for the instance's Redactor (ADR 0043); empty without data. */
+    public List<String> dataSecrets() {
+        if (projects == null) {
+            return List.of();
+        }
+        return projects.stream().filter(project -> project.data() != null).flatMap(project -> project.data().secrets().stream())
+                .toList();
+    }
+
     /** The task's branch name: the instance's own prefix, or "dispatch" by default. */
     public String branch(long taskId) {
         return branch(branchPrefix, taskId);

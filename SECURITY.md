@@ -52,7 +52,8 @@ that project's plan and report runs, does an agent reach prod.
 - **The approval gate:** a plan run sees only the data's shape (collections, indexes, field types, counts), never
   `find` or `aggregate`; the real query runs only after the requester taps 📊 **Тайлан гаргах**. Dispatch enforces this
   from Claude Code's init event, not the prompt: a data server that offers more than the run's level, or is missing or
-  not connected, stops the run, and a plan run that used the data cannot answer directly. Every query stops after 60 s.
+  not connected, stops the run, and a plan run that used the data cannot answer directly, nor can a reply in a session
+  that ran or planned a report. Every query stops after 60 s.
 - **What a run may load:** a data run loads no MCP server but `dispatch_data`, and its Bash may not run `mongosh`,
   `mongo`, `mongoexport`, `mongodump`, `printenv` or `env`.
 - **Residual risk:** those Bash rules are guardrails, not a boundary (ADR 0009). Claude Code gives the MCP server and

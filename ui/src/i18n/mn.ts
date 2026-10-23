@@ -292,6 +292,7 @@ export const mn: Record<Key, string> = {
   "tasks.send": "Илгээх",
   "tasks.youDecide": "Та шийд",
   "tasks.approve": "Батлах",
+  "tasks.makeReport": "📊 Тайлан гаргах",
   "tasks.correct": "Засвар бичих",
   "tasks.correction": "Юуг өөрчлөх вэ",
   "tasks.reject": "Татгалзах",

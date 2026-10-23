@@ -193,6 +193,19 @@ describe("the home screen", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
+  it("approves a report plan with the report's own label, as in Telegram", async () => {
+    vi.mocked(api.getTaskDetail).mockResolvedValue(
+      detailOf(waitingOnApproval, { ...planWithQuestions, planSeq: 2, current: 0, questions: [], result: "report" }));
+    vi.mocked(api.approvePlan).mockResolvedValue({ result: "APPROVED" });
+    renderHome([waitingOnApproval]);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Add the CSV export/ }));
+    const sheet = await dialog();
+    fireEvent.click(await within(sheet).findByRole("button", { name: "📊 Тайлан гаргах" }));
+
+    await waitFor(() => expect(api.approvePlan).toHaveBeenCalledWith(11, 2));
+  });
+
   it("rejects only after one more tap", async () => {
     vi.mocked(api.getTaskDetail).mockResolvedValue(
       detailOf(waitingOnApproval, { ...planWithQuestions, planSeq: 2, current: 0, questions: [] }));

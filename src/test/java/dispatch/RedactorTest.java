@@ -27,6 +27,18 @@ class RedactorTest {
         assertEquals("git failed with password=[redacted] in /usr/bin", redacted);
     }
 
+    /** A shell that echoes the read-only user's password alone matches no pattern (ADR 0043). */
+    @Test
+    void aDataSourcesUriAndBarePasswordAreMasked() {
+        dispatch.config.DataSource data = new dispatch.config.DataSource("webapp-prod", "db1:27017", "webapp",
+                "mongodb://ro:" + "s3cret%40pass" + "@db1:27017/webapp");
+        Redactor redactor = Redactor.fromEnvironment(Map.of()).with(data.secrets());
+
+        assertEquals("the password is [redacted], or [redacted] encoded",
+                redactor.redact("the password is s3cret@pass, or s3cret%40pass encoded"));
+        assertFalse(redactor.redact("connect to " + data.uri()).contains("s3cret"));
+    }
+
     @Test
     void theWorkerKeyIsMaskedThoughNoPatternWouldCatchItsBase64urlShape() {
         Redactor redactor = Redactor.fromEnvironment(Map.of("DISPATCH_WORKER_KEY", "qF3z9dK2p7XyN4wL8bT1vR6mJ0hS5cA-"));

@@ -124,7 +124,7 @@ export default function TaskView({ taskId, layout = "panel", onChanged, onDetail
       <Flex wrap gap={8} align="center">
         {plan && can("approve") && (
           <Button type="primary" loading={busy} onClick={() => void act(() => approvePlan(task.taskId, plan.planSeq))}>
-            {t("tasks.approve")}
+            {t(plan.result === "report" ? "tasks.makeReport" : "tasks.approve")}
           </Button>
         )}
         {plan && can("correct") && !correcting && <Button onClick={() => setCorrecting(true)}>{t("tasks.correct")}</Button>}

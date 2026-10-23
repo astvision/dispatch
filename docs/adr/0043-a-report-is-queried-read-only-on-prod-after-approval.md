@@ -37,14 +37,15 @@ same project is answered or planned as before.
   so a run without its data can only guess.
 
 A plan run that called any `dispatch_data` tool may not end in `answer`, since an answer goes to the chat unapproved; a
-resumed plan session counts as having called one, because an earlier run of it may have. Such a run fails as an invalid
-plan.
+resumed plan session counts as having called one when the task ran a report or its plan proposes one (`Job.dataSeen`),
+because what that session read is still in its context. A reply to an answered code question may be answered again.
+Such a run fails as an invalid plan.
 
 **Read-only twice.** The Mongo user is the hard boundary: `dispatch check` opens the tunnel, asks Mongo for the user's
 privileges (`connectionStatus`, `showPrivileges`) and fails a user that holds any action beyond reading, naming it: only
 the built-in `read` role's actions, `listDatabases` and `planCacheRead` pass. The
 server's own read-only mode (`MDB_MCP_READ_ONLY=true`) is the second layer: it lists no write tool. Without a sandbox
-(macOS, `sandbox: off`), where a data block is still accepted, any agent run can read the owner's SSH keys and
+(macOS, `sandbox: off`, no bwrap), where a data block is still accepted, any agent run can read the owner's SSH keys and
 `dispatch.env` from disk, so only the read-only Mongo user bounds it.
 
 **Guardrails beside the gate.** A data run also gets `--disallowedTools` rules for `mongosh`, `mongo`, `mongoexport`,
@@ -78,8 +79,12 @@ We chose this over:
 
 Consequences: data reports are personal-only. A `data` block on a team instance, on a Codex or Gemini CLI project, or on
 Windows fails config load; `mongodb+srv://` is refused because SRV cannot go through one forwarded port. `REPORT` never
-crosses the worker wire, so the worker protocol stays 4. A data run loads none of the owner's MCP servers (their plugins'
+crosses the worker wire, and `Job.dataSeen` is set only on a data project's plan and left out of the JSON otherwise, so
+the worker protocol stays 4. A data run loads none of the owner's MCP servers (their plugins'
 skills still load). The server version is pinned: upgrading it means probing its tool list again and updating the levels,
 or the run stops on the new tools. A report costs up to the project's execution budget and timeout, with planning's model.
 The schema tools show field types, not values, but `count` with a filter can still reveal a fact about a record before the
 tap; the read-only user and the 60 s limit bound that.
+
+Rollback: a jar from before migration 038 cannot read `REPORT` runs or report plans, so finish or cancel every report task
+before rolling back.

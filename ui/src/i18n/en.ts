@@ -291,6 +291,7 @@ export const en = {
   "tasks.send": "Send",
   "tasks.youDecide": "You decide",
   "tasks.approve": "Approve",
+  "tasks.makeReport": "Make the report",
   "tasks.correct": "Write a correction",
   "tasks.correction": "What should change",
   "tasks.reject": "Reject",

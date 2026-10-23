@@ -40,6 +40,15 @@ test("your own waiting plan shows its steps and is approved from here", async ()
   await vi.waitFor(() => expect(changed).toHaveBeenCalled());
 });
 
+test("a report plan is approved with the report's own label, as in Telegram", async () => {
+  vi.mocked(api.getTaskDetail).mockResolvedValue({ ...waiting, plan: { ...waiting.plan!, result: "report" } });
+
+  render(<TaskView taskId={14} />);
+
+  expect(await screen.findByRole("button", { name: "Make the report" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+});
+
 test("a plan's picked plugins are listed under it", async () => {
   vi.mocked(api.getTaskDetail).mockResolvedValue({ ...waiting, plan: { ...waiting.plan!, plugins: ["playwright"] } });
 

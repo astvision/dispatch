@@ -432,8 +432,11 @@ export interface PlanView {
   findings: string[];
   /** The official plugins the execution loads (spec: plugin picks); empty when the plan picked none. */
   plugins: string[];
-  /** "answer" when the plan run answered the task instead of planning a change (spec: answers). */
-  result: "plan" | "answer";
+  /**
+   * "answer" when the plan run answered the task instead of planning a change (spec: answers); "report" when it plans a
+   * report from the project's data, which approving runs (ADR 0043).
+   */
+  result: "plan" | "answer" | "report";
   /** The answer in markdown; empty for a plan. */
   answer: string;
   questions: PlanQuestionView[];
