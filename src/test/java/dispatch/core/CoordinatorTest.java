@@ -11,6 +11,7 @@ import dispatch.Json;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
 import dispatch.config.Config;
+import dispatch.config.DataSource;
 import dispatch.domain.ClaimedRun;
 import dispatch.domain.FailureReason;
 import dispatch.domain.Plan;
@@ -509,5 +510,39 @@ class CoordinatorTest {
 
         assertEquals(RunKind.PLAN, given.get().kind());
         assertTrue(given.get().prompt().contains("<reply>\nWhy 30?\n</reply>"), given.get().prompt());
+    }
+
+    private static final DataSource DATA = new DataSource("ops", "db:27017", "webapp", "mongodb://ro:" + "pw@h/webapp");
+    private static final String REPORT_JSON = new Plan("Visits per day", List.of("visits.at is a date"), List.of("Count visits by day"),
+            List.of(), List.of(), List.of(), List.of(), Plan.Result.REPORT, "").toJson();
+
+    @Test
+    void aReportForAProjectWithoutDataIsAnInvalidPlan() {
+        long id = queue("How many visits per day?");
+
+        coordinator(projects(List.of(ALM)), remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+
+        Map<String, String> task = row("SELECT * FROM task WHERE id = ?", id);
+        assertEquals("FAILED", task.get("phase"));
+        assertEquals("AGENT", task.get("failure_reason"));
+        assertTrue(task.get("failure_detail").contains("needs the project's data"), task.get("failure_detail"));
+    }
+
+    @Test
+    void aReportsFollowUpIsPlannedWithTheReportFollowUpPrompt() {
+        long id = queue("How many visits per day?");
+        Config.Project withData = new Config.Project("alm", null, "git@github.com:acme/alm.git", "/home/bold/alm", "main",
+                "claude-code", null, "high", List.of(".env"), null, new Config.PhaseSettings("opus", null),
+                new Config.PhaseSettings(null, "low"), null, null, null, null, DATA);
+        Projects configured = projects(List.of(withData));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Correct(id, java.util.OptionalInt.of(1), "Only last month")));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+
+        assertEquals(RunKind.PLAN, given.get().kind());
+        assertTrue(given.get().prompt().contains("Count visits by day"), given.get().prompt());
+        assertTrue(given.get().prompt().contains("Only last month"), given.get().prompt());
     }
 }

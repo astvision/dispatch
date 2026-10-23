@@ -747,7 +747,7 @@ public final class TaskService {
                 .put("requester", task.requester().name()).put("phase", task.phase().name()).put("priority", task.priority().name())
                 .put("prUrl", task.prUrl()).put("baseBranch", task.baseBranch()).put("branch", Config.branch(branchPrefix, task.id()))
                 .put("failureReason", name(task.failureReason())).put("createdAt", text(task.createdAt()))
-                .put("completedAt", text(task.completedAt())).put("answered", Plan.answers(task.planJson()));
+                .put("completedAt", text(task.completedAt())).put("answered", Plan.endsWithoutCode(task.planJson()));
         putActions(payload, actionsOf(tx, viewer, List.of(task)).get(task.id()));
         if (!isOwn(viewer, task)) {
             return Optional.of(payload.put("headline", true).putNull("costUsd"));

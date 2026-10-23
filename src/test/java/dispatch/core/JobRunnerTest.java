@@ -1018,6 +1018,13 @@ class JobRunnerTest {
     }
 
     @Test
+    void onlyAPlanWithDataGetsTheDataNote() {
+        assertEquals(Prompts.DATA_NOTE, JobRunner.dataNote(RunKind.PLAN, true));
+        assertEquals("", JobRunner.dataNote(RunKind.PLAN, false));
+        assertEquals("", JobRunner.dataNote(RunKind.EXECUTE, true));
+    }
+
+    @Test
     void theExecutionItsFixAndItsReviewerAllCarryThePicks() {
         picks = List.of("playwright");
         answers.put(RunKind.EXECUTE, answer(null, "1.00"));

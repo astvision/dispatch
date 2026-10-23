@@ -327,7 +327,7 @@ public final class TaskCommands {
         }
         // The reply to an answer is planned in the answer's own session: another answer, or a plan to approve. Any other
         // finished task continues in its building session, without a new plan (ADR 0006).
-        boolean answered = Plan.answers(task.planJson());
+        boolean answered = Plan.endsWithoutCode(task.planJson());
         return queueRun(tx, who, task, answered ? Phase.PLANNING : Phase.EXECUTING, answered ? RunKind.PLAN : RunKind.EXECUTE,
                 RunCause.FOLLOW_UP, followUp.text().strip(), "follow-up", true, OutboxKind.FOLLOW_UP_QUEUED, now);
     }

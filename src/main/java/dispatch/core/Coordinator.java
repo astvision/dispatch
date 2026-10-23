@@ -135,7 +135,8 @@ public final class Coordinator {
         Config.RunLimits limits = planLimits.apply(project);
         // A task that already has a plan is being corrected, or, after an answer, continued: the run's instruction is the reply.
         String prompt = task.planJson() == null ? Prompts.plan(task)
-                : Plan.answers(task.planJson()) ? Prompts.answerFollowUp(task, run) : Prompts.correction(task, run);
+                : !Plan.endsWithoutCode(task.planJson()) ? Prompts.correction(task, run)
+                : Plan.answers(task.planJson()) ? Prompts.answerFollowUp(task, run) : Prompts.reportFollowUp(task, run);
         return newJob(task, run, project, task.sessionId(), agentStartedBefore(task.id(), RunKind.PLAN, run.seq()), prompt,
                 project.planModel(), project.planEffort(), limits.timeout().toMillis(), limits.budgetUsd(),
                 attachments(task.id()), null, null, null);
@@ -277,7 +278,7 @@ public final class Coordinator {
 
     private void succeeded(Job job, JobResult result) {
         switch (job.kind()) {
-            case PLAN -> finishPlan(job.taskId(), job.seq(), result.agent());
+            case PLAN -> finishPlan(job.taskId(), job.seq(), result.agent(), job.project().name());
             case EXECUTE -> transitions.completed(job.taskId(), job.seq(), result.agent(), result.agent().summary(), result.files(),
                     result.prUrl(), result.verification(), result.head());
             case DELIVER -> transitions.completed(job.taskId(), job.seq(), null, job.deliverySummary(), result.files(),
@@ -287,16 +288,24 @@ public final class Coordinator {
     }
 
     /** The plan is parsed here, not by the worker: a worker's answer is checked before it becomes the task's plan. */
-    private void finishPlan(long taskId, int seq, AgentResult result) {
+    private void finishPlan(long taskId, int seq, AgentResult result, String projectName) {
         if (result.structuredOutput() == null) {
             transitions.failed(taskId, seq, FailureReason.AGENT, "agent finished without returning a plan", result);
             return;
         }
         try {
-            transitions.planSucceeded(taskId, seq, Plan.parse(result.structuredOutput()), result);
+            Plan plan = Plan.parse(result.structuredOutput());
+            if (plan.result() == Plan.Result.REPORT && !hasData(projectName)) {
+                throw new InvalidPlanException("result report needs the project's data, which is not configured");
+            }
+            transitions.planSucceeded(taskId, seq, plan, result);
         } catch (InvalidPlanException e) {
             transitions.failed(taskId, seq, FailureReason.AGENT, "plan did not match the schema: " + e.getMessage(), result);
         }
+    }
+
+    private boolean hasData(String projectName) {
+        return projects.byName(projectName).map(project -> project.data() != null).orElse(false);
     }
 
     private void failAfterCrash(ClaimedRun claimed, RuntimeException cause) {

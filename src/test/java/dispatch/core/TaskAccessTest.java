@@ -368,6 +368,18 @@ class TaskAccessTest {
     }
 
     /** Its first plan run failed, so no execution ever started. */
+    @Test
+    void aReportedTaskAcceptsAFollowUp() {
+        Plan report = new Plan("Visits per day", List.of(), List.of("Count visits by day"), List.of(), List.of(), List.of(),
+                List.of(), Plan.Result.REPORT, "");
+        long id = awaiting(report);
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
+        transitions.failed(id, claim().seq(), FailureReason.AGENT, "boom", RESULT);
+
+
+        assertEquals(Optional.empty(), verdict(BOLD, id).refusal(Action.FOLLOW_UP));
+    }
+
     private long failedPlan() {
         long id = create("alm");
         ClaimedRun run = claim();

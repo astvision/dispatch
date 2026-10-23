@@ -237,6 +237,59 @@ final class Prompts {
                 """.formatted(task.id(), why, instruction) + EXECUTE_RULES;
     }
 
+    /** Appended to a plan run that can read the project's data (ADR 0043). */
+    static final String DATA_NOTE = """
+            This run can read the project's production MongoDB through the dispatch_data tools, but only its shape: collections,
+            indexes, field types and counts. If the task asks for numbers, statistics or a report drawn from that data, set result
+            to "report" and do not answer it yourself: in understanding say what is asked in one sentence; in findings say which
+            collections and fields hold it (and any gap or oddity you already see); in steps explain the query in a few short lines
+            — collection, filter and date range, grouping, what is counted — so the requester can approve it. The real query runs
+            only after approval. If the task asks about the code, answer or plan as usual without using the data tools. If it is
+            unclear whether the task wants numbers or a change, choose plan or answer, never report.
+            """;
+
+    /** The resumed planning session runs the approved report plan (ADR 0043). */
+    static String report(Task task) {
+        return """
+                The requester approved the report plan above for task #%d. Use the dispatch:data-report skill. Run what \
+                was approved, nothing broader; that includes the finer queries the data checks need. Filter early and \
+                use indexes.
+
+                Return only {"html": "<!doctype html>…"} through the structured output: one complete, self-contained \
+                HTML document, in the same language as the task.
+                """.formatted(task.id());
+    }
+
+    /** @param run the planning run whose instruction is the requester's reply to the task's report plan (ADR 0043) */
+    static String reportFollowUp(Task task, Run run) {
+        Plan plan = Plan.parse(task.planJson());
+        return """
+                The requester replied to your report plan for this task. Do not modify anything. Nobody can answer \
+                questions while you work, so do not ask for confirmation or permission.
+
+                Task #%d from %s:
+                <task>
+                %s
+                </task>
+
+                Your report plan:
+                <understanding>
+                %s
+                </understanding>
+                <steps>
+                %s
+                </steps>
+
+                Reply from %s:
+                <reply>
+                %s
+                </reply>
+
+                If the reply asks something, answer it. If it changes what the report should show, plan that report again.
+                """.formatted(task.id(), task.requester().name(), task.description(), plan.understanding(),
+                String.join("\n", plan.steps()), run.requestedByName(), run.instruction()) + PLAN_FORMAT + DATA_NOTE;
+    }
+
     /** @param run the planning run whose instruction is the requester's reply to the task's answer (spec: answers) */
     static String answerFollowUp(Task task, Run run) {
         return """

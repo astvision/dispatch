@@ -479,9 +479,14 @@ public final class JobRunner implements Worker {
 
     private RunRequest request(Job job, Path worktree, TaskFiles files, List<Path> plugins) {
         return new RunRequest(job.kind(), worktree,
-                job.prompt() + files.note() + pluginNote(job) + skillNote(job.kind(), plugins),
+                job.prompt() + files.note() + pluginNote(job) + dataNote(job.kind(), false) + skillNote(job.kind(), plugins),
                 job.sessionId(), job.resume(), files.dirs(), job.budgetUsd(), job.model(), job.effort(),
                 workspaces.runLogBase(job.taskId(), job.seq()), Map.of(), plugins, job.picks());
+    }
+
+    /** The note that lets a plan run read the project's data shape and propose a report (ADR 0043); Task 6 passes hasData. */
+    static String dataNote(RunKind kind, boolean hasData) {
+        return kind == RunKind.PLAN && hasData ? Prompts.DATA_NOTE : "";
     }
 
     /**

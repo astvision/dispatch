@@ -51,8 +51,8 @@
     },
     "result": {
       "type": "string",
-      "enum": ["plan", "answer"],
-      "description": "answer when the task only asks for information and changes nothing; plan for any change"
+      "enum": ["plan", "answer", "report"],
+      "description": "answer when the task only asks for information and changes nothing; report when the task asks for numbers or a report from the project's data and this run was told it can read that data; plan for any change"
     },
     "answer": {
       "type": "string",
