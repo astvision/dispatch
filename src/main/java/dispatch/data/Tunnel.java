@@ -22,12 +22,15 @@ public final class Tunnel implements AutoCloseable {
     private static final Duration CLOSE_GRACE = Duration.ofSeconds(5);
     private static final int STDERR_LINES = 5;
 
-    private final Process process;
     private final int port;
+    private final Runnable end;
 
-    private Tunnel(Process process, int port) {
-        this.process = process;
+    /**
+     * A tunnel on {@code port} that {@code end} takes down; {@link #open} passes the end of its ssh, a test something it counts.
+     */
+    public Tunnel(int port, Runnable end) {
         this.port = port;
+        this.end = end;
     }
 
     /**
@@ -60,7 +63,7 @@ public final class Tunnel implements AutoCloseable {
                 if (accepts(port)) {
                     Log.info("tunnel.open", "ssh", source.ssh(), "port", port);
                     opened = true;
-                    return new Tunnel(process, port);
+                    return new Tunnel(port, () -> ProcessTrees.terminate(process.toHandle(), CLOSE_GRACE));
                 }
                 if (Instant.now().isAfter(deadline)) {
                     throw new TunnelException("ssh to " + source.ssh() + " did not forward within " + wait.toSeconds() + " s: " + lastLine(stderrTail));
@@ -92,7 +95,7 @@ public final class Tunnel implements AutoCloseable {
     /** Ends ssh and anything it started, waiting up to 5 s; safe to call twice. */
     @Override
     public void close() {
-        ProcessTrees.terminate(process.toHandle(), CLOSE_GRACE);
+        end.run();
         Log.info("tunnel.closed", "port", port);
     }
 

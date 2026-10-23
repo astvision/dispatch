@@ -10,9 +10,15 @@ import dispatch.agent.Agent;
 import dispatch.agent.AgentActivity;
 import dispatch.agent.AgentOutcome;
 import dispatch.agent.AgentResult;
+import dispatch.agent.DataAccess;
 import dispatch.agent.RunHandle;
 import dispatch.agent.RunRequest;
 import dispatch.agent.claude.ClaudeCodeAgent;
+import dispatch.agent.sandbox.Confinement;
+import dispatch.config.DataSource;
+import dispatch.data.DataSources;
+import dispatch.data.Tunnel;
+import dispatch.data.TunnelException;
 import dispatch.domain.FailureReason;
 import dispatch.domain.RunKind;
 import dispatch.testing.FakeClaude;
@@ -34,8 +40,10 @@ import java.util.Deque;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -69,6 +77,8 @@ class JobRunnerTest {
     private boolean skills;
     /** When set, a fix (a resumed EXECUTE) runs until it is cancelled or its thread interrupted. */
     private volatile boolean fixesHang;
+    /** When set, a REPORT runs until it is cancelled, as {@link #fixesHang} makes a fix; it counts down {@link #fixStarted} too. */
+    private volatile boolean reportsHang;
     private final java.util.concurrent.CountDownLatch fixStarted = new java.util.concurrent.CountDownLatch(1);
     /** The prompts the verify loop's reviewers were started with. */
     private final List<String> reviewPrompts = new CopyOnWriteArrayList<>();
@@ -844,7 +854,8 @@ class JobRunnerTest {
             if (request.kind() == RunKind.REVIEW) {
                 reviewPrompts.add(request.prompt());
             }
-            if (fixesHang && request.kind() == RunKind.EXECUTE && request.resume()) {
+            if (fixesHang && request.kind() == RunKind.EXECUTE && request.resume()
+                    || reportsHang && request.kind() == RunKind.REPORT) {
                 return hanging();
             }
             AgentResult answer = answers.get(request.kind());
@@ -1039,5 +1050,152 @@ class JobRunnerTest {
         for (RunRequest request : loopRequests) {
             assertEquals(List.of("playwright"), request.picks(), request.kind() + " resume=" + request.resume());
         }
+    }
+
+    // Data reports (ADR 0043): the tunnel is opened for the agent and closed after it, however the run ends.
+
+    private static final DataSource WEBAPP_DATA = new DataSource("webapp-prod", "db1:27017", "webapp",
+            "mongodb://ro:" + "pw@db1:27017/webapp");
+    private static final int FAKE_PORT = 40123;
+
+    /** Knows one project's data; its tunnels open nothing and count their closing. */
+    private static final class FakeDataSources implements DataSources {
+        private final String project;
+        private final AtomicInteger opened = new AtomicInteger();
+        private final AtomicInteger closed = new AtomicInteger();
+        private TunnelException failure;
+
+        FakeDataSources(String project) {
+            this.project = project;
+        }
+
+        @Override
+        public Optional<DataSource> forProject(String name) {
+            return project.equals(name) ? Optional.of(WEBAPP_DATA) : Optional.empty();
+        }
+
+        @Override
+        public Tunnel open(DataSource source) {
+            opened.incrementAndGet();
+            if (failure != null) {
+                throw failure;
+            }
+            return new Tunnel(FAKE_PORT, closed::incrementAndGet);
+        }
+    }
+
+    /** A runner whose agent is the scripted one, with {@code data} as the machine's projects' data. */
+    private JobRunner dataRunner(DataSources data) {
+        return new JobRunner(workspaces, delivery, Map.of("claude-code", new ScriptedAgent()), Redactor.patternsOnly(),
+                (fileRef, target) -> {
+                    throw new IllegalStateException("file " + fileRef + " is gone");
+                }, new TestCommand(Confinement.none("no sandbox configured")), Clock.systemUTC(), data);
+    }
+
+    /** A report job in an existing worktree, as Coordinator.reportJob sends it. */
+    private Job reportJob() throws IOException {
+        Path worktree = Files.createDirectories(dir.resolve("report-worktree"));
+        return job(RunKind.REPORT, 2, "Run the approved report", worktree.toString(), null, null);
+    }
+
+    @Test
+    void aPlanOnADataProjectRunsWithSchemaAccessThroughATunnel() throws Exception {
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+        answers.put(RunKind.PLAN, answer("{}", "0.10"));
+        FakeDataSources data = new FakeDataSources("alm");
+
+        JobResult result = dataRunner(data).run(job(RunKind.PLAN, 1, "How many visits a day?", null, null, null), events, control);
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), result.failureDetail());
+        RunRequest request = loopRequests.getFirst();
+        assertEquals(DataAccess.Level.SCHEMA, request.data().level());
+        assertTrue(request.data().connectionString().contains("127.0.0.1:" + FAKE_PORT));
+        assertTrue(request.prompt().contains(Prompts.DATA_NOTE), request.prompt());
+        assertEquals(List.of(workspaces.skillsPluginDir()), request.pluginDirs(), "a data project loads the skills plugin");
+        assertEquals(1, data.opened.get());
+        assertEquals(1, data.closed.get());
+    }
+
+    @Test
+    void aReportRunGetsFullAccess() throws Exception {
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+        answers.put(RunKind.REPORT, answer("{}", "0.50"));
+        FakeDataSources data = new FakeDataSources("alm");
+        Job report = reportJob();
+
+        JobResult result = dataRunner(data).run(report, events, control);
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), result.failureDetail());
+        RunRequest request = loopRequests.getFirst();
+        assertEquals(DataAccess.Level.FULL, request.data().level());
+        assertTrue(request.data().connectionString().contains("127.0.0.1:" + FAKE_PORT));
+        assertEquals(Path.of(report.worktree()), request.workdir(), "the planning session's directory, so --resume finds it");
+        // The report prompt names its skill; no plan or execution note, no data note.
+        assertEquals("Run the approved report", request.prompt());
+        assertEquals(List.of(workspaces.skillsPluginDir()), request.pluginDirs());
+        assertEquals(List.of("1 REPORT 1 → DONE"), events.steps);
+        assertEquals(1, data.closed.get());
+    }
+
+    @Test
+    void aTunnelThatFailsFailsTheRunAsSetupWithoutStartingTheAgent() {
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+        FakeDataSources data = new FakeDataSources("alm");
+        data.failure = new TunnelException("ssh to webapp-prod exited with 255: Permission denied (publickey).");
+
+        JobResult result = dataRunner(data).run(job(RunKind.PLAN, 1, "How many visits a day?", null, null, null), events, control);
+
+        assertEquals(JobResult.Outcome.FAILED, result.outcome());
+        assertEquals(FailureReason.SETUP, result.failureReason());
+        assertEquals("ssh to webapp-prod exited with 255: Permission denied (publickey).", result.failureDetail());
+        assertTrue(agentKindsStarted.isEmpty(), agentKindsStarted.toString());
+        assertEquals(0, data.closed.get(), "nothing opened, nothing to close");
+    }
+
+    @Test
+    void aCancelledReportRunClosesItsTunnel() throws Exception {
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+        reportsHang = true;
+        FakeDataSources data = new FakeDataSources("alm");
+        Job report = reportJob();
+        AtomicReference<JobResult> result = new AtomicReference<>();
+
+        Thread worker = Thread.ofVirtual().start(() -> result.set(dataRunner(data).run(report, events, control)));
+        assertTrue(fixStarted.await(10, java.util.concurrent.TimeUnit.SECONDS), "the report agent started");
+        control.stop(ActiveRuns.StopReason.CANCELLED);
+        worker.join(Duration.ofSeconds(10));
+
+        assertEquals(JobResult.Outcome.CANCELLED, result.get().outcome());
+        assertEquals(1, data.closed.get());
+    }
+
+    @Test
+    void aProjectWithoutDataOpensNoTunnel() {
+        answers.put(RunKind.PLAN, answer("{}", "0.10"));
+        FakeDataSources data = new FakeDataSources("webapp");
+
+        JobResult result = dataRunner(data).run(job(RunKind.PLAN, 1, "Plan this: fix the login timeout", null, null, null),
+                events, control);
+
+        assertEquals(JobResult.Outcome.SUCCEEDED, result.outcome(), result.failureDetail());
+        RunRequest request = loopRequests.getFirst();
+        assertNull(request.data());
+        assertFalse(request.prompt().contains(Prompts.DATA_NOTE), request.prompt());
+        assertEquals(List.of(), request.pluginDirs(), "skills off and no data: no plugin");
+        assertEquals(0, data.opened.get());
+    }
+
+    /** The data block was removed after the report plan was approved. */
+    @Test
+    void aReportWhoseProjectNoLongerHasDataFailsAsSetupWithoutStartingTheAgent() throws Exception {
+        FakeDataSources data = new FakeDataSources("webapp");
+
+        JobResult result = dataRunner(data).run(reportJob(), events, control);
+
+        assertEquals(JobResult.Outcome.FAILED, result.outcome());
+        assertEquals(FailureReason.SETUP, result.failureReason());
+        assertEquals("the project's data is no longer configured", result.failureDetail());
+        assertTrue(agentKindsStarted.isEmpty(), agentKindsStarted.toString());
+        assertEquals(0, data.opened.get());
     }
 }

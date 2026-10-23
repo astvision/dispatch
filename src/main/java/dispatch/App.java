@@ -173,8 +173,10 @@ public final class App {
         WorkerApi workerApi = null;
         if (config.workers() == null) {
             // Personal mode runs the job in this process, exactly as before.
+            // Data is personal-only (ADR 0043): a team instance's projects never reach a prod Mongo.
             worker = new JobRunner(workspaces, delivery, agents, redactor, api::downloadFile,
-                    new dispatch.core.TestCommand(confinement, environment), clock);
+                    new dispatch.core.TestCommand(confinement, environment), clock,
+                    config.isTeam() ? dispatch.data.DataSources.NONE : dispatch.data.DataSources.of(config));
         } else {
             workerKeys = new WorkerKeys(db, clock);
             // Someone taken out of the config takes their computers' access with them.

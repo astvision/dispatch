@@ -22,7 +22,7 @@ public final class SandboxPolicies {
     private static final List<String> BUILD_CODE = List.of(".gradle/init.d", ".gradle/gradle.properties", ".m2/settings.xml");
     private static final List<String> SECRETS = List.of(".ssh", ".config/gh", ".gnupg");
     private static final String GITDIR_PREFIX = "gitdir: ";
-    private static final Set<RunKind> IN_WORKTREE = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW);
+    private static final Set<RunKind> IN_WORKTREE = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW, RunKind.REPORT);
     private static final List<String> GIT_CONTROL = List.of("config", "hooks", "info", "config.worktree");
 
     private final Path home;

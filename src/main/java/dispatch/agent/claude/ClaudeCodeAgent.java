@@ -29,13 +29,14 @@ public final class ClaudeCodeAgent implements Agent {
     private static final String REVIEW_SCHEMA = Schemas.REVIEW;
     private static final String SPLIT_SCHEMA = Schemas.SPLIT;
     private static final String ASSISTANT_SCHEMA = Schemas.ASSISTANT;
+    private static final String REPORT_SCHEMA = Schemas.REPORT;
     /** The one command the assistant may run: its view of the member's tasks (A-1). */
     private static final String ASSISTANT_BASH = "Bash(dispatch ask *)";
     /** Replaces Claude Code's coding prompt, which a split does not need: it would multiply the split's cost (ADR 0013). */
     private static final String SPLIT_SYSTEM_PROMPT =
             "You split a developer's chat message into independent development tasks. Answer only through the structured output.";
     /** Runs that do the task's work; a split and an assistant turn keep only what Dispatch gives them. */
-    private static final Set<RunKind> OWNER_KINDS = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW);
+    private static final Set<RunKind> OWNER_KINDS = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW, RunKind.REPORT);
     /** Delivery is Dispatch's job (ADR 0007); the deny rules are a guardrail, not a boundary (ADR 0009). */
     private static final List<String> EXECUTE_DENIED = List.of("Bash(git commit *)", "Bash(git push *)", "Bash(gh *)");
     /**
@@ -104,12 +105,11 @@ public final class ClaudeCodeAgent implements Agent {
 
     private static String permissionMode(RunKind kind) {
         return switch (kind) {
-            case PLAN, SPLIT, REVIEW -> "plan";
+            case PLAN, SPLIT, REVIEW, REPORT -> "plan";
             case EXECUTE -> "auto";
             // Anything not allowed up front is refused without asking: here, every Bash command but dispatch ask.
             case ASSISTANT -> "dontAsk";
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
-            case REPORT -> throw new IllegalStateException("REPORT runs arrive in Task 6");
         };
     }
 
@@ -172,8 +172,9 @@ public final class ClaudeCodeAgent implements Agent {
             // Reads code, asks for tasks and loads its taskmanager skill (A-1), nothing else; --allowedTools takes every following argument too, so it is last.
             case ASSISTANT -> args.addAll(List.of("--tools", "Read,Grep,Glob,Bash,Skill", "--json-schema", ASSISTANT_SCHEMA,
                     "--allowedTools", ASSISTANT_BASH));
+            // The approved report (ADR 0043): read-only like its plan, querying through the data server, its HTML in its own schema.
+            case REPORT -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", REPORT_SCHEMA));
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
-            case REPORT -> throw new IllegalStateException("REPORT runs arrive in Task 6");
         }
         if (request.data() != null) {
             denied.addAll(DATA_DENIED);

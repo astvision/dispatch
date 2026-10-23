@@ -150,6 +150,19 @@ class SandboxPoliciesTest {
         assertTrue(policy.readOnly().contains(worktree.resolve(".git")), policy.readOnly().toString());
     }
 
+    /** A report resumes its plan's session in the task's worktree, so its git dir is guarded as a plan's is. */
+    @Test
+    void reportRunsWorkInTheWorktree() throws IOException {
+        Path gitDir = Files.createDirectories(stateDir.resolve("repos/alm/.git/worktrees/7"));
+        Path worktree = Files.createDirectories(stateDir.resolve("worktrees/7"));
+        Files.writeString(worktree.resolve(".git"), "gitdir: " + gitDir + "\n");
+
+        SandboxPolicy policy = new SandboxPolicies(home, stateDir, List.of(stateDir))
+                .forRun(request(RunKind.REPORT, worktree, List.of()), AgentState.NONE);
+
+        assertTrue(policy.readOnly().contains(worktree.resolve(".git")), policy.readOnly().toString());
+    }
+
     @Test
     void assistantRunGetsTheStateFileAndItsCommandBack() throws IOException {
         Path assistantHome = Files.createDirectories(stateDir.resolve("assistant"));

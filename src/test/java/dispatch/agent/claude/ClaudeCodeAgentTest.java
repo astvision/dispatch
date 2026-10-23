@@ -266,6 +266,24 @@ class ClaudeCodeAgentTest {
         assertEquals("Read,Bash", valueAfter(args, "--tools"));
     }
 
+    /** A report reads like a plan and answers through its own schema; the deny rules stay last, after the schema's value. */
+    @Test
+    void aReportRunIsPlanModeWithTheReportSchema() throws Exception {
+        Path plugin = Files.createDirectories(dir.resolve("state/plugins/dispatch"));
+        RunRequest request = new RunRequest(RunKind.REPORT, workdir, "Run the approved report", SESSION, true, List.of(),
+                new BigDecimal("2"), null, null, dir.resolve("runs/1/2"), Map.of(), List.of(plugin), List.of(),
+                new DataAccess(DataAccess.Level.FULL, "mongodb://ro:" + "pw@127.0.0.1:40123/webapp"));
+
+        agent.start(request).await();
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        assertEquals("plan", valueAfter(args, "--permission-mode"));
+        assertEquals("Read,Bash,Skill", valueAfter(args, "--tools"));
+        assertEquals(dispatch.agent.Schemas.REPORT, valueAfter(args, "--json-schema"));
+        assertEquals(SESSION.toString(), valueAfter(args, "--resume"));
+        assertEquals("--disallowedTools", args.get(args.size() - 7), args.toString());
+    }
+
     @Test
     void aPlanRunWithoutDataDeniesNothing() throws Exception {
         agent.start(plan("Plan it")).await();

@@ -12,6 +12,7 @@ import dispatch.core.JobResult;
 import dispatch.core.JobRunner;
 import dispatch.core.TestCommand;
 import dispatch.core.TestRunner;
+import dispatch.data.DataSources;
 import dispatch.domain.AgentKind;
 import dispatch.domain.FailureReason;
 import dispatch.domain.RunStep;
@@ -121,7 +122,8 @@ public final class WorkerLoop implements Runnable {
     /** One runner per job, so its attachment source knows which task's files it may fetch. */
     private JobRunner runnerFor(Job job) {
         return new JobRunner(workspaces, delivery, agentsByType, redactor,
-                (fileRef, target) -> client.attachment(job.taskId(), fileRef, target), tests, Clock.systemUTC());
+                (fileRef, target) -> client.attachment(job.taskId(), fileRef, target), tests, Clock.systemUTC(),
+                DataSources.NONE);
     }
 
     @Override
