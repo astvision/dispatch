@@ -38,11 +38,40 @@ Where the machine can (Linux with bubblewrap, `sandbox: auto`, the default), eve
 - **Plugin picks:** a task's plan may pick plugins from a list Dispatch ships (ADR 0037), and their code then runs in the sandbox with the agent's access. The list holds only Anthropic-hosted plugins without hooks or credentials, and the agent cannot add to it. `playwright` runs whatever npm serves as `@playwright/mcp@latest`.
 - **Teams:** upgrade the team machine and its workers together. Since ADR 0039 this is checked: a worker and a team machine on different worker protocols pass no work, and the requester is told to update that computer. Before it: a team machine from before this version refuses a result that reports a sandbox, and a worker from before it cannot read an execution or delivery job that carries its branch's expected commit, nor a job of a Claude Code project with skills on. Since plugin picks (ADR 0037), such a team machine also refuses every plan from a newer worker, and such a worker cannot read an execution job whose plan picked plugins.
 
+## Reports from prod data
+
+A project on a personal instance may name its production MongoDB in a `data` block (ADR 0043). Only then, and only for
+that project's plan and report runs, does an agent reach prod.
+- **The tunnel:** Dispatch opens `ssh -L` to a free local port itself, outside the sandbox, with the owner's own SSH
+  setup, and closes it when the run ends. The agent never sees `~/.ssh`; it reaches only `127.0.0.1:<port>`, and only
+  while the run lasts.
+- **Read-only, twice:** the Mongo user is the hard boundary, and `dispatch check` fails one that can insert, update,
+  remove, or create or drop a collection or index. The MCP server Dispatch loads (`mongodb-mcp-server`, pinned) runs in
+  its read-only mode, which offers no write tool.
+- **The approval gate:** a plan run sees only the data's shape (collections, indexes, field types, counts), never
+  `find` or `aggregate`; the real query runs only after the requester taps 📊 **Тайлан гаргах**. Dispatch enforces this
+  from Claude Code's init event, not the prompt: a data server that offers more than the run's level, or is missing or
+  not connected, stops the run, and a plan run that used the data cannot answer directly. Every query stops after 60 s.
+- **What a run may load:** a data run loads no MCP server but `dispatch_data`, and its Bash may not run `mongosh`,
+  `mongo`, `mongoexport`, `mongodump`, `printenv` or `env`.
+- **Residual risk:** those Bash rules are guardrails, not a boundary (ADR 0009). Claude Code gives the MCP server and
+  Bash the same environment and sandbox, so during a data run the tunnelled URI, with the read-only user's password, is
+  in the agent's environment, and a deliberately rogue shell command (prompt injection in a task or the repository)
+  could read it and query Mongo directly with that user's rights, past the gate, and send what it reads out over the
+  open network. The read-only user bounds what it can do; the gate bounds cost and approval on the normal path. Give
+  the report user read access to the report database only.
+- **Not reached:** a team instance, a member's computer, Codex and Gemini CLI projects, and Windows never get a data
+  block. No other run gets the URI: the `dispatch.env` variable that holds it is kept out of every agent's and test
+  command's environment.
+- **What a report holds:** aggregates. The report skill tells the agent never to put names, phone numbers or other raw
+  personal fields in the page; that is an instruction, not a filter. The page reaches only the requester's private chat,
+  and the run's transcript under `runs/` holds whatever the queries returned.
+
 ## Secrets
 
-- **Where secrets live:** only in the environment file (`TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `GH_TOKEN`), mode 600, owned by the instance user. A personal instance keeps them in the secrets file beside its config, created owner-only (mode 600 on macOS and Linux, an ACL for the current user alone on Windows); `dispatch run` refuses it while others can read it. `dispatch init` reads the bot token without echoing it, and never prints it.
+- **Where secrets live:** only in the environment file (`TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `GH_TOKEN`, and a project's read-only data URI under the name its `data.uri: ${NAME}` gives), mode 600, owned by the instance user. A personal instance keeps them in the secrets file beside its config, created owner-only (mode 600 on macOS and Linux, an ACL for the current user alone on Windows); `dispatch run` refuses it while others can read it. `dispatch init` reads the bot token without echoing it, and never prints it.
 - **Config file:** the YAML config never holds secrets. It rejects unknown keys and repository URLs with embedded credentials.
-- **What the agent gets:** the agent process never receives `TELEGRAM_BOT_TOKEN` or `GH_TOKEN`. Git receives the token through its environment, never on a command line. The `env` and `headers` values of an MCP server the owner lists (ADR 0036) travel the same way, as `${DISPATCH_MCP_<n>}` references Claude Code expands; a secret written into a server's command, arguments or URL still reaches the command line. Processes running as the same OS user can still read each other's environment.
+- **What the agent gets:** the agent process never receives `TELEGRAM_BOT_TOKEN` or `GH_TOKEN`. Git receives the token through its environment, never on a command line. The `env` and `headers` values of an MCP server the owner lists (ADR 0036) travel the same way, as `${DISPATCH_MCP_<n>}` references Claude Code expands; a secret written into a server's command, arguments or URL still reaches the command line. A project's data URI (ADR 0043) reaches only that project's plan and report runs, as `DISPATCH_DATA_URI`. Processes running as the same OS user can still read each other's environment.
 - **Redaction:**
   - What is masked: log lines, stack traces, every Telegram message Dispatch sends, and the agent's summary before it becomes a commit message and pull request description.
   - What gets replaced with `[redacted]`: the values of Dispatch's secret variables, plus common credential formats (Telegram bot tokens, Anthropic, OpenAI, GitHub and AWS keys, private keys, credentials in URLs).

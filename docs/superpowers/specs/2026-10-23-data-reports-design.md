@@ -136,6 +136,15 @@ driver). It takes a level (`schema` | `full`), refuses what that level forbids, 
 through Bash by one exact `--allowedTools` rule. The builder picks MCP only if all three hold, and records the probe
 results in the ADR.
 
+**Settled 2026-10-23: MCP** (Claude Code 2.1.309, mongodb-mcp-server 2.1.2, mongo:7.0; ADR 0043). All three held:
+MCP tools run in a plan-mode run with `--tools Read,Bash`; `MDB_MCP_DISABLED_TOOLS` removes tools from the init event's
+list, so Dispatch checks each run's tool set against its level (the schema level also disables `find`, `export` and
+`explain`, which return values or run pipelines); and `MDB_MCP_MAX_TIME_MS` reaches `find`, `count` and `aggregate`.
+`collection-schema` returns field types without values, so no Dispatch wrapper is needed to cut samples down. Also
+found: the server returns at most 100 documents a query by default (a report run raises it to 5000), and a cold npx
+cache outlasts Claude Code's 30 s MCP connect timeout (`MCP_TIMEOUT=120000`; `dispatch check` warms the cache). The live
+test `LiveDataReportTest` runs the whole flow through a real tunnel.
+
 ### 4. Recognizing a report: a third plan result
 
 The plan schema's `result` gains `report`, next to `plan` and `answer` (ADR 0038). PLAN_FORMAT says:
