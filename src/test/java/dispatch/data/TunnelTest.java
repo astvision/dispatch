@@ -26,7 +26,6 @@ class TunnelTest {
     @TempDir
     Path dir;
 
-    /** A fake ssh that serves the forwarded local port with python's http.server, as a real tunnel would accept. */
     private Path fakeSsh(String body) throws IOException {
         Path script = dir.resolve("ssh-" + System.nanoTime());
         Files.writeString(script, "#!/bin/bash\n" + body + "\n");
@@ -34,11 +33,31 @@ class TunnelTest {
         return script;
     }
 
-    private static final String FORWARD = """
-            for a in "$@"; do case $a in 127.0.0.1:*) spec=${a#127.0.0.1:};; esac; done
-            port=${spec%%:*}
-            exec python3 -m http.server "$port" --bind 127.0.0.1
-            """;
+    /**
+     * A fake ssh that accepts on the forwarded local port, as a real tunnel would, with this JVM's own java: python's
+     * http.server looks up the host's name before it listens, which stalled past the wait on macOS runners.
+     */
+    private Path forwardingSsh() throws IOException {
+        Path listen = dir.resolve("Listen.java");
+        Files.writeString(listen, """
+                public class Listen {
+                    public static void main(String[] args) throws Exception {
+                        try (var server = new java.net.ServerSocket(Integer.parseInt(args[0]), 50,
+                                java.net.InetAddress.getLoopbackAddress())) {
+                            while (true) {
+                                server.accept().close();
+                            }
+                        }
+                    }
+                }
+                """);
+        String java = ProcessHandle.current().info().command().orElseThrow();
+        return fakeSsh("""
+                for a in "$@"; do case $a in 127.0.0.1:*) spec=${a#127.0.0.1:};; esac; done
+                port=${spec%%%%:*}
+                exec "%s" "%s" "$port"
+                """.formatted(java, listen));
+    }
 
     private static boolean accepts(int port) {
         try (Socket ignored = new Socket("127.0.0.1", port)) {
@@ -56,7 +75,7 @@ class TunnelTest {
 
     @Test
     void aTunnelOpensOnceItsPortAccepts() throws Exception {
-        Path ssh = fakeSsh(FORWARD);
+        Path ssh = forwardingSsh();
         Tunnel tunnel = Tunnel.open(List.of(ssh.toString()), SOURCE, Duration.ofSeconds(10));
         int port = tunnel.port();
         try (Socket socket = new Socket("127.0.0.1", port)) {
@@ -89,7 +108,7 @@ class TunnelTest {
 
     @Test
     void twoTunnelsGetTwoPorts() throws Exception {
-        Path ssh = fakeSsh(FORWARD);
+        Path ssh = forwardingSsh();
         try (Tunnel first = Tunnel.open(List.of(ssh.toString()), SOURCE, Duration.ofSeconds(10));
              Tunnel second = Tunnel.open(List.of(ssh.toString()), SOURCE, Duration.ofSeconds(10))) {
             assertNotEquals(first.port(), second.port());
