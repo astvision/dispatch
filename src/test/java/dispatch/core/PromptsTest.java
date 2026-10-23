@@ -154,5 +154,10 @@ class PromptsTest {
         String followUp = Prompts.reportFollowUp(reported, reply);
         assertTrue(followUp.contains("Count visits by day"), followUp);
         assertFalse(followUp.contains(Prompts.DATA_NOTE), "JobRunner owns the note");
+        // The session has read the data, so an answer would always be refused (ADR 0043).
+        assertFalse(followUp.contains("answer it"), followUp);
+        assertTrue(followUp.contains("If the reply asks for a different or changed report, plan the report again: explain the new "
+                + "query in steps and set result to \"report\". If it asks for a change to the code, plan that change. Never answer "
+                + "directly"), followUp);
     }
 }

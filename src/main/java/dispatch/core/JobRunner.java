@@ -212,7 +212,7 @@ public final class JobRunner implements Worker {
         }
         try (Tunnel tunnel = dataSources.open(source)) {
             DataAccess data = new DataAccess(job.kind() == RunKind.REPORT ? DataAccess.Level.FULL : DataAccess.Level.SCHEMA,
-                    source.connectionString(tunnel.port()));
+                    source.connectionString(tunnel.port()), job.sawData());
             return runAgent(job, events, control, request(job, worktree, files, plugins, data), timeout);
         } catch (TunnelException e) {
             return JobResult.failed(FailureReason.SETUP, e.getMessage(), null);
@@ -538,23 +538,24 @@ public final class JobRunner implements Worker {
     }
 
     /** The note naming the plugin's skills for a plan or an execution; added here, beside the plugin, never by the team machine. */
-    private static String skillNote(RunKind kind, List<Path> plugins) {
+    private static String skillNote(Job job, List<Path> plugins) {
         if (plugins.isEmpty()) {
             return "";
         }
-        return switch (kind) {
-            case PLAN -> Prompts.SkillNote.PLAN.after();
+        return switch (job.kind()) {
+            // A data project loads the plugin for its report skill alone; the plan's note is for the project's own skills.
+            case PLAN -> job.project().skillsOn() ? Prompts.SkillNote.PLAN.after() : "";
             case EXECUTE -> Prompts.SkillNote.EXECUTE.after();
             // Its prompt names its one skill, dispatch:data-report; a plan's note would have it plan a change instead.
             case REPORT -> "";
-            case DELIVER, SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(kind + " is never a job's agent run");
+            case DELIVER, SPLIT, ASSISTANT, REVIEW -> throw new IllegalStateException(job.kind() + " is never a job's agent run");
         };
     }
 
     /** @param data the project's data the run may read, null for none */
     private RunRequest request(Job job, Path worktree, TaskFiles files, List<Path> plugins, DataAccess data) {
         return new RunRequest(job.kind(), worktree,
-                job.prompt() + files.note() + pluginNote(job) + dataNote(job.kind(), data != null) + skillNote(job.kind(), plugins),
+                job.prompt() + files.note() + pluginNote(job) + dataNote(job.kind(), data != null) + skillNote(job, plugins),
                 job.sessionId(), job.resume(), files.dirs(), job.budgetUsd(), job.model(), job.effort(),
                 workspaces.runLogBase(job.taskId(), job.seq()), Map.of(), plugins, job.picks(), data);
     }

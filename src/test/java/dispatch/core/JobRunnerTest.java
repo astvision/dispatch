@@ -166,7 +166,7 @@ class JobRunnerTest {
         Job job = new Job(TASK, 1, RunKind.PLAN, new Job.Project("alm", repos.origin.toString(), null, "main", "codex", List.of(), null, null, null),
                 "main", null, null, null, SESSION, false, "Plan this: fix the login timeout", null, null,
                 Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(), "dispatch #7: Fix the login timeout",
-                List.of("Requested-by: Bold"), null, null, null, null, null);
+                List.of("Requested-by: Bold"), null, null, null, null, null, null);
 
         JobResult result = runner.run(job, events, control);
 
@@ -182,7 +182,7 @@ class JobRunnerTest {
         Job job = new Job(TASK, 1, RunKind.PLAN, project(List.of()), "main", null, null, null, SESSION, false,
                 "Plan this: fix the login timeout", null, null, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"),
                 List.of(new dispatch.domain.Attachment("gone-id", "1-photo.jpg", 3L)), "dispatch #7: Fix the login timeout",
-                List.of("Requested-by: Bold"), null, null, null, null, null);
+                List.of("Requested-by: Bold"), null, null, null, null, null, null);
 
         JobResult result = runner.run(job, events, control);
 
@@ -223,7 +223,7 @@ class JobRunnerTest {
     void aTimeoutStopsTheAgentAndSaysHowLongItRan() throws Exception {
         Job job = new Job(TASK, 1, RunKind.PLAN, project(List.of()), "main", null, null, null, SESSION, false, "SCENARIO:sleep",
                 null, null, 700L, new BigDecimal("2"), List.of(), "dispatch #7: Fix the login timeout",
-                List.of("Requested-by: Bold"), null, null, null, null, null);
+                List.of("Requested-by: Bold"), null, null, null, null, null, null);
 
         JobResult result = runner.run(job, events, control);
 
@@ -257,7 +257,7 @@ class JobRunnerTest {
 
         Job job = new Job(TASK, 3, RunKind.DELIVER, project(List.of()), "main", events.baseSha, events.worktree, null, null,
                 false, null, null, null, 0L, null, List.of(), "dispatch #7: Fix the login timeout",
-                List.of("Requested-by: Bold", "Approved-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30", null, null, null, null);
+                List.of("Requested-by: Bold", "Approved-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30", null, null, null, null, null);
         JobResult result = runner.run(job, new Recorder(), new ActiveRuns().register(TASK, 3));
 
         assertEquals(List.of("README.md"), result.files());
@@ -700,7 +700,7 @@ class JobRunnerTest {
         return new Job(TASK, 3, RunKind.DELIVER, project(List.of()), "main", events.baseSha, events.worktree, null, null,
                 false, null, null, null, 0L, null, List.of(), "dispatch #7: Fix the login timeout",
                 List.of("Requested-by: Bold", "Approved-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30", null, null,
-                expectedHead, null);
+                expectedHead, null, null);
     }
 
     /**
@@ -831,7 +831,7 @@ class JobRunnerTest {
         Job job = new Job(TASK, 2, RunKind.EXECUTE, project, "main", events.baseSha, events.worktree, null, SESSION, false,
                 "Implement the approved plan", null, null, timeout.toMillis(), new BigDecimal("10"), List.of(),
                 "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null,
-                loop ? "Review this:" : null, guarded ? events.baseSha : null, picks);
+                loop ? "Review this:" : null, guarded ? events.baseSha : null, picks, null);
         return looping.run(job, loopEvents, execution);
     }
 
@@ -935,7 +935,7 @@ class JobRunnerTest {
     private Job job(RunKind kind, int seq, String prompt, String worktree, String baseSha, List<String> copyFiles) {
         return new Job(TASK, seq, kind, project(copyFiles == null ? List.of() : copyFiles), "main", baseSha, worktree, null,
                 SESSION, false, prompt, null, null, Duration.ofSeconds(30).toMillis(), new BigDecimal("2"), List.of(),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null, null, null, null);
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Bold"), null, null, null, null, null, null);
     }
 
     /** A copy of {@code job} with its team-sent branch set. */
@@ -943,7 +943,7 @@ class JobRunnerTest {
         return new Job(job.taskId(), job.seq(), job.kind(), job.project(), job.baseBranch(), job.baseSha(), job.worktree(),
                 job.prUrl(), job.sessionId(), job.resume(), job.prompt(), job.model(), job.effort(), job.timeoutMillis(),
                 job.budgetUsd(), job.attachments(), job.commitSubject(), job.commitTrailers(), job.deliverySummary(), branch,
-                job.reviewPrompt(), job.expectedHead(), job.plugins());
+                job.reviewPrompt(), job.expectedHead(), job.plugins(), job.dataSeen());
     }
 
     private Job.Project project(List<String> copyFiles) {
@@ -1021,7 +1021,7 @@ class JobRunnerTest {
         Job codexPlan = new Job(plan.taskId(), plan.seq(), plan.kind(), new Job.Project(p.name(), p.repo(), p.path(),
                 p.baseBranch(), "codex", p.copyFiles(), null, null, null), plan.baseBranch(), plan.baseSha(), plan.worktree(), plan.prUrl(),
                 plan.sessionId(), plan.resume(), plan.prompt(), plan.model(), plan.effort(), plan.timeoutMillis(),
-                plan.budgetUsd(), plan.attachments(), plan.commitSubject(), plan.commitTrailers(), plan.deliverySummary(), null, null, null, null);
+                plan.budgetUsd(), plan.attachments(), plan.commitSubject(), plan.commitTrailers(), plan.deliverySummary(), null, null, null, null, null);
 
         assertEquals(Prompts.PLUGIN_NOTE, JobRunner.pluginNote(plan));
         assertEquals("", JobRunner.pluginNote(codexPlan), "Codex loads no plugins, so it is offered none");
@@ -1111,9 +1111,33 @@ class JobRunnerTest {
         assertEquals(DataAccess.Level.SCHEMA, request.data().level());
         assertTrue(request.data().connectionString().contains("127.0.0.1:" + FAKE_PORT));
         assertTrue(request.prompt().contains(Prompts.DATA_NOTE), request.prompt());
+        assertFalse(request.prompt().contains(Prompts.SkillNote.PLAN.text()), "the project's own skills are off: " + request.prompt());
         assertEquals(List.of(workspaces.skillsPluginDir()), request.pluginDirs(), "a data project loads the skills plugin");
         assertEquals(1, data.opened.get());
         assertEquals(1, data.closed.get());
+    }
+
+    /** Every follow-up resumes the plan's session; only the job says whether that session saw report data. */
+    @Test
+    void aResumedDataPlanCarriesWhetherItsSessionSawReportData() throws Exception {
+        SkillsPlugin.install(workspaces.skillsPluginDir());
+        answers.put(RunKind.PLAN, answer("{}", "0.10"));
+        Path worktree = Files.createDirectories(dir.resolve("follow-up-worktree"));
+        Job unseen = resumed(job(RunKind.PLAN, 3, "Reply", worktree.toString(), null, null), null);
+        Job seen = resumed(unseen, true);
+
+        dataRunner(new FakeDataSources("alm")).run(unseen, events, control);
+        dataRunner(new FakeDataSources("alm")).run(seen, events, control);
+
+        assertFalse(loopRequests.get(0).data().seen(), "a resumed code session saw no report data");
+        assertTrue(loopRequests.get(1).data().seen());
+    }
+
+    private static Job resumed(Job job, Boolean dataSeen) {
+        return new Job(job.taskId(), job.seq(), job.kind(), job.project(), job.baseBranch(), job.baseSha(), job.worktree(),
+                job.prUrl(), job.sessionId(), true, job.prompt(), job.model(), job.effort(), job.timeoutMillis(), job.budgetUsd(),
+                job.attachments(), job.commitSubject(), job.commitTrailers(), job.deliverySummary(), job.branch(),
+                job.reviewPrompt(), job.expectedHead(), job.plugins(), dataSeen);
     }
 
     @Test

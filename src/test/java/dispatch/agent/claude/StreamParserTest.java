@@ -299,8 +299,8 @@ class StreamParserTest {
         return dataParser(DataAccess.Level.SCHEMA, false, lines);
     }
 
-    private static StreamParser dataParser(DataAccess.Level level, boolean resumed, String... lines) {
-        StreamParser parser = new StreamParser("plan", null, WORKTREE, null, level, resumed);
+    private static StreamParser dataParser(DataAccess.Level level, boolean seen, String... lines) {
+        StreamParser parser = new StreamParser("plan", null, WORKTREE, null, level, seen);
         List.of(lines).forEach(parser::accept);
         return parser;
     }
@@ -362,15 +362,15 @@ class StreamParserTest {
         assertEquals(AgentOutcome.SUCCEEDED, parser.result(0, "").outcome());
     }
 
-    /** A correction resumes the session whose earlier run may have read the data; its numbers are still in the context. */
+    /** A session that ran or planned a report still holds what it read; one that only planned code does not. */
     @Test
-    void aResumedPlanCannotAnswerEvenWithoutADataCallOfItsOwn() {
-        AgentResult resumed = dataParser(DataAccess.Level.SCHEMA, true, DATA_INIT, planResult("answer")).result(0, "");
-        AgentResult fresh = dataParser(DataAccess.Level.SCHEMA, false, DATA_INIT, planResult("answer")).result(0, "");
+    void aPlanWhoseSessionSawReportDataCannotAnswerEvenWithoutADataCallOfItsOwn() {
+        AgentResult seen = dataParser(DataAccess.Level.SCHEMA, true, DATA_INIT, planResult("answer")).result(0, "");
+        AgentResult unseen = dataParser(DataAccess.Level.SCHEMA, false, DATA_INIT, planResult("answer")).result(0, "");
 
-        assertEquals(AgentOutcome.FAILED, resumed.outcome());
-        assertTrue(resumed.error().contains("read the project's data, so it may not answer directly"), resumed.error());
-        assertEquals(AgentOutcome.SUCCEEDED, fresh.outcome());
+        assertEquals(AgentOutcome.FAILED, seen.outcome());
+        assertTrue(seen.error().contains("read the project's data, so it may not answer directly"), seen.error());
+        assertEquals(AgentOutcome.SUCCEEDED, unseen.outcome());
     }
 
     @Test

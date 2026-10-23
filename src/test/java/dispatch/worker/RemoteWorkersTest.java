@@ -602,7 +602,7 @@ class RemoteWorkersTest {
     private Job minimalJob(long taskId) {
         Job.Project project = new Job.Project(ALM.name(), ALM.repo(), null, ALM.baseBranch(), ALM.agent(), List.of(), null, null, null);
         return new Job(taskId, 1, RunKind.PLAN, project, "main", null, null, null, null, false, "prompt", null, null,
-                0L, null, List.of(), "subject", List.of(), null, null, null, null, null);
+                0L, null, List.of(), "subject", List.of(), null, null, null, null, null, null);
     }
 
     private Thread coordinate() {

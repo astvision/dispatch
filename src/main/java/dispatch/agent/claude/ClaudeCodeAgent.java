@@ -99,7 +99,7 @@ public final class ClaudeCodeAgent implements Agent {
         runEnvironment.putAll(loadout.environment());
         return ProcessRun.start(AgentKind.CLAUDE_CODE.id(), commandLine(run, permissionMode, loadout), run, runEnvironment, run.prompt(),
                 new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase(),
-                        request.data() == null ? null : request.data().level(), request.resume()),
+                        request.data() == null ? null : request.data().level(), request.data() != null && request.data().seen()),
                 cancelGrace, confinement, STATE);
     }
 

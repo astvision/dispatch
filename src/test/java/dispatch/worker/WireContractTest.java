@@ -22,7 +22,8 @@ class WireContractTest {
 
     // RunKind.REPORT was added under protocol 4 without raising it: a report needs a project's data, which only a personal
     // instance may have, and a personal instance hands no job to a worker (spec: data reports), so no REPORT job is ever
-    // sent on this wire.
+    // sent on this wire. Job.dataSeen likewise: only a data project's plan sets it, and it is left out of the JSON when
+    // null, so every job a team sends reads as it did before.
     private static final String WIRE = """
             protocol 4
             worker.Wire$Poll: protocol maxConcurrentRuns readiness
@@ -33,7 +34,7 @@ class WireContractTest {
             worker.Wire$Attachment: taskId fileRef
             worker.Wire$Setup: team authorName authorEmail projects
             worker.Readiness: claude gh projects agents
-            core.Job: taskId seq kind project baseBranch baseSha worktree prUrl sessionId resume prompt model effort timeoutMillis budgetUsd attachments commitSubject commitTrailers deliverySummary branch reviewPrompt expectedHead plugins
+            core.Job: taskId seq kind project baseBranch baseSha worktree prUrl sessionId resume prompt model effort timeoutMillis budgetUsd attachments commitSubject commitTrailers deliverySummary branch reviewPrompt expectedHead plugins dataSeen
             worker.RemoteWorkers$Step: n kind round startedAt endedAt outcome detail
             core.JobResult: outcome agent files prUrl failureReason failureDetail verification head
             worker.Wire$Project: name repo baseBranch agent model effort

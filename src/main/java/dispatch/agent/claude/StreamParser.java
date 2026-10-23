@@ -67,13 +67,13 @@ final class StreamParser implements OutputParser {
 
     /**
      * @param dataLevel the level the run was given the project's data at, whose tools are checked; null for none
-     * @param resumed   whether the run continues a session, whose earlier runs may have read the data already
+     * @param seen      whether the run's session has seen report data already (DataAccess#seen)
      */
     StreamParser(String expectedPermissionMode, String requestedModel, Path workdir, Path logBase, DataAccess.Level dataLevel,
-                 boolean resumed) {
+                 boolean seen) {
         this.dataLevel = dataLevel;
-        // A correction resumes the plan's session: what an earlier run read is still in its context.
-        this.dataTouched = dataLevel != null && resumed;
+        // Every follow-up resumes the plan's session; one that ran or planned a report still holds what it read.
+        this.dataTouched = dataLevel != null && seen;
         this.expectedPermissionMode = expectedPermissionMode;
         this.requestedModel = requestedModel;
         this.workdir = workdir;

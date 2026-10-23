@@ -426,7 +426,7 @@ class WorkerProtocolTest extends WorkerApiFixture {
                 "main", "6f3030a", null, null, UUID.fromString("11111111-2222-3333-4444-555555555555"), false, prompt,
                 "opus", "high", 1_800_000L, new BigDecimal("2.50"),
                 List.of(new Attachment("photo-id", "1-photo.jpg", 3L)), "dispatch #7: Fix the login timeout",
-                List.of("Requested-by: Bold"), null, null, null, null, null);
+                List.of("Requested-by: Bold"), null, null, null, null, null, null);
     }
 
     /** A poll as a worker on this protocol sends it: {@code body}'s fields, and this protocol's defaults for the rest. */

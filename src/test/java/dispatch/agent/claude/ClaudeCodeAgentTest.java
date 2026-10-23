@@ -284,6 +284,23 @@ class ClaudeCodeAgentTest {
         assertEquals("--disallowedTools", args.get(args.size() - 7), args.toString());
     }
 
+    /** Every follow-up resumes the plan's session; only a session that saw report data is kept from answering. */
+    @Test
+    void aResumedDataPlanMayAnswerOnlyWhenItsSessionSawNoReportData() throws Exception {
+        AgentResult unseen = agent.start(resumedDataPlan(false)).await();
+        AgentResult seen = agent.start(resumedDataPlan(true)).await();
+
+        assertEquals(AgentOutcome.SUCCEEDED, unseen.outcome(), unseen.error());
+        assertEquals(AgentOutcome.FAILED, seen.outcome());
+        assertTrue(seen.error().contains("may not answer directly"), seen.error());
+    }
+
+    private RunRequest resumedDataPlan(boolean seen) {
+        return new RunRequest(RunKind.PLAN, workdir, "SCENARIO:data-answer", SESSION, true, List.of(), new BigDecimal("2"),
+                null, null, dir.resolve("runs/1/3"), Map.of(), List.of(), List.of(),
+                new DataAccess(DataAccess.Level.SCHEMA, "mongodb://ro:" + "pw@127.0.0.1:40123/webapp", seen));
+    }
+
     @Test
     void aPlanRunWithoutDataDeniesNothing() throws Exception {
         agent.start(plan("Plan it")).await();

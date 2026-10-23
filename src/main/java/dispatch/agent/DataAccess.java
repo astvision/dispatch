@@ -11,8 +11,10 @@ import java.util.Set;
  * mongodb-mcp-server 2.1.2: {@code export} and {@code explain} run pipelines, and {@code find} returns raw values.
  *
  * @param connectionString the URI through the run's tunnel; it travels only in the run's environment, never on a command line
+ * @param seen             whether the run's session has seen report data already, so it may not answer directly even
+ *                         without a data call of its own
  */
-public record DataAccess(Level level, String connectionString) {
+public record DataAccess(Level level, String connectionString, boolean seen) {
 
     /** The MCP server's name, so its tools are {@code mcp__dispatch_data__<tool>}. */
     public static final String SERVER = "dispatch_data";
@@ -69,9 +71,14 @@ public record DataAccess(Level level, String connectionString) {
         Objects.requireNonNull(connectionString, "connectionString");
     }
 
+    /** For a session that has seen no report data. */
+    public DataAccess(Level level, String connectionString) {
+        this(level, connectionString, false);
+    }
+
     /** Masked: a request is printed in logs and errors, and the URI holds the read-only user's password. */
     @Override
     public String toString() {
-        return "DataAccess[level=" + level + ", connectionString=***]";
+        return "DataAccess[level=" + level + ", connectionString=***, seen=" + seen + "]";
     }
 }

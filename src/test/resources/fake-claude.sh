@@ -51,6 +51,12 @@ case "$prompt" in
     printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"fake-session","total_cost_usd":0.01,"num_turns":1,"permission_denials":[],"structured_output":{"understanding":"only this"}}'
     exit 0
     ;;
+  *SCENARIO:data-answer*)
+    # A data plan that answers without calling the data server itself (spec: data reports).
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-session","permissionMode":"plan","tools":["Read","Bash"],"mcp_servers":[{"name":"dispatch_data","status":"connected"}]}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"fake-session","total_cost_usd":0.01,"num_turns":1,"permission_denials":[],"structured_output":{"result":"answer","understanding":"x"}}'
+    exit 0
+    ;;
   *SCENARIO:wrong-mode*)
     # What Claude Code does when the model has no auto mode: it starts anyway, in default mode. The child is recorded
     # first: Dispatch stops the run as soon as it reads the init line, which on a slow machine came before the record.

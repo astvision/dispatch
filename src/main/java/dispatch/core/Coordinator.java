@@ -142,7 +142,18 @@ public final class Coordinator {
                 : Plan.answers(task.planJson()) ? Prompts.answerFollowUp(task, run) : Prompts.reportFollowUp(task, run);
         return newJob(task, run, project, task.sessionId(), agentStartedBefore(task.id(), RunKind.PLAN, run.seq()), prompt,
                 project.planModel(), project.planEffort(), limits.timeout().toMillis(), limits.budgetUsd(),
-                attachments(task.id()), null, null, null);
+                attachments(task.id()), null, null, null, dataSeen(task, run));
+    }
+
+    /**
+     * Whether the task's session has seen report data (ADR 0043): it ran a report, or its plan proposes one. Every follow-up
+     * resumes that session, so only such a one is kept from answering; a code question's reply may answer again.
+     */
+    private boolean dataSeen(Task task, Run run) {
+        if (task.planJson() != null && Plan.parse(task.planJson()).result() == Plan.Result.REPORT) {
+            return true;
+        }
+        return agentStartedBefore(task.id(), RunKind.REPORT, run.seq());
     }
 
     private Job executeJob(Task task, Run run, Config.Project project) {
@@ -150,7 +161,7 @@ public final class Coordinator {
         boolean resume = agentStartedBefore(task.id(), RunKind.EXECUTE, run.seq());
         return newJob(task, run, project, buildSession(task), resume, executePrompt(task, run, resume), project.executeModel(),
                 project.executeEffort(), limits.timeout().toMillis(), limits.budgetUsd(), attachments(task.id()), null,
-                project.loopOn() ? Prompts.review(task, task.planJson(), reviewInstruction(task, run)) : null, picks(task));
+                project.loopOn() ? Prompts.review(task, task.planJson(), reviewInstruction(task, run)) : null, picks(task), false);
     }
 
     /**
@@ -160,7 +171,7 @@ public final class Coordinator {
     private Job reportJob(Task task, Run run, Config.Project project) {
         Config.RunLimits limits = executeLimits.apply(project);
         return newJob(task, run, project, task.sessionId(), true, Prompts.report(task), project.planModel(), project.planEffort(),
-                limits.timeout().toMillis(), limits.budgetUsd(), List.of(), null, null, null);
+                limits.timeout().toMillis(), limits.budgetUsd(), List.of(), null, null, null, false);
     }
 
     /** The plan's plugin picks (spec: plugin picks); a task without a plan has none. A plan run never loads them. */
@@ -170,12 +181,12 @@ public final class Coordinator {
 
     /** A delivery run has no agent: it commits what the failed delivery left, with that run's summary as the body. */
     private Job deliverJob(Task task, Run run, Config.Project project) {
-        return newJob(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction(), null, null);
+        return newJob(task, run, project, null, false, null, null, null, 0L, null, List.of(), run.instruction(), null, null, false);
     }
 
     private Job newJob(Task task, Run run, Config.Project project, UUID sessionId, boolean resume, String prompt, String model,
                     String effort, long timeoutMillis, BigDecimal budgetUsd, List<Attachment> attachments,
-                    String deliverySummary, String reviewPrompt, List<String> plugins) {
+                    String deliverySummary, String reviewPrompt, List<String> plugins, boolean dataSeen) {
         Job.Project on = new Job.Project(project.name(), project.repo(), project.path(), project.baseBranch(), project.agent(),
                 project.copyFiles(), project.loopOn() ? project.test() : null, project.loopOn() ? Boolean.TRUE : null,
                 skills(project));
@@ -183,7 +194,7 @@ public final class Coordinator {
                 task.worktree(), task.prUrl(), sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, "dispatch #" + task.id() + ": " + task.title(),
                 trailers(task, run.kind()), deliverySummary, Config.branchFor(branchPrefix, task.id()), reviewPrompt,
-                expectedHead(task.id(), run.kind()), plugins);
+                expectedHead(task.id(), run.kind()), plugins, dataSeen);
     }
 
     /**

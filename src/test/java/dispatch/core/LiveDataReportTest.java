@@ -313,7 +313,7 @@ class LiveDataReportTest {
                            String prompt, Duration timeout, String budgetUsd) {
         return new Job(task.id(), seq, kind, project, "main", null, worktree, null, session, resume, prompt, "sonnet", null,
                 timeout.toMillis(), new BigDecimal(budgetUsd), List.of(), "dispatch #" + task.id() + ": " + task.title(),
-                List.of(), null, null, null, null, null);
+                List.of(), null, null, null, null, null, null);
     }
 
     private static boolean onPath(String command) {

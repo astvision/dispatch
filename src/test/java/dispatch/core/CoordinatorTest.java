@@ -587,13 +587,64 @@ class CoordinatorTest {
         assertEquals("the report run returned no HTML document", task.get("failure_detail"));
     }
 
-    /** Plans a report on the data project, approves it, and runs its REPORT job to {@code result}. */
+    /** A reply to an answered code question resumes a session that never read report data: it may answer again. */
+    @Test
+    void aFollowUpToACodeAnswerOnADataProjectHasNotSeenData() {
+        long id = queue("Where is the timeout set?");
+        Projects configured = projects(List.of(WITH_DATA));
+        String answer = new Plan("Where?", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                Plan.Result.ANSWER, "In AuthClient.java").toJson();
+        coordinator(configured, remember(JobResult.succeeded(agentResult(answer)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.FollowUp(id, "Why 30?", new Origin("telegram:100/9"))));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(answer)))).execute(claim());
+
+        assertEquals(RunKind.PLAN, given.get().kind());
+        assertNull(given.get().dataSeen());
+    }
+
+    @Test
+    void aCorrectionOfAReportPlanHasSeenData() {
+        long id = queue("How many visits per day?");
+        Projects configured = projects(List.of(WITH_DATA));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Correct(id, java.util.OptionalInt.of(1), "Only last month")));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
+
+        assertEquals(Boolean.TRUE, given.get().dataSeen());
+    }
+
+    /** The session ran a report, then planned a code change: what the report read is still in its context. */
+    @Test
+    void aTaskThatHadAReportRunHasSeenDataWhateverItsPlanIsNow() {
+        long id = reported(JobResult.succeeded(agentResult(Json.object().put("html", REPORT_HTML).toString())));
+        Projects configured = projects(List.of(WITH_DATA));
+        db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.FollowUp(id, "Add this to the admin page",
+                new Origin("telegram:100/9"))));
+        coordinator(configured, remember(JobResult.succeeded(agentResult(PLAN_JSON)))).execute(claim());
+        db.transaction(tx -> tasks.commands().run(tx, BOLD,
+                new TaskCommand.Correct(id, java.util.OptionalInt.empty(), "Only for admins")));
+
+        coordinator(configured, remember(JobResult.succeeded(agentResult(PLAN_JSON)))).execute(claim());
+
+        assertEquals(RunKind.PLAN, given.get().kind());
+        assertTrue(given.get().prompt().contains("Only for admins"), given.get().prompt());
+        assertEquals(Boolean.TRUE, given.get().dataSeen());
+    }
+
+    /** Plans a report on the data project, approves it, and runs its REPORT job, whose agent starts, to {@code result}. */
     private long reported(JobResult result) {
         long id = queue("How many visits per day?");
         Projects configured = projects(List.of(WITH_DATA));
         coordinator(configured, remember(JobResult.succeeded(agentResult(REPORT_JSON)))).execute(claim());
         db.transaction(tx -> tasks.commands().run(tx, BOLD, new TaskCommand.Approve(id, 1)));
-        coordinator(configured, remember(result)).execute(claim());
+        coordinator(configured, (job, events, control) -> {
+            given.set(job);
+            events.agentStarted(null, clock.instant());
+            return result;
+        }).execute(claim());
         return id;
     }
 }

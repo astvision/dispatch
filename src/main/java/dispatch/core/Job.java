@@ -1,6 +1,7 @@
 package dispatch.core;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import dispatch.config.Config;
 import dispatch.domain.Attachment;
 import dispatch.domain.RunKind;
@@ -34,6 +35,9 @@ import java.util.UUID;
  *                        it at before it builds on or pushes it; null when there is nothing to check (a PLAN job, a task from
  *                        before the guard), and then nothing is checked
  * @param plugins         EXECUTE only: the official plugins the plan picked (spec: plugin picks); null when there are none
+ * @param dataSeen        PLAN only: true when the task's session has seen report data (a REPORT run, or a plan proposing a
+ *                        report), so a resumed plan may not answer directly; null when false. Left out of the JSON when
+ *                        null: only a personal instance's data project sets it, so a team's job reads as protocol 4 always did
  */
 public record Job(
         long taskId,
@@ -58,12 +62,20 @@ public record Job(
         String branch,
         String reviewPrompt,
         String expectedHead,
-        List<String> plugins) {
+        List<String> plugins,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Boolean dataSeen) {
 
     public Job {
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         commitTrailers = commitTrailers == null ? List.of() : List.copyOf(commitTrailers);
         plugins = plugins == null || plugins.isEmpty() ? null : List.copyOf(plugins);
+        dataSeen = Boolean.TRUE.equals(dataSeen) ? Boolean.TRUE : null;
+    }
+
+    /** Whether the run's session has seen report data (ADR 0043); false for a job without it. */
+    @JsonIgnore
+    public boolean sawData() {
+        return Boolean.TRUE.equals(dataSeen);
     }
 
     /** The plugins this run loads (spec: plugin picks); empty for a job without picks. */
@@ -76,14 +88,14 @@ public record Job(
     public Job withProject(Project other) {
         return new Job(taskId, seq, kind, other, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt, model,
                 effort, timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers, deliverySummary, branch,
-                reviewPrompt, expectedHead, plugins);
+                reviewPrompt, expectedHead, plugins, dataSeen);
     }
 
     /** This job with the model and effort of the computer that runs it. */
     public Job withModel(String otherModel, String otherEffort) {
         return new Job(taskId, seq, kind, project, baseBranch, baseSha, worktree, prUrl, sessionId, resume, prompt,
                 otherModel, otherEffort, timeoutMillis, budgetUsd, attachments, commitSubject, commitTrailers,
-                deliverySummary, branch, reviewPrompt, expectedHead, plugins);
+                deliverySummary, branch, reviewPrompt, expectedHead, plugins, dataSeen);
     }
 
     /** The task's branch: the team's prefix when it sent one, else dispatch/<task>. */

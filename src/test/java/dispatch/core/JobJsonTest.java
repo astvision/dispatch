@@ -28,7 +28,7 @@ class JobJsonTest {
                 "main", "6f3030a", "/var/lib/dispatch/worktrees/7", "https://github.com/acme/alm/pull/9",
                 UUID.fromString("11111111-2222-3333-4444-555555555555"), true, "Implement the approved plan", "opus", "low",
                 1_800_000L, new BigDecimal("2.50"), List.of(new Attachment("photo-id", "1-photo.jpg", 3L)),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Ali"), null, null, null, null, null);
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Ali"), null, null, null, null, null, null);
 
         assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
     }
@@ -47,7 +47,7 @@ class JobJsonTest {
         Job job = new Job(7, 3, RunKind.DELIVER,
                 new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null),
                 "main", "6f3030a", "/var/lib/dispatch/worktrees/7", null, null, false, null, null, null, 0L, null, List.of(),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30", null, null, null, null);
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), "Raised AUTH_TIMEOUT_SECONDS to 30", null, null, null, null, null);
 
         assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
     }
@@ -61,7 +61,7 @@ class JobJsonTest {
                 "main", "6f3030a", "/var/lib/dispatch/worktrees/7", "https://github.com/acme/alm/pull/9",
                 UUID.fromString("11111111-2222-3333-4444-555555555555"), true, "Implement the approved plan", "opus", "low",
                 1_800_000L, new BigDecimal("2.50"), List.of(new Attachment("photo-id", "1-photo.jpg", 3L)),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Ali"), null, null, null, null, null);
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold", "Approved-by: Ali"), null, null, null, null, null, null);
         ObjectNode node = (ObjectNode) Json.MAPPER.valueToTree(job);
         node.remove("attachments");
         node.remove("commitTrailers");
@@ -87,7 +87,7 @@ class JobJsonTest {
     void aTeamsOwnPrefixTravelsWithTheJob() throws Exception {
         Job job = new Job(7, 1, RunKind.PLAN, new Job.Project("alm", "r", null, "main", "claude-code", List.of(), null, null, null), "main",
                 null, null, null, null, false, "p", null, null, 1000, BigDecimal.ONE, List.of(), "s", List.of(), null,
-                "dispatch/team/7", null, null, null);
+                "dispatch/team/7", null, null, null, null);
 
         assertEquals("dispatch/team/7", Json.MAPPER.readValue(Json.write(job), Job.class).branchName());
     }
@@ -146,7 +146,7 @@ class JobJsonTest {
                         "./mvnw -q test", true, null),
                 "main", "6f3030a", "/var/lib/dispatch/worktrees/7", null, UUID.fromString("11111111-2222-3333-4444-555555555555"),
                 false, "Implement the approved plan", "opus", "low", 1_800_000L, new BigDecimal("2.50"), List.of(),
-                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), null, null, "Review this change", null, null);
+                "dispatch #7: Fix the login timeout", List.of("Requested-by: Bold"), null, null, "Review this change", null, null, null);
 
         assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
     }
@@ -156,13 +156,13 @@ class JobJsonTest {
         Job on = new Job(7, 2, RunKind.EXECUTE,
                 new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, true),
                 "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false, "p", null, null, 1L, null, List.of(), "s", List.of(),
-                null, null, null, null, null);
+                null, null, null, null, null, null);
         assertEquals(on, Json.MAPPER.readValue(Json.write(on), Job.class));
 
         Job older = new Job(7, 2, RunKind.EXECUTE,
                 new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null),
                 "main", "6f3030a", "/w/7", null, UUID.randomUUID(), false, "p", null, null, 1L, null, List.of(), "s", List.of(),
-                null, null, null, null, null);
+                null, null, null, null, null, null);
         assertFalse(Json.MAPPER.readValue(Json.write(older), Job.class).project().skillsOn());
     }
 
@@ -171,7 +171,7 @@ class JobJsonTest {
         Job job = new Job(7, 3, RunKind.DELIVER,
                 new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null),
                 "main", "6f3030a", "/w/7", null, null, false, null, null, null, 0L, null, List.of(), "s", List.of(), "summary",
-                null, null, "9c1e2d4", null);
+                null, null, "9c1e2d4", null, null);
         JobResult result = JobResult.failed(FailureReason.DELIVERY, "git push failed", null).withHead("b7a0f11");
 
         assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
@@ -184,9 +184,23 @@ class JobJsonTest {
         Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null);
         Job job = new Job(7, 2, RunKind.EXECUTE, project, "main", "6f3030a", "/w/7", null, UUID.fromString("11111111-2222-3333-4444-555555555555"),
                 false, "Implement", null, null, 1000L, new BigDecimal("2"), List.of(), "dispatch #7: x", List.of(), null, null, null, null,
-                List.of("playwright"));
+                List.of("playwright"), null);
 
         assertEquals(job, Json.MAPPER.readValue(Json.write(job), Job.class));
         assertEquals(List.of("playwright"), job.picks());
+    }
+
+    /** Only a personal instance's data plan ever sets it, so a team's job is written as protocol 4 has always written it. */
+    @Test
+    void aJobsDataSeenSurvivesJsonAndIsLeftOutWhenNotSet() throws Exception {
+        Job.Project project = new Job.Project("alm", "git@github.com:acme/alm.git", null, "main", "claude-code", List.of(), null, null, null);
+        Job seen = new Job(7, 4, RunKind.PLAN, project, "main", null, "/w/7", null, UUID.randomUUID(), true, "Reply", null, null,
+                1000L, BigDecimal.ONE, List.of(), "dispatch #7: x", List.of(), null, null, null, null, null, true);
+        Job unseen = new Job(7, 4, RunKind.PLAN, project, "main", null, "/w/7", null, UUID.randomUUID(), true, "Reply", null, null,
+                1000L, BigDecimal.ONE, List.of(), "dispatch #7: x", List.of(), null, null, null, null, null, false);
+
+        assertEquals(seen, Json.MAPPER.readValue(Json.write(seen), Job.class));
+        assertNull(unseen.dataSeen(), "false is written as nothing");
+        assertFalse(Json.write(unseen).contains("dataSeen"), Json.write(unseen));
     }
 }

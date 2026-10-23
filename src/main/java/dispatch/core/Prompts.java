@@ -286,7 +286,9 @@ final class Prompts {
                 %s
                 </reply>
 
-                If the reply asks something, answer it. If it changes what the report should show, plan that report again.
+                If the reply asks for a different or changed report, plan the report again: explain the new query in steps \
+                and set result to "report". If it asks for a change to the code, plan that change. Never answer directly: \
+                this session has read the data, so an answer is refused.
                 """.formatted(task.id(), task.requester().name(), task.description(), plan.understanding(),
                 String.join("\n", plan.steps()), run.requestedByName(), run.instruction()) + PLAN_FORMAT;
     }
