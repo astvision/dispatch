@@ -249,6 +249,30 @@ class ClaudeCodeAgentTest {
         assertTrue(Files.readString(workdir.resolve("fake-claude.env")).contains("DISPATCH_DATA_URI=" + uri));
     }
 
+    /** A guardrail, not the boundary: the URI is in the environment, and a shell could reach Mongo or print it. */
+    @Test
+    void aDataRunMayNotRunAMongoShellOrPrintTheEnvironment() throws Exception {
+        RunRequest request = new RunRequest(RunKind.PLAN, workdir, "Plan it", SESSION, false, List.of(), new BigDecimal("2"),
+                null, null, dir.resolve("runs/1/1"), Map.of(), List.of(), List.of(),
+                new DataAccess(DataAccess.Level.SCHEMA, "mongodb://ro:" + "pw@127.0.0.1:40123/webapp"));
+
+        agent.start(request).await();
+
+        List<String> args = Files.readAllLines(workdir.resolve("fake-claude.args"));
+        // --disallowedTools takes every following argument that is not a flag, so it is last.
+        assertEquals(List.of("--disallowedTools", "Bash(mongosh *)", "Bash(mongo *)", "Bash(mongoexport *)", "Bash(mongodump *)",
+                "Bash(printenv*)", "Bash(env*)"), args.subList(args.size() - 7, args.size()));
+        assertTrue(valueAfter(args, "--json-schema").contains("\"understanding\""), args.toString());
+        assertEquals("Read,Bash", valueAfter(args, "--tools"));
+    }
+
+    @Test
+    void aPlanRunWithoutDataDeniesNothing() throws Exception {
+        agent.start(plan("Plan it")).await();
+
+        assertFalse(Files.readAllLines(workdir.resolve("fake-claude.args")).contains("--disallowedTools"));
+    }
+
     @Test
     void failingAgentReportsExitCodeAndStderr() throws Exception {
         AgentResult result = agent.start(plan("SCENARIO:fail")).await();

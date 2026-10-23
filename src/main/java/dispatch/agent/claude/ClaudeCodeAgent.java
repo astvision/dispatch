@@ -36,6 +36,14 @@ public final class ClaudeCodeAgent implements Agent {
             "You split a developer's chat message into independent development tasks. Answer only through the structured output.";
     /** Runs that do the task's work; a split and an assistant turn keep only what Dispatch gives them. */
     private static final Set<RunKind> OWNER_KINDS = Set.of(RunKind.PLAN, RunKind.EXECUTE, RunKind.REVIEW);
+    /** Delivery is Dispatch's job (ADR 0007); the deny rules are a guardrail, not a boundary (ADR 0009). */
+    private static final List<String> EXECUTE_DENIED = List.of("Bash(git commit *)", "Bash(git push *)", "Bash(gh *)");
+    /**
+     * A run with data has its URI in the environment: no shell may reach Mongo past the data server's level or print it. A
+     * guardrail like {@link #EXECUTE_DENIED}; the level's gate is the data server's tool check (spec: data reports).
+     */
+    private static final List<String> DATA_DENIED = List.of("Bash(mongosh *)", "Bash(mongo *)", "Bash(mongoexport *)",
+            "Bash(mongodump *)", "Bash(printenv*)", "Bash(env*)");
 
     /**
      * What Claude Code keeps in the owner's home (spec: agent state guard); what persists, where a working dir's project
@@ -90,7 +98,7 @@ public final class ClaudeCodeAgent implements Agent {
         runEnvironment.putAll(loadout.environment());
         return ProcessRun.start(AgentKind.CLAUDE_CODE.id(), commandLine(run, permissionMode, loadout), run, runEnvironment, run.prompt(),
                 new StreamParser(permissionMode, request.model(), request.workdir(), request.logBase(),
-                        request.data() == null ? null : request.data().level()),
+                        request.data() == null ? null : request.data().level(), request.resume()),
                 cancelGrace, confinement, STATE);
     }
 
@@ -149,13 +157,14 @@ public final class ClaudeCodeAgent implements Agent {
             args.addAll(List.of("--add-dir", dir.toString()));
         }
         String skill = loadout.skillTool() ? ",Skill" : "";
+        List<String> denied = new ArrayList<>();
         switch (request.kind()) {
             // Read-only investigation: no subagents or schedulers, just reading files and read-only shell commands.
             case PLAN -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", PLAN_SCHEMA));
-            // Delivery is Dispatch's job (ADR 0007); the deny rules are a guardrail, not a boundary (ADR 0009).
-            // --disallowedTools takes every following argument that is not a flag, so it stays last.
-            case EXECUTE -> args.addAll(List.of("--tools", "Read,Edit,Write,Bash" + skill,
-                    "--disallowedTools", "Bash(git commit *)", "Bash(git push *)", "Bash(gh *)"));
+            case EXECUTE -> {
+                args.addAll(List.of("--tools", "Read,Edit,Write,Bash" + skill));
+                denied.addAll(EXECUTE_DENIED);
+            }
             // The verify loop's reviewer: read-only like a plan, its own schema (spec: verify loop).
             case REVIEW -> args.addAll(List.of("--tools", "Read,Bash" + skill, "--json-schema", REVIEW_SCHEMA));
             case SPLIT -> args.addAll(List.of("--tools", "", "--json-schema", SPLIT_SCHEMA, "--system-prompt", SPLIT_SYSTEM_PROMPT));
@@ -163,6 +172,14 @@ public final class ClaudeCodeAgent implements Agent {
             case ASSISTANT -> args.addAll(List.of("--tools", "Read,Grep,Glob,Bash,Skill", "--json-schema", ASSISTANT_SCHEMA,
                     "--allowedTools", ASSISTANT_BASH));
             case DELIVER -> throw new IllegalArgumentException("DELIVER runs do not start an agent");
+        }
+        if (request.data() != null) {
+            denied.addAll(DATA_DENIED);
+        }
+        if (!denied.isEmpty()) {
+            // --disallowedTools takes every following argument that is not a flag, so it stays last, after --json-schema's value.
+            args.add("--disallowedTools");
+            args.addAll(denied);
         }
         return args;
     }

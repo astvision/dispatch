@@ -62,12 +62,13 @@ class LoadoutTest {
                 new BigDecimal("2"), null, null, Path.of("/runs/7/1"), Map.of(), List.of(), List.of(), data);
     }
 
+    /** Another server (a Mongo plugin, say) could read the URI from the environment and query past the level's gate. */
     @Test
-    void aDataRunAddsTheDataServerBesideTheOwners() throws IOException {
+    void aDataRunLoadsTheDataServerAndNoneOfTheOwners() throws IOException {
         Loadout loadout = Loadout.of(dataRequest(new DataAccess(DataAccess.Level.SCHEMA, URI)), OWNER_WITH_A_SERVER, null);
 
         JsonNode servers = new ObjectMapper().readTree(loadout.mcpConfig()).path("mcpServers");
-        assertTrue(servers.has("playwright"), servers.toString());
+        assertEquals(List.of("dispatch_data"), List.copyOf(servers.properties().stream().map(Map.Entry::getKey).toList()));
         JsonNode data = servers.path("dispatch_data");
         assertEquals("npx", data.path("command").asText());
         assertEquals("[\"-y\",\"mongodb-mcp-server@2.1.2\"]", data.path("args").toString());
@@ -80,7 +81,19 @@ class LoadoutTest {
         assertEquals("60000", env.path("MDB_MCP_MAX_TIME_MS").asText());
         assertEquals("disabled", env.path("MDB_MCP_TELEMETRY").asText());
         assertFalse(env.has("MDB_MCP_MAX_DOCUMENTS_PER_QUERY"), "the server's default of 100 is enough for a shape");
-        assertEquals(Map.of("DISPATCH_MCP_1", "x", "DISPATCH_DATA_URI", URI, "MCP_TIMEOUT", "120000"), loadout.environment());
+        assertEquals(Map.of("DISPATCH_DATA_URI", URI, "MCP_TIMEOUT", "120000"), loadout.environment(),
+                "the owner's servers' secrets stay out with their servers");
+    }
+
+    @Test
+    void aDataRunKeepsTheOwnersPluginsAndSkills() {
+        OwnerPlugins.Resolved owner = new OwnerPlugins.Resolved(List.of(Path.of("/cache/playwright")), null, Map.of(),
+                List.of(Path.of("/home/ann/.claude/skills/graphify")));
+
+        Loadout loadout = Loadout.of(dataRequest(new DataAccess(DataAccess.Level.SCHEMA, URI)), owner, Path.of("/runs/7/1.skills"));
+
+        assertEquals(List.of(Path.of("/cache/playwright"), Path.of("/runs/7/1.skills")), loadout.pluginDirs());
+        assertEquals(List.of(Path.of("/home/ann/.claude/skills/graphify")), loadout.skillDirs());
     }
 
     @Test
@@ -112,6 +125,10 @@ class LoadoutTest {
 
     @Test
     void theUriIsMaskedWhenPrinted() {
+        Loadout loadout = Loadout.of(dataRequest(new DataAccess(DataAccess.Level.SCHEMA, URI)), OwnerPlugins.Resolved.NONE, null);
+
         assertFalse(new DataAccess(DataAccess.Level.SCHEMA, URI).toString().contains("pw@"));
+        assertFalse(loadout.toString().contains("pw@"), loadout.toString());
+        assertTrue(loadout.toString().contains("DISPATCH_DATA_URI=***"), loadout.toString());
     }
 }

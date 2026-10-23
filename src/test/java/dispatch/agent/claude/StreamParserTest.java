@@ -296,7 +296,11 @@ class StreamParserTest {
     }
 
     private static StreamParser schemaParser(String... lines) {
-        StreamParser parser = new StreamParser("plan", null, WORKTREE, null, DataAccess.Level.SCHEMA);
+        return dataParser(DataAccess.Level.SCHEMA, false, lines);
+    }
+
+    private static StreamParser dataParser(DataAccess.Level level, boolean resumed, String... lines) {
+        StreamParser parser = new StreamParser("plan", null, WORKTREE, null, level, resumed);
         List.of(lines).forEach(parser::accept);
         return parser;
     }
@@ -321,11 +325,52 @@ class StreamParserTest {
                 {"type":"system","subtype":"init","session_id":"s-1","permissionMode":"plan","tools":["Read","Bash"],\
                 "mcp_servers":[{"name":"dispatch_data","status":"failed"}]}""", planResult("plan"));
 
+        assertEquals("data_unreachable", parser.stopReason());
         AgentResult result = parser.result(0, "");
-
         assertEquals(AgentOutcome.FAILED, result.outcome());
         assertTrue(result.error().contains("could not reach the project's data"), result.error());
         assertNull(result.structuredOutput(), "a plan made without the data it needed");
+    }
+
+    /** A report run that never had its server would otherwise succeed on no data at all. */
+    @Test
+    void aDataServerMissingFromInitStopsTheRunLikeAFailedOne() {
+        StreamParser unlisted = schemaParser("""
+                {"type":"system","subtype":"init","session_id":"s-1","permissionMode":"plan","tools":["Read","Bash"],\
+                "mcp_servers":[{"name":"playwright","status":"connected"}]}""");
+        StreamParser noServers = schemaParser("""
+                {"type":"system","subtype":"init","session_id":"s-1","permissionMode":"plan","tools":["Read","Bash"]}""");
+
+        assertEquals("data_unreachable", unlisted.stopReason());
+        assertEquals("data_unreachable", noServers.stopReason());
+        AgentResult result = noServers.result(143, "");
+        assertEquals(AgentOutcome.FAILED, result.outcome());
+        assertTrue(result.error().contains("could not reach the project's data"), result.error());
+    }
+
+    @Test
+    void aFullRunMayFindAggregateAndExplain() {
+        StreamParser parser = dataParser(DataAccess.Level.FULL, false, """
+                {"type":"system","subtype":"init","session_id":"s-1","permissionMode":"plan","tools":["Read","Bash",\
+                "mcp__dispatch_data__list-databases","mcp__dispatch_data__list-collections",\
+                "mcp__dispatch_data__collection-indexes","mcp__dispatch_data__collection-schema",\
+                "mcp__dispatch_data__collection-storage-size","mcp__dispatch_data__count","mcp__dispatch_data__db-stats",\
+                "mcp__dispatch_data__find","mcp__dispatch_data__aggregate","mcp__dispatch_data__explain"],\
+                "mcp_servers":[{"name":"dispatch_data","status":"connected"}]}""", planResult("report"));
+
+        assertNull(parser.stopReason());
+        assertEquals(AgentOutcome.SUCCEEDED, parser.result(0, "").outcome());
+    }
+
+    /** A correction resumes the session whose earlier run may have read the data; its numbers are still in the context. */
+    @Test
+    void aResumedPlanCannotAnswerEvenWithoutADataCallOfItsOwn() {
+        AgentResult resumed = dataParser(DataAccess.Level.SCHEMA, true, DATA_INIT, planResult("answer")).result(0, "");
+        AgentResult fresh = dataParser(DataAccess.Level.SCHEMA, false, DATA_INIT, planResult("answer")).result(0, "");
+
+        assertEquals(AgentOutcome.FAILED, resumed.outcome());
+        assertTrue(resumed.error().contains("read the project's data, so it may not answer directly"), resumed.error());
+        assertEquals(AgentOutcome.SUCCEEDED, fresh.outcome());
     }
 
     @Test

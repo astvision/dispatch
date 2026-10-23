@@ -49,7 +49,7 @@ final class StreamParser implements OutputParser {
     private UsageLimit limit;
     /** The data server's tools beyond what its level allows, as the init event lists them (spec: data reports). */
     private final Set<String> unexpectedDataTools = new TreeSet<>();
-    /** The data server's status when the init event shows it anything but connected; null otherwise. */
+    /** The data server's status when the init event shows it anything but connected, "missing" when it lists none. */
     private String dataServerDown;
     /** True once the run itself called one of the data server's tools. */
     private boolean dataTouched;
@@ -62,12 +62,18 @@ final class StreamParser implements OutputParser {
      * @param logBase        the run's log base, which names its task, run and step in the log
      */
     StreamParser(String expectedPermissionMode, String requestedModel, Path workdir, Path logBase) {
-        this(expectedPermissionMode, requestedModel, workdir, logBase, null);
+        this(expectedPermissionMode, requestedModel, workdir, logBase, null, false);
     }
 
-    /** @param dataLevel the level the run was given the project's data at, whose tools are checked; null for none */
-    StreamParser(String expectedPermissionMode, String requestedModel, Path workdir, Path logBase, DataAccess.Level dataLevel) {
+    /**
+     * @param dataLevel the level the run was given the project's data at, whose tools are checked; null for none
+     * @param resumed   whether the run continues a session, whose earlier runs may have read the data already
+     */
+    StreamParser(String expectedPermissionMode, String requestedModel, Path workdir, Path logBase, DataAccess.Level dataLevel,
+                 boolean resumed) {
         this.dataLevel = dataLevel;
+        // A correction resumes the plan's session: what an earlier run read is still in its context.
+        this.dataTouched = dataLevel != null && resumed;
         this.expectedPermissionMode = expectedPermissionMode;
         this.requestedModel = requestedModel;
         this.workdir = workdir;
@@ -162,10 +168,12 @@ final class StreamParser implements OutputParser {
                 unexpectedDataTools.add(bare);
             }
         }
+        // Absent counts as down: a report run must not succeed on no data at all.
+        dataServerDown = "missing";
         for (JsonNode server : init.path("mcp_servers")) {
-            String status = server.path("status").asText();
-            if (server.path("name").asText().equals(DataAccess.SERVER) && !status.equals("connected")) {
-                dataServerDown = status;
+            if (server.path("name").asText().equals(DataAccess.SERVER)) {
+                String status = server.path("status").asText();
+                dataServerDown = status.equals("connected") ? null : status;
             }
         }
     }

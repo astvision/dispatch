@@ -8,9 +8,9 @@ import dispatch.agent.DataAccess;
 import dispatch.agent.RunRequest;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * What one Claude Code run loads beyond its working directory: Dispatch's skills plugin (ADR 0034), what the machine's
@@ -21,7 +21,7 @@ import java.util.Map;
  *                    then the plugin of links to the owner's skills
  * @param skillDirs   the owner's skill directories those links point to, which the run must be able to read
  * @param mcpConfig   the one inline MCP configuration, null when the run starts no server
- * @param environment the variables its servers' secrets travel in
+ * @param environment the variables its servers' secrets travel in; on a run with data, only the data server's
  */
 record Loadout(List<Path> pluginDirs, List<Path> skillDirs, String mcpConfig, Map<String, String> environment) {
 
@@ -47,17 +47,17 @@ record Loadout(List<Path> pluginDirs, List<Path> skillDirs, String mcpConfig, Ma
         if (request.data() == null) {
             return new Loadout(dirs, owner.skills(), owner.mcpConfig(), owner.environment());
         }
-        Map<String, String> environment = new HashMap<>(owner.environment());
-        environment.put(DataAccess.URI_VARIABLE, request.data().connectionString());
-        environment.put("MCP_TIMEOUT", MCP_TIMEOUT_MS);
-        return new Loadout(dirs, owner.skills(), withDataServer(owner.mcpConfig(), request.data().level()), environment);
+        // The data server alone, and none of the owner's servers or their secrets: another server (a Mongo plugin, say) could
+        // read the URI from the environment and query past the level's gate.
+        Map<String, String> environment = Map.of(DataAccess.URI_VARIABLE, request.data().connectionString(),
+                "MCP_TIMEOUT", MCP_TIMEOUT_MS);
+        return new Loadout(dirs, owner.skills(), dataServerConfig(request.data().level()), environment);
     }
 
-    /** The owner's servers and the data server beside them, which replaces any the owner happened to name the same. */
-    private static String withDataServer(String ownerConfig, DataAccess.Level level) {
+    private static String dataServerConfig(DataAccess.Level level) {
         try {
-            ObjectNode config = (ObjectNode) JSON.readTree(ownerConfig == null ? "{\"mcpServers\":{}}" : ownerConfig);
-            ObjectNode server = config.withObject("/mcpServers").putObject(DataAccess.SERVER);
+            ObjectNode config = JSON.createObjectNode();
+            ObjectNode server = config.putObject("mcpServers").putObject(DataAccess.SERVER);
             server.put("command", "npx");
             ArrayNode args = server.putArray("args");
             DATA_SERVER_ARGS.forEach(args::add);
@@ -65,9 +65,17 @@ record Loadout(List<Path> pluginDirs, List<Path> skillDirs, String mcpConfig, Ma
             level.serverEnvironment().forEach(env::put);
             return JSON.writeValueAsString(config);
         } catch (JsonProcessingException e) {
-            // OwnerPlugins wrote it; unreadable means a bug there, not something a run can work around.
-            throw new IllegalStateException("the owner's MCP configuration is not JSON: " + e.getOriginalMessage(), e);
+            throw new IllegalStateException("cannot write the data server's MCP configuration", e);
         }
+    }
+
+    /** The data URI masked: it holds the read-only user's password. */
+    @Override
+    public String toString() {
+        Map<String, String> shown = new TreeMap<>(environment);
+        shown.computeIfPresent(DataAccess.URI_VARIABLE, (name, uri) -> "***");
+        return "Loadout[pluginDirs=" + pluginDirs + ", skillDirs=" + skillDirs + ", mcpConfig=" + mcpConfig
+                + ", environment=" + shown + "]";
     }
 
     /** A plugin's skill cannot be invoked without the Skill tool (probed on Claude Code 2.1.286). */
