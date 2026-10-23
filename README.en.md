@@ -249,8 +249,8 @@ projects:
       uri: ${WEBAPP_MONGO_RO_URI}  # a read-only user's mongodb:// URI, kept in dispatch.env
 ```
 
-and the URI to `dispatch.env`, beside the config: `WEBAPP_MONGO_RO_URI=` and the user's `mongodb://` URI, with its user name and password
-(the host is replaced by the tunnel's; `mongodb+srv://` is refused). Create the user with only the `read` role.
+and to `dispatch.env`, beside the config, a line `WEBAPP_MONGO_RO_URI=` followed by the read-only user's `mongodb://`
+connection string (the host is replaced by the tunnel's; `mongodb+srv://` is refused). Create the user with only the `read` role.
 `dispatch check` opens the tunnel, refuses a user that can write (it needs `mongosh` for that check), and fetches the
 pinned MongoDB MCP server so the first report does not wait for npx.
 

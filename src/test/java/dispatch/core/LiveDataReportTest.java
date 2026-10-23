@@ -69,10 +69,15 @@ class LiveDataReportTest {
     void tearDown() throws Exception {
         if (sshd != null) {
             sshd.destroy();
-            sshd.waitFor(5, TimeUnit.SECONDS);
+            if (!sshd.waitFor(5, TimeUnit.SECONDS)) {
+                sshd.destroyForcibly();
+            }
         }
         if (container != null) {
-            run(List.of("docker", "rm", "-f", container));
+            Result removed = run(List.of("docker", "rm", "-f", container));
+            if (removed.exit() != 0) {
+                System.out.println("LIVE data: could not remove container " + container + ": " + removed.output());
+            }
         }
     }
 

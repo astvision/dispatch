@@ -36,15 +36,16 @@ Where the machine can (Linux with bubblewrap, `sandbox: auto`, the default), eve
 - **Unsandboxed runs:** without bwrap, on macOS and Windows, or with `sandbox: off`, agents run as the OS user with full access. `dispatch check`, the startup log and every plan and result of such a run say so.
 - **Skills:** the dispatch plugin under the state directory is bound read-only into every sandboxed Claude Code run, so such an agent can read the skills and never change them (ADR 0034). An unsandboxed agent can change them like anything else the OS user can, and they stay changed for later runs until Dispatch next starts and writes them again. With the `Skill` tool on, a repository's own `.claude/skills/` run in its tasks, trusted like its `CLAUDE.md`.
 - **Plugin picks:** a task's plan may pick plugins from a list Dispatch ships (ADR 0037), and their code then runs in the sandbox with the agent's access. The list holds only Anthropic-hosted plugins without hooks or credentials, and the agent cannot add to it. `playwright` runs whatever npm serves as `@playwright/mcp@latest`.
-- **Teams:** upgrade the team machine and its workers together. Since ADR 0039 this is checked: a worker and a team machine on different worker protocols pass no work, and the requester is told to update that computer. Before it: a team machine from before this version refuses a result that reports a sandbox, and a worker from before it cannot read an execution or delivery job that carries its branch's expected commit, nor a job of a Claude Code project with skills on. Since plugin picks (ADR 0037), such a team machine also refuses every plan from a newer worker, and such a worker cannot read an execution job whose plan picked plugins.
+- **Teams:** upgrade the team machine and its workers together. Since ADR 0039 this is checked: a worker and a team machine on different worker protocols pass no work, and the requester is told to update that computer. Before it: a team machine from before this version refuses a result that reports a sandbox, and a worker from before it cannot read an execution or delivery job that carries its branch's expected commit, nor a job of a Claude Code project with skills on. Since plugin picks (ADR 0037), such a team machine also refuses every plan from a newer worker, and such a worker cannot read an execution job whose plan picked plugins. Reports (ADR 0043) left the worker protocol at 4:
+a report run never crosses the wire, since data blocks are personal-only.
 
 ## Reports from prod data
 
 A project on a personal instance may name its production MongoDB in a `data` block (ADR 0043). Only then, and only for
 that project's plan and report runs, does an agent reach prod.
 - **The tunnel:** Dispatch opens `ssh -L` to a free local port itself, outside the sandbox, with the owner's own SSH
-  setup, and closes it when the run ends. The agent never sees `~/.ssh`; it reaches only `127.0.0.1:<port>`, and only
-  while the run lasts.
+  setup, and closes it when the run ends. In a sandboxed run the agent never sees `~/.ssh`; it reaches only
+  `127.0.0.1:<port>`, and only while the run lasts.
 - **Read-only, twice:** the Mongo user is the hard boundary, and `dispatch check` fails one that can insert, update,
   remove, or create or drop a collection or index. The MCP server Dispatch loads (`mongodb-mcp-server`, pinned) runs in
   its read-only mode, which offers no write tool.
@@ -61,8 +62,10 @@ that project's plan and report runs, does an agent reach prod.
   open network. The read-only user bounds what it can do; the gate bounds cost and approval on the normal path. Give
   the report user read access to the report database only.
 - **Not reached:** a team instance, a member's computer, Codex and Gemini CLI projects, and Windows never get a data
-  block. No other run gets the URI: the `dispatch.env` variable that holds it is kept out of every agent's and test
-  command's environment.
+  block. No other run gets the URI in its environment: the `dispatch.env` variable that holds it is kept out of every
+  agent's and test command's environment, and in a sandboxed run the agent cannot read `dispatch.env` itself.
+- **Without a sandbox** (macOS, `sandbox: off`, no bwrap), a data block is still accepted, and every agent run, of any
+  project, can read the owner's SSH keys and `dispatch.env` from disk: only the read-only Mongo user bounds it.
 - **What a report holds:** aggregates. The report skill tells the agent never to put names, phone numbers or other raw
   personal fields in the page; that is an instruction, not a filter. The page reaches only the requester's private chat,
   and the run's transcript under `runs/` holds whatever the queries returned.

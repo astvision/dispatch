@@ -147,7 +147,7 @@ projects:
       uri: ${WEBAPP_MONGO_RO_URI}  # зөвхөн уншдаг хэрэглэгчийн URI, dispatch.env-д
 ```
 
-`dispatch.env`-д: `WEBAPP_MONGO_RO_URI=` гээд хэрэглэгчийн нэр, нууц үгтэй `mongodb://` URI — Mongo хэрэглэгч зөвхөн `read` эрхтэй
+`dispatch.env`-д `WEBAPP_MONGO_RO_URI=` мөрийн араас зөвхөн уншдаг хэрэглэгчийн `mongodb://` холболтын мөрийг бичнэ — Mongo хэрэглэгч зөвхөн `read` эрхтэй
 байна. `dispatch check` tunnel нээж шалгаад, бичих эрхтэй хэрэглэгчийг татгалзана (`mongosh` хэрэгтэй).
 
 | Алхам | Юу болдог |

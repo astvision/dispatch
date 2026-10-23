@@ -5,14 +5,14 @@ Amends ADR 0038 (a plan run returns `plan` or `answer`): on a project with data,
 
 A project on a personal instance may name its production MongoDB in a `data` block: the SSH host to tunnel through, Mongo's
 address as that host sees it, the database, and `uri: ${NAME}`, the read-only user's connection string, which lives only in
-`dispatch.env`. For each plan or report run on such a project, Dispatch itself (outside the sandbox, which hides `~/.ssh`)
+`dispatch.env`. For each plan or report run on such a project, Dispatch itself (outside the sandbox, which in a sandboxed run hides `~/.ssh`)
 opens `ssh -N -L 127.0.0.1:<free port>:<mongo> <host>`, waits up to 20 s for the port, runs the agent, and closes the tunnel
 however the run ends. The URI's hosts become `127.0.0.1:<port>` and reads prefer a secondary.
 
 The run reaches Mongo through `mongodb-mcp-server`, pinned to 2.1.2 and named `dispatch_data`, in `--strict-mcp-config` with
 nothing else loaded. Its connection string reaches the server as `${DISPATCH_DATA_URI}`, expanded from the run's environment,
 never on a command line. The `dispatch.env` variable that holds the real URI is kept out of every agent's environment, so
-no other run carries it. Every query has a server-side `maxTimeMS` of 60 s. There are two levels:
+no other run carries it in its environment. Every query has a server-side `maxTimeMS` of 60 s. There are two levels:
 
 | Run | Tools |
 |-----|-------|
@@ -40,7 +40,9 @@ plan.
 **Read-only twice.** The Mongo user is the hard boundary: `dispatch check` opens the tunnel, asks Mongo for the user's
 privileges (`connectionStatus`, `showPrivileges`) and fails a user that can insert, update, remove, or create or drop a
 collection or index. The
-server's own read-only mode (`MDB_MCP_READ_ONLY=true`) is the second layer: it lists no write tool.
+server's own read-only mode (`MDB_MCP_READ_ONLY=true`) is the second layer: it lists no write tool. Without a sandbox
+(macOS, `sandbox: off`), where a data block is still accepted, any agent run can read the owner's SSH keys and
+`dispatch.env` from disk, so only the read-only Mongo user bounds it.
 
 **Guardrails beside the gate.** A data run also gets `--disallowedTools` rules for `mongosh`, `mongo`, `mongoexport`,
 `mongodump`, `printenv` and `env` in Bash. They are guardrails like ADR 0009's, not a boundary: Claude Code gives the MCP

@@ -4,9 +4,11 @@ import dispatch.config.Config;
 import dispatch.config.DataSource;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /** The projects' prod Mongo this machine may reach for reports, and the tunnel a run opens to one (ADR 0043). */
 public interface DataSources {
@@ -35,7 +37,7 @@ public interface DataSources {
      * tunnelled URI as {@code DISPATCH_DATA_URI} instead (ADR 0043).
      */
     static Map<String, String> withoutDataUris(Map<String, String> environment, Config config) {
-        java.util.Set<String> uris = new java.util.HashSet<>();
+        Set<String> uris = new HashSet<>();
         for (Config.Project project : config.projects()) {
             if (project.data() != null) {
                 uris.add(project.data().uri());
