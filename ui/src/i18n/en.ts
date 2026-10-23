@@ -315,6 +315,7 @@ export const en = {
   "tasks.cost": "Cost",
   "tasks.noCost": "no cost reported",
   "tasks.kind.PLAN": "Planning",
+  "tasks.kind.REPORT": "Report",
   "tasks.kind.EXECUTE": "Execution",
   "tasks.kind.DELIVER": "Delivery",
   "tasks.status.QUEUED": "queued",

@@ -31,7 +31,7 @@ export function stateOf(task: TaskRow): { word: string; tone: Tone } {
     case "awaitingApproval":
       return { word: "таныг хүлээж", tone: "you" };
     case "running":
-      return { word: task.kind === "EXECUTE" ? "хийж байна" : "төлөвлөж байна", tone: "working" };
+      return { word: task.kind === "EXECUTE" ? "хийж байна" : task.kind === "REPORT" ? "тайлан гаргаж байна" : "төлөвлөж байна", tone: "working" };
     case "queued":
       return { word: task.waitingForWorker ? "компьютер хүлээж" : "дараалалд", tone: "waiting" };
     case "finished":

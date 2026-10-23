@@ -75,6 +75,38 @@ class RendererTest {
     }
 
     @Test
+    void aReportPlanSaysReportAndOffersToMakeIt() {
+        ObjectNode payload = planPayload(List.of("Count visits per day"), List.of());
+        ((ObjectNode) payload.get("plan")).put("result", "report");
+
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, payload);
+
+        assertTrue(rendered.html().contains("📊"), rendered.html());
+        assertEquals(Renderer.Button.primary("📊 Тайлан гаргах", "approve:42:1"), rendered.keyboard().get(0).get(0));
+    }
+
+    @Test
+    void aCodePlanKeepsItsStartButton() {
+        Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, planPayload(List.of("Do it"), List.of()));
+
+        assertFalse(rendered.html().contains("📊"), rendered.html());
+        assertEquals(Renderer.Button.primary(messages.getString("button.start"), "approve:42:1"), rendered.keyboard().get(0).get(0));
+    }
+
+    @Test
+    void timelineShowsAnApprovedReportRunAsAReportWithWhoApprovedIt() {
+        ObjectNode payload = timelinePayload();
+        payload.withArray("runs").removeAll();
+        payload.withArray("runs").addObject().put("seq", 2).put("kind", "REPORT").put("status", "SUCCEEDED").put("requestedBy", "Bold")
+                .putNull("instruction").put("queuedAt", "2026-09-17T10:07:00Z").put("startedAt", "2026-09-17T10:07:00Z")
+                .put("finishedAt", "2026-09-17T10:08:02Z").put("costUsd", "0.26").putNull("failureReason");
+
+        String html = renderer.render(OutboxKind.TASK_TIMELINE, payload).html();
+
+        assertTrue(html.contains("📊 Тайлан (Bold зөвшөөрсөн)"), html);
+    }
+
+    @Test
     void planWithoutDecisionsHasNoDecisionsButton() {
         Renderer.Rendered rendered = renderer.render(OutboxKind.PLAN_READY, planPayload(List.of("Do it"), List.of()));
 

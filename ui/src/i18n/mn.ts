@@ -316,6 +316,7 @@ export const mn: Record<Key, string> = {
   "tasks.cost": "Зардал",
   "tasks.noCost": "зардал мэдэгдээгүй",
   "tasks.kind.PLAN": "Төлөвлөх",
+  "tasks.kind.REPORT": "Тайлан",
   "tasks.kind.EXECUTE": "Хэрэгжүүлэх",
   "tasks.kind.DELIVER": "Хүргэх",
   "tasks.status.QUEUED": "дараалалд",

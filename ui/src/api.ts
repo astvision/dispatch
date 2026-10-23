@@ -351,7 +351,7 @@ export interface TaskRow {
   steps?: number;
   lastAction?: string;
   waitingForWorker?: boolean;
-  /** A running or queued run's kind: PLAN or EXECUTE. */
+  /** A running or queued run's kind: PLAN, EXECUTE or REPORT. */
   kind?: string;
   blocked?: string;
   /** On the viewer's own task awaiting approval: how many of its plan's questions are open, and the first of them. */
@@ -463,7 +463,7 @@ export interface TaskDetail {
 /** One step of a run (RM): the implementation, a test run, a fix, the review, the delivery, or a plan run's one call. */
 export interface RunStepView {
   n: number;
-  kind: "PLAN" | "IMPLEMENT" | "TEST" | "FIX" | "PAUSE" | "REVIEW" | "DELIVER";
+  kind: "PLAN" | "REPORT" | "IMPLEMENT" | "TEST" | "FIX" | "PAUSE" | "REVIEW" | "DELIVER";
   round: number;
   startedAt: string;
   endedAt: string | null;
@@ -480,7 +480,7 @@ export interface RunStepView {
 export interface RunView {
   taskId: number;
   seq: number;
-  kind: "PLAN" | "EXECUTE" | "DELIVER";
+  kind: "PLAN" | "EXECUTE" | "REPORT" | "DELIVER";
   status: string;
   startedAt: string | null;
   finishedAt: string | null;
